@@ -55,10 +55,7 @@ def _explain_event(message: str, data: dict[str, Any]) -> str | None:
         rc = data.get("reason_codes") or []
         rs = data.get("risk_score", "")
         oa = data.get("overlay_applied", "")
-        parts = [
-            f"Policy decision after risk assessment: final_action={fa!r}, winning_rule={wr!r}, "
-            f"risk_score={rs!r}."
-        ]
+        parts = [f"Policy decision after risk assessment: final_action={fa!r}, winning_rule={wr!r}, " f"risk_score={rs!r}."]
         if rc:
             parts.append(f" Reason codes: {', '.join(str(x) for x in rc)}.")
         if oa:

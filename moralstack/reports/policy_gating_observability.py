@@ -120,11 +120,13 @@ def _gating_events_from_debug(debug_events: list[dict[str, Any]] | None) -> list
         data = payload.get("data")
         if not isinstance(data, dict):
             data = {}
-        out.append({
-            "message": msg,
-            "hypothesis_id": (payload.get("hypothesisId") or payload.get("hypothesis_id") or "").strip(),
-            "data": data,
-        })
+        out.append(
+            {
+                "message": msg,
+                "hypothesis_id": (payload.get("hypothesisId") or payload.get("hypothesis_id") or "").strip(),
+                "data": data,
+            }
+        )
     return out
 
 
@@ -266,7 +268,9 @@ def policy_gating_to_io_annotations(obs: dict[str, Any]) -> dict[str, list[dict[
     pre = obs.get("pre_policy")
     if isinstance(pre, dict) and pre:
         inputs.append({"label": "risk_category", "source": str(pre.get("risk_category") or "")})
-        inputs.append({"label": "bounds", "source": f"min={pre.get('policy_min_action')} max={pre.get('policy_max_action')}"})
+        inputs.append(
+            {"label": "bounds", "source": f"min={pre.get('policy_min_action')} max={pre.get('policy_max_action')}"}
+        )
         outputs.append({"label": "pre_action", "value": str(pre.get("pre_policy_final_action") or "")})
         outputs.append({"label": "pre_path", "value": str(pre.get("pre_policy_path") or "")})
     for ge in obs.get("gating_events") or []:
