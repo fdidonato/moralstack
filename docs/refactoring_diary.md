@@ -1,0 +1,214 @@
+# Refactoring Diary
+
+Log of refactoring sessions: baseline state and per-change decisions. Used to keep refactors reversible and auditable.
+
+## Baseline
+
+Fill this section at the start of the first refactoring session (or when resetting the baseline).
+
+| Field      | Value                                    |
+|------------|------------------------------------------|
+| **Date**   | 2025-02-24                               |
+| **Branch** | massive-refactoring                      |
+| **Commit** | 97890e70d3d33a240ded7f75fc931ee6370f8b84 |
+
+### Commands and expected outcome
+
+| Command                 | Purpose                                                            | Result                                                    |
+|-------------------------|--------------------------------------------------------------------|-----------------------------------------------------------|
+| `pytest -q`             | Run tests (or `pytest --maxfail=1 --disable-warnings -q` as in CI) | 576 passed, 3 warnings                                    |
+| `ruff check .`          | Lint                                                               | 1142 errors (126 fixable with `--fix`)                    |
+| `ruff format --check .` | Format check (CI-style)                                            | 80 files would be reformatted, 42 already formatted       |
+| `black --check .`       | Black format check (CI-style)                                      | 83 files would be reformatted, 42 would be left unchanged |
+| `mypy moralstack`       | Type check (gradual; package only)                                 | 100 errors in 12 files (84 source files checked)          |
+
+**Baseline failure notes (pre-existing; do not attribute to refactoring):**
+
+- **Tests:** All 576 tests passed. Three PytestCollectionWarnings (test classes with `__init__`: `TestRunner` in `test_perspective_standalone.py`, `TestTask`/`TestResult` in `test_risk_estimator.py`).
+- **Ruff check:** 1142 lint errors at baseline; 126 fixable with `--fix`. Run `ruff check .` for full list.
+- **Ruff format:** 80 files would be reformatted, 42 already formatted; run `ruff format --check .` for list.
+- **Black check:** 83 files would be reformatted, 42 would be left unchanged; run `black --check .` for full list.
+
+**Ruff check — conteggio per categoria (`ruff check . --statistics`):**
+
+| Categoria | Count | Regola | Descrizione                      |
+|-----------|-------|--------|----------------------------------|
+| E         | 950   | E501   | line-too-long                    |
+| E         | 44    | E402   | module-import-not-at-top-of-file |
+| E         | 13    | E722   | bare-except                      |
+| E         | 1     | E741   | ambiguous-variable-name          |
+| F         | 29    | F541   | f-string-missing-placeholders    |
+| F         | 19    | F401   | unused-import                    |
+| F         | 7     | F841   | unused-variable                  |
+| F         | 1     | F601   | multi-value-repeated-key-literal |
+| I         | 78    | I001   | unsorted-imports                 |
+
+**Ruff check — top 10 file più problematici:**
+
+| #  | File                                            | Errori |
+|----|-------------------------------------------------|--------|
+| 1  | scripts/benchmark_moralstack.py                 | 308    |
+| 2  | moralstack/orchestration/deliberation_runner.py | 119    |
+| 3  | moralstack/cli/run.py                           | 113    |
+| 4  | moralstack/orchestration/controller.py          | 58     |
+| 5  | moralstack/constitution/store.py                | 47     |
+| 6  | tests/test_orchestrator.py                      | 29     |
+| 7  | tests/test_perspective_module.py                | 26     |
+| 8  | tests/test_perspective_standalone.py            | 24     |
+| 9  | moralstack/ui/app.py                            | 22     |
+| 10 | tests/test_risk_estimator.py                    | 22     |
+
+| 10 | tests/test_risk_estimator.py                    | 22     |
+
+**mypy baseline (2025-02-24):**
+
+Command: `mypy moralstack` (from repo root). Target: package `moralstack` only (tests/ and scripts/ excluded).
+
+| Metric               | Value |
+|----------------------|-------|
+| Total errors         | 100   |
+| Files with errors    | 12    |
+| Source files checked | 84    |
+
+**mypy — count by error category:**
+
+| Category         | Code             | Count | Description                                           |
+|------------------|------------------|-------|-------------------------------------------------------|
+| assignment       | assignment       | 18    | Incompatible types in assignment                      |
+| attr-defined     | attr-defined     | 21    | Object has no attribute                               |
+| arg-type         | arg-type         | 14    | Argument has incompatible type (e.g. str vs Literal)  |
+| return-value     | return-value     | 10    | Incompatible return value type                        |
+| misc             | misc             | 17    | Cannot assign to type, object not iterable, etc.      |
+| has-type         | has-type         | 10    | Cannot determine type of variable                     |
+| var-annotated    | var-annotated    | 5     | Need type annotation for variable                     |
+| import-not-found | import-not-found | 7     | Missing stubs (datasets, fastapi, uvicorn, starlette) |
+| typeddict-item   | typeddict-item   | 2     | Missing keys for TypedDict                            |
+| union-attr       | union-attr       | 1     | Item "None" has no attribute                          |
+| call-arg         | call-arg         | 1     | Unexpected keyword argument                           |
+
+**mypy — top 10 files by error count:**
+
+| #  | File                                            | Errors |
+|----|-------------------------------------------------|--------|
+| 1  | moralstack/cli/run.py                           | 32     |
+| 2  | moralstack/orchestration/decision_service.py    | 28     |
+| 3  | moralstack/constitution/store.py                | 13     |
+| 4  | moralstack/orchestration/deliberation_runner.py | 6      |
+| 5  | moralstack/ui/app.py                            | 7      |
+| 6  | moralstack/data/builders/sft_builder.py         | 5      |
+| 7  | moralstack/runtime/trace/decision_trace.py      | 4      |
+| 8  | moralstack/orchestration/controller.py          | 2      |
+| 9  | moralstack/runtime/modules/simulator_module.py  | 2      |
+| 10 | moralstack/runtime/modules/hindsight_module.py  | 2      |
+
+Note: Seven `import-not-found` errors are for optional dependencies (datasets in sft_builder; fastapi, uvicorn, starlette in ui/app). They can be silenced by installing optional extras or adding per-module overrides.
+
+**Interfacce candidate a Protocol/typing (solo analisi):**
+
+The following interfaces are good candidates for Protocol or improved typing in a later step. No code changes in this commit.
+
+1. **LLM / OpenAI client**
+   - **Files:** `moralstack/constitution/store.py`, `moralstack/models/policy.py`
+   - **Issue:** Concrete `openai.OpenAI()` and `client.chat.completions.create` usage; no abstraction. Refactoring and mocking are harder.
+   - **Candidate:** A Protocol (e.g. `LLMClient`) with a method such as `create_chat_completion(...)` and typed parameters/return, to be adopted in store and policy later.
+
+2. **Persistence / DB**
+   - **Files:** `moralstack/persistence/db.py`, `moralstack/persistence/sink.py`
+   - **Issue:** Direct use of `sqlite3` and `_get_connection(path)`; no typed abstraction for connection or sink.
+   - **Candidate:** A Protocol for the connection (execute/commit/context manager) and/or for the sink (e.g. `persist_llm_call`, `persist_request`), to be defined in a later step.
+
+**Black check — baseline (2025-02-24):**
+
+| Metric                         | Value |
+|--------------------------------|-------|
+| Files with violations          | 83    |
+| Files already compliant        | 42    |
+
+Sample of files needing reformat (first 10 from `black --check .` output):
+
+| #  | File                                        |
+|----|---------------------------------------------|
+| 1  | moralstack/__init__.py                      |
+| 2  | moralstack/data/builders/__init__.py        |
+| 3  | moralstack/models/base.py                   |
+| 4  | moralstack/constitution/__init__.py         |
+| 5  | moralstack/constitution/loader.py           |
+| 6  | moralstack/models/risk/categories.py        |
+| 7  | moralstack/constitution/prompt_formatter.py |
+| 8  | moralstack/models/risk/utils.py             |
+| 9  | moralstack/orchestration/__init__.py        |
+| 10 | moralstack/models/risk/schema.py            |
+
+---
+
+## Decision log
+
+One row or block per refactoring step. Add rows as you go.
+
+| Date       | What (scope/files)                     | Why                                                                   | Risk | Tests run                      | Commit (hash or message)                  |
+|------------|----------------------------------------|-----------------------------------------------------------------------|------|--------------------------------|-------------------------------------------|
+| 2025-02-24 | Add Black config + check (no reformat) | Standardize formatting with Black, prepare CI                         | low  | `pytest -q`, `black --check .` | `chore: add black config (check-only)`    |
+| 2025-02-24 | Add mypy (gradual) configuration       | Introduce gradual type checking; baseline errors; Protocol candidates | low  | `pytest -q`, `mypy moralstack` | `chore: add mypy (gradual) configuration` |
+
+#### Entry: 2025-02-24 — Black config (check-only)
+
+- **What:** `pyproject.toml` (dev deps + `[tool.black]`), CI step, `docs/refactoring_diary.md`, `docs/DEVELOPMENT.md`
+- **Why:** Standardize formatting with Black; check executable in CI; no reformat in this step
+- **Risk:** low
+- **Tests run:** `pytest -q`, `black --check .`
+- **Commit:** `chore: add black config (check-only)`
+
+#### Entry: 2025-02-24 — mypy (gradual) configuration
+
+- **What:** `pyproject.toml` (`[tool.mypy]` + overrides, mypy in dev deps), `docs/refactoring_diary.md` (mypy baseline + Protocol candidates), `docs/DEVELOPMENT.md` (mypy command)
+- **Why:** Gradual type checking; runnable `mypy moralstack` without blocking; baseline and interface analysis documented
+- **Risk:** low
+- **Tests run:** `pytest -q`, `mypy moralstack`
+- **Commit:** `chore: add mypy (gradual) configuration`
+
+| 2026-02-24   | Add pre-commit hooks (ruff/black/whitespace) | Automate cheap checks before commit | low | `pre-commit run --all-files` | `chore: add pre-commit hooks (ruff/black)` |
+| _YYYY-MM-DD_ | _e.g. rename X to Y in module Z_ | _e.g. clarity, consistency_ | low / medium / high | _e.g. pytest -q, tests/unit/test_z.py_ | _hash or `refactor: ... (no behavior change)`_ |
+
+#### Entry: 2026-02-24 — Pre-commit hooks
+
+- **What:** `.pre-commit-config.yaml` (new), `pyproject.toml` (pre-commit in dev deps), `docs/DEVELOPMENT.md` (pre-commit section), `docs/refactoring_diary.md`, `.cursor/rules/dependency-management.mdc`
+- **Why:** Automate cheap checks (format, lint, whitespace) before every commit to prevent mechanical regressions
+- **Risk:** low
+- **Tests run:** `pre-commit run --all-files`
+- **Commit:** `chore: add pre-commit hooks (ruff/black)`
+
+**Hooks activated:**
+
+| Hook                | Repo                               | Mode                           |
+|---------------------|------------------------------------|--------------------------------|
+| trailing-whitespace | pre-commit/pre-commit-hooks v6.0.0 | auto-fix                       |
+| end-of-file-fixer   | pre-commit/pre-commit-hooks v6.0.0 | auto-fix                       |
+| ruff-check          | astral-sh/ruff-pre-commit v0.15.2  | `--fix --exit-non-zero-on-fix` |
+| black               | psf/black 26.1.0                   | auto-format                    |
+
+**First run results (`pre-commit run --all-files`):**
+
+| Hook                | Result               | Files fixed                                          |
+|---------------------|----------------------|------------------------------------------------------|
+| trailing-whitespace | Failed (fixed)       | 24 files                                             |
+| end-of-file-fixer   | Failed (fixed)       | ~40 files (py, yaml, md)                             |
+| ruff-check          | Failed               | ~1000 E501/E402/E722 remaining; I001/F401 auto-fixed |
+| black               | Failed (reformatted) | 79 files reformatted, 46 unchanged                   |
+
+**Notes:** First full-repo run fails due to pre-existing baseline issues (1142 ruff errors, 83 black violations). On incremental commits (staged files only), hooks are fast (<2s for ruff/black on typical changesets). The `--exit-non-zero-on-fix` flag on ruff ensures the developer sees and re-stages auto-fixed files.
+
+### Template for a single entry (copy as needed)
+
+```markdown
+#### Entry: YYYY-MM-DD — &lt;short title&gt;
+
+- **What:** (files / scope)
+- **Why:** (rationale)
+- **Risk:** low | medium | high
+- **Tests run:** (commands)
+- **Commit:** (hash or message)
+```
+
+---
+
+_See `.cursor/rules/refactoring.md` for the refactoring constraints and workflow._

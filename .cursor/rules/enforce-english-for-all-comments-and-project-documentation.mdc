@@ -1,0 +1,32 @@
+---
+description: |
+  Enforce english in documentation and comments
+alwaysApply: true
+---
+
+All comments and all project documentation must be written strictly in English.
+
+This rule applies to:
+
+- Inline comments
+- Block comments
+- Documentation comments (e.g., JSDoc, docstrings, XML comments, etc.)
+- README files
+- INSTALL.md / install.md files
+- CONTRIBUTING guides
+- API documentation
+- Configuration documentation
+- Any Markdown (.md), text, or documentation files
+- Any other form of written documentation within the project
+
+Non-English content is not allowed under any circumstances.
+
+If generating or modifying code or documentation:
+
+1. Always write comments and documentation in clear, grammatically correct English.
+2. If existing comments or documentation are in another language, translate them fully into English.
+3. Do not mix languages within the same file or section.
+4. Use professional and technical terminology appropriate to the programming language and project context.
+5. Ensure README, install guides, and all documentation are written entirely in English, including headings, descriptions, and examples.
+
+Any violation of this rule must be corrected before finalizing the code or documentation.

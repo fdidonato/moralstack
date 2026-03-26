@@ -1,0 +1,103 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moralstack"
+version = "0.1.0"
+description = "Policy-aware reasoning orchestration layer for LLM systems"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Francesco di Donato" }
+]
+dependencies = [
+    "openai>=1.0.0",
+    "pydantic>=2",
+    "python-dotenv>=1.0.0",
+    "ruamel.yaml>=0.18",
+    "langdetect>=1.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "black",
+    "mypy",
+    "pre-commit",
+]
+ui = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9"
+]
+
+[project.scripts]
+moralstack = "moralstack.cli.run:main"
+moralstack-ui = "moralstack.ui.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["moralstack*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+# MoralStack runtime configuration example
+# See docs/modules/orchestrator.md for details.
+# [tool.moralstack.config]
+# borderline_refuse_upper = 0.95
+
+[tool.ruff]
+line-length = 125
+target-version = "py311"
+exclude = [
+    ".bzr", ".direnv", ".eggs", ".git", ".hg", ".ipynb_checkpoints",
+    ".mypy_cache", ".nox", ".pytest_cache", ".ruff_cache", ".tox",
+    ".venv", "venv", "env", ".vscode", "__pypackages__", "_build",
+    "buck-out", "build", "dist", "node_modules", "site-packages",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.black]
+line-length = 125
+target-version = ["py311"]
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = false
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["ruamel.yaml.*", "langdetect.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "moralstack.data.builders.sft_builder"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "moralstack.ui.app"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "moralstack.orchestration.*"
+strict = true

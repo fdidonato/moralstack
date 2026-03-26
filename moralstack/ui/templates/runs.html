@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - MoralStack{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Dashboard</h1>
+    <p class="subtitle">Recent benchmark runs</p>
+</div>
+
+{% if runs %}
+<div class="card">
+    <table class="table">
+        <thead>
+        <tr>
+            <th>Run ID</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Started</th>
+            <th>Ended</th>
+            <th class="col-actions">Actions</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for r in runs %}
+        <tr>
+            <td class="mono"><a href="/runs/{{ r.run_id }}">{{ r.run_id[:12] }}</a></td>
+            <td>
+                {% if r.run_type == 'benchmark' %}
+                <span class="badge badge-benchmark">BENCHMARK</span>
+                {% elif r.run_type == 'single' %}
+                <span class="badge badge-type">SINGLE</span>
+                {% else %}
+                <span class="badge badge-type">{{ r.run_type or '—' }}</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if r.status == 'completed' %}
+                <span class="badge badge-ok">{{ r.status }}</span>
+                {% elif r.status == 'running' %}
+                <span class="badge badge-running">{{ r.status }}</span>
+                {% elif r.status == 'failed' %}
+                <span class="badge badge-fail">{{ r.status }}</span>
+                {% else %}
+                <span class="badge">{{ r.status or '—' }}</span>
+                {% endif %}
+            </td>
+            <td class="ts">{{ r.started_at | fmtdate }}</td>
+            <td class="ts">{{ r.ended_at | fmtdate }}</td>
+            <td class="col-actions">
+                <a href="/runs/{{ r.run_id }}" class="btn btn-sm">View</a>
+                <a href="/runs/{{ r.run_id }}/export_benchmark.md" download class="btn btn-sm btn-outline">Export</a>
+                <button class="btn btn-sm btn-danger btn-delete" data-run-id="{{ r.run_id }}">Delete</button>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="empty-state">
+    <p>No runs found.</p>
+    <p class="muted">Run a benchmark first, then visit this page.</p>
+</div>
+{% endif %}
+{% endblock %}

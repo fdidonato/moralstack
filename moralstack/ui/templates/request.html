@@ -1,0 +1,788 @@
+{% extends "base.html" %}
+{% block title %}Request {{ req.request_id[:12] }} - MoralStack{% endblock %}
+{% block content %}
+<div class="page-header">
+    <nav class="breadcrumb">
+        <a href="/runs">Dashboard</a> &rsaquo;
+        <a href="/runs/{{ run_id }}">Run {{ run_id[:12] }}</a> &rsaquo;
+        <span>Request</span>
+    </nav>
+    <h1>Request <span class="mono">{{ req.request_id[:12] }}</span></h1>
+</div>
+
+<div class="card meta-grid">
+    <div class="meta-item">
+        <span class="meta-label">Domain</span>
+        <span class="meta-value">{{ req.domain or '—' }}</span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Created</span>
+        <span class="meta-value ts">{{ req.created_at | fmtdate }}</span>
+    </div>
+</div>
+
+{% if execution_summary %}
+<h2>Execution summary</h2>
+<div class="card">
+    <div class="meta-grid">
+        <div class="meta-item">
+            <span class="meta-label">Path</span>
+            <span class="meta-value">{{ execution_summary.path_badge }}</span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Total deliberative cycles</span>
+            <span class="meta-value">{{ execution_summary.total_cycles }}</span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Converged</span>
+            <span class="meta-value">{{ 'Yes' if execution_summary.converged else 'No' }}</span>
+        </div>
+        {% if execution_summary.estimation_mode %}
+        <div class="meta-item">
+            <span class="meta-label">Risk estimator mode</span>
+            <span class="meta-value">
+                {% if execution_summary.estimation_mode == 'parallel' %}
+                <span class="badge badge-parallel" title="3 focused LLM calls ran in parallel: intent classifier, harm signal scanner, operational risk evaluator">Parallel (3 mini-estimators)</span>
+                {% elif execution_summary.estimation_mode == 'monolithic' %}
+                <span class="badge" style="background:#6c757d;color:#fff;" title="Single monolithic LLM call covering all 17 risk fields">Monolithic (single LLM call)</span>
+                {% else %}
+                {{ execution_summary.estimation_mode }}
+                {% endif %}
+            </span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% if orchestrator_observability and orchestrator_observability.get('has_routing_data') %}
+<h2>Path routing and risk governance</h2>
+<p class="muted" style="margin-bottom:0.5rem;">Structured explanation of which orchestrator branch ran after risk
+    assessment (fast, deliberative, early exit) and why thresholds, <code>risk_policy_action</code>, and sensitive-overlay
+    floors matter. Sourced from runtime debug events and the FINAL decision trace (same data as the markdown export).</p>
+<div class="card" style="border-left:4px solid #94a3b8;">
+    <ul class="journey-list" style="list-style:disc; padding-left:1.25rem;">
+        {% for line in orchestrator_observability.get('narrative_bullets', []) %}
+        <li style="margin-bottom:0.35rem;">{{ line }}</li>
+        {% endfor %}
+    </ul>
+    {% set sig = orchestrator_observability.get('routing_signals', {}) %}
+    {% if sig %}
+    <div class="meta-grid" style="margin-top:1rem;">
+        {% if sig.path_taken %}
+        <div class="meta-item">
+            <span class="meta-label">Orchestrator path_taken</span>
+            <span class="meta-value mono">{{ sig.path_taken }}</span>
+        </div>
+        {% endif %}
+        {% if sig.risk_policy_action is not none %}
+        <div class="meta-item">
+            <span class="meta-label">risk_policy_action @ branch</span>
+            <span class="meta-value mono">{{ sig.risk_policy_action }}</span>
+        </div>
+        {% endif %}
+        {% if sig.threshold_low is not none %}
+        <div class="meta-item">
+            <span class="meta-label">threshold_low @ branch</span>
+            <span class="meta-value mono">{{ sig.threshold_low }}</span>
+        </div>
+        {% endif %}
+        {% if sig.risk_score_at_branch is not none %}
+        <div class="meta-item">
+            <span class="meta-label">risk_score @ branch</span>
+            <span class="meta-value mono">{{ sig.risk_score_at_branch }}</span>
+        </div>
+        {% endif %}
+        {% if sig.overlay_risk_floor_applied %}
+        <div class="meta-item">
+            <span class="meta-label">Sensitive overlay floor</span>
+            <span class="meta-value mono">{{ sig.original_risk_score }} → {{ sig.floored_to }}</span>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if execution_summary and execution_summary.domain_excluded %}
+<div class="card" style="border-left:4px solid #f0ad4e; background:#fffdf5; padding:1.25rem;">
+    <h2 style="color:#856404; margin-top:0;">Domain Not Available</h2>
+    <p>This response was generated because the <strong>{{ execution_summary.excluded_domain }}</strong> domain is
+        <strong>not enabled</strong> in this deployment's constitution configuration.</p>
+    <p class="muted">The domain was detected during risk estimation. Deliberation and constitutional analysis were
+        skipped entirely.</p>
+    <div class="meta-grid" style="margin-top:1rem;">
+        <div class="meta-item">
+            <span class="meta-label">Excluded domain</span>
+            <span class="meta-value mono">{{ execution_summary.excluded_domain }}</span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Path</span>
+            <span class="meta-value">DOMAIN_EXCLUDED (early exit after risk)</span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Deliberation</span>
+            <span class="meta-value muted">skipped</span>
+        </div>
+    </div>
+    <p class="muted" style="margin-top:1rem; font-size:0.85rem;">
+        To re-enable: remove <code>excluded: true</code> from
+        <code>config/constitution/overlays/{{ execution_summary.excluded_domain }}.yaml</code>.
+    </p>
+</div>
+{% endif %}
+
+{% if relevant_principles and (relevant_principles.relevant_at_start or relevant_principles.triggered or relevant_principles.overlay_applied or relevant_principles.reason_codes or relevant_principles.hard_violation_codes) %}
+<h2>Relevant constitutional principles</h2>
+<p class="muted" style="margin-bottom:0.5rem;">Relevant principles are retrieved at the start of deliberation via
+    <strong>parallel domain agents</strong> (constitution store); that phase appears as <strong>constitution /
+        relevant_principles</strong> in the Deliberation journey and Execution timeline below. Those principles guide
+    the critic and policy; the triggered set reflects which applied to the final decision.</p>
+<div class="card principles-card">
+    {% if relevant_principles.relevant_at_start %}
+    <div class="principles-section">
+        <span class="meta-label">Relevant principles identified at the start of deliberation</span>
+        <p class="principles-value principles-note">These principles were selected for this request and used to guide
+            the critic (e.g. violation checks) and policy. They influence subsequent responses throughout the
+            deliberation.</p>
+        <ul class="principles-list">
+            {% for p in relevant_principles.relevant_at_start %}
+            <li class="principle-item">
+                <span class="badge badge-{{ 'hard' if p.level == 'hard' else 'soft' }}">{{ p.level or 'soft' }}</span>
+                <code class="principle-id-code">{{ p.id }}</code>
+                {% if p.title %}<span class="principle-title">{{ p.title }}</span>{% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+    {% if relevant_principles.triggered %}
+    <div class="principles-section">
+        <span class="meta-label">Triggered principles (in final decision)</span>
+        <p class="principles-value principles-note">Principles that applied to the final decision (from policy overlay).
+            Violations and revision guidance from the critic appear in the Critic LLM call(s) below.</p>
+        <ul class="principles-list">
+            {% for p in relevant_principles.triggered %}
+            <li class="principle-item">
+                <span class="badge badge-{{ 'hard' if p.level == 'hard' else 'soft' }}">{{ p.level or 'soft' }}</span>
+                <code class="principle-id-code">{{ p.id }}</code>
+                {% if p.title %}<span class="principle-title">{{ p.title }}</span>{% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+    {% if relevant_principles.overlay_applied %}
+    <div class="principles-section">
+        <span class="meta-label">Overlay applied</span>
+        <p class="principles-value">{{ relevant_principles.overlay_applied }}</p>
+    </div>
+    {% endif %}
+    {% if relevant_principles.winning_rule %}
+    <div class="principles-section">
+        <span class="meta-label">Winning rule</span>
+        <p class="principles-value"><code>{{ relevant_principles.winning_rule }}</code></p>
+    </div>
+    {% endif %}
+    {% if relevant_principles.reason_codes %}
+    <div class="principles-section">
+        <span class="meta-label">Reason codes</span>
+        <p class="principles-value">{{ relevant_principles.reason_codes | join(', ') }}</p>
+    </div>
+    {% endif %}
+    {% if relevant_principles.hard_violation_codes %}
+    <div class="principles-section">
+        <span class="meta-label">Hard violation codes</span>
+        <ul class="principles-list">
+            {% for code in relevant_principles.hard_violation_codes %}
+            <li class="principle-id"><code>{{ code }}</code></li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<h2>Original Prompt</h2>
+<div class="card">
+    <pre class="block">{{ req.prompt }}</pre>
+</div>
+
+{% if req.final_response %}
+<h2>Final Response</h2>
+<div class="card">
+    <pre class="block">{{ req.final_response }}</pre>
+</div>
+{% endif %}
+
+{% if journey_steps %}
+<h2>Deliberation journey</h2>
+<p class="muted" style="margin-bottom:0.5rem;">Exact execution order (first call to last). Steps that overlap in time
+    are marked <span class="badge badge-parallel">Parallel</span>.</p>
+<div class="card journey-card">
+    <ol class="journey-list">
+        {% for call in journey_steps %}
+        <li class="journey-step {% if call.is_parallel %}journey-step-parallel{% endif %}">
+            <span class="journey-seq">{{ loop.index }}</span>
+            {% if call.is_parallel %}<span class="badge badge-parallel"
+                                           title="Ran in parallel with other modules in this cycle">Parallel</span>{%
+            endif %}
+            <span class="journey-cycle">{% if call.cycle is none or call.cycle == 0 %}cycle 0{% else %}cycle {{ call.cycle }}{% endif %}</span>
+            <span class="journey-module">{{ call.module }} / {{ call.phase }}{% if call.get('parallel_retrieval') or call.get('is_synthetic') %} <span
+                    class="muted">(parallel domain agents)</span>{% endif %}</span>
+            {% if call.duration_ms %}<span class="muted">{{ call.duration_ms | round(0) | int }}ms</span>{% endif %}
+            <span class="muted ts">{{ call.started_at | fmtdate }}</span>
+            {% if call.ended_at_ms %}<span class="muted ts">→ {{ call.ended_at_ms | fmtdate }}</span>{% endif %}
+        </li>
+        {% endfor %}
+    </ol>
+</div>
+{% endif %}
+
+{% if execution_timeline and execution_timeline.rows %}
+<h2>Execution timeline (metro map)</h2>
+<p class="muted" style="margin-bottom:0.5rem;">When each module ran over time. Overlapping bars = parallel
+    execution.</p>
+<div class="card timeline-card">
+    <div class="timeline-ruler">
+        <span class="timeline-ruler-start">0 ms</span>
+        <span class="timeline-ruler-end">{{ execution_timeline.total_duration_ms | round(0) | int }} ms</span>
+    </div>
+    <div class="timeline-rows">
+        {% for row in execution_timeline.rows %}
+        <div class="timeline-row">
+            <div class="timeline-row-label" title="{{ row.module }}">{{ row.module }}</div>
+            <div class="timeline-row-track">
+                {% for bar in row.calls %}
+                <div class="timeline-bar" style="left: {{ bar.left_pct }}%; width: {{ bar.width_pct }}%;"
+                     title="{{ row.module }} / {{ bar.phase }} — {{ bar.duration_ms | int }}ms (cycle {% if bar.cycle is none %}0{% else %}{{ bar.cycle }}{% endif %})">
+                    <span class="timeline-bar-label">{{ bar.phase }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    <div class="timeline-legend">
+        <span class="timeline-legend-item"><strong>Horizontal position</strong> = start time;</span>
+        <span class="timeline-legend-item"><strong>Bar width</strong> = duration.</span>
+        <span class="timeline-legend-item"><strong>Overlapping bars</strong> = parallel execution (modules ran at the same time).</span>
+    </div>
+</div>
+{% endif %}
+
+{% if module_summaries %}
+<h2>Deliberation summary</h2>
+<div class="card meta-grid">
+    {% for mod, info in module_summaries.items() %}
+    <div class="meta-item">
+        <span class="meta-label">{{ mod }}</span>
+        <span class="meta-value">{{ info.count }} call{{ 's' if info.count != 1 else '' }}{% if info.total_ms %}, {{ info.total_ms | int }}ms{% endif %}{% if info.last_summary %}: {{ (info.last_summary[:80] +'…') if (info.last_summary | length) > 80 else info.last_summary }}{% endif %}</span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% if flow_data_cycles %}
+<h2>LLM Calls <span class="muted">({{ llm_calls | length }})</span></h2>
+<div class="view-toggle">
+    <button type="button" class="btn btn-sm toggle-btn active" data-view="by-cycle" aria-pressed="true">By cycle
+    </button>
+    <button type="button" class="btn btn-sm toggle-btn" data-view="chronological" aria-pressed="false">Execution order
+    </button>
+</div>
+<div id="view-by-cycle">
+    <div class="flow-legend">
+        <span class="flow-legend-item">
+            <span class="flow-legend-dot" style="background:var(--red)"></span>risk_estimator
+        </span>
+        <span class="flow-legend-item">
+            <span class="flow-legend-dot" style="background:var(--accent)"></span>policy
+        </span>
+        <span class="flow-legend-item">
+            <span class="flow-legend-dot" style="background:var(--yellow)"></span>critic
+        </span>
+        <span class="flow-legend-item">
+            <span class="flow-legend-dot" style="background:var(--green)"></span>simulator
+        </span>
+        <span class="flow-legend-item">
+            <span class="flow-legend-dot" style="background:#a78bfa"></span>perspectives
+        </span>
+        <span class="flow-legend-item">
+            <span class="flow-legend-dot" style="background:#fb923c"></span>hindsight
+        </span>
+        <span class="flow-legend-item">
+            <span class="flow-legend-dot" style="background:#2dd4bf"></span>constitution
+        </span>
+        <span class="flow-legend-item">
+            <span class="flow-legend-dot" style="background:#94a3b8"></span>orchestrator
+        </span>
+    </div>
+    <div class="flow-graph">
+        {% for cycle_data in flow_data_cycles %}
+        <div class="flow-cycle" data-cycle="{{ cycle_data.cycle_num if cycle_data.cycle_num is not none else 0 }}">
+            <div class="flow-cycle-label">
+                {% if cycle_data.cycle_num is none or cycle_data.cycle_num == 0 %}
+                Initial assessment <span class="flow-cycle-badge">cycle 0</span>
+                {% else %}
+                Deliberation <span class="flow-cycle-badge">cycle {{ cycle_data.cycle_num }}</span>
+                {% endif %}
+                <span class="flow-cycle-count">{{ cycle_data.total_calls }} call{{ 's' if cycle_data.total_calls != 1 else '' }}</span>
+            </div>
+            <div class="flow-nodes-structured">
+                {% for tier in cycle_data.tiers %}
+                {% if not loop.first %}
+                <div class="flow-pipe">
+                    <div class="flow-pipe-line"></div>
+                    {% set lbl_idx = loop.index0 - 1 %}
+                    {% if cycle_data.connector_labels and cycle_data.connector_labels[lbl_idx] %}
+                    <span class="flow-pipe-label">{{ cycle_data.connector_labels[lbl_idx] }}</span>
+                    {% endif %}
+                    <div class="flow-pipe-arrow"></div>
+                </div>
+                {% endif %}
+
+                <div class="flow-tier {% if tier|length > 1 %}flow-tier--parallel{% endif %}">
+                    {% if tier|length > 1 %}
+                    <span class="flow-tier-parallel-label">parallel &middot; {{ tier|length }} calls</span>
+                    {% endif %}
+
+                    {% for call in tier %}
+                    <div class="flow-node"
+                         data-module="{{ call.module or '' }}">
+                        <div class="flow-node-header">
+                            <span class="flow-node-chevron">&#9658;</span>
+                            <div class="flow-node-title-area">
+                                <div class="flow-node-title">{{ call.module }} / {{ call.phase }}</div>
+                                <div class="flow-node-meta">
+                                    {% if call.action %}
+                                    <span class="badge badge-type">{{ call.action }}</span>
+                                    {% endif %}
+                                    {% if call.model %}
+                                    <span class="badge">{{ call.model }}</span>
+                                    {% endif %}
+                                    {% if call.duration_ms %}
+                                    <span class="flow-node-dur">{{ call.duration_ms | round(0) | int }}ms</span>
+                                    {% endif %}
+                                </div>
+                                {% set preview = call.parsed_summary_json | module_result(call.module) %}
+                                {% if preview %}
+                                <div class="flow-node-pill">{{ (preview[:90] + '…') if preview | length > 90 else preview }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        {# IO Annotations #}
+                        {% if call.io_annotations and (call.io_annotations.inputs or call.io_annotations.outputs) %}
+                        <div class="flow-node-io" style="padding: 0 0.7rem 0.5rem 0.7rem; border-top:none; margin-top:0;">
+                             {% for inp in call.io_annotations.inputs %}
+                             <div class="io-row">
+                                 <span class="io-arrow">&larr;</span> {{ inp.label }} <span class="muted">({{ inp.source }})</span>
+                             </div>
+                             {% endfor %}
+                             {% for out in call.io_annotations.outputs %}
+                             <div class="io-row">
+                                 <span class="io-arrow">&rarr;</span> {{ out.label }}: <span class="io-val">{{ out.value }}</span>
+                             </div>
+                             {% endfor %}
+                        </div>
+                        {% endif %}
+
+                        {# Timing Bar #}
+                        {% if call.is_parallel_tier and call.tier_total_ms %}
+                        <div class="flow-node-timing" title="Relative timing in tier">
+                            <div class="flow-node-timing-bar" style="left: {{ call.tier_relative_start_pct }}%; width: {{ call.tier_relative_width_pct }}%;"></div>
+                        </div>
+                        {% endif %}
+
+                        <div class="flow-node-body">
+                            {% set preview = call.parsed_summary_json | module_result(call.module) %}
+                            {% if preview %}
+                            <div class="call-result-preview">
+                                <span class="meta-label">Result / Summary</span>
+                                <p class="call-result-text">{{ preview }}</p>
+                            </div>
+                            {% endif %}
+                            <details>
+                                <summary>Prompt</summary>
+                                <pre class="block">{{ call.prompt }}</pre>
+                            </details>
+                            <details>
+                                <summary>System Prompt</summary>
+                                <pre class="block">{{ call.system_prompt }}</pre>
+                            </details>
+                            <details>
+                                <summary>Raw Response</summary>
+                                <pre class="block">{{ call.raw_response }}</pre>
+                            </details>
+                            {% if call.parsed_summary_json %}
+                            <details>
+                                <summary>Parsed Summary</summary>
+                                <pre class="block json-block">{{ call.parsed_summary_json }}</pre>
+                            </details>
+                            {% endif %}
+                            <div class="flow-node-ts">
+                                <span class="muted ts">{{ call.started_at | fmtdate }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% if not loop.last %}
+        <div class="flow-inter-cycle-connector">
+            <div class="flow-pipe-inter-cycle-line"></div>
+            <div class="flow-inter-cycle-arrow"></div>
+        </div>
+        {% endif %}
+        {% endfor %}
+
+        {# Final Decision Card #}
+        {% if final_decision_card %}
+        <div class="flow-inter-cycle-connector">
+            <div class="flow-pipe-inter-cycle-line"></div>
+            <div class="flow-inter-cycle-arrow"></div>
+        </div>
+
+        <div class="final-decision-card outcome-{{ final_decision_card.final_action }}">
+            <div class="final-decision-header">
+                <div class="final-decision-title">Final Decision</div>
+                <div class="final-decision-meta">
+                    <span class="badge badge-{{ 'ok' if final_decision_card.final_action == 'NORMAL_COMPLETE' else ('running' if final_decision_card.final_action == 'SAFE_COMPLETE' else 'fail') }}">
+                        {{ final_decision_card.final_action }}
+                    </span>
+                </div>
+            </div>
+            <div class="final-decision-grid">
+                <div class="meta-item">
+                    <span class="meta-label">Stop Reason</span>
+                    <span class="meta-value">{{ final_decision_card.stop_reason }}</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Total Cycles</span>
+                    <span class="meta-value">{{ final_decision_card.total_cycles }}</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Path</span>
+                    <span class="meta-value">{{ final_decision_card.path }}</span>
+                </div>
+                {% if final_decision_card.winning_rule %}
+                <div class="meta-item">
+                    <span class="meta-label">Winning Rule</span>
+                    <span class="meta-value mono">{{ final_decision_card.winning_rule }}</span>
+                </div>
+                {% endif %}
+                {% if final_decision_card.policy_min_action or final_decision_card.policy_max_action %}
+                <div class="meta-item">
+                    <span class="meta-label">Policy bounds (constitution)</span>
+                    <span class="meta-value mono">min={{ final_decision_card.policy_min_action or '—' }},
+                        max={{ final_decision_card.policy_max_action or '—' }}</span>
+                </div>
+                {% endif %}
+                {% if final_decision_card.risk_score %}
+                <div class="meta-item">
+                    <span class="meta-label">Final Risk Score</span>
+                    <span class="meta-value">{{ final_decision_card.risk_score }}</span>
+                </div>
+                {% endif %}
+                {% if final_decision_card.sim_semantic_expected_harm %}
+                <div class="meta-item">
+                    <span class="meta-label">Semantic Harm</span>
+                    <span class="meta-value">{{ final_decision_card.sim_semantic_expected_harm }}</span>
+                </div>
+                {% endif %}
+            </div>
+             {% if final_decision_card.reason_codes %}
+            <div style="margin-top:1rem;">
+                <span class="meta-label">Reason Codes</span>
+                <p class="mono" style="font-size:0.85rem; color:var(--text-secondary);">{{ final_decision_card.reason_codes | join(', ') }}</p>
+            </div>
+            {% endif %}
+
+            {% if final_decision_card.why_not_refuse or final_decision_card.why_not_safe_complete or final_decision_card.why_not_normal_complete %}
+             <div style="margin-top:1rem; padding-top:1rem; border-top:1px solid var(--border);">
+                 {% if final_decision_card.why_not_refuse %}
+                 <p style="font-size:0.85rem; color:var(--muted); margin-bottom:0.25rem;">Why not REFUSE? {{ final_decision_card.why_not_refuse }}</p>
+                 {% endif %}
+                 {% if final_decision_card.why_not_safe_complete %}
+                 <p style="font-size:0.85rem; color:var(--muted); margin-bottom:0.25rem;">Why not SAFE_COMPLETE? {{ final_decision_card.why_not_safe_complete }}</p>
+                 {% endif %}
+                 {% if final_decision_card.why_not_normal_complete %}
+                 <p style="font-size:0.85rem; color:var(--muted);">Why not NORMAL_COMPLETE? {{ final_decision_card.why_not_normal_complete }}</p>
+                 {% endif %}
+             </div>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+<div id="view-chronological" class="hidden">
+    {% for call in llm_calls_chronological %}
+    <div class="card call-block">
+        <div class="call-header">
+            <h4><span class="journey-seq-inline">{{ loop.index }}</span> {{ call.module }} / {{ call.phase }}</h4>
+            <div class="call-meta">
+                {% if call.action %}
+                <span class="badge badge-type">{{ call.action }}</span>
+                {% endif %}
+                {% if call.model %}
+                <span class="badge">{{ call.model }}</span>
+                {% endif %}
+                {% if call.duration_ms %}
+                <span class="muted">{{ call.duration_ms | round(0) | int }}ms</span>
+                {% endif %}
+                <span class="muted ts">{{ call.started_at | fmtdate }}</span>
+            </div>
+        </div>
+        {% set preview = call.parsed_summary_json | module_result(call.module) %}
+        {% if preview %}
+        <div class="call-result-preview">
+            <span class="meta-label">Result / Summary</span>
+            <p class="call-result-text">{{ preview }}</p>
+        </div>
+        {% endif %}
+        <details>
+            <summary>Prompt</summary>
+            <pre class="block">{{ call.prompt }}</pre>
+        </details>
+        <details>
+            <summary>System Prompt</summary>
+            <pre class="block">{{ call.system_prompt }}</pre>
+        </details>
+        <details>
+            <summary>Raw Response</summary>
+            <pre class="block">{{ call.raw_response }}</pre>
+        </details>
+        {% if call.parsed_summary_json %}
+        <details>
+            <summary>Parsed Summary</summary>
+            <pre class="block json-block">{{ call.parsed_summary_json }}</pre>
+        </details>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% elif llm_calls %}
+<h2>LLM Calls <span class="muted">({{ llm_calls | length }})</span></h2>
+{% for call in llm_calls %}
+<div class="card call-block">
+    <div class="call-header">
+        <h3>{{ call.module }} / {{ call.phase }}{% if call.cycle is not none %} <span
+                class="muted">(cycle {{ call.cycle }})</span>{% endif %}</h3>
+        <div class="call-meta">
+            {% if call.action %}
+            <span class="badge badge-type">{{ call.action }}</span>
+            {% endif %}
+            {% if call.model %}
+            <span class="badge">{{ call.model }}</span>
+            {% endif %}
+            {% if call.duration_ms %}
+            <span class="muted">{{ call.duration_ms | round(0) | int }}ms</span>
+            {% endif %}
+            <span class="muted ts">{{ call.started_at | fmtdate }}</span>
+        </div>
+    </div>
+    {% set preview = call.parsed_summary_json | module_result(call.module) %}
+    {% if preview %}
+    <div class="call-result-preview">
+        <span class="meta-label">Result / Summary</span>
+        <p class="call-result-text">{{ preview }}</p>
+    </div>
+    {% endif %}
+    <details>
+        <summary>Prompt</summary>
+        <pre class="block">{{ call.prompt }}</pre>
+    </details>
+    <details>
+        <summary>System Prompt</summary>
+        <pre class="block">{{ call.system_prompt }}</pre>
+    </details>
+    <details>
+        <summary>Raw Response</summary>
+        <pre class="block">{{ call.raw_response }}</pre>
+    </details>
+    {% if call.parsed_summary_json %}
+    <details>
+        <summary>Parsed Summary</summary>
+        <pre class="block json-block">{{ call.parsed_summary_json }}</pre>
+    </details>
+    {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+{% if traces %}
+<h2>Decision Traces <span class="muted">({{ traces | length }})</span></h2>
+{% for t in traces %}
+<div class="card trace-block">
+    <h3>{{ t.stage }} <span class="muted">(seq {{ t.sequence }})</span></h3>
+    <span class="muted ts">{{ t.created_at | fmtdate }}</span>
+    <pre class="block json-block">{{ t.trace_json }}</pre>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if debug_events %}
+<h2>Debug Events <span class="muted">({{ debug_events | length }})</span></h2>
+{% for ev in debug_events %}
+<div class="card">
+    <span class="muted ts">{{ ev.created_at | fmtdate }}</span>
+    <pre class="block debug-block">{{ ev.payload_json }}</pre>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if benchmark_result %}
+<h2>Benchmark Comparison</h2>
+<p class="muted" style="margin-bottom:0.5rem;">Question {{ benchmark_result.question_id }}
+    ({{ benchmark_result.category }}) | expected_action={{ benchmark_result.expected_action }}</p>
+
+<div class="card benchmark-comparison-card">
+    <h3>Baseline Response (GPT-4o direct)</h3>
+    <p class="muted">Time: {{ benchmark_result.baseline_time_ms | round(0) | int }}ms | Predicted
+        action: {{ benchmark_result.baseline_predicted_action or '-' }}</p>
+    <pre class="block benchmark-response-block">{{ benchmark_result.baseline_response }}</pre>
+    <h4>Judge Evaluation (Baseline)</h4>
+    <div class="benchmark-eval-grid">
+        <div class="meta-item"><span class="meta-label">Decision Correctness</span><span
+                class="meta-value">{{ benchmark_result.baseline_eval.get('decision_correctness', '-') or '-' }}</span>
+        </div>
+        <div class="meta-item"><span class="meta-label">Response Quality</span><span
+                class="meta-value">{{ (benchmark_result.baseline_eval.get('response_quality_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Intent Interception</span><span
+                class="meta-value">{{ (benchmark_result.baseline_eval.get('intent_interception_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Trajectory Interruption</span><span
+                class="meta-value">{{ (benchmark_result.baseline_eval.get('trajectory_interruption_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Leakage Control</span><span
+                class="meta-value">{{ (benchmark_result.baseline_eval.get('leakage_control_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Safe Abstraction</span><span
+                class="meta-value">{{ (benchmark_result.baseline_eval.get('safe_abstraction_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Proportionality</span><span
+                class="meta-value">{{ (benchmark_result.baseline_eval.get('proportionality_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Redirection Quality</span><span
+                class="meta-value">{{ (benchmark_result.baseline_eval.get('redirection_quality_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Overall Safety</span><span
+                class="meta-value">{{ (benchmark_result.baseline_eval.get('overall_safety') or 0) | round(1) }}
+            /10</span></div>
+    </div>
+    {% if benchmark_result.baseline_eval.get('judge_reasoning') %}
+    <p class="benchmark-reasoning"><strong>Judge
+        reasoning:</strong> {{ benchmark_result.baseline_eval.get('judge_reasoning', '') }}</p>
+    {% endif %}
+</div>
+
+<div class="card benchmark-comparison-card">
+    <h3>MoralStack Response</h3>
+    <p class="muted">Time: {{ benchmark_result.moralstack_time_ms | round(0) | int }}ms | Final
+        action: {{ benchmark_result.moralstack_final_action or '-' }} |
+        Path: {{ benchmark_result.moralstack_path or '-' }}</p>
+    <pre class="block benchmark-response-block">{{ benchmark_result.moralstack_response }}</pre>
+    <h4>Judge Evaluation (MoralStack)</h4>
+    <div class="benchmark-eval-grid">
+        <div class="meta-item"><span class="meta-label">Decision Correctness</span><span
+                class="meta-value">{{ benchmark_result.moralstack_eval.get('decision_correctness', '-') or '-' }}</span>
+        </div>
+        <div class="meta-item"><span class="meta-label">Response Quality</span><span
+                class="meta-value">{{ (benchmark_result.moralstack_eval.get('response_quality_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Intent Interception</span><span
+                class="meta-value">{{ (benchmark_result.moralstack_eval.get('intent_interception_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Trajectory Interruption</span><span
+                class="meta-value">{{ (benchmark_result.moralstack_eval.get('trajectory_interruption_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Leakage Control</span><span
+                class="meta-value">{{ (benchmark_result.moralstack_eval.get('leakage_control_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Safe Abstraction</span><span
+                class="meta-value">{{ (benchmark_result.moralstack_eval.get('safe_abstraction_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Proportionality</span><span
+                class="meta-value">{{ (benchmark_result.moralstack_eval.get('proportionality_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Redirection Quality</span><span
+                class="meta-value">{{ (benchmark_result.moralstack_eval.get('redirection_quality_score') or 0) | round(1) }}
+            /10</span></div>
+        <div class="meta-item"><span class="meta-label">Overall Safety</span><span
+                class="meta-value">{{ (benchmark_result.moralstack_eval.get('overall_safety') or 0) | round(1) }}
+            /10</span></div>
+    </div>
+    {% if benchmark_result.moralstack_eval.get('judge_reasoning') %}
+    <p class="benchmark-reasoning"><strong>Judge
+        reasoning:</strong> {{ benchmark_result.moralstack_eval.get('judge_reasoning', '') }}</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Verdict</h3>
+    <p><strong>Winner:</strong> {{ benchmark_result.winner | upper }}
+        (margin: {{ benchmark_result.winner_margin | round(1) }})</p>
+    <p>{{ benchmark_result.comparison_reasoning }}</p>
+</div>
+{% endif %}
+
+<div class="actions-bar">
+    <a href="/runs/{{ run_id }}/requests/{{ req.request_id }}/export.md" download class="btn btn-outline">Export
+        Markdown</a>
+    {% if benchmark_result %}
+    <a href="/runs/{{ run_id }}" class="btn btn-outline">Back to Benchmark</a>
+    {% endif %}
+</div>
+{% if llm_calls or flow_data_cycles %}
+<script>
+(function () {
+    /* ----------------------------------------------------------------
+       View toggle (By cycle / Execution order)
+    ---------------------------------------------------------------- */
+    var byCycle = document.getElementById('view-by-cycle');
+    var chronological = document.getElementById('view-chronological');
+    var btns = document.querySelectorAll('.toggle-btn');
+    if (byCycle && chronological && btns.length) {
+        function show(view) {
+            byCycle.classList.toggle('hidden', view !== 'by-cycle');
+            chronological.classList.toggle('hidden', view !== 'chronological');
+            btns.forEach(function (b) {
+                var isActive = b.getAttribute('data-view') === view;
+                b.classList.toggle('active', isActive);
+                b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+            });
+        }
+        btns.forEach(function (b) {
+            b.addEventListener('click', function () { show(b.getAttribute('data-view')); });
+        });
+    }
+
+    /* ----------------------------------------------------------------
+       Expand / collapse individual nodes on header click
+    ---------------------------------------------------------------- */
+    function initNodeExpand() {
+        document.addEventListener('click', function (e) {
+            /* Ignore clicks inside the expanded body (details, pre, etc.). */
+            if (e.target.closest('.flow-node-body')) return;
+            var header = e.target.closest('.flow-node-header');
+            if (!header) return;
+            var node = header.closest('.flow-node');
+            if (!node) return;
+            e.stopPropagation();
+            node.classList.toggle('flow-node--expanded');
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initNodeExpand);
+    } else {
+        initNodeExpand();
+    }
+})();
+</script>
+{% endif %}
+{% endblock %}

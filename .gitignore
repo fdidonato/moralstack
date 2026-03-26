@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg-info/
+dist/
+build/
+moralstack.db
+moralstack.db-*
+benchmark_outputs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Pytest
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+
+# Logs & reports
+logs/
+reports/
+# Exception: version project reports (root-level reports/)
+!/reports/
+!/reports/**
+.debug/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment (secrets)
+.env

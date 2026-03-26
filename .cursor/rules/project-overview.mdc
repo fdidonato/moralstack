@@ -1,0 +1,72 @@
+---
+description: |
+  High-level purpose and structure of MoralStack.
+  Ensures Cursor AI always understands the core architecture when making recommendations.
+alwaysApply: true
+---
+
+# MoralStack Project Overview
+
+- MoralStack is a **policy-aware reasoning runtime** for LLMs — it decides *if*, *how*, and *under what constraints* a response should be generated.
+- It is NOT a model or a simple filter; it is a **decision and governance layer** between the user and the language model.
+
+## Core Decision Model
+
+Every request produces an explicit **final_action** before text generation:
+
+| Action             | Meaning                                              |
+|--------------------|------------------------------------------------------|
+| NORMAL_COMPLETE    | Direct, unconstrained response                       |
+| SAFE_COMPLETE      | Informative response with responsible framing         |
+| REFUSE             | Refusal with explanation and safe redirect            |
+
+SAFE_COMPLETE is an intentional governance choice, **not an error**.
+
+## Module Map
+
+| Package                        | Responsibility                                |
+|--------------------------------|-----------------------------------------------|
+| `moralstack/core/`             | Base types (Turn, UserContext, Violation), protocols (PolicyLLMProtocol, etc.), shared schema (RiskAssessmentSchema, StructuredDecision) |
+| `moralstack/runtime/`          | Orchestrator, deliberation loop; simulator includes semantic layer (harm_type, semantic_expected_harm) that influences deliberation; simulator module with config_loader for env (MORALSTACK_SIMULATOR_*); hindsight module with config_loader for env (MORALSTACK_HINDSIGHT_*); perspective module with config_loader for env (MORALSTACK_PERSPECTIVES_*); critic module with config_loader for env (MORALSTACK_CRITIC_*) |
+| `moralstack/runtime/decision/` | safe_complete_policy (single source of truth for action bounds, final_action) |
+| `moralstack/runtime/trace/`    | DecisionTrace, append_decision_trace for audit |
+| `moralstack/models/risk/`      | Risk estimation (schema, estimator, calibration, parse_result, config_loader for env) |
+| `moralstack/models/decision_explanation.py` | DecisionExplanation dataclass for explainability |
+| `moralstack/models/reason_codes.py` | ReasonCode enum and policy-to-reason mapping |
+| `moralstack/models/delib_context.py` | DelibContext dataclass for token optimization |
+| `moralstack/pipeline/`        | Context builder (build_context, compute_delta) |
+| `moralstack/prompts/`          | Thin prompt builders (critic, perspectives, simulator, hindsight) |
+| `moralstack/orchestration/`    | Controller (thin) routing, path_router, overlay_policy, trace_lifecycle, decision_logger, safe refusal generation, config_loader for env (MORALSTACK_ORCHESTRATOR_*); guidance_builder, convergence_evaluator, language_resolver, persistence_helpers |
+| `moralstack/constitution/`     | Policy store, loader, schema (YAML-based)     |
+| `moralstack/persistence/`      | PersistencePort (protocol), NullPersistence, DefaultPersistence; SQLite (config, context, db, sink)   |
+| `moralstack/utils/`            | Shared utilities (JSON parsing, etc.)         |
+| `moralstack/cli/`              | CLI entrypoints (run, shell, loader, mocks, report, visualizer) |
+| `moralstack/reports/`          | RequestReport, renderer_markdown, benchmark_report_loader, orchestrator_observability (path-routing explainability from debug events) |
+| `moralstack/ui/`               | FastAPI dashboard (moralstack-ui)              |
+| `scripts/`                     | CLI entrypoints                               |
+| `config/constitution/`         | YAML constitution files (core + overlays)     |
+
+## Canonical Documentation
+
+- Architecture & API contracts: @docs/architecture_spec.md
+- Module docs: @docs/modules/
+- Constitution design: @docs/constitution.md
+- Decision policy: @docs/decision_policy.md
+- Installation: @INSTALL.md
+- Development workflow: @docs/DEVELOPMENT.md
+- Limitations: @docs/limitations_and_tradeoffs.md
+
+## Fundamental Invariants
+
+- **Language-Agnostic**: MoralStack is completely language-independent at runtime. No runtime logic may contain hardcoded natural-language strings. Fallback/error via LLM or structural markers.
+- **Content Purity**: Final response `content` contains ONLY generative output; never critic rationale, revision_guidance, or meta-analysis text. Policy overlay in metadata (`policy_overlay`, `meta_analysis`).
+
+See @.cursor/rules/architecture-guidelines.mdc for full details.
+
+## AI Instructions
+
+- Always consult the canonical docs above before proposing structural changes.
+- Do NOT alter architectural intent (decision model, module boundaries, final_action semantics) without updating the corresponding documentation.
+- After any structural change, check and update affected `.cursor/rules/*.mdc` files as required by @.cursor/rules/rules-self-maintenance.mdc.
+- **Never introduce hardcoded natural-language strings** in runtime code (patterns, stubs, filters). Flag and propose a language-agnostic alternative.
+- Respond in **Italian** when interacting with the user, per project convention.

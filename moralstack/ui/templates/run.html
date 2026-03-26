@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% block title %}Run {{ run.run_id[:12] }} - MoralStack{% endblock %}
+{% block content %}
+<div class="page-header">
+    <nav class="breadcrumb">
+        <a href="/runs">Dashboard</a> &rsaquo; <span>Run</span>
+    </nav>
+    <h1>Run <span class="mono">{{ run.run_id[:12] }}</span></h1>
+</div>
+
+<div class="card meta-grid">
+    <div class="meta-item">
+        <span class="meta-label">Type</span>
+        <span class="meta-value">
+            {% if run.run_type == 'benchmark' %}
+            <span class="badge badge-benchmark">BENCHMARK</span>
+            {% elif run.run_type == 'single' %}
+            <span class="badge badge-type">SINGLE</span>
+            {% else %}
+            <span class="badge badge-type">{{ run.run_type or '—' }}</span>
+            {% endif %}
+        </span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Status</span>
+        <span class="meta-value">
+            {% if run.status == 'completed' %}
+            <span class="badge badge-ok">{{ run.status }}</span>
+            {% elif run.status == 'running' %}
+            <span class="badge badge-running">{{ run.status }}</span>
+            {% elif run.status == 'failed' %}
+            <span class="badge badge-fail">{{ run.status }}</span>
+            {% else %}
+            <span class="badge">{{ run.status or '—' }}</span>
+            {% endif %}
+        </span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Started</span>
+        <span class="meta-value ts">{{ run.started_at | fmtdate }}</span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Ended</span>
+        <span class="meta-value ts">{{ run.ended_at | fmtdate }}</span>
+    </div>
+</div>
+
+{% if run.run_type == 'benchmark' and benchmark_report and benchmark_report.models_config %}
+<div class="card" style="margin-top:1rem;">
+    <h3 style="margin-top:0;">Models used</h3>
+    <table class="table" style="margin-bottom:0;">
+        <thead>
+        <tr>
+            <th>Component</th>
+            <th>Model</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+            <td><strong>Baseline</strong></td>
+            <td><code>{{ benchmark_report.models_config.baseline }}</code></td>
+        </tr>
+        <tr>
+            <td><strong>Judge</strong></td>
+            <td><code>{{ benchmark_report.models_config.judge }}</code></td>
+        </tr>
+        {% if benchmark_report.models_config.moralstack %}
+        <tr>
+            <td><strong>MoralStack policy</strong></td>
+            <td><code>{{ benchmark_report.models_config.moralstack.policy }}</code></td>
+        </tr>
+        {% if benchmark_report.models_config.moralstack.risk_parallel %}
+        <tr>
+            <td><strong>MoralStack risk</strong></td>
+            <td><code>parallel mini-estimators</code></td>
+        </tr>
+        <tr>
+            <td><strong>MoralStack risk · intent</strong></td>
+            <td><code>{{ benchmark_report.models_config.moralstack.risk_intent }}</code></td>
+        </tr>
+        <tr>
+            <td><strong>MoralStack risk · signals</strong></td>
+            <td><code>{{ benchmark_report.models_config.moralstack.risk_signals }}</code></td>
+        </tr>
+        <tr>
+            <td><strong>MoralStack risk · operational</strong></td>
+            <td><code>{{ benchmark_report.models_config.moralstack.risk_operational }}</code></td>
+        </tr>
+        {% else %}
+        <tr>
+            <td><strong>MoralStack risk</strong></td>
+            <td><code>{{ benchmark_report.models_config.moralstack.risk }}</code></td>
+        </tr>
+        {% endif %}
+        <tr>
+            <td><strong>MoralStack critic</strong></td>
+            <td><code>{{ benchmark_report.models_config.moralstack.critic }}</code></td>
+        </tr>
+        <tr>
+            <td><strong>MoralStack simulator</strong></td>
+            <td><code>{{ benchmark_report.models_config.moralstack.simulator }}</code></td>
+        </tr>
+        <tr>
+            <td><strong>MoralStack hindsight</strong></td>
+            <td><code>{{ benchmark_report.models_config.moralstack.hindsight }}</code></td>
+        </tr>
+        <tr>
+            <td><strong>MoralStack perspectives</strong></td>
+            <td><code>{{ benchmark_report.models_config.moralstack.perspectives }}</code></td>
+        </tr>
+        {% endif %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<div class="actions-bar">
+    <a href="/runs/{{ run.run_id }}/export_benchmark.md" download class="btn btn-outline">Export Benchmark</a>
+    <button class="btn btn-danger btn-delete" data-run-id="{{ run.run_id }}">Delete Run</button>
+</div>
+
+{% if run.run_type == 'benchmark' and benchmark_report and benchmark_summary_md %}
+<h2>Benchmark Summary</h2>
+
+<div class="card" style="margin-bottom:1rem;">
+    <h3 style="margin-top:0;">Executive Summary</h3>
+    <table class="table" style="margin-bottom:0;">
+        <thead>
+        <tr>
+            <th>Metric</th>
+            <th>Baseline</th>
+            <th>MoralStack</th>
+            <th>Difference</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+            <td><strong>Wins</strong></td>
+            <td>{{ benchmark_report.get('baseline_wins', 0) }}</td>
+            <td>{{ benchmark_report.get('moralstack_wins', 0) }}</td>
+            <td>{{ '%+d' | format(benchmark_report.get('moralstack_wins', 0) - benchmark_report.get('baseline_wins', 0)) }}</td>
+        </tr>
+        <tr>
+            <td><strong>Ties</strong></td>
+            <td colspan="3">{{ benchmark_report.get('ties', 0) }}</td>
+        </tr>
+        <tr>
+            <td><strong>Average Score</strong></td>
+            <td>{{ "%.2f" | format(benchmark_report.get('baseline_avg_score', 0)) }}/10</td>
+            <td>{{ "%.2f" | format(benchmark_report.get('moralstack_avg_score', 0)) }}/10</td>
+            <td>{{ "%+.2f" | format((benchmark_report.get('moralstack_avg_score', 0) - benchmark_report.get('baseline_avg_score', 0))) }}</td>
+        </tr>
+        <tr>
+            <td><strong>Average Time</strong></td>
+            <td>{{ "%.0f" | format(benchmark_report.get('avg_baseline_time_ms', 0)) }}ms</td>
+            <td>{{ "%.0f" | format(benchmark_report.get('avg_moralstack_time_ms', 0)) }}ms</td>
+            <td>{{ "%+.0f" | format((benchmark_report.get('avg_moralstack_time_ms', 0) - benchmark_report.get('avg_baseline_time_ms', 0))) }}
+                ms
+            </td>
+        </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card" style="margin-bottom:1rem;">
+    <h3 style="margin-top:0;">FP/FN &amp; Leakage</h3>
+    <table class="table" style="margin-bottom:0;">
+        <thead>
+        <tr>
+            <th>System</th>
+            <th>FP (refusal when not expected)</th>
+            <th>FN (no refusal when REFUSE expected)</th>
+            <th>Leakage count</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+            <td><strong>Baseline</strong></td>
+            <td>{{ benchmark_report.get('baseline_fp', 0) }}</td>
+            <td>{{ benchmark_report.get('baseline_fn', 0) }}</td>
+            <td>{{ benchmark_report.get('baseline_leakage_count', 0) }}</td>
+        </tr>
+        <tr>
+            <td><strong>MoralStack</strong></td>
+            <td>{{ benchmark_report.get('moralstack_fp', 0) }}</td>
+            <td>{{ benchmark_report.get('moralstack_fn', 0) }}</td>
+            <td>{{ benchmark_report.get('moralstack_leakage_count', 0) }}</td>
+        </tr>
+        </tbody>
+    </table>
+    <p class="muted" style="margin-top:0.5rem; margin-bottom:0;">Over-Governance
+        Rate: {{ "%.2f" | format((benchmark_report.get('over_governance_rate', 0) * 100)) }}%</p>
+</div>
+
+<p class="muted" style="margin-bottom:0.5rem;">Full report as exported in the MD format. Use Export Benchmark to
+    download.</p>
+<div class="card benchmark-summary-card">
+    <pre class="benchmark-summary-pre">{{ benchmark_summary_md }}</pre>
+</div>
+
+<h2>Questions <span class="muted">(by category, ordered by ID)</span></h2>
+{% if questions_by_category %}
+{% for category, questions in questions_by_category.items() %}
+<div class="card benchmark-category-card">
+    <h3 class="benchmark-category-heading">{{ category }}</h3>
+    <table class="table benchmark-questions-table">
+        <thead>
+        <tr>
+            <th class="col-benchmark-qid">Q#</th>
+            <th>Request ID</th>
+            <th>Prompt</th>
+            <th>Domain</th>
+            <th>Decision</th>
+            <th class="col-actions">Actions</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for q in questions %}
+        <tr>
+            <td>{{ q.question_id }}</td>
+            <td class="mono">
+                {% if q.moralstack_request_id %}
+                <a href="/runs/{{ run.run_id }}/requests/{{ q.moralstack_request_id }}">{{ q.moralstack_request_id[:12]
+                    }}</a>
+                {% else %}—{% endif %}
+            </td>
+            <td class="prompt-cell">
+                {{ (q.question_text or '')[:80] }}{% if (q.question_text or '') | length > 80 %}…{% endif %}
+                {% if q.error %}
+                <span class="muted benchmark-q-error"> — {{ q.error[:80] }}{% if q.error | length > 80 %}…{% endif %}</span>
+                {% endif %}
+            </td>
+            <td><span class="badge">{{ (q.moralstack_overlay or q.domain_overlay) or '—' }}</span></td>
+            <td class="benchmark-decision-cell">
+                <div class="benchmark-decision-row">
+                    <span class="muted benchmark-decision-label">Expected</span>
+                    <span class="badge">{{ q.expected_action or '—' }}</span>
+                </div>
+                <div class="benchmark-decision-row">
+                    <span class="muted benchmark-decision-label">Final</span>
+                    <span class="badge">{{ q.moralstack_final_action or '—' }}</span>
+                </div>
+            </td>
+            <td class="col-actions">
+                {% if q.moralstack_request_id %}
+                <a href="/runs/{{ run.run_id }}/requests/{{ q.moralstack_request_id }}" class="btn btn-sm">View</a>
+                <a href="/runs/{{ run.run_id }}/requests/{{ q.moralstack_request_id }}/export.md" download
+                   class="btn btn-sm btn-outline">Export</a>
+                {% else %}
+                <span class="muted">—</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endfor %}
+{% else %}
+<div class="empty-state">
+    <p>No questions in benchmark report.</p>
+</div>
+{% endif %}
+{% else %}
+<h2>Requests <span class="muted">({{ requests | length }})</span></h2>
+
+{% if requests %}
+<div class="card">
+    <table class="table">
+        <thead>
+        <tr>
+            <th>Request ID</th>
+            <th>Prompt</th>
+            <th>Domain</th>
+            <th>Created</th>
+            <th class="col-actions">Actions</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for req in requests %}
+        <tr>
+            <td class="mono"><a href="/runs/{{ run.run_id }}/requests/{{ req.request_id }}">{{ req.request_id[:12]
+                }}</a></td>
+            <td class="prompt-cell">{{ (req.prompt or '')[:80] }}{% if (req.prompt or '') | length > 80 %}…{% endif %}
+            </td>
+            <td><span class="badge">{{ req.domain or '—' }}</span></td>
+            <td class="ts">{{ req.created_at | fmtdate }}</td>
+            <td class="col-actions">
+                <a href="/runs/{{ run.run_id }}/requests/{{ req.request_id }}" class="btn btn-sm">View</a>
+                <a href="/runs/{{ run.run_id }}/requests/{{ req.request_id }}/export.md" download
+                   class="btn btn-sm btn-outline">Export</a>
+                <button class="btn btn-sm btn-danger btn-delete-req" data-run-id="{{ run.run_id }}"
+                        data-request-id="{{ req.request_id }}">Delete
+                </button>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="empty-state">
+    <p>No requests in this run.</p>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}
