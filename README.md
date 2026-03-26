@@ -114,7 +114,25 @@ Deliberative paths add latency by design (see [Limitations](#limitations--trade-
 - Python 3.11+
 - OpenAI API key
 
-### Install
+## Installation
+
+Before installing, please create a virtual environment and activate it.
+
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+
+**One-command (recommended):**
+
+```bash
+python scripts/install.py
+```
+
+Installs the package in editable mode with all extras (dev, ui). Registers `moralstack` and `moralstack-ui` CLI entry
+points.
+
+**Manual (equivalent to install.py):**
 
 ```bash
 pip install -e ".[dev,ui]"
@@ -123,7 +141,7 @@ pip install -e ".[dev,ui]"
 ### Configure
 
 ```bash
-cp .env.template .env
+cp .env.minimal .env
 ```
 
 Set at least:

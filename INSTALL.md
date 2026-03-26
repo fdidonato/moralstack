@@ -54,7 +54,11 @@ or `install.py` for that.
 
 All configuration can be managed via a `.env` file in the project root.
 
-### Setup
+### Quick Setup
+
+Copy .env.minimal to .env end configure your API key in OPENAI_API_KEY
+
+### Customized Setup
 
 1. Copy the template: `cp .env.template .env` (Linux/macOS) or `copy .env.template .env` (Windows)
 2. Edit `.env` and set your values (at minimum `OPENAI_API_KEY`)
