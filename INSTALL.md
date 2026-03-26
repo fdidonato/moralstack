@@ -7,6 +7,13 @@
 
 ## Installation
 
+Before installing, please create a virtual environment and activate it.
+
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+
 **One-command (recommended):**
 
 ```bash
