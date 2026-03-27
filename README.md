@@ -2,6 +2,12 @@
   <img src="assets/banner.png" alt="MoralStack" width="512"/>
 </p>
 
+![License](https://img.shields.io/badge/license-Apache%202.0-orange)
+![Python](https://img.shields.io/badge/python-3.11+-blue)
+![Status](https://img.shields.io/badge/status-research--stage-yellow)
+![Compliance](https://img.shields.io/badge/benchmark-98.8%25%20compliance-brightgreen)
+![Model](https://img.shields.io/badge/model-GPT--4o-412991)
+
 MoralStack is a governance layer that decides **whether**, **how**, and **under what constraints** a response should be
 generated before text generation starts.
 
