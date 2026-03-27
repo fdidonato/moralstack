@@ -95,7 +95,7 @@ SC             0    52     0
 REFUSE         0     0    22
 ```
 
-100% compliance rate. Zero system errors. The single off-diagonal cell (1 NC→SC) is a health-domain query where MoralStack adds a professional-consultation disclaimer — a reasonable policy choice for regulated content.
+98.8% compliance rate. Zero system errors. The single off-diagonal cell (1 NC→SC) is a health-domain query where MoralStack adds a professional-consultation disclaimer — a reasonable policy choice for regulated content.
 
 > **Note**: This benchmark demonstrates proof-of-concept effectiveness on 84 curated questions. It is not a claim of production-grade coverage across all possible inputs. We encourage independent evaluation.
 
