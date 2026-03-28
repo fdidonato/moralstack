@@ -47,24 +47,36 @@ Calibrate evaluation using the upstream risk context:
   Low risk. Evaluate helpfulness, accuracy, completeness normally.
 """
 
-# Full template: perspective block + REQUEST/RESPONSE + common (kept for build_perspectives_prompt)
-PERSPECTIVE_FULL_TEMPLATE = """Evaluate this AI response from the perspective of: {perspective_name}
+# Full template: static interpretation + JSON contract first (prompt caching); perspective + draft last.
+PERSPECTIVE_FULL_TEMPLATE = (
+    RISK_CONTEXT_INTERPRETATION
+    + PERSPECTIVE_COMMON_INSTRUCTIONS
+    + """
+
+Evaluate this AI response from the perspective of: {perspective_name}
 
 {perspective_instructions}
 
+TURN CONTEXT:
 REQUEST: {request}
 
 RESPONSE: {response}
 
 RISK CONTEXT: {risk_signals}
+"""
+)
 
-""" + RISK_CONTEXT_INTERPRETATION + PERSPECTIVE_COMMON_INSTRUCTIONS
+# Thin template: same static-first layout as full; perspective + thin turn context last.
+PERSPECTIVE_THIN_TEMPLATE = (
+    RISK_CONTEXT_INTERPRETATION
+    + PERSPECTIVE_COMMON_INSTRUCTIONS
+    + """
 
-# Thin template: perspective block + request + thin sections + common
-PERSPECTIVE_THIN_TEMPLATE = """Evaluate this AI response from the perspective of: {perspective_name}
+Evaluate this AI response from the perspective of: {perspective_name}
 
 {perspective_instructions}
 
+TURN CONTEXT:
 REQUEST: {request}
 
 RESPONSE SUMMARY (compact):
@@ -75,19 +87,31 @@ KEY POINTS:
 
 RISK CONTEXT: {risk_signals}
 {change_log_section}
+"""
+)
 
-""" + RISK_CONTEXT_INTERPRETATION + PERSPECTIVE_COMMON_INSTRUCTIONS
+# Shared system prompt body: static block first, then REQUEST/RESPONSE (full) or thin sections.
+PERSPECTIVE_SYSTEM_FULL_BODY = (
+    RISK_CONTEXT_INTERPRETATION
+    + PERSPECTIVE_COMMON_INSTRUCTIONS
+    + """
 
-# Shared system prompt body: REQUEST + RESPONSE (or thin) + common instructions only (no perspective)
-PERSPECTIVE_SYSTEM_FULL_BODY = """REQUEST: {request}
+TURN CONTEXT:
+REQUEST: {request}
 
 RESPONSE: {response}
 
 RISK CONTEXT: {risk_signals}
+"""
+)
 
-""" + RISK_CONTEXT_INTERPRETATION + PERSPECTIVE_COMMON_INSTRUCTIONS
+PERSPECTIVE_SYSTEM_THIN_BODY = (
+    RISK_CONTEXT_INTERPRETATION
+    + PERSPECTIVE_COMMON_INSTRUCTIONS
+    + """
 
-PERSPECTIVE_SYSTEM_THIN_BODY = """REQUEST: {request}
+TURN CONTEXT:
+REQUEST: {request}
 
 RESPONSE SUMMARY (compact):
 {response_summary}
@@ -97,8 +121,8 @@ KEY POINTS:
 
 RISK CONTEXT: {risk_signals}
 {change_log_section}
-
-""" + RISK_CONTEXT_INTERPRETATION + PERSPECTIVE_COMMON_INSTRUCTIONS
+"""
+)
 
 
 def build_perspectives_system_prompt(

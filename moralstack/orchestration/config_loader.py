@@ -37,6 +37,8 @@ ENV_ENABLE_HINDSIGHT_GATING = "MORALSTACK_ORCHESTRATOR_ENABLE_HINDSIGHT_GATING"
 ENV_SIMULATOR_GATE_SEMANTIC_HARM_THRESHOLD = "MORALSTACK_ORCHESTRATOR_SIMULATOR_GATE_SEMANTIC_HARM_THRESHOLD"
 ENV_SIMULATOR_GATE_DELTA_CHARS_THRESHOLD = "MORALSTACK_ORCHESTRATOR_SIMULATOR_GATE_DELTA_CHARS_THRESHOLD"
 ENV_BORDERLINE_REFUSE_UPPER = "MORALSTACK_ORCHESTRATOR_BORDERLINE_REFUSE_UPPER"
+ENV_PARALLEL_CRITIC_WITH_MODULES = "MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES"
+ENV_ENABLE_SPECULATIVE_GENERATION = "MORALSTACK_ORCHESTRATOR_ENABLE_SPECULATIVE_GENERATION"
 
 
 def load_orchestrator_config_from_env():  # -> OrchestratorConfig (imported inside)
@@ -75,6 +77,8 @@ def load_orchestrator_config_from_env():  # -> OrchestratorConfig (imported insi
     simulator_gate_semantic_harm_threshold = get_env_float(ENV_SIMULATOR_GATE_SEMANTIC_HARM_THRESHOLD, 0.4, 0.0, 1.0)
     simulator_gate_delta_chars_threshold = get_env_int(ENV_SIMULATOR_GATE_DELTA_CHARS_THRESHOLD, 100, 0)
     borderline_refuse_upper = get_env_float(ENV_BORDERLINE_REFUSE_UPPER, 0.95, 0.0, 1.0)
+    parallel_critic_with_modules = get_env_bool(ENV_PARALLEL_CRITIC_WITH_MODULES, True)
+    enable_speculative_generation = get_env_bool(ENV_ENABLE_SPECULATIVE_GENERATION, True)
 
     return OrchestratorConfig(
         max_deliberation_cycles=max_deliberation_cycles,
@@ -97,4 +101,6 @@ def load_orchestrator_config_from_env():  # -> OrchestratorConfig (imported insi
         simulator_gate_semantic_harm_threshold=simulator_gate_semantic_harm_threshold,
         simulator_gate_delta_chars_threshold=simulator_gate_delta_chars_threshold,
         borderline_refuse_upper=borderline_refuse_upper,
+        parallel_critic_with_modules=parallel_critic_with_modules,
+        enable_speculative_generation=enable_speculative_generation,
     )

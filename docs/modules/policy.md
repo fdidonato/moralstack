@@ -65,6 +65,11 @@ print(result.text)
 
 Revises a response based on feedback.
 
+When the configured model supports it (gpt-4o, gpt-4o-mini, gpt-4.1 family), `rewrite()` automatically leverages
+**OpenAI Predicted Outputs** (speculative decoding): the existing draft is provided as a prediction hint so that
+unchanged portions of the text are generated significantly faster. This is transparent to the caller and does not
+alter the output quality.
+
 ```python
 result = policy.rewrite(
     prompt="Original user request",
@@ -105,6 +110,20 @@ class GenerationResult:
     tokens_used: int       # Tokens consumed
     finish_reason: str     # Termination reason ("stop", "length", etc.)
 ```
+
+### GenerationConfig
+
+```python
+@dataclass
+class GenerationConfig:
+    max_tokens: int = 2048
+    temperature: float = 0.7
+    top_p: float = 0.9
+    stop_sequences: list[str] = []
+    response_format: Any = None  # OpenAI response format constraint
+```
+
+The optional `response_format` field maps to OpenAI's response format (e.g. `{"type": "json_object"}`). Structured evaluation modules (Critic, Simulator, Hindsight, Perspectives) set it so the API returns guaranteed valid JSON.
 
 ---
 
@@ -173,6 +192,8 @@ class PolicyLLMProtocol(Protocol):
         """Generates reasoned refusal. language: explicit output language when prompt empty or to reduce drift."""
         ...
 ```
+
+The `config` argument is typically a `GenerationConfig` (see [Output Structure](#output-structure)); it may include `response_format` for OpenAI structured outputs.
 
 ---
 

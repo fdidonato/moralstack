@@ -500,6 +500,15 @@ class OrchestratorConfig:
     soft_revision_min_suggestions: int = 1  # Minimum total suggestions to trigger
     soft_revision_max_approval: float = 0.95  # Skip rewrite if weighted approval exceeds this
     early_exit_perspectives_threshold: float = 0.85  # Early exit se critic PROCEED + perspectives >= questo
+    # When True and parallel_module_calls is True, critic runs in parallel
+    # with simulator and perspectives instead of acting as a sequential gate.
+    # Hard violations are still honoured: sim/persp results are discarded when
+    # the critic finds a hard violation. Default True for latency savings.
+    parallel_critic_with_modules: bool = True
+    # When True, risk estimation and speculative draft generation run in
+    # parallel. The draft is used directly for benign/fast/deliberative
+    # routes and discarded on REFUSE. Zero impact on decision quality.
+    enable_speculative_generation: bool = True
 
 
 # =============================================================================

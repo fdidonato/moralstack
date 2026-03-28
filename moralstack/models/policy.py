@@ -17,8 +17,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from moralstack.models.base import GenerationConfig, GenerationResult
-from moralstack.utils.openai_params import completion_tokens_param
-from moralstack.utils.provider_errors import classify_provider_error, sleep_with_backoff
+from moralstack.utils.openai_params import (
+    completion_tokens_param,
+    supports_predicted_output,
+)
+from moralstack.utils.provider_errors import (
+    classify_provider_error,
+    sleep_with_backoff,
+)
 
 
 def _get_openai_config(
@@ -146,13 +152,24 @@ class OpenAIPolicy:
         max_tokens: int = 1024,
         top_p: float | None = None,
         response_format: Any = None,
+        prediction: dict[str, str] | None = None,
     ) -> tuple[str, int, str]:
         """
         Chiamata completions con retry su errori transient (429/503/timeout).
         Ritorna (text, tokens_used, finish_reason). Usa classifier e backoff con jitter.
+
+        Args:
+            prediction: Optional predicted output for speculative decoding.
+                Expected format: ``{"type": "content", "content": "..."}``
+                Only applied when the current model supports the feature.
         """
         temp = temperature if temperature is not None else self._default_temperature
         top_p_val = top_p if top_p is not None else self._default_top_p
+        use_prediction = prediction is not None and supports_predicted_output(self.model or "")
+        # prediction and response_format are mutually exclusive in
+        # the OpenAI API; prefer response_format (structural guarantee)
+        if use_prediction and response_format is not None:
+            use_prediction = False
         last_error: Exception | None = None
         for attempt in range(self._max_retries):
             try:
@@ -166,6 +183,8 @@ class OpenAIPolicy:
                 kwargs.update(completion_tokens_param(self.model, max_tokens))
                 if response_format is not None:
                     kwargs["response_format"] = response_format
+                if use_prediction:
+                    kwargs["prediction"] = prediction
                 response = self.client.chat.completions.create(**kwargs)
                 choice = response.choices[0]
                 text = (choice.message.content or "").strip()
@@ -198,8 +217,16 @@ class OpenAIPolicy:
         prompt: str,
         system: str = "",
         config: GenerationConfig | None = None,
+        prediction: dict[str, str] | None = None,
     ) -> GenerationResult:
-        """Genera risposta al prompt."""
+        """Genera risposta al prompt.
+
+        Args:
+            prediction: Optional predicted output for speculative decoding.
+                When provided and the model supports it, the API uses
+                speculative decoding to produce faster responses when the
+                output is expected to be similar to the prediction text.
+        """
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -208,13 +235,20 @@ class OpenAIPolicy:
         max_tokens = 1024
         temperature = self._default_temperature
         top_p = self._default_top_p
+        response_format = None
         if config is not None:
             max_tokens = getattr(config, "max_tokens", max_tokens)
             temperature = getattr(config, "temperature", temperature)
             top_p = getattr(config, "top_p", top_p)
+            response_format = getattr(config, "response_format", None)
 
         text, tokens_used, finish_reason = self._complete(
-            messages, temperature=temperature, max_tokens=max_tokens, top_p=top_p
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            prediction=prediction,
+            response_format=response_format,
         )
         return GenerationResult(
             text=text,
@@ -233,26 +267,42 @@ class OpenAIPolicy:
         system: str = "",
         config: GenerationConfig | None = None,
     ) -> GenerationResult:
-        """Riscrive una bozza in base al feedback."""
+        """Riscrive una bozza in base al feedback.
+
+        Uses OpenAI predicted outputs (speculative decoding) when the model
+        supports it: the existing draft is provided as a prediction hint so
+        that unchanged portions are generated significantly faster.
+        """
         rewrite_prompt = (
             f"ORIGINAL REQUEST:\n{prompt}\n\n"
             f"CURRENT DRAFT:\n{draft}\n\n"
             f"REVISION FEEDBACK:\n{guidance}\n\n"
             "Revise the response incorporating the feedback above. "
-            "IMPORTANT: Maintain or improve the depth, structure, and multiple perspectives. "
+            "IMPORTANT: Maintain or improve the depth, structure, "
+            "and multiple perspectives. "
             "Use numbered lists and clear sections when appropriate. "
             "Keep the response comprehensive and well-reasoned. "
             "Output ONLY the revised response, no additional commentary."
         )
         rewrite_system = system or (
-            "You are an assistant that revises responses based on feedback. "
-            "When revising, MAINTAIN or IMPROVE the depth and structure of the response. "
-            "Continue to present multiple perspectives and balanced analysis. "
+            "You are an assistant that revises responses based on "
+            "feedback. "
+            "When revising, MAINTAIN or IMPROVE the depth and "
+            "structure of the response. "
+            "Continue to present multiple perspectives and balanced "
+            "analysis. "
             "Use numbered lists and clear organization. "
-            "Incorporate the feedback while keeping the response comprehensive and well-reasoned. "
+            "Incorporate the feedback while keeping the response "
+            "comprehensive and well-reasoned. "
             "Respond in the SAME LANGUAGE as the original user request."
         )
-        return self.generate(rewrite_prompt, system=rewrite_system, config=config)
+        draft_prediction = {"type": "content", "content": draft} if draft else None
+        return self.generate(
+            rewrite_prompt,
+            system=rewrite_system,
+            config=config,
+            prediction=draft_prediction,
+        )
 
     def refuse(
         self,
@@ -298,7 +348,7 @@ class OpenAIPolicy:
             "Provide deep reasoning and helpful, specific alternatives. "
         )
         if language and str(language).strip():
-            refuse_system += f"CRITICAL: You MUST respond entirely in {language.strip()}. " "Do not add translations."
+            refuse_system += f"CRITICAL: You MUST respond entirely in {language.strip()}. Do not add translations."
         else:
             refuse_system += "Always respond in the SAME LANGUAGE as the user's request."
         return self.generate(refuse_prompt, system=refuse_system, config=config)

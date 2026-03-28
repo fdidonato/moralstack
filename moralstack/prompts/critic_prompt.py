@@ -52,11 +52,17 @@ If no violations:
 {"decision":"PROCEED","violated_hard":false,"violations":[],"revision_guidance":""}
 """
 
-CRITIC_FULL_TEMPLATE = """Evaluate the response against these principles. Output valid JSON only.
+# Static rules + JSON closure first (prompt-cache friendly); per-request fields last.
+CRITIC_FULL_TEMPLATE = """{rules}
+
+""" + OUTPUT_JSON_ONLY + """
+
+TASK: Evaluate the response in TURN CONTEXT against the listed principles. Judge the RESPONSE content, not the REQUEST topic.
 
 PRINCIPLES:
 {principles}
 
+TURN CONTEXT:
 RISK ASSESSMENT:
 {risk_signals}
 
@@ -65,9 +71,7 @@ REQUEST:
 
 RESPONSE:
 {response}
-
-{rules}
-""" + OUTPUT_JSON_ONLY
+"""
 
 CRITIC_THIN_TEMPLATE = """Evaluate the response against these principles. Output valid JSON only.
 

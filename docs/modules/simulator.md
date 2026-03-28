@@ -295,6 +295,8 @@ configuration is the single source of configuration — no CLI or code path over
 - **Type**: int (>= 1)
 - **Description**: Number of parse attempts for the simulator JSON response before raising an error.
 
+Simulator generation uses OpenAI's `json_object` response format (`response_format={"type": "json_object"}` on `GenerationConfig`), which guarantees valid JSON and greatly reduces retries caused by malformed JSON.
+
 #### MORALSTACK_SIMULATOR_MAX_TOKENS
 
 - **Default**: `384`

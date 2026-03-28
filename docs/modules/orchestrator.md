@@ -119,6 +119,26 @@ config = OrchestratorConfig(
 | `min_hindsight_score`                  | 0.8     | Minimum hindsight score for convergence                          |
 | `borderline_refuse_upper`              | 0.95    | Upper bound for borderline REFUSE deliberation                   |
 | `early_exit_perspectives_threshold`    | 0.85    | Weighted approval threshold for early exit (critic PROCEED path) |
+| `parallel_critic_with_modules`         | `True`  | When `True` and `parallel_module_calls` is `True`, the critic runs in parallel with the simulator and perspectives instead of as a sequential gate. See [Latency-oriented parameters](#latency-oriented-parameters). |
+| `enable_speculative_generation`        | `True`  | When `True`, risk estimation and speculative draft generation run in parallel before routing. The draft is reused on benign, fast, and deliberative routes when applicable. See [Latency-oriented parameters](#latency-oriented-parameters). |
+
+### Latency-oriented parameters
+
+These flags reduce wall-clock latency **without changing routing policy** (`decide_action`, `get_route`, overlay floors, or convergence invariants). They do not change how `final_action` is computed from risk and module outputs.
+
+**`parallel_critic_with_modules` (default `True`)**
+
+- **Requires** `parallel_module_calls=True`. When both are `True`, each deliberation cycle runs **critic**, **simulator**, and **perspectives** concurrently (three parallel LLM calls per cycle when those modules are enabled).
+- **When `False`**: the runner uses a two-stage layout: critic runs first; only if there is no hard violation do simulator and perspectives run in parallel. This avoids paying for simulator/perspective calls when the critic would reject the draft, but adds sequential critic latency before sim/persp start.
+- **Hard violations**: If the critic reports a hard violation, simulator and perspective results from that cycle are **discarded** and do not affect merged state. Convergence and refusal logic see the same critic outcome as in the gated layout; you may pay extra token cost in the rare hard-violation case.
+- **Set to `false`** if you prioritize minimizing LLM spend on hard-violation paths over latency.
+
+**`enable_speculative_generation` (default `True`)**
+
+- **When `True`**: `OrchestrationController` starts **risk estimation** and a **speculative policy `generate`** (same base system prompt as normal first-pass generation) in parallel. After risk returns, routing proceeds as usual; the speculative draft is **not** used for policy routing decisions.
+- **Reuse**: On benign fast path, fast path, and deliberative path, the draft is reused when it is still valid (skipping a duplicate first `generate` where implemented). On **REFUSE**, the speculative call is unused (wasted latency/token trade-off). **`SAFE_COMPLETE`** path does not reuse this draft (different system instructions).
+- **Constrained generation** (`CLEARLY_HARMFUL` deliberation): the speculative draft is **not** applied as cycle-1 output; the constrained system prompt is used instead.
+- **Note**: Speculative generation uses language resolution **before** the risk estimator’s `detected_language` is available (fallback path). Routing and safety decisions are unchanged; draft wording may differ slightly from a strictly sequential generate-after-risk for the same request.
 
 ### Borderline REFUSE Upper Bound
 
@@ -427,10 +447,29 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
 
 - **Default**: `true`
 - **Type**: bool
-- **Description**: When true, critic/simulator/perspectives run in parallel within each cycle. Their LLM calls are
-  persisted (with run/request/cycle context) and appear in moralstack-ui; `MORALSTACK_ORCHESTRATOR_ENABLE_PERSPECTIVES`,
+- **Description**: When true, the deliberation runner uses parallel execution for module calls within each cycle (see
+  also `MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES`). LLM calls are persisted (with run/request/cycle context)
+  and appear in moralstack-ui; `MORALSTACK_ORCHESTRATOR_ENABLE_PERSPECTIVES`,
   `MORALSTACK_ORCHESTRATOR_ENABLE_SIMULATION`, and `MORALSTACK_ORCHESTRATOR_ENABLE_HINDSIGHT` determine which modules run
   and thus which calls are recorded and visible in the UI.
+
+#### MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES
+
+- **Default**: `true`
+- **Type**: bool
+- **Description**: When `true` and `MORALSTACK_ORCHESTRATOR_PARALLEL_MODULE_CALLS` is `true`, the critic runs in parallel
+  with the simulator and perspectives (full parallel evaluation). When `false`, the critic runs first as a gate; simulator
+  and perspectives run in parallel only after the critic reports no hard violation. See
+  [Latency-oriented parameters](#latency-oriented-parameters).
+
+#### MORALSTACK_ORCHESTRATOR_ENABLE_SPECULATIVE_GENERATION
+
+- **Default**: `true`
+- **Type**: bool
+- **Description**: When `true`, risk estimation and speculative first-pass draft generation run in parallel at the start
+  of `process()`. The draft may be reused on benign, fast, and deliberative routes; it is not used for routing. When
+  `false`, risk estimation runs alone, then generation follows the previous sequential pattern. See
+  [Latency-oriented parameters](#latency-oriented-parameters).
 
 ### Risk thresholds (path routing)
 

@@ -129,10 +129,12 @@ both CLI run and benchmark, hindsight configuration and model are read only from
 CLI override — env is the single source of configuration.**
 
 **Orchestrator**: Optional overrides (e.g. `MORALSTACK_ORCHESTRATOR_MAX_DELIBERATION_CYCLES`,
-`MORALSTACK_ORCHESTRATOR_TIMEOUT_MS`, `MORALSTACK_ORCHESTRATOR_ENABLE_PERSPECTIVES`, …) are listed in `.env.template`
-and fully documented in [docs/modules/orchestrator.md](docs/modules/orchestrator.md#environment-variables). Leave them
-commented to use built-in defaults. **In both CLI run and benchmark, orchestrator configuration is read only from the
-environment (`.env`); there is no CLI override — env is the single source of configuration.**
+`MORALSTACK_ORCHESTRATOR_TIMEOUT_MS`, `MORALSTACK_ORCHESTRATOR_ENABLE_PERSPECTIVES`,
+`MORALSTACK_ORCHESTRATOR_PARALLEL_MODULE_CALLS`, `MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES`,
+`MORALSTACK_ORCHESTRATOR_ENABLE_SPECULATIVE_GENERATION`, …) are listed in `.env.template` and fully documented in
+[docs/modules/orchestrator.md](docs/modules/orchestrator.md#environment-variables). Leave them commented to use built-in
+defaults. **In both CLI run and benchmark, orchestrator configuration is read only from the environment (`.env`); there
+is no CLI override — env is the single source of configuration.**
 
 **Benchmark**: Optional overrides (e.g. `MORALSTACK_BENCHMARK_OUTPUTS`, `MORALSTACK_BENCHMARK_BASELINE_MODEL`,
 `MORALSTACK_BENCHMARK_JUDGE_MODEL`) are listed in `.env.template` and fully documented

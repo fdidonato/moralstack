@@ -150,6 +150,9 @@ class OrchestratorConfig:
     enable_simulation: bool = True
     enable_hindsight: bool = True
     borderline_refuse_upper: float = 0.95  # Upper bound (inclusive) for borderline REFUSE deliberation
+    parallel_module_calls: bool = True
+    parallel_critic_with_modules: bool = True   # *[impl]* critic || sim || persp when parallel_module_calls
+    enable_speculative_generation: bool = True  # *[impl]* risk || speculative generate at controller entry
 
 @dataclass
 class RiskThresholds:

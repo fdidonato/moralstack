@@ -84,6 +84,41 @@ response = client.chat.completions.create(
 
 ---
 
+## Predicted Output Support
+
+Some models support the `prediction` parameter, which enables speculative decoding for faster generation when the
+expected output is largely similar to a known text (e.g. a draft revision in `rewrite()`).
+
+### `MODELS_SUPPORTING_PREDICTED_OUTPUT`
+
+Tuple of model name prefixes that support the `prediction` parameter:
+
+```python
+MODELS_SUPPORTING_PREDICTED_OUTPUT = (
+    "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
+)
+```
+
+### `supports_predicted_output(model: str) -> bool`
+
+Returns `True` if the model supports speculative decoding via predicted outputs.
+
+```python
+from moralstack.utils.openai_params import supports_predicted_output
+
+supports_predicted_output("gpt-4o")      # True
+supports_predicted_output("gpt-4.1")     # True
+supports_predicted_output("o3-mini")     # False (uses max_completion_tokens)
+supports_predicted_output("gpt-5.2")    # False
+```
+
+**Constraints:** Predicted outputs are incompatible with `max_completion_tokens`, `logprobs`, and `n > 1`. The
+`rewrite()` method in `OpenAIPolicy` uses this automatically — no caller changes needed.
+
+**Reference:** [OpenAI Predicted Outputs](https://platform.openai.com/docs/guides/predicted-outputs)
+
+---
+
 ## Updating the Model List
 
 When OpenAI releases new models that require `max_completion_tokens`, update the tuple in
@@ -91,6 +126,12 @@ When OpenAI releases new models that require `max_completion_tokens`, update the
 
 ```python
 MODELS_REQUIRING_MAX_COMPLETION_TOKENS = ("o1", "o3", "o4", "gpt-5", "gpt-6")  # add new prefix
+```
+
+When OpenAI adds predicted output support to new models, update:
+
+```python
+MODELS_SUPPORTING_PREDICTED_OUTPUT = ("gpt-4o", "gpt-4o-mini", "gpt-4.1", ...)  # add new prefix
 ```
 
 **Rules:**
@@ -109,7 +150,8 @@ deprecated and not compatible with o-series models.
 
 All modules that call the OpenAI Chat Completions API use this utility:
 
-- **Policy LLM** (`moralstack/models/policy.py`) — `_complete()`
+- **Policy LLM** (`moralstack/models/policy.py`) — `_complete()` uses `completion_tokens_param` and
+  `supports_predicted_output` (the latter for `rewrite()` speculative decoding)
 - **Benchmark** (`scripts/benchmark_moralstack.py`) — `OpenAIClient.generate()`, `_generate_with_model()`
 - **Constitution Retriever** (`moralstack/constitution/retriever.py`) — direct `client.chat.completions.create` calls (used by store)
 - **Runtime modules** (critic, perspective, hindsight, simulator, risk estimator) — via policy

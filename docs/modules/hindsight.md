@@ -247,6 +247,8 @@ hindsight configuration is the single source of configuration — no CLI or code
 - **Type**: int (>= 1)
 - **Description**: Number of parse attempts for the hindsight JSON response before raising an error.
 
+Hindsight evaluation uses OpenAI's `json_object` response format (`response_format={"type": "json_object"}` on `GenerationConfig`), which guarantees valid JSON and greatly reduces retries caused by malformed JSON.
+
 #### MORALSTACK_HINDSIGHT_MAX_TOKENS
 
 - **Default**: `768`

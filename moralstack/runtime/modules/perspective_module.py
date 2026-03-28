@@ -419,6 +419,7 @@ class LLMPerspectiveEnsemble:
             temperature=self.config.temperature,
             top_p=self.config.top_p,
             stop_sequences=[],
+            response_format={"type": "json_object"},
         )
 
     def evaluate(
@@ -883,8 +884,7 @@ def apply_constitutional_override(
     # Override: cap weighted_approval to 0.2
     if inner.weighted_approval > 0.2:
         logging.getLogger(__name__).info(
-            "Perspective override applied due to HARD constitutional violation: "
-            "weighted_approval capped from %.2f to 0.20",
+            "Perspective override applied due to HARD constitutional violation: weighted_approval capped from %.2f to 0.20",
             inner.weighted_approval,
         )
         inner.weighted_approval = min(inner.weighted_approval, 0.2)

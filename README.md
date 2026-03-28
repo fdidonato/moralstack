@@ -244,6 +244,6 @@ MoralStack makes deliberate trade-offs:
 - **Benchmark scope**: 84 curated questions demonstrate the approach but do not cover all edge cases. We recommend running your own evaluations on domain-specific inputs.
 - **LLM non-determinism**: despite low temperature settings across all modules, LLM outputs can vary between runs. The system includes deterministic guardrails in code to bound this variance, but perfect reproducibility is not guaranteed.
 
-We are actively working on reducing latency through early-exit optimizations and context-mode switching.
+We are actively working on reducing latency through early-exit optimizations, context-mode switching, speculative decoding (predicted outputs for draft revisions), and JSON response format enforcement for evaluation modules.
 
 See full discussion in [docs/limitations_and_tradeoffs.md](docs/limitations_and_tradeoffs.md).

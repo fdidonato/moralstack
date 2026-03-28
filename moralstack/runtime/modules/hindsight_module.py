@@ -509,6 +509,7 @@ class LLMHindsightEvaluator:
             temperature=self.config.temperature,
             top_p=self.config.top_p,
             stop_sequences=[],
+            response_format={"type": "json_object"},
         )
 
         # Pesi per HindsightScores
