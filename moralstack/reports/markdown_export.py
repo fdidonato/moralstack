@@ -11,12 +11,14 @@ using data from the SQLite persistence layer.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from typing import Any
 
 from moralstack.persistence.config import get_db_path
 from moralstack.persistence.db import (
     get_decision_traces_for_request,
+    get_models_used_for_run,
     get_requests_for_run,
     get_run,
 )
@@ -121,6 +123,102 @@ def _build_benchmark_comparison_section(br: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_models_used_markdown(models_cfg: dict[str, Any], *, primary_model: str = "gpt-4o") -> str:
+    """
+    Renders the '### Models used' markdown table from a benchmark-style ``models_config`` dict.
+    Matches the benchmark report header (including parallel risk rows when present).
+    """
+    ms = models_cfg.get("moralstack") or {}
+    m = primary_model or "gpt-4o"
+    baseline = models_cfg.get("baseline", m)
+    judge = models_cfg.get("judge", m)
+    if ms.get("risk_parallel"):
+        risk_rows = (
+            f"| **MoralStack risk** | parallel mini-estimators |\n"
+            f"| **MoralStack risk · intent** | {ms.get('risk_intent', '—')} |\n"
+            f"| **MoralStack risk · signals** | {ms.get('risk_signals', '—')} |\n"
+            f"| **MoralStack risk · operational** | {ms.get('risk_operational', '—')} |"
+        )
+    else:
+        risk_rows = f"| **MoralStack risk** | {ms.get('risk', m)} |"
+    pr = ms.get("policy_rewrite", ms.get("policy", m))
+    return f"""### Models used
+
+| Component | Model |
+|-----------|-------|
+| **Baseline** | {baseline} |
+| **Judge** | {judge} |
+| **MoralStack policy** | {ms.get('policy', m)} |
+| **MoralStack policy (rewrite)** | {pr} |
+{risk_rows}
+| **MoralStack critic** | {ms.get('critic', m)} |
+| **MoralStack simulator** | {ms.get('simulator', m)} |
+| **MoralStack hindsight** | {ms.get('hindsight', m)} |
+| **MoralStack perspectives** | {ms.get('perspectives', m)} |
+"""
+
+
+def _resolve_models_config_for_run(run_id: str) -> tuple[dict[str, Any], str]:
+    """
+    Returns (models_config, primary_model) for a run.
+
+    Priority:
+      1. Benchmark JSON ``models_config`` (snapshot taken at benchmark time).
+      2. Persisted ``llm_calls.model`` column (actual models used at run time).
+      3. Env-vars fallback (last resort; may not match the run).
+    """
+    env_policy = (os.getenv("OPENAI_MODEL") or "gpt-4o").strip()
+    run = get_run(run_id)
+    run_type = (run.get("run_type") or "").strip().lower() if run else ""
+
+    # --- Benchmark: prefer the embedded snapshot ---
+    if run_type == "benchmark":
+        br = load_benchmark_report(run_id)
+        if br and isinstance(br, dict):
+            mc = br.get("models_config")
+            if mc:
+                _overlay_db_models(mc, run_id)
+                return mc, (br.get("model") or env_policy)
+            model = br.get("model") or env_policy
+            bm = br.get("baseline_model") or model
+            jm = br.get("judge_model") or model
+            cfg = _get_benchmark_models_config_fallback(bm, jm, moralstack_policy_model=model)
+            _overlay_db_models(cfg, run_id)
+            return cfg, model
+
+    # --- Single / interactive run: build from DB ---
+    db_models = get_models_used_for_run(run_id)
+    primary = db_models.get("policy_generate") or env_policy
+    ms: dict[str, Any] = {
+        "policy": primary,
+        "policy_rewrite": db_models.get("policy_rewrite", primary),
+        "risk": db_models.get("risk", primary),
+        "critic": db_models.get("critic", primary),
+        "simulator": db_models.get("simulator", primary),
+        "hindsight": db_models.get("hindsight", primary),
+        "perspectives": db_models.get("perspectives", primary),
+    }
+    cfg: dict[str, Any] = {"baseline": "—", "judge": "—", "moralstack": ms}
+    return cfg, primary
+
+
+def _overlay_db_models(cfg: dict[str, Any], run_id: str) -> None:
+    """Patch *cfg* in-place with actually-used models from ``llm_calls``."""
+    db_models = get_models_used_for_run(run_id)
+    if not db_models:
+        return
+    ms = cfg.get("moralstack")
+    if not isinstance(ms, dict):
+        return
+    if "policy_generate" in db_models:
+        ms["policy"] = db_models["policy_generate"]
+    if "policy_rewrite" in db_models:
+        ms["policy_rewrite"] = db_models["policy_rewrite"]
+    for key in ("risk", "critic", "simulator", "hindsight", "perspectives"):
+        if key in db_models:
+            ms[key] = db_models[key]
+
+
 def export_request_markdown(run_id: str, request_id: str) -> str:
     """
     Exports a single request's deliberation report as markdown.
@@ -138,7 +236,12 @@ def export_request_markdown(run_id: str, request_id: str) -> str:
             return "# Error: No database configured (MORALSTACK_DB_PATH)"
         return f"# Error: Request {request_id} not found in run {run_id}"
 
-    md = render_request_report(report)
+    models_cfg, primary_model = _resolve_models_config_for_run(run_id)
+    models_used_md = format_models_used_markdown(models_cfg, primary_model=primary_model)
+    md = render_request_report(
+        report,
+        models_used_section=f"---\n\n{models_used_md}",
+    )
 
     if report.benchmark_result:
         md += "\n\n" + _build_benchmark_comparison_section(report.benchmark_result)
@@ -203,11 +306,15 @@ def _get_benchmark_models_config_fallback(
     except ImportError:
         risk_m = critic_m = simulator_m = hindsight_m = perspectives_m = policy_fallback
 
+    rewrite_raw = (os.getenv("MORALSTACK_POLICY_REWRITE_MODEL") or "").strip()
+    policy_rewrite_m = rewrite_raw if rewrite_raw else policy_fallback
+
     return {
         "baseline": baseline_model,
         "judge": judge_model,
         "moralstack": {
             "policy": policy_fallback,
+            "policy_rewrite": policy_rewrite_m,
             "risk": risk_m,
             "critic": critic_m,
             "simulator": simulator_m,
@@ -278,24 +385,9 @@ def _build_benchmark_section_from_dict(report: dict, section_builder: str) -> st
         models_cfg = report.get("models_config")
         if not models_cfg:
             models_cfg = _get_benchmark_models_config_fallback(baseline_model, judge_model, moralstack_policy_model=model)
-        ms = models_cfg.get("moralstack", {})
         models_block = ""
-        if ms:
-            models_block = f"""
-
-### Models used
-
-| Component | Model |
-|-----------|-------|
-| **Baseline** | {models_cfg.get('baseline', model)} |
-| **Judge** | {models_cfg.get('judge', judge_model)} |
-| **MoralStack policy** | {ms.get('policy', model)} |
-| **MoralStack risk** | {ms.get('risk', model)} |
-| **MoralStack critic** | {ms.get('critic', model)} |
-| **MoralStack simulator** | {ms.get('simulator', model)} |
-| **MoralStack hindsight** | {ms.get('hindsight', model)} |
-| **MoralStack perspectives** | {ms.get('perspectives', model)} |
-"""
+        if models_cfg.get("moralstack"):
+            models_block = "\n\n" + format_models_used_markdown(models_cfg, primary_model=model) + "\n"
         return f"""# 🧪 MoralStack Benchmark Report
 
 > **Report generated**: {ts}

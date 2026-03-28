@@ -56,6 +56,36 @@ from moralstack.persistence.context import set_current_cycle
 
 _LOG = logging.getLogger(__name__)
 
+
+def _policy_llm_model_for_action(policy: Any, action: str) -> str | None:
+    """Effective OpenAI model name for policy generate vs rewrite (rewrite may use MORALSTACK_POLICY_REWRITE_MODEL)."""
+    if policy is None:
+        return None
+    if action == "rewrite":
+        rw = getattr(policy, "rewrite_model", None)
+        if rw is not None:
+            return str(rw)
+    m = getattr(policy, "model", None)
+    return str(m) if m is not None else None
+
+
+def _module_model(module: Any) -> str | None:
+    """Return the OpenAI model name used by a cognitive module (critic, simulator, …).
+
+    Each module stores its inner ``OpenAIPolicy`` as ``self.policy``; fall back
+    to ``module.model`` if present.
+    """
+    if module is None:
+        return None
+    inner = getattr(module, "policy", None)
+    if inner is not None:
+        m = getattr(inner, "model", None)
+        if m is not None:
+            return str(m)
+    m = getattr(module, "model", None)
+    return str(m) if m is not None else None
+
+
 # Logical order within a deliberation cycle for journey/report display (sequence_in_cycle).
 SEQ_POLICY = 1
 SEQ_CRITIC = 2
@@ -208,6 +238,7 @@ class DeliberationRunner:
                             "module": "policy",
                             "action": "generate (speculative-reuse,"
                             " benign_fast_path)",
+                            "model": _policy_llm_model_for_action(self.policy, "generate"),
                             "duration_ms": 0.0,
                             "prompt": request.prompt[:200],
                             "raw_response": content[:200],
@@ -421,6 +452,7 @@ class DeliberationRunner:
             try:
                 if speculative_draft:
                     state.draft_response = speculative_draft
+                    reuse_model = _policy_llm_model_for_action(self.policy, "generate")
                     record_llm_call(
                         self.logger,
                         {
@@ -430,6 +462,7 @@ class DeliberationRunner:
                             "prompt": request.prompt[:200],
                             "response": speculative_draft[:200],
                             "duration_ms": 0.0,
+                            "model": reuse_model,
                         },
                         {
                             "cycle": 0,
@@ -437,6 +470,7 @@ class DeliberationRunner:
                             "module": "policy",
                             "action": "generate (speculative-reuse,"
                             " fast_path)",
+                            "model": reuse_model,
                             "duration_ms": 0.0,
                             "prompt": request.prompt[:200],
                             "raw_response": speculative_draft[:200],
@@ -1474,6 +1508,7 @@ class DeliberationRunner:
             state.soft_revision_guidance_used = guidance
             prompt_used = _policy_prompt_used(result, user_prompt_with_lang)
             system_used = _policy_system_used(result, self._protected_system_prompt)
+            soft_model = _policy_llm_model_for_action(self.policy, "rewrite")
             record_llm_call(
                 self.logger,
                 {
@@ -1482,11 +1517,13 @@ class DeliberationRunner:
                     "prompt": f"Guidance: {guidance[:200]}",
                     "response": state.draft_response[:200],
                     "duration_ms": elapsed,
+                    "model": soft_model,
                 },
                 {
                     "phase": "soft_revision",
                     "module": "policy",
                     "action": "soft_revision",
+                    "model": soft_model,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": prompt_used,
@@ -1514,6 +1551,7 @@ class DeliberationRunner:
         # Speculative draft already present from parallel generation:
         # skip redundant LLM call in cycle 1.
         if state.cycle == 1 and state.draft_response:
+            reuse_model = _policy_llm_model_for_action(self.policy, "generate")
             record_llm_call(
                 self.logger,
                 {
@@ -1522,12 +1560,14 @@ class DeliberationRunner:
                     "prompt": request.prompt[:200],
                     "response": state.draft_response[:200],
                     "duration_ms": 0.0,
+                    "model": reuse_model,
                 },
                 {
                     "cycle": 1,
                     "phase": "policy_generate",
                     "module": "policy",
                     "action": "generate (speculative-reuse)",
+                    "model": reuse_model,
                     "duration_ms": 0.0,
                     "prompt": request.prompt[:200],
                     "raw_response": state.draft_response[:200],
@@ -1601,6 +1641,7 @@ class DeliberationRunner:
             state.draft_response = sanitize_policy_output(protection_result.cleaned)
             prompt_used = _policy_prompt_used(result, prompt_text)
             system_used = _policy_system_used(result, self._protected_system_prompt)
+            policy_model_label = _policy_llm_model_for_action(self.policy, action)
             record_llm_call(
                 self.logger,
                 {
@@ -1609,11 +1650,13 @@ class DeliberationRunner:
                     "prompt": prompt_text,
                     "response": state.draft_response,
                     "duration_ms": elapsed,
+                    "model": policy_model_label,
                 },
                 {
                     "phase": "policy_generate" if action == "generate" else "policy_rewrite",
                     "module": "policy",
                     "action": action,
+                    "model": policy_model_label,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": prompt_used,
@@ -1687,6 +1730,7 @@ class DeliberationRunner:
             nv = len(critique.violations)
             rg = (critique.revision_guidance[:100]) if critique.revision_guidance else "N/A"
             response_text = f"Violations: {nv}, Guidance: {rg}"
+            critic_model = _module_model(self.critic)
             record_llm_call(
                 self.logger,
                 {
@@ -1695,11 +1739,13 @@ class DeliberationRunner:
                     "prompt": prompt_text,
                     "response": response_text,
                     "duration_ms": elapsed,
+                    "model": critic_model,
                 },
                 {
                     "phase": "critic",
                     "module": "critic",
                     "action": "critique",
+                    "model": critic_model,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": getattr(critique, "prompt", None) or prompt_text,
@@ -1786,6 +1832,7 @@ class DeliberationRunner:
                 f"Expected valence: {ev:.2f}, Semantic harm: {sem_harm:.2f}, "
                 f"Dominant harms: {dom_harms}, Worst harm: {worst}"
             )
+            sim_model = _module_model(self.simulator)
             record_llm_call(
                 self.logger,
                 {
@@ -1794,11 +1841,13 @@ class DeliberationRunner:
                     "prompt": f"SIMULATION\nPrompt: {request.prompt}\nResponse: {state.draft_response}",
                     "response": response_text,
                     "duration_ms": elapsed,
+                    "model": sim_model,
                 },
                 {
                     "phase": "simulator",
                     "module": "simulator",
                     "action": "simulate",
+                    "model": sim_model,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": getattr(simulation, "prompt", ""),
@@ -1891,6 +1940,7 @@ class DeliberationRunner:
                 context_mode=context_mode,
             )
             elapsed = (time.time() - start) * 1000
+            hindsight_model = _module_model(self.hindsight)
             record_llm_call(
                 self.logger,
                 {
@@ -1899,11 +1949,13 @@ class DeliberationRunner:
                     "prompt": f"HINDSIGHT\nPrompt: {request.prompt}\nResponse: {state.draft_response}",
                     "response": str(hindsight_result)[:200],
                     "duration_ms": elapsed,
+                    "model": hindsight_model,
                 },
                 {
                     "phase": "hindsight",
                     "module": "hindsight",
                     "action": "evaluate",
+                    "model": hindsight_model,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": getattr(hindsight_result, "prompt", ""),
@@ -1998,6 +2050,7 @@ class DeliberationRunner:
             raw_resp = "\n---\n".join(result.raw_responses or []) if getattr(result, "raw_responses", None) else ""
             prompts_list = getattr(result, "prompts", []) or []
             system_list = getattr(result, "system_prompts", []) or []
+            persp_model = _module_model(self.perspectives)
             record_llm_call(
                 self.logger,
                 {
@@ -2006,11 +2059,13 @@ class DeliberationRunner:
                     "prompt": f"PERSPECTIVES\nPrompt: {request.prompt}\nResponse: {state.draft_response}",
                     "response": str(result)[:200],
                     "duration_ms": elapsed,
+                    "model": persp_model,
                 },
                 {
                     "phase": "perspectives",
                     "module": "perspectives",
                     "action": "evaluate",
+                    "model": persp_model,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": "\n---\n".join(prompts_list) if prompts_list else "",

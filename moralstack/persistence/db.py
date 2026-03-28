@@ -750,6 +750,58 @@ def get_all_runs(limit: int = 100) -> list[dict[str, Any]]:
         return []
 
 
+def get_models_used_for_run(run_id: str) -> dict[str, str]:
+    """Returns a mapping of ``module/action`` → model actually used, from persisted llm_calls.
+
+    Scans all llm_calls for the run and picks the first non-empty ``model`` value
+    per logical slot.  Returned keys: ``policy_generate``, ``policy_rewrite``,
+    ``risk``, ``critic``, ``simulator``, ``hindsight``, ``perspectives``.
+    Only slots with a non-empty model value appear in the result.
+    """
+    path = get_db_path()
+    if not path:
+        return {}
+    try:
+        conn = _get_connection(path)
+        rows = conn.execute(
+            """
+            SELECT module, action, model
+            FROM llm_calls
+            WHERE run_id = ? AND model IS NOT NULL AND model != ''
+            ORDER BY started_at
+            """,
+            (run_id,),
+        ).fetchall()
+        conn.close()
+    except Exception as e:
+        logger.warning("persistence: get_models_used_for_run failed: %s", e)
+        return {}
+
+    result: dict[str, str] = {}
+    for r in rows:
+        module = (r["module"] or "").strip()
+        action = (r["action"] or "").strip().lower()
+        model = (r["model"] or "").strip()
+        if not model:
+            continue
+        if module == "policy":
+            if "rewrite" in action:
+                result.setdefault("policy_rewrite", model)
+            elif "generate" in action:
+                result.setdefault("policy_generate", model)
+        elif module == "risk_estimator":
+            result.setdefault("risk", model)
+        elif module == "critic":
+            result.setdefault("critic", model)
+        elif module == "simulator":
+            result.setdefault("simulator", model)
+        elif module == "hindsight":
+            result.setdefault("hindsight", model)
+        elif module == "perspectives":
+            result.setdefault("perspectives", model)
+    return result
+
+
 def delete_run(run_id: str) -> bool:
     """Deletes a run and all related data (CASCADE). Returns True on success."""
     path = get_db_path()

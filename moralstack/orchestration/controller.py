@@ -240,6 +240,8 @@ class OrchestrationController:
                 getattr(result, "system_used", None)
                 or self._protected_system_prompt
             )
+            policy_model = getattr(self.policy, "model", None)
+            policy_model_str = str(policy_model) if policy_model is not None else None
             record_llm_call(
                 self.logger,
                 None,
@@ -248,6 +250,7 @@ class OrchestrationController:
                     "phase": "speculative_generate",
                     "module": "policy",
                     "action": "generate (speculative)",
+                    "model": policy_model_str,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": prompt_used,

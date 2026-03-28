@@ -17,7 +17,16 @@ class CallLogger:
         self.calls: list[dict] = []
         self.call_counter = 0
 
-    def log_call(self, module: str, action: str, prompt: str, response: str = "", duration_ms: float = 0.0):
+    def log_call(
+        self,
+        module: str,
+        action: str,
+        prompt: str,
+        response: str = "",
+        duration_ms: float = 0.0,
+        *,
+        model: str | None = None,
+    ):
         """Logs an LLM call."""
         self.call_counter += 1
 
@@ -32,6 +41,7 @@ class CallLogger:
             "prompt": prompt[:prompt_limit] + "..." if len(prompt) > prompt_limit else prompt,
             "response": (response[:response_limit] + "..." if len(response) > response_limit else response),
             "duration_ms": duration_ms,
+            "model": model,
             # Always save complete data for revision history
             "full_prompt": prompt,
             "full_response": response,
@@ -51,6 +61,9 @@ class CallLogger:
         print_colored(f"\n{'=' * 80}", border_color)
         print_colored(f"📞 LLM CALL #{call['id']}: {call['module']} → {call['action']}", header_color)
         print_colored(f"{'=' * 80}", border_color)
+
+        if call.get("model"):
+            print_colored(f"🤖 Model: {call['model']}", "cyan")
 
         if call["prompt"]:
             print_colored("\n📤 PROMPT:", "blue")
@@ -422,6 +435,10 @@ class MarkdownReportGenerator:
                 lines.append(f"| **Duration** | `{phase.duration_ms:.0f}ms` |")
                 lines.append(f"| **Success** | {status_icon} |")
 
+                policy_call = self._get_policy_call_dict_for_phase(phase, cycle_num, calls_by_module)
+                if policy_call and policy_call.get("model"):
+                    lines.append(f"| **Model** | `{policy_call['model']}` |")
+
                 if phase.decision:
                     lines.append(f"| **Decision** | `{phase.decision}` |")
                 if phase.decision_reason:
@@ -511,6 +528,29 @@ class MarkdownReportGenerator:
             calls_map[module].append(call)
 
         return calls_map
+
+    def _get_policy_call_dict_for_phase(
+        self, phase: PhaseResult, cycle: int, calls_map: dict
+    ) -> dict[str, Any] | None:
+        """Returns the CallLogger entry for policy generation or revision, if any."""
+        if phase.phase not in (PhaseType.GENERATION, PhaseType.REVISION):
+            return None
+        if "policy" not in calls_map:
+            return None
+        module_calls = calls_map["policy"]
+        if phase.phase == PhaseType.GENERATION:
+            for call in module_calls:
+                if "generate" in call.get("action", "").lower():
+                    return call
+            return module_calls[0] if module_calls else None
+        if phase.phase == PhaseType.REVISION:
+            rewrite_calls = [c for c in module_calls if "rewrite" in c.get("action", "").lower()]
+            if cycle >= 2 and rewrite_calls:
+                idx = cycle - 2
+                if 0 <= idx < len(rewrite_calls):
+                    return rewrite_calls[idx]
+            return None
+        return None
 
     def _get_full_data_for_phase(self, phase: PhaseResult, cycle: int, calls_map: dict) -> tuple:
         """

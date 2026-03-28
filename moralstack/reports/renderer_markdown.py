@@ -488,13 +488,19 @@ def render_request_footer(report: "RequestReport") -> str:
 """
 
 
-def render_request_report(report: "RequestReport") -> str:
-    """Render full request/deliberation report markdown from RequestReport."""
+def render_request_report(report: "RequestReport", *, models_used_section: str = "") -> str:
+    """Render full request/deliberation report markdown from RequestReport.
+
+    Optional ``models_used_section``: markdown block (e.g. '### Models used' table) inserted
+    after the request header and before the executive summary (used by UI export).
+    """
     orch = render_orchestrator_observability(report)
     sections = [
         render_request_header(report),
-        render_executive_summary(report),
     ]
+    if models_used_section and models_used_section.strip():
+        sections.append(models_used_section.strip())
+    sections.append(render_executive_summary(report))
     if orch:
         sections.append(orch)
     sections.extend(

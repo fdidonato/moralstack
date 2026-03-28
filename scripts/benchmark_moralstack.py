@@ -1468,6 +1468,7 @@ def get_benchmark_models_config(
     Baseline uses MORALSTACK_BENCHMARK_BASELINE_MODEL exclusively.
     MoralStack modules use env vars (MORALSTACK_*_MODEL); if unset, fall back to
     moralstack_policy_model.
+    Includes `policy_rewrite` from `MORALSTACK_POLICY_REWRITE_MODEL` (or primary policy when unset).
     When parallel mini-estimators are enabled, includes risk_intent, risk_signals,
     risk_operational keys.
     """
@@ -1512,8 +1513,12 @@ def get_benchmark_models_config(
     except ImportError:
         risk_m = critic_m = simulator_m = hindsight_m = perspectives_m = policy_fallback
 
+    rewrite_raw = (os.getenv("MORALSTACK_POLICY_REWRITE_MODEL") or "").strip()
+    policy_rewrite_m = rewrite_raw if rewrite_raw else policy_fallback
+
     moralstack_cfg: dict[str, Any] = {
         "policy": policy_fallback,
+        "policy_rewrite": policy_rewrite_m,
         "risk": risk_m,
         "critic": critic_m,
         "simulator": simulator_m,
@@ -2813,6 +2818,7 @@ class MarkdownReportGenerator:
 | **Baseline** | {models_cfg["baseline"]} |
 | **Judge** | {models_cfg["judge"]} |
 | **MoralStack policy** | {ms["policy"]} |
+| **MoralStack policy (rewrite)** | {ms["policy_rewrite"]} |
 {risk_rows}
 | **MoralStack critic** | {ms["critic"]} |
 | **MoralStack simulator** | {ms["simulator"]} |

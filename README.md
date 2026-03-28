@@ -180,6 +180,7 @@ Environment is loaded via `moralstack/utils/env_loader.py`.
 Key variables:
 
 - `OPENAI_MODEL` (default `gpt-4o`)
+- `MORALSTACK_POLICY_REWRITE_MODEL` (optional; model for deliberative `rewrite()` at cycle 2+; if unset, same as `OPENAI_MODEL`. `.env.template` suggests `gpt-4o-mini` for lower rewrite latency.)
 - `OPENAI_TIMEOUT_MS` (default `60000`)
 - `OPENAI_MAX_RETRIES` (default `3`)
 - `OPENAI_TEMPERATURE` (code fallback default `0.7`; `.env.template` starter value `0.1`)
@@ -189,6 +190,18 @@ Key variables:
 - `MORALSTACK_ORCHESTRATOR_BORDERLINE_REFUSE_UPPER` (default `0.95`)
 
 For full variable reference see [INSTALL.md](INSTALL.md) and `docs/modules/*.md`.
+
+Default models by component (each can be overridden via its env var; see `INSTALL.md` and module docs):
+
+| Component | Default model | Env variable |
+|-----------|---------------|--------------|
+| Policy (generation) | gpt-4o | `OPENAI_MODEL` |
+| Policy (rewrite) | same as primary, or `gpt-4o-mini` in `.env.template` | `MORALSTACK_POLICY_REWRITE_MODEL` |
+| Risk estimator | follows `OPENAI_MODEL` unless set | `MORALSTACK_RISK_MODEL` |
+| Critic | follows `OPENAI_MODEL` unless set | `MORALSTACK_CRITIC_MODEL` |
+| Simulator | follows `OPENAI_MODEL` unless set | `MORALSTACK_SIMULATOR_MODEL` |
+| Perspectives | follows `OPENAI_MODEL` unless set | `MORALSTACK_PERSPECTIVES_MODEL` |
+| Hindsight | follows `OPENAI_MODEL` unless set | `MORALSTACK_HINDSIGHT_MODEL` |
 
 ## Running the Benchmark
 

@@ -33,7 +33,7 @@ models like gpt-5.x and o-series require the latter).
 ```python
 from moralstack.models.policy import OpenAIPolicy, OpenAIPolicyConfig
 
-# From environment variables (OPENAI_API_KEY, OPENAI_MODEL, ...)
+# From environment variables (OPENAI_API_KEY, OPENAI_MODEL, optional MORALSTACK_POLICY_REWRITE_MODEL, ...)
 policy = OpenAIPolicy()
 
 # Or with explicit overrides
@@ -69,6 +69,22 @@ When the configured model supports it (gpt-4o, gpt-4o-mini, gpt-4.1 family), `re
 **OpenAI Predicted Outputs** (speculative decoding): the existing draft is provided as a prediction hint so that
 unchanged portions of the text are generated significantly faster. This is transparent to the caller and does not
 alter the output quality.
+
+**Rewrite model**: `OpenAIPolicy` may use a separate model for `rewrite()` only via `MORALSTACK_POLICY_REWRITE_MODEL`.
+If unset or empty, `rewrite()` uses the same model as `generate()` (`OPENAI_MODEL`). This keeps the first-pass
+draft on the primary model while allowing a lighter model for deliberative revisions (see `docs/architecture_spec.md`).
+
+---
+
+## Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `OPENAI_API_KEY` | Required API key |
+| `OPENAI_MODEL` | Primary model for `generate()` and `refuse()` |
+| `MORALSTACK_POLICY_REWRITE_MODEL` | Optional; model for `rewrite()` (deliberative cycle 2+). Defaults to `OPENAI_MODEL` when unset. |
+
+See also `.env.template` and `INSTALL.md`.
 
 ```python
 result = policy.rewrite(

@@ -229,12 +229,15 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         attempts: int,
     ) -> None:
         """Persist LLM call for risk estimation. Logs debug on ImportError."""
+        risk_model = getattr(self.policy, "model", None) if self.policy else None
+        risk_model_str = str(risk_model) if risk_model is not None else None
         try:
             persist_llm_call(
                 cycle=0,
                 phase="risk_estimation",
                 module="risk_estimator",
                 action="estimate",
+                model=risk_model_str,
                 started_at=started_at,
                 duration_ms=duration_ms,
                 prompt=prompt,
@@ -411,12 +414,15 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         """Persist a single mini-estimator LLM call. Logs debug on ImportError."""
         import json as _json
 
+        risk_model = getattr(self.policy, "model", None) if self.policy else None
+        risk_model_str = str(risk_model) if risk_model is not None else None
         try:
             persist_llm_call(
                 cycle=0,
                 phase="risk_estimation",
                 module="risk_estimator",
                 action=action,
+                model=risk_model_str,
                 started_at=started_at,
                 duration_ms=duration_ms,
                 prompt=prompt,

@@ -30,6 +30,7 @@ SAFE_COMPLETE is an intentional governance choice, **not an error**.
 | `moralstack/runtime/`          | Orchestrator, deliberation loop; simulator includes semantic layer (harm_type, semantic_expected_harm) that influences deliberation; simulator module with config_loader for env (MORALSTACK_SIMULATOR_*); hindsight module with config_loader for env (MORALSTACK_HINDSIGHT_*); perspective module with config_loader for env (MORALSTACK_PERSPECTIVES_*); critic module with config_loader for env (MORALSTACK_CRITIC_*) |
 | `moralstack/runtime/decision/` | safe_complete_policy (single source of truth for action bounds, final_action) |
 | `moralstack/runtime/trace/`    | DecisionTrace, append_decision_trace for audit |
+| `moralstack/models/policy.py` | `OpenAIPolicy` (generate / rewrite / refuse); env `OPENAI_*`; optional `MORALSTACK_POLICY_REWRITE_MODEL` for deliberative `rewrite()` (defaults to primary model when unset) |
 | `moralstack/models/risk/`      | Risk estimation (schema, estimator, calibration, parse_result, config_loader for env) |
 | `moralstack/models/decision_explanation.py` | DecisionExplanation dataclass for explainability |
 | `moralstack/models/reason_codes.py` | ReasonCode enum and policy-to-reason mapping |

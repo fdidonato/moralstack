@@ -248,8 +248,17 @@ To reduce tokens and latency, the deliberative cycle supports:
   cycles) to preserve revision context
 - **Gating**: `enable_hindsight_gating` is true by default (hindsight only in final cycle; opt-out for legacy). `enable_simulator_gating` (opt-in) skips simulator when safe.
 - **Trace**: optional fields `context_mode_by_module`, `modules_skipped` for reporting
+- **Policy rewrite model**: deliberative `rewrite()` at cycle 2+ may use `MORALSTACK_POLICY_REWRITE_MODEL` (when unset,
+  same as `OPENAI_MODEL`) to reduce latency; initial `generate()` / speculative draft stays on the primary model.
 
-See § Token Optimization above.
+#### Policy rewrite model downgrade
+
+When the critic triggers a revision on soft violations, the policy `rewrite` at cycle 2+ uses a configurable model
+(`MORALSTACK_POLICY_REWRITE_MODEL`). If unset or empty, the primary `OPENAI_MODEL` is used (backward compatible). A
+lighter default (for example `gpt-4o-mini` in `.env.template`) reduces rewrite latency because the call runs under
+explicit critic guidance and constrained-generation instructions; speculative first-pass generation remains on the
+primary model for baseline quality. To disable the split, set `MORALSTACK_POLICY_REWRITE_MODEL` to the same value as
+`OPENAI_MODEL`.
 
 ---
 
@@ -307,7 +316,9 @@ strutturato), non un classificatore leggero; i segnali sono semantici (es. `ethi
 ### 3.4 Policy LLM
 
 **Responsibility**: Text generation (responses, revisions, refusals). *[impl]* The Orchestrator uses `generate` for
-draft, `rewrite` for revisions guided by Critic/Hindsight/Simulator/Perspectives, `refuse` for refusals.
+draft, `rewrite` for revisions guided by Critic/Hindsight/Simulator/Perspectives, `refuse` for refusals. Optional env
+`MORALSTACK_POLICY_REWRITE_MODEL` selects the model for `rewrite()` only; `generate()` and `refuse()` use the primary
+`OPENAI_MODEL` (see [Policy rewrite model downgrade](#policy-rewrite-model-downgrade) above).
 
 ```python
 @dataclass
