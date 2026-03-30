@@ -32,7 +32,9 @@ Output JSON:
 """
 
 # FULL: static evaluation/output schema first (prompt caching); consequences + turn context last.
-HINDSIGHT_BATCH_FULL_TEMPLATE = """For each consequence listed under POTENTIAL CONSEQUENCES below, produce exactly one evaluation using the same scenario_id.
+HINDSIGHT_BATCH_FULL_TEMPLATE = (
+    """For each consequence listed under POTENTIAL CONSEQUENCES below,
+    produce exactly one evaluation using the same scenario_id.
 
 Output JSON:
 {{
@@ -49,7 +51,9 @@ Output JSON:
     }}
   ]
 }}
-""" + OUTPUT_JSON_ONLY + """
+"""
+    + OUTPUT_JSON_ONLY
+    + """
 
 POTENTIAL CONSEQUENCES:
 {consequences}
@@ -61,6 +65,7 @@ RESPONSE: {response}
 RISK CONTEXT:
 {risk_signals}
 """
+)
 
 HINDSIGHT_BATCH_THIN_TEMPLATE = """Evaluate this AI response considering multiple potential consequences.
 

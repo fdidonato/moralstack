@@ -529,9 +529,7 @@ class MarkdownReportGenerator:
 
         return calls_map
 
-    def _get_policy_call_dict_for_phase(
-        self, phase: PhaseResult, cycle: int, calls_map: dict
-    ) -> dict[str, Any] | None:
+    def _get_policy_call_dict_for_phase(self, phase: PhaseResult, cycle: int, calls_map: dict) -> dict[str, Any] | None:
         """Returns the CallLogger entry for policy generation or revision, if any."""
         if phase.phase not in (PhaseType.GENERATION, PhaseType.REVISION):
             return None

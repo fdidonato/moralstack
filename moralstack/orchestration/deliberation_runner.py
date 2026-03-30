@@ -236,8 +236,7 @@ class DeliberationRunner:
                             "cycle": 0,
                             "phase": "policy_generate",
                             "module": "policy",
-                            "action": "generate (speculative-reuse,"
-                            " benign_fast_path)",
+                            "action": "generate (speculative-reuse," " benign_fast_path)",
                             "model": _policy_llm_model_for_action(self.policy, "generate"),
                             "duration_ms": 0.0,
                             "prompt": request.prompt[:200],
@@ -262,10 +261,12 @@ class DeliberationRunner:
                     elapsed = (time.time() - start_gen) * 1000
                     response_text = _policy_text(result)
                     prompt_used = _policy_prompt_used(
-                        result, prompt_text,
+                        result,
+                        prompt_text,
                     )
                     system_used = _policy_system_used(
-                        result, self._protected_system_prompt or "",
+                        result,
+                        self._protected_system_prompt or "",
                     )
                     record_llm_call(
                         self.logger,
@@ -283,9 +284,7 @@ class DeliberationRunner:
                             "sequence_in_cycle": SEQ_POLICY,
                         },
                     )
-                    protection_result = (
-                        self._output_protector.validate(response_text)
-                    )
+                    protection_result = self._output_protector.validate(response_text)
                     content = protection_result.cleaned
             except Exception as e:
                 raise GenerationError(f"Generation failed: {e}")
@@ -445,7 +444,8 @@ class DeliberationRunner:
         )
         if constitution is None and self.constitution_store is not None:
             constitution = get_constitution_safe(
-                self.constitution_store, request.get_domain(),
+                self.constitution_store,
+                request.get_domain(),
             )
         state = DeliberationState(cycle=0)
         if self.policy is not None:
@@ -457,8 +457,7 @@ class DeliberationRunner:
                         self.logger,
                         {
                             "module": "policy",
-                            "action": "generate (speculative-reuse,"
-                            " fast_path)",
+                            "action": "generate (speculative-reuse," " fast_path)",
                             "prompt": request.prompt[:200],
                             "response": speculative_draft[:200],
                             "duration_ms": 0.0,
@@ -468,8 +467,7 @@ class DeliberationRunner:
                             "cycle": 0,
                             "phase": "policy_generate",
                             "module": "policy",
-                            "action": "generate (speculative-reuse,"
-                            " fast_path)",
+                            "action": "generate (speculative-reuse," " fast_path)",
                             "model": reuse_model,
                             "duration_ms": 0.0,
                             "prompt": request.prompt[:200],
@@ -493,18 +491,14 @@ class DeliberationRunner:
                         result = self.policy.generate(prompt_text)
                     elapsed = (time.time() - start_gen) * 1000
                     response_text = _policy_text(result)
-                    protection_result = (
-                        self._output_protector.validate(response_text)
-                    )
+                    protection_result = self._output_protector.validate(response_text)
                     if protection_result.had_leakage:
                         record_llm_call(
                             self.logger,
                             {
                                 "module": "output_protection",
-                                "action": "leakage_detected"
-                                " (fast_path)",
-                                "prompt": "Type: "
-                                f"{protection_result.leakage_type}",
+                                "action": "leakage_detected" " (fast_path)",
+                                "prompt": "Type: " f"{protection_result.leakage_type}",
                                 "response": "Cleaned from "
                                 f"{len(response_text)} to "
                                 f"{len(protection_result.cleaned)}"
@@ -515,12 +509,10 @@ class DeliberationRunner:
                                 "cycle": 0,
                                 "phase": "output_protection",
                                 "module": "output_protection",
-                                "action": "leakage_detected"
-                                " (fast_path)",
+                                "action": "leakage_detected" " (fast_path)",
                                 "duration_ms": 0.0,
                                 "raw_response": {
-                                    "leakage_type":
-                                        protection_result.leakage_type,
+                                    "leakage_type": protection_result.leakage_type,
                                     "original_len": len(response_text),
                                     "cleaned_len": len(
                                         protection_result.cleaned,
@@ -532,10 +524,12 @@ class DeliberationRunner:
                         )
                     state.draft_response = protection_result.cleaned
                     prompt_used = _policy_prompt_used(
-                        result, prompt_text,
+                        result,
+                        prompt_text,
                     )
                     system_used = _policy_system_used(
-                        result, self._protected_system_prompt,
+                        result,
+                        self._protected_system_prompt,
                     )
                     record_llm_call(
                         self.logger,
@@ -568,7 +562,9 @@ class DeliberationRunner:
                 quick_result = self.critic.quick_check(request.prompt, state.draft_response, constitution)
                 if not quick_result.passed:
                     state_delib, risk_score, outcome = self.run_deliberative_path(
-                        request, risk_estimation, start_time,
+                        request,
+                        risk_estimation,
+                        start_time,
                         constitution=constitution,
                         speculative_draft=state.draft_response,
                     )
@@ -754,7 +750,8 @@ class DeliberationRunner:
 
         if constitution is None and self.constitution_store is not None:
             constitution = get_constitution_safe(
-                self.constitution_store, request.get_domain(),
+                self.constitution_store,
+                request.get_domain(),
             )
         request_id = request.request_id or ""
         orch_debug_log(
@@ -1274,7 +1271,8 @@ class DeliberationRunner:
 
         if self.config.parallel_critic_with_modules:
             return self._run_full_parallel_evaluation(
-                state, request,
+                state,
+                request,
                 delib_context=delib_context,
                 context_mode=context_mode,
                 risk_estimation=risk_estimation,
@@ -1283,7 +1281,8 @@ class DeliberationRunner:
             )
 
         return self._run_critic_gated_parallel(
-            state, request,
+            state,
+            request,
             delib_context=delib_context,
             context_mode=context_mode,
             risk_estimation=risk_estimation,
@@ -1311,9 +1310,7 @@ class DeliberationRunner:
             context_mode=context_mode,
             constitution=constitution,
         )
-        if state.has_critical_violations or getattr(
-            state.last_critique, "violated_hard", False
-        ):
+        if state.has_critical_violations or getattr(state.last_critique, "violated_hard", False):
             return state
 
         n_errors_after_critic = len(state.errors)
@@ -1321,25 +1318,37 @@ class DeliberationRunner:
         state3 = state.fork()
 
         def do_simulate(
-            s: DeliberationState, r: ProcessedRequest,
+            s: DeliberationState,
+            r: ProcessedRequest,
         ) -> DeliberationState:
             if not self.config.enable_simulation or self.simulator is None:
                 return s
             if not self._should_run_simulator(
-                s, risk_estimation, delib_context, s.cycle, max_cycles,
+                s,
+                risk_estimation,
+                delib_context,
+                s.cycle,
+                max_cycles,
             ):
                 return s
             return self._simulate(
-                s, r, delib_context=delib_context, context_mode=context_mode,
+                s,
+                r,
+                delib_context=delib_context,
+                context_mode=context_mode,
             )
 
         def do_perspectives(
-            s: DeliberationState, r: ProcessedRequest,
+            s: DeliberationState,
+            r: ProcessedRequest,
         ) -> DeliberationState:
             if not self.config.enable_perspectives or self.perspectives is None:
                 return s
             return self._evaluate_perspectives(
-                s, r, delib_context=delib_context, context_mode=context_mode,
+                s,
+                r,
+                delib_context=delib_context,
+                context_mode=context_mode,
             )
 
         ctx2 = contextvars.copy_context()
@@ -1351,11 +1360,7 @@ class DeliberationRunner:
         state.simulations = s2.simulations
         state.perspectives = s3.perspectives
         state._perspectives_aggregation = s3._perspectives_aggregation
-        state.errors = (
-            list(state.errors)
-            + list(s2.errors[n_errors_after_critic:])
-            + list(s3.errors[n_errors_after_critic:])
-        )
+        state.errors = list(state.errors) + list(s2.errors[n_errors_after_critic:]) + list(s3.errors[n_errors_after_critic:])
         return state
 
     def _run_full_parallel_evaluation(
@@ -1380,35 +1385,49 @@ class DeliberationRunner:
         state_persp = state.fork()
 
         def do_critique(
-            s: DeliberationState, r: ProcessedRequest,
+            s: DeliberationState,
+            r: ProcessedRequest,
         ) -> DeliberationState:
             return self._critique(
-                s, r,
+                s,
+                r,
                 delib_context=delib_context,
                 context_mode=context_mode,
                 constitution=constitution,
             )
 
         def do_simulate(
-            s: DeliberationState, r: ProcessedRequest,
+            s: DeliberationState,
+            r: ProcessedRequest,
         ) -> DeliberationState:
             if not self.config.enable_simulation or self.simulator is None:
                 return s
             if not self._should_run_simulator(
-                s, risk_estimation, delib_context, s.cycle, max_cycles,
+                s,
+                risk_estimation,
+                delib_context,
+                s.cycle,
+                max_cycles,
             ):
                 return s
             return self._simulate(
-                s, r, delib_context=delib_context, context_mode=context_mode,
+                s,
+                r,
+                delib_context=delib_context,
+                context_mode=context_mode,
             )
 
         def do_perspectives(
-            s: DeliberationState, r: ProcessedRequest,
+            s: DeliberationState,
+            r: ProcessedRequest,
         ) -> DeliberationState:
             if not self.config.enable_perspectives or self.perspectives is None:
                 return s
             return self._evaluate_perspectives(
-                s, r, delib_context=delib_context, context_mode=context_mode,
+                s,
+                r,
+                delib_context=delib_context,
+                context_mode=context_mode,
             )
 
         ctx_c = contextvars.copy_context()
@@ -1425,28 +1444,22 @@ class DeliberationRunner:
 
         # Always merge critic results
         state.critiques = sc.critiques
-        state.errors = (
-            list(state.errors)
-            + list(sc.errors[n_errors_before:])
-        )
+        state.errors = list(state.errors) + list(sc.errors[n_errors_before:])
 
         # Propagate critic signals into delib_context (matches sequential path)
         if delib_context is not None and state.last_critique is not None:
             critique = state.last_critique
-            delib_context.critic_decision = (
-                getattr(critique, "decision", "") or ""
-            )
-            delib_context.critic_violated_hard = bool(
-                getattr(critique, "violated_hard", False)
-            )
+            delib_context.critic_decision = getattr(critique, "decision", "") or ""
+            delib_context.critic_violated_hard = bool(getattr(critique, "violated_hard", False))
             if getattr(critique, "violations", None):
                 delib_context.critic_violations_summary = "; ".join(
-                    f"{v.principle_id}:{getattr(v, 'severity', 0)}"
-                    for v in critique.violations[:5]
+                    f"{v.principle_id}:{getattr(v, 'severity', 0)}" for v in critique.violations[:5]
                 )
 
         hard_violation = state.has_critical_violations or getattr(
-            state.last_critique, "violated_hard", False,
+            state.last_critique,
+            "violated_hard",
+            False,
         )
         if hard_violation:
             # Discard sim/persp results — critic authority prevails.
@@ -1457,11 +1470,7 @@ class DeliberationRunner:
         state.simulations = ss.simulations
         state.perspectives = sp.perspectives
         state._perspectives_aggregation = sp._perspectives_aggregation
-        state.errors = (
-            list(state.errors)
-            + list(ss.errors[n_errors_before:])
-            + list(sp.errors[n_errors_before:])
-        )
+        state.errors = list(state.errors) + list(ss.errors[n_errors_before:]) + list(sp.errors[n_errors_before:])
         return state
 
     def _apply_constitutional_perspective_override(self, state: DeliberationState) -> None:

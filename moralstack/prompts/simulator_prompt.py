@@ -147,9 +147,7 @@ Minimal schema skeleton:
 """
 )
 
-SIMULATOR_FULL_TEMPLATE = (
-    SIMULATOR_FULL_STATIC_PREFIX
-    + """
+SIMULATOR_FULL_TEMPLATE = SIMULATOR_FULL_STATIC_PREFIX + """
 
 ---
 
@@ -172,7 +170,6 @@ DOMAIN-SPECIFIC GUIDANCE:
 
 {domain_guidance}
 """
-)
 
 
 # THIN template

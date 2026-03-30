@@ -53,9 +53,12 @@ If no violations:
 """
 
 # Static rules + JSON closure first (prompt-cache friendly); per-request fields last.
-CRITIC_FULL_TEMPLATE = """{rules}
+CRITIC_FULL_TEMPLATE = (
+    """{rules}
 
-""" + OUTPUT_JSON_ONLY + """
+"""
+    + OUTPUT_JSON_ONLY
+    + """
 
 TASK: Evaluate the response in TURN CONTEXT against the listed principles. Judge the RESPONSE content, not the REQUEST topic.
 
@@ -72,6 +75,7 @@ REQUEST:
 RESPONSE:
 {response}
 """
+)
 
 CRITIC_THIN_TEMPLATE = """Evaluate the response against these principles. Output valid JSON only.
 

@@ -48,10 +48,7 @@ Calibrate evaluation using the upstream risk context:
 """
 
 # Full template: static interpretation + JSON contract first (prompt caching); perspective + draft last.
-PERSPECTIVE_FULL_TEMPLATE = (
-    RISK_CONTEXT_INTERPRETATION
-    + PERSPECTIVE_COMMON_INSTRUCTIONS
-    + """
+PERSPECTIVE_FULL_TEMPLATE = RISK_CONTEXT_INTERPRETATION + PERSPECTIVE_COMMON_INSTRUCTIONS + """
 
 Evaluate this AI response from the perspective of: {perspective_name}
 
@@ -64,13 +61,9 @@ RESPONSE: {response}
 
 RISK CONTEXT: {risk_signals}
 """
-)
 
 # Thin template: same static-first layout as full; perspective + thin turn context last.
-PERSPECTIVE_THIN_TEMPLATE = (
-    RISK_CONTEXT_INTERPRETATION
-    + PERSPECTIVE_COMMON_INSTRUCTIONS
-    + """
+PERSPECTIVE_THIN_TEMPLATE = RISK_CONTEXT_INTERPRETATION + PERSPECTIVE_COMMON_INSTRUCTIONS + """
 
 Evaluate this AI response from the perspective of: {perspective_name}
 
@@ -88,13 +81,9 @@ KEY POINTS:
 RISK CONTEXT: {risk_signals}
 {change_log_section}
 """
-)
 
 # Shared system prompt body: static block first, then REQUEST/RESPONSE (full) or thin sections.
-PERSPECTIVE_SYSTEM_FULL_BODY = (
-    RISK_CONTEXT_INTERPRETATION
-    + PERSPECTIVE_COMMON_INSTRUCTIONS
-    + """
+PERSPECTIVE_SYSTEM_FULL_BODY = RISK_CONTEXT_INTERPRETATION + PERSPECTIVE_COMMON_INSTRUCTIONS + """
 
 TURN CONTEXT:
 REQUEST: {request}
@@ -103,12 +92,8 @@ RESPONSE: {response}
 
 RISK CONTEXT: {risk_signals}
 """
-)
 
-PERSPECTIVE_SYSTEM_THIN_BODY = (
-    RISK_CONTEXT_INTERPRETATION
-    + PERSPECTIVE_COMMON_INSTRUCTIONS
-    + """
+PERSPECTIVE_SYSTEM_THIN_BODY = RISK_CONTEXT_INTERPRETATION + PERSPECTIVE_COMMON_INSTRUCTIONS + """
 
 TURN CONTEXT:
 REQUEST: {request}
@@ -122,7 +107,6 @@ KEY POINTS:
 RISK CONTEXT: {risk_signals}
 {change_log_section}
 """
-)
 
 
 def build_perspectives_system_prompt(

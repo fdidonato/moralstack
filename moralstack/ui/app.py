@@ -453,9 +453,7 @@ def _group_calls_into_tiers_and_enrich(calls: list) -> list[list[dict]]:
         collapsed: list[list[dict]] = [all_tiers[0]]
         for tier in all_tiers[1:]:
             prev = collapsed[-1]
-            prev_max_end = max(
-                (c.get("started_at") or 0) + (c.get("duration_ms") or 0) for c in prev
-            )
+            prev_max_end = max((c.get("started_at") or 0) + (c.get("duration_ms") or 0) for c in prev)
             tier_min_start = min((c.get("started_at") or 0) for c in tier)
             if tier_min_start < prev_max_end:
                 prev.extend(tier)

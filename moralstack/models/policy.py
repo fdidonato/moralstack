@@ -118,9 +118,7 @@ class OpenAIPolicy:
         final_max_retries = config.max_retries if config and config.max_retries is not None else env_cfg.max_retries
         final_temperature = config.temperature if config and config.temperature is not None else env_cfg.temperature
         final_top_p = config.top_p if config and config.top_p is not None else env_cfg.top_p
-        final_rewrite_model = (
-            config.rewrite_model if config and config.rewrite_model is not None else env_cfg.rewrite_model
-        )
+        final_rewrite_model = config.rewrite_model if config and config.rewrite_model is not None else env_cfg.rewrite_model
 
         # Override espliciti da parametri __init__ (sovrascrivono tutto)
         if api_key is not None:

@@ -208,7 +208,8 @@ class OrchestrationController:
             raise RiskEstimationError(f"Risk estimation failed: {e}")
 
     def _speculative_generate(
-        self, request: ProcessedRequest,
+        self,
+        request: ProcessedRequest,
     ) -> str | None:
         """Generate a speculative draft in parallel with risk estimation.
 
@@ -220,7 +221,9 @@ class OrchestrationController:
             return None
         try:
             prompt_text = resolve_prompt_with_language(
-                request.prompt, "", request.prompt,
+                request.prompt,
+                "",
+                request.prompt,
             )
             start = time.time()
             try:
@@ -233,13 +236,8 @@ class OrchestrationController:
             elapsed = (time.time() - start) * 1000
             response_text = getattr(result, "text", None) or str(result)
             protection = self._output_protector.validate(response_text)
-            prompt_used = (
-                getattr(result, "prompt_used", None) or prompt_text
-            )
-            system_used = (
-                getattr(result, "system_used", None)
-                or self._protected_system_prompt
-            )
+            prompt_used = getattr(result, "prompt_used", None) or prompt_text
+            system_used = getattr(result, "system_used", None) or self._protected_system_prompt
             policy_model = getattr(self.policy, "model", None)
             policy_model_str = str(policy_model) if policy_model is not None else None
             record_llm_call(
@@ -262,12 +260,14 @@ class OrchestrationController:
             return protection.cleaned
         except Exception as e:
             _LOG.warning(
-                "Speculative generation failed, will regenerate: %s", e,
+                "Speculative generation failed, will regenerate: %s",
+                e,
             )
             return None
 
     def _run_speculative_overlap(
-        self, request: ProcessedRequest,
+        self,
+        request: ProcessedRequest,
     ) -> tuple[str | None, RiskEstimation]:
         """Run risk estimation and speculative draft generation in parallel.
 
@@ -287,7 +287,9 @@ class OrchestrationController:
         try:
             risk_fut = executor.submit(ctx_risk.run, self._estimate_risk, request)
             spec_fut = executor.submit(
-                ctx_spec.run, self._speculative_generate, request,
+                ctx_spec.run,
+                self._speculative_generate,
+                request,
             )
             risk_estimation = risk_fut.result()
             speculative_draft = spec_fut.result()
@@ -1006,13 +1008,8 @@ class OrchestrationController:
 
         try:
             speculative_draft: str | None = None
-            if (
-                self.config.enable_speculative_generation
-                and self.policy is not None
-            ):
-                speculative_draft, risk_estimation = (
-                    self._run_speculative_overlap(request)
-                )
+            if self.config.enable_speculative_generation and self.policy is not None:
+                speculative_draft, risk_estimation = self._run_speculative_overlap(request)
             else:
                 risk_estimation = self._estimate_risk(request)
             risk_score = risk_estimation.score if hasattr(risk_estimation, "score") else 0.5
