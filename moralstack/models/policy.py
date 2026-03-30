@@ -319,6 +319,17 @@ class OpenAIPolicy:
             "comprehensive and well-reasoned. "
             "Respond in the SAME LANGUAGE as the original user request."
         )
+
+        # Append constraints regardless of source
+        rewrite_system += (
+            "REWRITE CONSTRAINTS:\n"
+            "- Do NOT add new examples, scenarios, or operational details "
+            "not present in the original draft.\n"
+            "- Focus on restructuring, deepening, and reframing the EXISTING "
+            "content based on the feedback.\n"
+            "- When feedback says to focus on narrative or conceptual aspects, "
+            "REMOVE operational specifics rather than adding new ones.\n"
+        )
         draft_prediction = {"type": "content", "content": draft} if draft else None
         logger.info(
             "policy_rewrite using model=%s (primary=%s)",
