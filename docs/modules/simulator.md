@@ -287,6 +287,11 @@ configuration is the single source of configuration — no CLI or code path over
       for simulation and a larger one for generation.
     - **Unset or empty**: The simulator uses the same policy (and model) as the rest of the pipeline.
 
+In the recommended configuration (`.env.template`), the simulator uses `gpt-4.1-nano`.
+Benchmark testing shows this reduces average deliberative latency by ~27% compared to
+`gpt-4o-mini` on the simulator, with no compliance degradation (98.8% maintained) and
+minimal quality impact (avg score 9.39 vs 9.36 with `gpt-4o` across all modules).
+
 ### LLM and retry behaviour
 
 #### MORALSTACK_SIMULATOR_MAX_RETRIES

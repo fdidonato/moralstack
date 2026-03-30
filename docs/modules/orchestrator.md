@@ -198,7 +198,7 @@ For low-risk requests, the system uses an optimized path:
 Request → Risk Estimation (< 0.3) → Direct Generation → Response
 ```
 
-**Typical latency**: 300-500ms
+**Typical latency**: ~10-12s (benchmark, 84 questions)
 
 ### Deliberative Path (risk ≥ 0.3)
 
@@ -211,7 +211,9 @@ For significant-risk requests:
 5. **Hindsight Evaluation**: Retrospective evaluation
 6. **Convergence Check**: Verify termination criteria
 
-**Typical latency**: 2-30 seconds (depends on number of cycles)
+**Typical latency**: Deliberative path averages ~45-60s for standard queries,
+~70-85s for sensitive-domain queries (1 cycle ~35s, 2 cycles ~65s).
+Fast path averages ~10-12s.
 
 ---
 

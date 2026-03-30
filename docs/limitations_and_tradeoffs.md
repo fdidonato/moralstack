@@ -17,20 +17,28 @@ to the risk of underestimating vulnerability situations.
 ### 2. Latency and Computational Cost
 
 When it activates the deliberative path, MoralStack introduces
-significant computational overhead compared to a direct LLM call.
+computational overhead compared to a direct LLM call (~60s average
+vs ~5s for raw GPT-4o).
 
-The system prioritizes:
+The system prioritizes safety, decision correctness, and auditability
+over pure latency. Recent optimizations (parallel risk estimation,
+speculative decoding, lighter models for simulator and policy rewrite)
+have reduced average deliberative latency by ~26% from the initial
+architecture.
 
-- safety
-- decision correctness
-- auditability
+Latency profile by path:
 
-over pure latency.
+- **Fast path** (benign queries, ~11% of traffic): ~10-12s
+- **Deliberative path** (standard): ~45-60s
+- **Deliberative sensitive** (regulated domains): ~70-85s
 
 For this reason, MoralStack is not suitable for:
 
 - high-frequency creative chat
-- real-time systems with strict latency constraints
+- real-time systems with strict sub-second latency constraints
+
+Planned further optimizations include early-exit on low-risk deliberative
+queries and context-mode switching for reduced token overhead.
 
 ### 3. SAFE_COMPLETE as Decision, not Error
 

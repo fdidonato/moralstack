@@ -260,6 +260,23 @@ explicit critic guidance and constrained-generation instructions; speculative fi
 primary model for baseline quality. To disable the split, set `MORALSTACK_POLICY_REWRITE_MODEL` to the same value as
 `OPENAI_MODEL`.
 
+In benchmark testing, this optimization reduces rewrite step latency and, combined with
+`gpt-4.1-nano` on the simulator, brings average deliberative latency from ~82s to ~60s
+(~27% reduction) with no measurable compliance degradation (98.8% maintained).
+
+#### Rewrite prompt constraints
+
+To prevent lighter rewrite models from introducing new operational content during revision,
+the rewrite system prompt includes explicit constraints:
+
+- Do not add new examples, scenarios, or operational details not present in the original draft
+- Focus on restructuring and reframing existing content based on critic feedback
+- When feedback requests conceptual focus, remove operational specifics rather than adding new ones
+
+These constraints are appended to the rewrite system prompt regardless of whether it comes from
+the deliberation runner or uses the fallback default. They compensate for the tendency of smaller
+models to "fill" revisions with new specifics rather than restructuring existing content.
+
 ---
 
 ### 3.3 Risk Estimator
@@ -906,6 +923,10 @@ Refusal text is persisted as an LLM call with `action` containing `"refuse"` (e.
 - Draft generation: ~300ms
 - Quick check: ~100ms
 - Assembly: ~10ms
+
+> **Actual measured performance** (benchmark, 84 questions): fast path average ~10-12s.
+> Target values above reflect aspirational architecture without LLM call latency.
+> Real-world fast path includes speculative generation (~5-8s) plus quick-check (~2-3s).
 
 ---
 

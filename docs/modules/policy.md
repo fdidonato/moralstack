@@ -74,6 +74,11 @@ alter the output quality.
 If unset or empty, `rewrite()` uses the same model as `generate()` (`OPENAI_MODEL`). This keeps the first-pass
 draft on the primary model while allowing a lighter model for deliberative revisions (see `docs/architecture_spec.md`).
 
+The rewrite prompt also includes explicit constraints that prevent lighter models from adding
+new operational content not present in the original draft. This ensures that `gpt-4.1-nano`
+rewrites maintain quality comparable to `gpt-4o` rewrites on the benchmark (9.39 avg score,
+0 leakage).
+
 ---
 
 ## Environment variables
