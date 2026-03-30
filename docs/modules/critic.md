@@ -170,6 +170,8 @@ variables.**
 - **Type**: int (>= 1)
 - **Meaning**: Number of parse attempts for the critic JSON response before raising an error.
 
+Structured critic output uses OpenAI's `json_object` response format (`response_format={"type": "json_object"}` on `GenerationConfig`), which guarantees valid JSON and greatly reduces retries caused by malformed JSON.
+
 #### MORALSTACK_CRITIC_MAX_TOKENS
 
 - **Default**: `384`

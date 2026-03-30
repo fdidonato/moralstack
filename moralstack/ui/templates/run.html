@@ -69,6 +69,10 @@
             <td><strong>MoralStack policy</strong></td>
             <td><code>{{ benchmark_report.models_config.moralstack.policy }}</code></td>
         </tr>
+        <tr>
+            <td><strong>MoralStack policy (rewrite)</strong></td>
+            <td><code>{{ benchmark_report.models_config.moralstack.policy_rewrite | default(benchmark_report.models_config.moralstack.policy, true) }}</code></td>
+        </tr>
         {% if benchmark_report.models_config.moralstack.risk_parallel %}
         <tr>
             <td><strong>MoralStack risk</strong></td>

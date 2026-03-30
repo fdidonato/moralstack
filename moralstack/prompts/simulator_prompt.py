@@ -85,31 +85,16 @@ Focus on negative outcomes such as:
 DEFAULT_DOMAIN_GUIDANCE = "Consider whether the intent is educational/protective vs exploitative."
 
 
-# FULL template
-SIMULATOR_FULL_TEMPLATE = (
+# FULL template: longest static prefix first (prompt caching); TURN PARAMETERS and draft last.
+SIMULATOR_FULL_STATIC_PREFIX = (
     """
-Generate {num_scenarios} potential consequences for this AI response.
-
-REQUEST:
-{request}
-
-RESPONSE:
-{response}
-
-RISK CONTEXT:
-{risk_signals}
-
-DOMAIN CONTEXT:
-{domain}
-
-DOMAIN-SPECIFIC GUIDANCE:
-
-{domain_guidance}
+CONTRACT (fixed instructions; identical across requests when this prefix is reused):
 
 Requirements:
 
-- Generate exactly {num_scenarios} consequences.
-- Return exactly {num_scenarios} objects inside "consequences".
+- Generate exactly N potential consequences for one AI response, where N is the integer num_scenarios in
+  TURN PARAMETERS below.
+- Return exactly N objects inside "consequences".
 
 - Include a balanced mix:
   - at least one positive outcome (scenario_type: positive_outcome)
@@ -161,6 +146,30 @@ Minimal schema skeleton:
     + """
 """
 )
+
+SIMULATOR_FULL_TEMPLATE = SIMULATOR_FULL_STATIC_PREFIX + """
+
+---
+
+TURN PARAMETERS:
+num_scenarios: {num_scenarios}
+
+REQUEST:
+{request}
+
+RESPONSE:
+{response}
+
+RISK CONTEXT:
+{risk_signals}
+
+DOMAIN CONTEXT:
+{domain}
+
+DOMAIN-SPECIFIC GUIDANCE:
+
+{domain_guidance}
+"""
 
 
 # THIN template

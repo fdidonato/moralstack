@@ -56,6 +56,36 @@ from moralstack.persistence.context import set_current_cycle
 
 _LOG = logging.getLogger(__name__)
 
+
+def _policy_llm_model_for_action(policy: Any, action: str) -> str | None:
+    """Effective OpenAI model name for policy generate vs rewrite (rewrite may use MORALSTACK_POLICY_REWRITE_MODEL)."""
+    if policy is None:
+        return None
+    if action == "rewrite":
+        rw = getattr(policy, "rewrite_model", None)
+        if rw is not None:
+            return str(rw)
+    m = getattr(policy, "model", None)
+    return str(m) if m is not None else None
+
+
+def _module_model(module: Any) -> str | None:
+    """Return the OpenAI model name used by a cognitive module (critic, simulator, …).
+
+    Each module stores its inner ``OpenAIPolicy`` as ``self.policy``; fall back
+    to ``module.model`` if present.
+    """
+    if module is None:
+        return None
+    inner = getattr(module, "policy", None)
+    if inner is not None:
+        m = getattr(inner, "model", None)
+        if m is not None:
+            return str(m)
+    m = getattr(module, "model", None)
+    return str(m) if m is not None else None
+
+
 # Logical order within a deliberation cycle for journey/report display (sequence_in_cycle).
 SEQ_POLICY = 1
 SEQ_CRITIC = 2
@@ -183,6 +213,7 @@ class DeliberationRunner:
         *,
         decision: Decision,
         decision_explanation: DecisionExplanation | None = None,
+        speculative_draft: str | None = None,
     ) -> OrchestratorResult:
         """FAST PATH per operational_risk == NONE. Nessun modulo deliberativo."""
         from moralstack.orchestration.diagnostics import orch_debug_log
@@ -196,38 +227,65 @@ class DeliberationRunner:
         )
         if self.policy is not None:
             try:
-                prompt_text = resolve_prompt_with_language(
-                    request.prompt,
-                    risk_estimation.detected_language or "",
-                    request.prompt,
-                )
-                start_gen = time.time()
-                try:
-                    result = self.policy.generate(prompt=prompt_text, system=self._protected_system_prompt)
-                except TypeError:
-                    result = self.policy.generate(prompt_text)
-                elapsed = (time.time() - start_gen) * 1000
-                response_text = _policy_text(result)
-                prompt_used = _policy_prompt_used(result, prompt_text)
-                system_used = _policy_system_used(result, self._protected_system_prompt or "")
-                record_llm_call(
-                    self.logger,
-                    None,
-                    {
-                        "cycle": 0,
-                        "phase": "policy_generate",
-                        "module": "policy",
-                        "action": "generate (benign_fast_path)",
-                        "started_at": int(start_gen * 1000),
-                        "duration_ms": elapsed,
-                        "prompt": prompt_used,
-                        "system_prompt": system_used or "",
-                        "raw_response": response_text,
-                        "sequence_in_cycle": SEQ_POLICY,
-                    },
-                )
-                protection_result = self._output_protector.validate(response_text)
-                content = protection_result.cleaned
+                if speculative_draft:
+                    content = speculative_draft
+                    record_llm_call(
+                        self.logger,
+                        None,
+                        {
+                            "cycle": 0,
+                            "phase": "policy_generate",
+                            "module": "policy",
+                            "action": "generate (speculative-reuse," " benign_fast_path)",
+                            "model": _policy_llm_model_for_action(self.policy, "generate"),
+                            "duration_ms": 0.0,
+                            "prompt": request.prompt[:200],
+                            "raw_response": content[:200],
+                            "sequence_in_cycle": SEQ_POLICY,
+                        },
+                    )
+                else:
+                    prompt_text = resolve_prompt_with_language(
+                        request.prompt,
+                        risk_estimation.detected_language or "",
+                        request.prompt,
+                    )
+                    start_gen = time.time()
+                    try:
+                        result = self.policy.generate(
+                            prompt=prompt_text,
+                            system=self._protected_system_prompt,
+                        )
+                    except TypeError:
+                        result = self.policy.generate(prompt_text)
+                    elapsed = (time.time() - start_gen) * 1000
+                    response_text = _policy_text(result)
+                    prompt_used = _policy_prompt_used(
+                        result,
+                        prompt_text,
+                    )
+                    system_used = _policy_system_used(
+                        result,
+                        self._protected_system_prompt or "",
+                    )
+                    record_llm_call(
+                        self.logger,
+                        None,
+                        {
+                            "cycle": 0,
+                            "phase": "policy_generate",
+                            "module": "policy",
+                            "action": "generate (benign_fast_path)",
+                            "started_at": int(start_gen * 1000),
+                            "duration_ms": elapsed,
+                            "prompt": prompt_used,
+                            "system_prompt": system_used or "",
+                            "raw_response": response_text,
+                            "sequence_in_cycle": SEQ_POLICY,
+                        },
+                    )
+                    protection_result = self._output_protector.validate(response_text)
+                    content = protection_result.cleaned
             except Exception as e:
                 raise GenerationError(f"Generation failed: {e}")
         else:
@@ -371,6 +429,7 @@ class DeliberationRunner:
         decision: Decision,
         constitution: Any | None = None,
         decision_explanation: DecisionExplanation | None = None,
+        speculative_draft: str | None = None,
     ) -> OrchestratorResult:
         """Path veloce: genera draft + quick check costituzionale;
         se fallisce passa a deliberative."""
@@ -384,73 +443,116 @@ class DeliberationRunner:
             request_id=request.request_id or "",
         )
         if constitution is None and self.constitution_store is not None:
-            constitution = get_constitution_safe(self.constitution_store, request.get_domain())
+            constitution = get_constitution_safe(
+                self.constitution_store,
+                request.get_domain(),
+            )
         state = DeliberationState(cycle=0)
         if self.policy is not None:
             try:
-                start_gen = time.time()
-                prompt_text = resolve_prompt_with_language(
-                    request.prompt,
-                    risk_estimation.detected_language or "",
-                    request.prompt,
-                )
-                try:
-                    result = self.policy.generate(prompt=prompt_text, system=self._protected_system_prompt)
-                except TypeError:
-                    result = self.policy.generate(prompt_text)
-                elapsed = (time.time() - start_gen) * 1000
-                response_text = _policy_text(result)
-                protection_result = self._output_protector.validate(response_text)
-                if protection_result.had_leakage:
+                if speculative_draft:
+                    state.draft_response = speculative_draft
+                    reuse_model = _policy_llm_model_for_action(self.policy, "generate")
                     record_llm_call(
                         self.logger,
                         {
-                            "module": "output_protection",
-                            "action": "leakage_detected (fast_path)",
-                            "prompt": f"Type: {protection_result.leakage_type}",
-                            "response": f"Cleaned from {len(response_text)} to {len(protection_result.cleaned)} chars",
+                            "module": "policy",
+                            "action": "generate (speculative-reuse," " fast_path)",
+                            "prompt": request.prompt[:200],
+                            "response": speculative_draft[:200],
                             "duration_ms": 0.0,
+                            "model": reuse_model,
                         },
                         {
                             "cycle": 0,
-                            "phase": "output_protection",
-                            "module": "output_protection",
-                            "action": "leakage_detected (fast_path)",
+                            "phase": "policy_generate",
+                            "module": "policy",
+                            "action": "generate (speculative-reuse," " fast_path)",
+                            "model": reuse_model,
                             "duration_ms": 0.0,
-                            "raw_response": {
-                                "leakage_type": protection_result.leakage_type,
-                                "original_len": len(response_text),
-                                "cleaned_len": len(protection_result.cleaned),
-                                "had_leakage": True,
-                            },
+                            "prompt": request.prompt[:200],
+                            "raw_response": speculative_draft[:200],
                             "sequence_in_cycle": SEQ_POLICY,
                         },
                     )
-                state.draft_response = protection_result.cleaned
-                prompt_used = _policy_prompt_used(result, prompt_text)
-                system_used = _policy_system_used(result, self._protected_system_prompt)
-                record_llm_call(
-                    self.logger,
-                    {
-                        "module": "policy",
-                        "action": "generate (fast_path)",
-                        "prompt": request.prompt,
-                        "response": state.draft_response,
-                        "duration_ms": elapsed,
-                    },
-                    {
-                        "cycle": 0,
-                        "phase": "policy_generate",
-                        "module": "policy",
-                        "action": "generate (fast_path)",
-                        "started_at": int(start_gen * 1000),
-                        "duration_ms": elapsed,
-                        "prompt": prompt_used,
-                        "system_prompt": system_used or "",
-                        "raw_response": response_text,
-                        "sequence_in_cycle": SEQ_POLICY,
-                    },
-                )
+                else:
+                    start_gen = time.time()
+                    prompt_text = resolve_prompt_with_language(
+                        request.prompt,
+                        risk_estimation.detected_language or "",
+                        request.prompt,
+                    )
+                    try:
+                        result = self.policy.generate(
+                            prompt=prompt_text,
+                            system=self._protected_system_prompt,
+                        )
+                    except TypeError:
+                        result = self.policy.generate(prompt_text)
+                    elapsed = (time.time() - start_gen) * 1000
+                    response_text = _policy_text(result)
+                    protection_result = self._output_protector.validate(response_text)
+                    if protection_result.had_leakage:
+                        record_llm_call(
+                            self.logger,
+                            {
+                                "module": "output_protection",
+                                "action": "leakage_detected" " (fast_path)",
+                                "prompt": "Type: " f"{protection_result.leakage_type}",
+                                "response": "Cleaned from "
+                                f"{len(response_text)} to "
+                                f"{len(protection_result.cleaned)}"
+                                " chars",
+                                "duration_ms": 0.0,
+                            },
+                            {
+                                "cycle": 0,
+                                "phase": "output_protection",
+                                "module": "output_protection",
+                                "action": "leakage_detected" " (fast_path)",
+                                "duration_ms": 0.0,
+                                "raw_response": {
+                                    "leakage_type": protection_result.leakage_type,
+                                    "original_len": len(response_text),
+                                    "cleaned_len": len(
+                                        protection_result.cleaned,
+                                    ),
+                                    "had_leakage": True,
+                                },
+                                "sequence_in_cycle": SEQ_POLICY,
+                            },
+                        )
+                    state.draft_response = protection_result.cleaned
+                    prompt_used = _policy_prompt_used(
+                        result,
+                        prompt_text,
+                    )
+                    system_used = _policy_system_used(
+                        result,
+                        self._protected_system_prompt,
+                    )
+                    record_llm_call(
+                        self.logger,
+                        {
+                            "module": "policy",
+                            "action": "generate (fast_path)",
+                            "prompt": request.prompt,
+                            "response": state.draft_response,
+                            "duration_ms": elapsed,
+                        },
+                        {
+                            "cycle": 0,
+                            "phase": "policy_generate",
+                            "module": "policy",
+                            "action": "generate (fast_path)",
+                            "started_at": int(start_gen * 1000),
+                            "duration_ms": elapsed,
+                            "prompt": prompt_used,
+                            "system_prompt": system_used or "",
+                            "raw_response": response_text,
+                            "sequence_in_cycle": SEQ_POLICY,
+                        },
+                    )
             except Exception as e:
                 raise GenerationError(f"Generation failed: {e}")
         else:
@@ -460,7 +562,11 @@ class DeliberationRunner:
                 quick_result = self.critic.quick_check(request.prompt, state.draft_response, constitution)
                 if not quick_result.passed:
                     state_delib, risk_score, outcome = self.run_deliberative_path(
-                        request, risk_estimation, start_time, constitution=constitution
+                        request,
+                        risk_estimation,
+                        start_time,
+                        constitution=constitution,
+                        speculative_draft=state.draft_response,
                     )
                     return self._build_deliberative_result(
                         request,
@@ -627,16 +733,26 @@ class DeliberationRunner:
         *,
         constrained_generation: bool = False,
         constitution: Any | None = None,
+        speculative_draft: str | None = None,
     ) -> tuple[DeliberationState, float, ConvergenceOutcome]:
         """
         Esegue cicli deliberativi. Restituisce (state, risk_score, outcome) per assemblaggio.
         L'unica autorità sul loop è outcome post-enforcement: "continue"
         non sopravvive a cicli esauriti.
+
+        Args:
+            speculative_draft: Pre-generated draft from parallel overlap with
+                risk estimation.  When provided *and* constrained_generation is
+                False, the draft is used as the cycle-1 starting point,
+                skipping the initial generation call.
         """
         from moralstack.orchestration.diagnostics import orch_debug_log
 
         if constitution is None and self.constitution_store is not None:
-            constitution = get_constitution_safe(self.constitution_store, request.get_domain())
+            constitution = get_constitution_safe(
+                self.constitution_store,
+                request.get_domain(),
+            )
         request_id = request.request_id or ""
         orch_debug_log(
             "orchestrator.py:_deliberative_path",
@@ -647,6 +763,13 @@ class DeliberationRunner:
         )
         self._current_start_time = start_time
         state = DeliberationState(cycle=0)
+        # Pre-set speculative draft for cycle 1 when safe to do so.
+        # constrained_generation uses a different system prompt so the
+        # speculative draft (generated with the base prompt) is not suitable.
+        if speculative_draft and not constrained_generation:
+            state.draft_response = sanitize_policy_output(
+                speculative_draft,
+            )
         risk_score = risk_estimation.score
         max_cycles = self._effective_max_cycles(risk_estimation)
         # Constrained generation (clearly_harmful): the policy is already instructed to
@@ -1146,9 +1269,40 @@ class DeliberationRunner:
         import moralstack.prompts.perspectives_prompt  # noqa: F401
         import moralstack.prompts.simulator_prompt  # noqa: F401
 
-        # STAGE 1: critic always runs first — it is the gate for the entire cycle.
-        # If it returns violated_hard=True, simulator and perspectives cannot change
-        # the outcome and would be pure waste. Run critic sequentially and short-circuit.
+        if self.config.parallel_critic_with_modules:
+            return self._run_full_parallel_evaluation(
+                state,
+                request,
+                delib_context=delib_context,
+                context_mode=context_mode,
+                risk_estimation=risk_estimation,
+                max_cycles=max_cycles,
+                constitution=constitution,
+            )
+
+        return self._run_critic_gated_parallel(
+            state,
+            request,
+            delib_context=delib_context,
+            context_mode=context_mode,
+            risk_estimation=risk_estimation,
+            max_cycles=max_cycles,
+            constitution=constitution,
+        )
+
+    def _run_critic_gated_parallel(
+        self,
+        state: DeliberationState,
+        request: ProcessedRequest,
+        *,
+        delib_context: DelibContext | None = None,
+        context_mode: str = "full",
+        risk_estimation: RiskEstimationProtocol | None = None,
+        max_cycles: int = 2,
+        constitution: Any | None = None,
+    ) -> DeliberationState:
+        """Original two-stage approach: critic runs first as a gate, then
+        simulator + perspectives run in parallel only if no hard violation."""
         state = self._critique(
             state,
             request,
@@ -1157,31 +1311,45 @@ class DeliberationRunner:
             constitution=constitution,
         )
         if state.has_critical_violations or getattr(state.last_critique, "violated_hard", False):
-            # Hard violation confirmed: skip simulator and perspectives entirely.
-            # _deliberation_cycle will read state.has_critical_violations and set
-            # state.decision = REFUSE / REVISE immediately after we return.
             return state
 
-        # STAGE 2: critic returned PROCEED/REVISE with no hard violations.
-        # Simulator and perspectives are now meaningful — run them in parallel.
-        # Note: n_errors_after_critic is taken AFTER _critique so that fork()
-        # inherits critic errors and the slice correctly captures only new errors
-        # added by simulator / perspectives.
         n_errors_after_critic = len(state.errors)
         state2 = state.fork()
         state3 = state.fork()
 
-        def do_simulate(s: DeliberationState, r: ProcessedRequest) -> DeliberationState:
+        def do_simulate(
+            s: DeliberationState,
+            r: ProcessedRequest,
+        ) -> DeliberationState:
             if not self.config.enable_simulation or self.simulator is None:
                 return s
-            if not self._should_run_simulator(s, risk_estimation, delib_context, s.cycle, max_cycles):
-                return s  # Carry forward (s already has simulations from fork)
-            return self._simulate(s, r, delib_context=delib_context, context_mode=context_mode)
+            if not self._should_run_simulator(
+                s,
+                risk_estimation,
+                delib_context,
+                s.cycle,
+                max_cycles,
+            ):
+                return s
+            return self._simulate(
+                s,
+                r,
+                delib_context=delib_context,
+                context_mode=context_mode,
+            )
 
-        def do_perspectives(s: DeliberationState, r: ProcessedRequest) -> DeliberationState:
+        def do_perspectives(
+            s: DeliberationState,
+            r: ProcessedRequest,
+        ) -> DeliberationState:
             if not self.config.enable_perspectives or self.perspectives is None:
                 return s
-            return self._evaluate_perspectives(s, r, delib_context=delib_context, context_mode=context_mode)
+            return self._evaluate_perspectives(
+                s,
+                r,
+                delib_context=delib_context,
+                context_mode=context_mode,
+            )
 
         ctx2 = contextvars.copy_context()
         ctx3 = contextvars.copy_context()
@@ -1193,6 +1361,116 @@ class DeliberationRunner:
         state.perspectives = s3.perspectives
         state._perspectives_aggregation = s3._perspectives_aggregation
         state.errors = list(state.errors) + list(s2.errors[n_errors_after_critic:]) + list(s3.errors[n_errors_after_critic:])
+        return state
+
+    def _run_full_parallel_evaluation(
+        self,
+        state: DeliberationState,
+        request: ProcessedRequest,
+        *,
+        delib_context: DelibContext | None = None,
+        context_mode: str = "full",
+        risk_estimation: RiskEstimationProtocol | None = None,
+        max_cycles: int = 2,
+        constitution: Any | None = None,
+    ) -> DeliberationState:
+        """Full parallel: critic, simulator, and perspectives all run
+        concurrently. On hard violation the sim/persp results are discarded,
+        paying extra LLM calls but saving wall-clock time in the common case
+        (no hard violation). Decision quality is identical: the convergence
+        logic sees exactly the same module outputs."""
+        n_errors_before = len(state.errors)
+        state_critic = state.fork()
+        state_sim = state.fork()
+        state_persp = state.fork()
+
+        def do_critique(
+            s: DeliberationState,
+            r: ProcessedRequest,
+        ) -> DeliberationState:
+            return self._critique(
+                s,
+                r,
+                delib_context=delib_context,
+                context_mode=context_mode,
+                constitution=constitution,
+            )
+
+        def do_simulate(
+            s: DeliberationState,
+            r: ProcessedRequest,
+        ) -> DeliberationState:
+            if not self.config.enable_simulation or self.simulator is None:
+                return s
+            if not self._should_run_simulator(
+                s,
+                risk_estimation,
+                delib_context,
+                s.cycle,
+                max_cycles,
+            ):
+                return s
+            return self._simulate(
+                s,
+                r,
+                delib_context=delib_context,
+                context_mode=context_mode,
+            )
+
+        def do_perspectives(
+            s: DeliberationState,
+            r: ProcessedRequest,
+        ) -> DeliberationState:
+            if not self.config.enable_perspectives or self.perspectives is None:
+                return s
+            return self._evaluate_perspectives(
+                s,
+                r,
+                delib_context=delib_context,
+                context_mode=context_mode,
+            )
+
+        ctx_c = contextvars.copy_context()
+        ctx_s = contextvars.copy_context()
+        ctx_p = contextvars.copy_context()
+        executor = self._get_executor()
+        fut_c = executor.submit(ctx_c.run, do_critique, state_critic, request)
+        fut_s = executor.submit(ctx_s.run, do_simulate, state_sim, request)
+        fut_p = executor.submit(ctx_p.run, do_perspectives, state_persp, request)
+
+        sc = fut_c.result()
+        ss = fut_s.result()
+        sp = fut_p.result()
+
+        # Always merge critic results
+        state.critiques = sc.critiques
+        state.errors = list(state.errors) + list(sc.errors[n_errors_before:])
+
+        # Propagate critic signals into delib_context (matches sequential path)
+        if delib_context is not None and state.last_critique is not None:
+            critique = state.last_critique
+            delib_context.critic_decision = getattr(critique, "decision", "") or ""
+            delib_context.critic_violated_hard = bool(getattr(critique, "violated_hard", False))
+            if getattr(critique, "violations", None):
+                delib_context.critic_violations_summary = "; ".join(
+                    f"{v.principle_id}:{getattr(v, 'severity', 0)}" for v in critique.violations[:5]
+                )
+
+        hard_violation = state.has_critical_violations or getattr(
+            state.last_critique,
+            "violated_hard",
+            False,
+        )
+        if hard_violation:
+            # Discard sim/persp results — critic authority prevails.
+            # Wall-clock time was not wasted (parallel execution).
+            return state
+
+        # No hard violation: merge sim + persp results
+        state.simulations = ss.simulations
+        state.perspectives = sp.perspectives
+        state._perspectives_aggregation = sp._perspectives_aggregation
+        state.errors = list(state.errors) + list(ss.errors[n_errors_before:]) + list(sp.errors[n_errors_before:])
         return state
 
     def _apply_constitutional_perspective_override(self, state: DeliberationState) -> None:
@@ -1239,6 +1517,7 @@ class DeliberationRunner:
             state.soft_revision_guidance_used = guidance
             prompt_used = _policy_prompt_used(result, user_prompt_with_lang)
             system_used = _policy_system_used(result, self._protected_system_prompt)
+            soft_model = _policy_llm_model_for_action(self.policy, "rewrite")
             record_llm_call(
                 self.logger,
                 {
@@ -1247,11 +1526,13 @@ class DeliberationRunner:
                     "prompt": f"Guidance: {guidance[:200]}",
                     "response": state.draft_response[:200],
                     "duration_ms": elapsed,
+                    "model": soft_model,
                 },
                 {
                     "phase": "soft_revision",
                     "module": "policy",
                     "action": "soft_revision",
+                    "model": soft_model,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": prompt_used,
@@ -1276,7 +1557,33 @@ class DeliberationRunner:
         if self.policy is None:
             state.draft_response = f"[Mock response to: {request.prompt[:50]}...]"
             return state
-        # Use explicit language from Risk Estimator to reduce LLM non-compliance
+        # Speculative draft already present from parallel generation:
+        # skip redundant LLM call in cycle 1.
+        if state.cycle == 1 and state.draft_response:
+            reuse_model = _policy_llm_model_for_action(self.policy, "generate")
+            record_llm_call(
+                self.logger,
+                {
+                    "module": "policy",
+                    "action": "generate (speculative-reuse)",
+                    "prompt": request.prompt[:200],
+                    "response": state.draft_response[:200],
+                    "duration_ms": 0.0,
+                    "model": reuse_model,
+                },
+                {
+                    "cycle": 1,
+                    "phase": "policy_generate",
+                    "module": "policy",
+                    "action": "generate (speculative-reuse)",
+                    "model": reuse_model,
+                    "duration_ms": 0.0,
+                    "prompt": request.prompt[:200],
+                    "raw_response": state.draft_response[:200],
+                    "sequence_in_cycle": SEQ_POLICY,
+                },
+            )
+            return state
         try:
             start = time.time()
             det_iso = risk_estimation.detected_language or ""
@@ -1343,6 +1650,7 @@ class DeliberationRunner:
             state.draft_response = sanitize_policy_output(protection_result.cleaned)
             prompt_used = _policy_prompt_used(result, prompt_text)
             system_used = _policy_system_used(result, self._protected_system_prompt)
+            policy_model_label = _policy_llm_model_for_action(self.policy, action)
             record_llm_call(
                 self.logger,
                 {
@@ -1351,11 +1659,13 @@ class DeliberationRunner:
                     "prompt": prompt_text,
                     "response": state.draft_response,
                     "duration_ms": elapsed,
+                    "model": policy_model_label,
                 },
                 {
                     "phase": "policy_generate" if action == "generate" else "policy_rewrite",
                     "module": "policy",
                     "action": action,
+                    "model": policy_model_label,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": prompt_used,
@@ -1429,6 +1739,7 @@ class DeliberationRunner:
             nv = len(critique.violations)
             rg = (critique.revision_guidance[:100]) if critique.revision_guidance else "N/A"
             response_text = f"Violations: {nv}, Guidance: {rg}"
+            critic_model = _module_model(self.critic)
             record_llm_call(
                 self.logger,
                 {
@@ -1437,11 +1748,13 @@ class DeliberationRunner:
                     "prompt": prompt_text,
                     "response": response_text,
                     "duration_ms": elapsed,
+                    "model": critic_model,
                 },
                 {
                     "phase": "critic",
                     "module": "critic",
                     "action": "critique",
+                    "model": critic_model,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": getattr(critique, "prompt", None) or prompt_text,
@@ -1528,6 +1841,7 @@ class DeliberationRunner:
                 f"Expected valence: {ev:.2f}, Semantic harm: {sem_harm:.2f}, "
                 f"Dominant harms: {dom_harms}, Worst harm: {worst}"
             )
+            sim_model = _module_model(self.simulator)
             record_llm_call(
                 self.logger,
                 {
@@ -1536,11 +1850,13 @@ class DeliberationRunner:
                     "prompt": f"SIMULATION\nPrompt: {request.prompt}\nResponse: {state.draft_response}",
                     "response": response_text,
                     "duration_ms": elapsed,
+                    "model": sim_model,
                 },
                 {
                     "phase": "simulator",
                     "module": "simulator",
                     "action": "simulate",
+                    "model": sim_model,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": getattr(simulation, "prompt", ""),
@@ -1633,6 +1949,7 @@ class DeliberationRunner:
                 context_mode=context_mode,
             )
             elapsed = (time.time() - start) * 1000
+            hindsight_model = _module_model(self.hindsight)
             record_llm_call(
                 self.logger,
                 {
@@ -1641,11 +1958,13 @@ class DeliberationRunner:
                     "prompt": f"HINDSIGHT\nPrompt: {request.prompt}\nResponse: {state.draft_response}",
                     "response": str(hindsight_result)[:200],
                     "duration_ms": elapsed,
+                    "model": hindsight_model,
                 },
                 {
                     "phase": "hindsight",
                     "module": "hindsight",
                     "action": "evaluate",
+                    "model": hindsight_model,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": getattr(hindsight_result, "prompt", ""),
@@ -1740,6 +2059,7 @@ class DeliberationRunner:
             raw_resp = "\n---\n".join(result.raw_responses or []) if getattr(result, "raw_responses", None) else ""
             prompts_list = getattr(result, "prompts", []) or []
             system_list = getattr(result, "system_prompts", []) or []
+            persp_model = _module_model(self.perspectives)
             record_llm_call(
                 self.logger,
                 {
@@ -1748,11 +2068,13 @@ class DeliberationRunner:
                     "prompt": f"PERSPECTIVES\nPrompt: {request.prompt}\nResponse: {state.draft_response}",
                     "response": str(result)[:200],
                     "duration_ms": elapsed,
+                    "model": persp_model,
                 },
                 {
                     "phase": "perspectives",
                     "module": "perspectives",
                     "action": "evaluate",
+                    "model": persp_model,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": "\n---\n".join(prompts_list) if prompts_list else "",

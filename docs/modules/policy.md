@@ -33,7 +33,7 @@ models like gpt-5.x and o-series require the latter).
 ```python
 from moralstack.models.policy import OpenAIPolicy, OpenAIPolicyConfig
 
-# From environment variables (OPENAI_API_KEY, OPENAI_MODEL, ...)
+# From environment variables (OPENAI_API_KEY, OPENAI_MODEL, optional MORALSTACK_POLICY_REWRITE_MODEL, ...)
 policy = OpenAIPolicy()
 
 # Or with explicit overrides
@@ -64,6 +64,32 @@ print(result.text)
 ### rewrite()
 
 Revises a response based on feedback.
+
+When the configured model supports it (gpt-4o, gpt-4o-mini, gpt-4.1 family), `rewrite()` automatically leverages
+**OpenAI Predicted Outputs** (speculative decoding): the existing draft is provided as a prediction hint so that
+unchanged portions of the text are generated significantly faster. This is transparent to the caller and does not
+alter the output quality.
+
+**Rewrite model**: `OpenAIPolicy` may use a separate model for `rewrite()` only via `MORALSTACK_POLICY_REWRITE_MODEL`.
+If unset or empty, `rewrite()` uses the same model as `generate()` (`OPENAI_MODEL`). This keeps the first-pass
+draft on the primary model while allowing a lighter model for deliberative revisions (see `docs/architecture_spec.md`).
+
+The rewrite prompt also includes explicit constraints that prevent lighter models from adding
+new operational content not present in the original draft. This ensures that `gpt-4.1-nano`
+rewrites maintain quality comparable to `gpt-4o` rewrites on the benchmark (9.39 avg score,
+0 leakage).
+
+---
+
+## Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `OPENAI_API_KEY` | Required API key |
+| `OPENAI_MODEL` | Primary model for `generate()` and `refuse()` |
+| `MORALSTACK_POLICY_REWRITE_MODEL` | Optional; model for `rewrite()` (deliberative cycle 2+). Defaults to `OPENAI_MODEL` when unset. `.env.template` sets `gpt-4.1-nano` when you copy that file. |
+
+See also `.env.template` and `INSTALL.md`.
 
 ```python
 result = policy.rewrite(
@@ -105,6 +131,20 @@ class GenerationResult:
     tokens_used: int       # Tokens consumed
     finish_reason: str     # Termination reason ("stop", "length", etc.)
 ```
+
+### GenerationConfig
+
+```python
+@dataclass
+class GenerationConfig:
+    max_tokens: int = 2048
+    temperature: float = 0.7
+    top_p: float = 0.9
+    stop_sequences: list[str] = []
+    response_format: Any = None  # OpenAI response format constraint
+```
+
+The optional `response_format` field maps to OpenAI's response format (e.g. `{"type": "json_object"}`). Structured evaluation modules (Critic, Simulator, Hindsight, Perspectives) set it so the API returns guaranteed valid JSON.
 
 ---
 
@@ -173,6 +213,8 @@ class PolicyLLMProtocol(Protocol):
         """Generates reasoned refusal. language: explicit output language when prompt empty or to reduce drift."""
         ...
 ```
+
+The `config` argument is typically a `GenerationConfig` (see [Output Structure](#output-structure)); it may include `response_format` for OpenAI structured outputs.
 
 ---
 

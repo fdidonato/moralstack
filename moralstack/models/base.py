@@ -5,7 +5,7 @@ Tipi base per modelli LLM in MoralStack.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,7 @@ class GenerationConfig:
     temperature: float = 0.7
     top_p: float = 0.9
     stop_sequences: List[str] = field(default_factory=list)
+    response_format: Any = None
 
 
 @dataclass(frozen=True)

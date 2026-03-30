@@ -309,6 +309,7 @@ class LLMConstitutionalCritic:
             temperature=self.config.temperature,
             top_p=self.config.top_p,
             stop_sequences=[],
+            response_format={"type": "json_object"},
         )
 
     def critique(
@@ -500,6 +501,7 @@ class LLMConstitutionalCritic:
             max_tokens=256,
             temperature=0.1,
             top_p=self.config.top_p,
+            response_format={"type": "json_object"},
         )
 
         try:

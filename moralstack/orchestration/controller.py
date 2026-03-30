@@ -36,6 +36,7 @@ from moralstack.orchestration.diagnostics import (
     orch_debug_log,
 )
 from moralstack.orchestration.domain_exclusion import generate_domain_exclusion_response
+from moralstack.orchestration.language_resolver import resolve_prompt_with_language
 from moralstack.orchestration.overlay_policy import (
     OVERLAY_SENSITIVE_RISK_FLOOR,
     apply_risk_floor_if_sensitive,
@@ -205,6 +206,96 @@ class OrchestrationController:
             return cast(RiskEstimation, result)
         except Exception as e:
             raise RiskEstimationError(f"Risk estimation failed: {e}")
+
+    def _speculative_generate(
+        self,
+        request: ProcessedRequest,
+    ) -> str | None:
+        """Generate a speculative draft in parallel with risk estimation.
+
+        Uses the base system prompt and fallback language detection (the risk
+        estimator's ``detected_language`` is not available yet).  Returns the
+        output-protected draft text, or ``None`` on any failure.
+        """
+        if self.policy is None:
+            return None
+        try:
+            prompt_text = resolve_prompt_with_language(
+                request.prompt,
+                "",
+                request.prompt,
+            )
+            start = time.time()
+            try:
+                result = self.policy.generate(
+                    prompt=prompt_text,
+                    system=self._protected_system_prompt,
+                )
+            except TypeError:
+                result = self.policy.generate(prompt_text)
+            elapsed = (time.time() - start) * 1000
+            response_text = getattr(result, "text", None) or str(result)
+            protection = self._output_protector.validate(response_text)
+            prompt_used = getattr(result, "prompt_used", None) or prompt_text
+            system_used = getattr(result, "system_used", None) or self._protected_system_prompt
+            policy_model = getattr(self.policy, "model", None)
+            policy_model_str = str(policy_model) if policy_model is not None else None
+            record_llm_call(
+                self.logger,
+                None,
+                {
+                    "cycle": 0,
+                    "phase": "speculative_generate",
+                    "module": "policy",
+                    "action": "generate (speculative)",
+                    "model": policy_model_str,
+                    "started_at": int(start * 1000),
+                    "duration_ms": elapsed,
+                    "prompt": prompt_used,
+                    "system_prompt": system_used or "",
+                    "raw_response": response_text,
+                    "sequence_in_cycle": 0,
+                },
+            )
+            return protection.cleaned
+        except Exception as e:
+            _LOG.warning(
+                "Speculative generation failed, will regenerate: %s",
+                e,
+            )
+            return None
+
+    def _run_speculative_overlap(
+        self,
+        request: ProcessedRequest,
+    ) -> tuple[str | None, RiskEstimation]:
+        """Run risk estimation and speculative draft generation in parallel.
+
+        Returns ``(speculative_draft_or_None, risk_estimation)``.
+        If risk estimation raises, the exception propagates normally.
+
+        Uses ``contextvars.copy_context()`` so that persistence context
+        (run_id, request_id, cycle) is available inside the worker threads.
+        """
+        import contextvars
+        from concurrent.futures import ThreadPoolExecutor
+
+        ctx_risk = contextvars.copy_context()
+        ctx_spec = contextvars.copy_context()
+
+        executor = ThreadPoolExecutor(max_workers=2)
+        try:
+            risk_fut = executor.submit(ctx_risk.run, self._estimate_risk, request)
+            spec_fut = executor.submit(
+                ctx_spec.run,
+                self._speculative_generate,
+                request,
+            )
+            risk_estimation = risk_fut.result()
+            speculative_draft = spec_fut.result()
+            return speculative_draft, risk_estimation
+        finally:
+            executor.shutdown(wait=False)
 
     def _handle_timeout(self, request: ProcessedRequest, error_msg: str, start_time: float) -> OrchestratorResult:
         processing_time = int((time.time() - start_time) * 1000)
@@ -447,6 +538,7 @@ class OrchestrationController:
         risk_estimation: RiskEstimationProtocol,
         start_time: float,
         trace: Trace,
+        speculative_draft: str | None = None,
     ) -> OrchestratorResult:
         request_id = request.request_id
         orch_debug_log(
@@ -462,6 +554,7 @@ class OrchestrationController:
             start_time,
             decision=decision,
             decision_explanation=explanation,
+            speculative_draft=speculative_draft,
         )
         fill_trace_from_result(trace, result)
         result.trace = trace
@@ -515,6 +608,7 @@ class OrchestrationController:
         risk_estimation: RiskEstimationProtocol,
         start_time: float,
         trace: Trace,
+        speculative_draft: str | None = None,
     ) -> OrchestratorResult:
         request_id = request.request_id
         orch_debug_log(
@@ -532,6 +626,7 @@ class OrchestrationController:
             decision=decision,
             constitution=constitution,
             decision_explanation=explanation,
+            speculative_draft=speculative_draft,
         )
         result.path_taken = "fast"
         fill_trace_from_result(trace, result)
@@ -675,6 +770,7 @@ class OrchestrationController:
         start_time: float,
         trace: Trace,
         pre_decision: Decision | None = None,
+        speculative_draft: str | None = None,
     ) -> OrchestratorResult:
         request_id = request.request_id
         orch_debug_log(
@@ -691,6 +787,7 @@ class OrchestrationController:
             start_time,
             constrained_generation=constrained_generation,
             constitution=constitution,
+            speculative_draft=speculative_draft,
         )
         modules_called: set[str] = set()
         if state.critiques:
@@ -910,7 +1007,11 @@ class OrchestrationController:
         trace = self._trace_lifecycle.start_trace(request_id)
 
         try:
-            risk_estimation = self._estimate_risk(request)
+            speculative_draft: str | None = None
+            if self.config.enable_speculative_generation and self.policy is not None:
+                speculative_draft, risk_estimation = self._run_speculative_overlap(request)
+            else:
+                risk_estimation = self._estimate_risk(request)
             risk_score = risk_estimation.score if hasattr(risk_estimation, "score") else 0.5
             risk_category = getattr(risk_estimation, "risk_category", None)
             constrained_generation = risk_category == RiskCategory.CLEARLY_HARMFUL
@@ -1037,6 +1138,7 @@ class OrchestrationController:
                     risk_proto,
                     start_time,
                     trace,
+                    speculative_draft=speculative_draft,
                 )
             if route == "safe_complete":
                 return self._route_safe_complete(
@@ -1070,6 +1172,7 @@ class OrchestrationController:
                     risk_proto,
                     start_time,
                     trace,
+                    speculative_draft=speculative_draft,
                 )
 
             return self._route_deliberative(
@@ -1081,6 +1184,7 @@ class OrchestrationController:
                 start_time,
                 trace,
                 pre_decision=decision,
+                speculative_draft=speculative_draft,
             )
 
         except OrchestratorTimeoutError as e:

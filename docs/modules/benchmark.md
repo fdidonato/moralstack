@@ -55,6 +55,10 @@ All benchmark configuration can be overridden via `.env`. Variables are read whe
 1. `--model` / `-m` (CLI)
 2. `gpt-4o` (default)
 
+**MoralStack policy rewrite** (env only; not set via CLI): `MORALSTACK_POLICY_REWRITE_MODEL` selects the model for
+`rewrite()` in deliberation (cycle 2+). If unset, the rewrite uses the same model as primary policy generation. Report
+`models_config.moralstack.policy_rewrite` reflects the effective value.
+
 **Judge**:
 
 1. `MORALSTACK_BENCHMARK_JUDGE_MODEL` (if set in `.env`)
@@ -84,8 +88,8 @@ With `MORALSTACK_BENCHMARK_BASELINE_MODEL=gpt-4o` in `.env`, the baseline always
 ## Report and UI
 
 The benchmark report JSON (`benchmark_{run_id}.json`) stores `model`, `judge_model`, and `models_config` (baseline,
-judge, MoralStack modules: policy, risk, critic, simulator, hindsight, perspectives). The markdown export and the UI
-display these models clearly in the report header and on the run detail page.
+judge, MoralStack modules: policy, policy_rewrite, risk, critic, simulator, hindsight, perspectives). The markdown
+export and the UI display these models clearly in the report header and on the run detail page.
 
 **UI and export requirement**: The file `benchmark_{run_id}.json` in `MORALSTACK_BENCHMARK_OUTPUTS` is **required** for
 the moralstack-ui to display the full benchmark summary (Executive Summary, FP/FN, per-question baseline/moralstack

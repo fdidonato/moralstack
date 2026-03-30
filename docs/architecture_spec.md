@@ -150,6 +150,9 @@ class OrchestratorConfig:
     enable_simulation: bool = True
     enable_hindsight: bool = True
     borderline_refuse_upper: float = 0.95  # Upper bound (inclusive) for borderline REFUSE deliberation
+    parallel_module_calls: bool = True
+    parallel_critic_with_modules: bool = True   # *[impl]* critic || sim || persp when parallel_module_calls
+    enable_speculative_generation: bool = True  # *[impl]* risk || speculative generate at controller entry
 
 @dataclass
 class RiskThresholds:
@@ -245,8 +248,34 @@ To reduce tokens and latency, the deliberative cycle supports:
   cycles) to preserve revision context
 - **Gating**: `enable_hindsight_gating` is true by default (hindsight only in final cycle; opt-out for legacy). `enable_simulator_gating` (opt-in) skips simulator when safe.
 - **Trace**: optional fields `context_mode_by_module`, `modules_skipped` for reporting
+- **Policy rewrite model**: deliberative `rewrite()` at cycle 2+ may use `MORALSTACK_POLICY_REWRITE_MODEL` (when unset,
+  same as `OPENAI_MODEL`) to reduce latency; initial `generate()` / speculative draft stays on the primary model.
 
-See § Token Optimization above.
+#### Policy rewrite model downgrade
+
+When the critic triggers a revision on soft violations, the policy `rewrite` at cycle 2+ uses a configurable model
+(`MORALSTACK_POLICY_REWRITE_MODEL`). If unset or empty, the primary `OPENAI_MODEL` is used (backward compatible). A
+lighter default (for example `gpt-4.1-nano` in `.env.template`) reduces rewrite latency because the call runs under
+explicit critic guidance and constrained-generation instructions; speculative first-pass generation remains on the
+primary model for baseline quality. To disable the split, set `MORALSTACK_POLICY_REWRITE_MODEL` to the same value as
+`OPENAI_MODEL`.
+
+In benchmark testing, this optimization reduces rewrite step latency and, combined with
+`gpt-4.1-nano` on the simulator, brings average deliberative latency from ~82s to ~60s
+(~27% reduction) with no measurable compliance degradation (98.8% maintained).
+
+#### Rewrite prompt constraints
+
+To prevent lighter rewrite models from introducing new operational content during revision,
+the rewrite system prompt includes explicit constraints:
+
+- Do not add new examples, scenarios, or operational details not present in the original draft
+- Focus on restructuring and reframing existing content based on critic feedback
+- When feedback requests conceptual focus, remove operational specifics rather than adding new ones
+
+These constraints are appended to the rewrite system prompt regardless of whether it comes from
+the deliberation runner or uses the fallback default. They compensate for the tendency of smaller
+models to "fill" revisions with new specifics rather than restructuring existing content.
 
 ---
 
@@ -304,7 +333,9 @@ strutturato), non un classificatore leggero; i segnali sono semantici (es. `ethi
 ### 3.4 Policy LLM
 
 **Responsibility**: Text generation (responses, revisions, refusals). *[impl]* The Orchestrator uses `generate` for
-draft, `rewrite` for revisions guided by Critic/Hindsight/Simulator/Perspectives, `refuse` for refusals.
+draft, `rewrite` for revisions guided by Critic/Hindsight/Simulator/Perspectives, `refuse` for refusals. Optional env
+`MORALSTACK_POLICY_REWRITE_MODEL` selects the model for `rewrite()` only; `generate()` and `refuse()` use the primary
+`OPENAI_MODEL` (see [Policy rewrite model downgrade](#policy-rewrite-model-downgrade) above).
 
 ```python
 @dataclass
@@ -892,6 +923,10 @@ Refusal text is persisted as an LLM call with `action` containing `"refuse"` (e.
 - Draft generation: ~300ms
 - Quick check: ~100ms
 - Assembly: ~10ms
+
+> **Actual measured performance** (benchmark, 84 questions): fast path average ~10-12s.
+> Target values above reflect aspirational architecture without LLM call latency.
+> Real-world fast path includes speculative generation (~5-8s) plus quick-check (~2-3s).
 
 ---
 

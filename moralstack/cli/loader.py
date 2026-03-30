@@ -163,8 +163,11 @@ class ModuleLoader:
             model=self.config.openai_model,
         )
         modules["policy"] = openai_policy
-        self.load_status["policy"] = f"✓ OpenAI ({self.config.openai_model})"
-        print_colored(f"  ✓ policy: OpenAI ({self.config.openai_model})", "green")
+        policy_display = self.config.openai_model
+        if openai_policy.rewrite_model != openai_policy.model:
+            policy_display = f"{self.config.openai_model} (rewrite: {openai_policy.rewrite_model})"
+        self.load_status["policy"] = f"✓ OpenAI ({policy_display})"
+        print_colored(f"  ✓ policy: OpenAI ({policy_display})", "green")
 
         # Constitution Store (requires openai_api_key)
         from moralstack.constitution.openai_config import OpenAIClientConfig

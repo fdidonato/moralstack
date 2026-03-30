@@ -444,6 +444,23 @@ def _group_calls_into_tiers_and_enrich(calls: list) -> list[list[dict]]:
     all_tiers = time_tiers + merged_seq_tiers
     all_tiers.sort(key=lambda t: min((c.get("started_at") or 0) for c in t))
 
+    # ── Post-merge: collapse adjacent tiers that overlap in time ────────
+    # With full-parallel evaluation (critic||sim||persp) or speculative
+    # overlap (risk||generate), modules from different static vtiers may
+    # actually run concurrently.  Merge them so the UI shows a single
+    # parallel tier instead of misleading sequential steps.
+    if len(all_tiers) > 1:
+        collapsed: list[list[dict]] = [all_tiers[0]]
+        for tier in all_tiers[1:]:
+            prev = collapsed[-1]
+            prev_max_end = max((c.get("started_at") or 0) + (c.get("duration_ms") or 0) for c in prev)
+            tier_min_start = min((c.get("started_at") or 0) for c in tier)
+            if tier_min_start < prev_max_end:
+                prev.extend(tier)
+            else:
+                collapsed.append(tier)
+        all_tiers = collapsed
+
     # ── Enrich with timing info ──────────────────────────────────────────
     processed: list[list[dict]] = []
     for tier in all_tiers:

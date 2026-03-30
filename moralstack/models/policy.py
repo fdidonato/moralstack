@@ -1,24 +1,34 @@
 """
-Policy LLM per MoralStack - OpenAI only.
+Policy LLM for MoralStack — OpenAI only.
 
-Unico provider: OpenAI API. Configurazione centralizzata via variabili d'ambiente:
-- OPENAI_API_KEY (obbligatoria)
+Single provider: OpenAI API. Configuration via environment variables:
+- OPENAI_API_KEY (required)
 - OPENAI_MODEL (default: gpt-4o)
-- OPENAI_BASE_URL (opzionale, per proxy/enterprise)
-- OPENAI_TIMEOUT_MS (opzionale)
-- OPENAI_MAX_RETRIES (opzionale)
-- OPENAI_TEMPERATURE (opzionale, default 0.7)
+- MORALSTACK_POLICY_REWRITE_MODEL (optional; deliberative rewrite at cycle 2+; defaults to OPENAI_MODEL)
+- OPENAI_BASE_URL (optional, for proxy/enterprise)
+- OPENAI_TIMEOUT_MS (optional)
+- OPENAI_MAX_RETRIES (optional)
+- OPENAI_TEMPERATURE (optional, default 0.7)
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
 
 from moralstack.models.base import GenerationConfig, GenerationResult
-from moralstack.utils.openai_params import completion_tokens_param
-from moralstack.utils.provider_errors import classify_provider_error, sleep_with_backoff
+from moralstack.utils.openai_params import (
+    completion_tokens_param,
+    supports_predicted_output,
+)
+from moralstack.utils.provider_errors import (
+    classify_provider_error,
+    sleep_with_backoff,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def _get_openai_config(
@@ -29,8 +39,8 @@ def _get_openai_config(
     api_key = (api_key_override or os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
         raise ValueError(
-            "OPENAI_API_KEY non impostata. Imposta la variabile d'ambiente OPENAI_API_KEY "
-            "o usa --openai-key da riga di comando. Esempio: export OPENAI_API_KEY=sk-..."
+            "OPENAI_API_KEY is not set. Set the environment variable OPENAI_API_KEY "
+            "or pass --openai-key from the command line. Example: export OPENAI_API_KEY=sk-..."
         )
     base_url = os.getenv("OPENAI_BASE_URL") or None
     timeout_ms_env = os.getenv("OPENAI_TIMEOUT_MS")
@@ -39,6 +49,8 @@ def _get_openai_config(
     model = model_override or os.getenv("OPENAI_MODEL", "gpt-4o")
     temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
     top_p = float(os.getenv("OPENAI_TOP_P", "0.9"))
+    rewrite_raw = os.getenv("MORALSTACK_POLICY_REWRITE_MODEL")
+    rewrite_model = rewrite_raw.strip() if rewrite_raw and rewrite_raw.strip() else None
     return OpenAIPolicyConfig(
         api_key=api_key,
         base_url=base_url,
@@ -47,6 +59,7 @@ def _get_openai_config(
         model=model,
         temperature=temperature,
         top_p=top_p,
+        rewrite_model=rewrite_model,
     )
 
 
@@ -64,6 +77,7 @@ class OpenAIPolicyConfig:
     max_retries: int | None = None
     temperature: float | None = None
     top_p: float | None = None
+    rewrite_model: str | None = None
 
 
 class OpenAIPolicy:
@@ -104,6 +118,7 @@ class OpenAIPolicy:
         final_max_retries = config.max_retries if config and config.max_retries is not None else env_cfg.max_retries
         final_temperature = config.temperature if config and config.temperature is not None else env_cfg.temperature
         final_top_p = config.top_p if config and config.top_p is not None else env_cfg.top_p
+        final_rewrite_model = config.rewrite_model if config and config.rewrite_model is not None else env_cfg.rewrite_model
 
         # Override espliciti da parametri __init__ (sovrascrivono tutto)
         if api_key is not None:
@@ -119,6 +134,7 @@ class OpenAIPolicy:
 
         self.api_key = final_api_key
         self.model = final_model
+        self._rewrite_model = final_rewrite_model if final_rewrite_model is not None else final_model
         self._timeout = (final_timeout_ms / 1000.0) if final_timeout_ms is not None else 60.0
         self._max_retries = final_max_retries if final_max_retries is not None else 3
         self._default_temperature = final_temperature if final_temperature is not None else 0.7
@@ -127,13 +143,18 @@ class OpenAIPolicy:
         try:
             import openai
         except ImportError:
-            raise ImportError("Il client OpenAI è richiesto. Installa con: pip install openai")
+            raise ImportError("The OpenAI client is required. Install with: pip install openai")
 
         kwargs: dict[str, Any] = {"api_key": self.api_key}
         if final_base_url:
             kwargs["base_url"] = final_base_url
         self.client = openai.OpenAI(**kwargs)
         self._cost_tracker: Any = None
+
+    @property
+    def rewrite_model(self) -> str:
+        """Effective model for `rewrite()` (may differ from `model` when env is set)."""
+        return self._rewrite_model
 
     def set_cost_tracker(self, tracker: Any) -> None:
         """Imposta un TokenCostTracker per tracciare i costi delle chiamate."""
@@ -146,26 +167,42 @@ class OpenAIPolicy:
         max_tokens: int = 1024,
         top_p: float | None = None,
         response_format: Any = None,
+        prediction: dict[str, str] | None = None,
+        model_override: str | None = None,
     ) -> tuple[str, int, str]:
         """
-        Chiamata completions con retry su errori transient (429/503/timeout).
-        Ritorna (text, tokens_used, finish_reason). Usa classifier e backoff con jitter.
+        Completions call with retry on transient errors (429/503/timeout).
+        Returns (text, tokens_used, finish_reason). Uses classifier and jittered backoff.
+
+        Args:
+            prediction: Optional predicted output for speculative decoding.
+                Expected format: ``{"type": "content", "content": "..."}``
+                Only applied when the current model supports the feature.
+            model_override: If set, used instead of ``self.model`` for this call.
         """
+        effective_model = model_override or self.model
         temp = temperature if temperature is not None else self._default_temperature
         top_p_val = top_p if top_p is not None else self._default_top_p
+        use_prediction = prediction is not None and supports_predicted_output(effective_model or "")
+        # prediction and response_format are mutually exclusive in
+        # the OpenAI API; prefer response_format (structural guarantee)
+        if use_prediction and response_format is not None:
+            use_prediction = False
         last_error: Exception | None = None
         for attempt in range(self._max_retries):
             try:
                 kwargs: dict[str, Any] = {
-                    "model": self.model,
+                    "model": effective_model,
                     "messages": messages,
                     "temperature": temp,
                     "top_p": top_p_val,
                     "timeout": self._timeout,
                 }
-                kwargs.update(completion_tokens_param(self.model, max_tokens))
+                kwargs.update(completion_tokens_param(effective_model, max_tokens))
                 if response_format is not None:
                     kwargs["response_format"] = response_format
+                if use_prediction:
+                    kwargs["prediction"] = prediction
                 response = self.client.chat.completions.create(**kwargs)
                 choice = response.choices[0]
                 text = (choice.message.content or "").strip()
@@ -177,7 +214,7 @@ class OpenAIPolicy:
                     prompt_tokens = int(tokens * 0.7) if tokens else 0
                     completion_tokens = tokens - prompt_tokens if tokens else 0
                 if self._cost_tracker is not None and hasattr(self._cost_tracker, "add_call"):
-                    self._cost_tracker.add_call(self.model, prompt_tokens, completion_tokens)
+                    self._cost_tracker.add_call(effective_model, prompt_tokens, completion_tokens)
                 reason = choice.finish_reason or "stop"
                 return text, tokens, reason
             except Exception as e:
@@ -198,8 +235,18 @@ class OpenAIPolicy:
         prompt: str,
         system: str = "",
         config: GenerationConfig | None = None,
+        prediction: dict[str, str] | None = None,
+        model_override: str | None = None,
     ) -> GenerationResult:
-        """Genera risposta al prompt."""
+        """Generate a response for the prompt.
+
+        Args:
+            prediction: Optional predicted output for speculative decoding.
+                When provided and the model supports it, the API uses
+                speculative decoding to produce faster responses when the
+                output is expected to be similar to the prediction text.
+            model_override: If set, used instead of the primary policy model for this call.
+        """
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -208,13 +255,21 @@ class OpenAIPolicy:
         max_tokens = 1024
         temperature = self._default_temperature
         top_p = self._default_top_p
+        response_format = None
         if config is not None:
             max_tokens = getattr(config, "max_tokens", max_tokens)
             temperature = getattr(config, "temperature", temperature)
             top_p = getattr(config, "top_p", top_p)
+            response_format = getattr(config, "response_format", None)
 
         text, tokens_used, finish_reason = self._complete(
-            messages, temperature=temperature, max_tokens=max_tokens, top_p=top_p
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            prediction=prediction,
+            response_format=response_format,
+            model_override=model_override,
         )
         return GenerationResult(
             text=text,
@@ -233,26 +288,59 @@ class OpenAIPolicy:
         system: str = "",
         config: GenerationConfig | None = None,
     ) -> GenerationResult:
-        """Riscrive una bozza in base al feedback."""
+        """Riscrive una bozza in base al feedback.
+
+        Uses OpenAI predicted outputs (speculative decoding) when the model
+        supports it: the existing draft is provided as a prediction hint so
+        that unchanged portions are generated significantly faster.
+        """
         rewrite_prompt = (
             f"ORIGINAL REQUEST:\n{prompt}\n\n"
             f"CURRENT DRAFT:\n{draft}\n\n"
             f"REVISION FEEDBACK:\n{guidance}\n\n"
             "Revise the response incorporating the feedback above. "
-            "IMPORTANT: Maintain or improve the depth, structure, and multiple perspectives. "
+            "IMPORTANT: Maintain or improve the depth, structure, "
+            "and multiple perspectives. "
             "Use numbered lists and clear sections when appropriate. "
             "Keep the response comprehensive and well-reasoned. "
             "Output ONLY the revised response, no additional commentary."
         )
         rewrite_system = system or (
-            "You are an assistant that revises responses based on feedback. "
-            "When revising, MAINTAIN or IMPROVE the depth and structure of the response. "
-            "Continue to present multiple perspectives and balanced analysis. "
+            "You are an assistant that revises responses based on "
+            "feedback. "
+            "When revising, MAINTAIN or IMPROVE the depth and "
+            "structure of the response. "
+            "Continue to present multiple perspectives and balanced "
+            "analysis. "
             "Use numbered lists and clear organization. "
-            "Incorporate the feedback while keeping the response comprehensive and well-reasoned. "
+            "Incorporate the feedback while keeping the response "
+            "comprehensive and well-reasoned. "
             "Respond in the SAME LANGUAGE as the original user request."
         )
-        return self.generate(rewrite_prompt, system=rewrite_system, config=config)
+
+        # Append constraints regardless of source
+        rewrite_system += (
+            "REWRITE CONSTRAINTS:\n"
+            "- Do NOT add new examples, scenarios, or operational details "
+            "not present in the original draft.\n"
+            "- Focus on restructuring, deepening, and reframing the EXISTING "
+            "content based on the feedback.\n"
+            "- When feedback says to focus on narrative or conceptual aspects, "
+            "REMOVE operational specifics rather than adding new ones.\n"
+        )
+        draft_prediction = {"type": "content", "content": draft} if draft else None
+        logger.info(
+            "policy_rewrite using model=%s (primary=%s)",
+            self._rewrite_model,
+            self.model,
+        )
+        return self.generate(
+            rewrite_prompt,
+            system=rewrite_system,
+            config=config,
+            prediction=draft_prediction,
+            model_override=self._rewrite_model,
+        )
 
     def refuse(
         self,
@@ -298,7 +386,7 @@ class OpenAIPolicy:
             "Provide deep reasoning and helpful, specific alternatives. "
         )
         if language and str(language).strip():
-            refuse_system += f"CRITICAL: You MUST respond entirely in {language.strip()}. " "Do not add translations."
+            refuse_system += f"CRITICAL: You MUST respond entirely in {language.strip()}. Do not add translations."
         else:
             refuse_system += "Always respond in the SAME LANGUAGE as the user's request."
         return self.generate(refuse_prompt, system=refuse_system, config=config)

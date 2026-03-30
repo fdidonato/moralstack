@@ -12,6 +12,10 @@ from moralstack.models.delib_context import DelibContext
 # Costante standard per chiusura prompt JSON
 OUTPUT_JSON_ONLY = "Output ONLY valid JSON."
 
+# Prompt-cache layout (FULL prompts): longest stable instruction/schema blocks MUST come first in the
+# string sent to the provider; per-request fields (request, draft, risk) MUST come last so identical
+# prefixes can hit automatic prompt caches (e.g. OpenAI prompt caching on repeated long prefixes).
+
 
 class ThinContextSections(TypedDict):
     """Sezioni contesto per thin mode (summary, key_points, risk_signals, change_log)."""
