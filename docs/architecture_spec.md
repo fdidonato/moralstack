@@ -255,7 +255,7 @@ To reduce tokens and latency, the deliberative cycle supports:
 
 When the critic triggers a revision on soft violations, the policy `rewrite` at cycle 2+ uses a configurable model
 (`MORALSTACK_POLICY_REWRITE_MODEL`). If unset or empty, the primary `OPENAI_MODEL` is used (backward compatible). A
-lighter default (for example `gpt-4o-mini` in `.env.template`) reduces rewrite latency because the call runs under
+lighter default (for example `gpt-4.1-nano` in `.env.template`) reduces rewrite latency because the call runs under
 explicit critic guidance and constrained-generation instructions; speculative first-pass generation remains on the
 primary model for baseline quality. To disable the split, set `MORALSTACK_POLICY_REWRITE_MODEL` to the same value as
 `OPENAI_MODEL`.

@@ -180,7 +180,7 @@ Environment is loaded via `moralstack/utils/env_loader.py`.
 Key variables:
 
 - `OPENAI_MODEL` (default `gpt-4o`)
-- `MORALSTACK_POLICY_REWRITE_MODEL` (optional; model for deliberative `rewrite()` at cycle 2+; if unset, same as `OPENAI_MODEL`. `.env.template` suggests `gpt-4o-mini` for lower rewrite latency.)
+- `MORALSTACK_POLICY_REWRITE_MODEL` (optional; model for deliberative `rewrite()` at cycle 2+; if unset, same as `OPENAI_MODEL`. `.env.template` sets `gpt-4.1-nano` for lower rewrite latency.)
 - `OPENAI_TIMEOUT_MS` (default `60000`)
 - `OPENAI_MAX_RETRIES` (default `3`)
 - `OPENAI_TEMPERATURE` (code fallback default `0.7`; `.env.template` starter value `0.1`)
@@ -196,7 +196,7 @@ Default models by component (each can be overridden via its env var; see `INSTAL
 | Component | Default model | Env variable |
 |-----------|---------------|--------------|
 | Policy (generation) | gpt-4o | `OPENAI_MODEL` |
-| Policy (rewrite) | same as primary, or `gpt-4o-mini` in `.env.template` | `MORALSTACK_POLICY_REWRITE_MODEL` |
+| Policy (rewrite) | same as primary, or `gpt-4.1-nano` in `.env.template` | `MORALSTACK_POLICY_REWRITE_MODEL` |
 | Risk estimator | follows `OPENAI_MODEL` unless set | `MORALSTACK_RISK_MODEL` |
 | Critic | follows `OPENAI_MODEL` unless set | `MORALSTACK_CRITIC_MODEL` |
 | Simulator | follows `OPENAI_MODEL` unless set | `MORALSTACK_SIMULATOR_MODEL` |
@@ -253,7 +253,7 @@ Open [http://localhost:8765/](http://localhost:8765/) (or `MORALSTACK_UI_PORT`).
 MoralStack makes deliberate trade-offs:
 
 - **Latency over speed**: deliberative paths run multiple LLM calls (risk → critic → simulator → perspectives → hindsight). Average response time is ~70s vs ~10s for raw GPT-4o. This is a design choice — governance takes time.
-- **Multi-model cost**: a single deliberative request makes 7-9 LLM calls. We use `gpt-4o-mini` for lower-stakes modules (simulator, perspectives) to reduce cost.
+- **Multi-model cost**: a single deliberative request makes 7-9 LLM calls. Example profiles: `.env.minimal` uses `gpt-4.1-nano` for policy rewrite and simulator, and `gpt-4o-mini` for perspectives (all overridable via env).
 - **Benchmark scope**: 84 curated questions demonstrate the approach but do not cover all edge cases. We recommend running your own evaluations on domain-specific inputs.
 - **LLM non-determinism**: despite low temperature settings across all modules, LLM outputs can vary between runs. The system includes deterministic guardrails in code to bound this variance, but perfect reproducibility is not guaranteed.
 

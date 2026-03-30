@@ -82,7 +82,7 @@ draft on the primary model while allowing a lighter model for deliberative revis
 |----------|---------|
 | `OPENAI_API_KEY` | Required API key |
 | `OPENAI_MODEL` | Primary model for `generate()` and `refuse()` |
-| `MORALSTACK_POLICY_REWRITE_MODEL` | Optional; model for `rewrite()` (deliberative cycle 2+). Defaults to `OPENAI_MODEL` when unset. |
+| `MORALSTACK_POLICY_REWRITE_MODEL` | Optional; model for `rewrite()` (deliberative cycle 2+). Defaults to `OPENAI_MODEL` when unset. `.env.template` sets `gpt-4.1-nano` when you copy that file. |
 
 See also `.env.template` and `INSTALL.md`.
 
