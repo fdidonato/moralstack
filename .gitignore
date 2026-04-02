@@ -25,10 +25,9 @@ env/
 
 # Logs & reports
 logs/
-reports/
-# Exception: version project reports (root-level reports/)
-!/reports/
-!/reports/**
+# Only ignore a top-level `reports/` output dir. A bare `reports/` pattern matches
+# any directory named `reports` anywhere (including `moralstack/reports/`).
+/reports/
 .debug/
 *.pyc
 
