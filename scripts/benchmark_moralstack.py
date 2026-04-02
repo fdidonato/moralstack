@@ -2460,9 +2460,7 @@ class BenchmarkRunner:
                 _snap = ms_meta.get("convergence_snapshot")
                 result.moralstack_convergence_snapshot = _snap if isinstance(_snap, dict) else None
                 if isinstance(_snap, dict):
-                    result.moralstack_early_convergence_considered = bool(
-                        _snap.get("early_convergence_considered", False)
-                    )
+                    result.moralstack_early_convergence_considered = bool(_snap.get("early_convergence_considered", False))
                     result.moralstack_early_convergence_accepted = _snap.get("early_convergence_accepted")
                     result.moralstack_convergence_reason_codes = list(_snap.get("convergence_reason_codes") or [])
                     result.moralstack_perspectives_weighted_approval = (
@@ -2471,13 +2469,10 @@ class BenchmarkRunner:
                         else None
                     )
                     result.moralstack_semantic_expected_harm = (
-                        float(_snap["semantic_expected_harm"])
-                        if _snap.get("semantic_expected_harm") is not None
-                        else None
+                        float(_snap["semantic_expected_harm"]) if _snap.get("semantic_expected_harm") is not None else None
                     )
-                    result.moralstack_critic_revision_guidance_present = (
-                        "CRITIC_REVISION_GUIDANCE_PRESENT"
-                        in (_snap.get("convergence_reason_codes") or [])
+                    result.moralstack_critic_revision_guidance_present = "CRITIC_REVISION_GUIDANCE_PRESENT" in (
+                        _snap.get("convergence_reason_codes") or []
                     )
                 result.moralstack_risk_category = str(ms_meta.get("risk_category") or "")
                 result.moralstack_risk_score = float(ms_meta.get("risk_score") or 0.0)

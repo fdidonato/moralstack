@@ -142,8 +142,7 @@ def _risk_posture_blocks_cycle1_early_stop(
     if float(risk_estimation.score) >= config.risk_thresholds.medium:
         return True, "HIGH_RISK_REQUIRE_SECOND_CYCLE"
     if bool(getattr(risk_estimation, "requested_instructions", False)) and (
-        rc_enum
-        in (RiskCategory.SENSITIVE, RiskCategory.POTENTIALLY_HARMFUL, RiskCategory.CLEARLY_HARMFUL)
+        rc_enum in (RiskCategory.SENSITIVE, RiskCategory.POTENTIALLY_HARMFUL, RiskCategory.CLEARLY_HARMFUL)
         or rc_val in ("sensitive", "potentially_harmful", "clearly_harmful")
     ):
         return True, "HIGH_RISK_REQUIRE_SECOND_CYCLE"
@@ -287,13 +286,11 @@ def _evaluate_cycle1_early_convergence(
         "weighted_approval": w_ap,
         "violations_count": 0,
         "violated_hard": False,
-        "semantic_expected_harm": float(getattr(state.simulations[-1], "semantic_expected_harm", 0.0) or 0.0)
-        if state.simulations
-        else None,
+        "semantic_expected_harm": (
+            float(getattr(state.simulations[-1], "semantic_expected_harm", 0.0) or 0.0) if state.simulations else None
+        ),
     }
-    sem_for_log = (
-        float(getattr(state.simulations[-1], "semantic_expected_harm", 0.0) or 0.0) if state.simulations else 0.0
-    )
+    sem_for_log = float(getattr(state.simulations[-1], "semantic_expected_harm", 0.0) or 0.0) if state.simulations else 0.0
     _LOG.info(
         "cycle1_early_convergence ACCEPTED: weighted_approval=%.3f semantic_harm=%.3f reason_codes=%s",
         w_ap,

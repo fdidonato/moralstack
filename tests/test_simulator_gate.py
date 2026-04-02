@@ -199,4 +199,3 @@ def test_gating_view_model_from_traces():
     assert len(rows) == 1
     assert rows[0].get("status") == "skipped"
     assert rows[0].get("carry_forward") is True
-

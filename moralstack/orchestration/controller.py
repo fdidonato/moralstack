@@ -272,11 +272,7 @@ class OrchestrationController:
         """
         try:
             rc = getattr(risk_proto, "risk_category", None)
-            rc_str = (
-                getattr(rc, "value", str(rc or "")).strip().lower()
-                if rc is not None
-                else ""
-            )
+            rc_str = getattr(rc, "value", str(rc or "")).strip().lower() if rc is not None else ""
             op = getattr(risk_proto, "operational_risk", None)
             op_str = str(getattr(op, "value", op) or "").strip()
             rpa = getattr(risk_proto, "risk_policy_action", None)
@@ -1320,9 +1316,7 @@ class OrchestrationController:
                     trace,
                 )
             if route == "benign":
-                speculative_draft = (
-                    spec_handle.join_for_consumer("benign", "benign_fast_path") if spec_handle else None
-                )
+                speculative_draft = spec_handle.join_for_consumer("benign", "benign_fast_path") if spec_handle else None
                 return self._route_benign(
                     request,
                     decision,
@@ -1359,9 +1353,7 @@ class OrchestrationController:
                 )
 
             if route == "fast_path":
-                speculative_draft_fp = (
-                    spec_handle.join_for_consumer("fast_path", "run_fast_path") if spec_handle else None
-                )
+                speculative_draft_fp = spec_handle.join_for_consumer("fast_path", "run_fast_path") if spec_handle else None
                 return self._route_fast_path(
                     request,
                     decision,

@@ -110,8 +110,7 @@ def _build_unfiltered_guidance(state: DeliberationState, has_critical: bool) -> 
     guidance_parts: list[str] = []
     if not has_critical:
         guidance_parts.append(
-            "[BALANCE] Maintain or improve the balance between pros and cons; "
-            "do not add only caveats or disclaimers."
+            "[BALANCE] Maintain or improve the balance between pros and cons; " "do not add only caveats or disclaimers."
         )
         guidance_parts.append(
             "[BALANCE] Present both sides of the argument; prefer improving "
@@ -250,8 +249,7 @@ def build_aggregated_guidance(
     if guidance_parts and not has_critical:
         guidance_parts.insert(
             0,
-            "[BALANCE] Maintain or improve the balance between pros and cons; "
-            "do not add only caveats or disclaimers.",
+            "[BALANCE] Maintain or improve the balance between pros and cons; " "do not add only caveats or disclaimers.",
         )
         guidance_parts.insert(
             1,

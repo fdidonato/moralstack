@@ -36,12 +36,7 @@ def _markdown_early_convergence_section(conv: dict[str, Any] | None) -> str:
     codes = conv.get("cycle1_convergence_reason_codes") or []
     w_ap = conv.get("cycle1_perspectives_weighted_approval")
     sem = conv.get("cycle1_semantic_expected_harm")
-    if (
-        considered is not True
-        and not codes
-        and w_ap is None
-        and sem is None
-    ):
+    if considered is not True and not codes and w_ap is None and sem is None:
         return ""
     lines = [
         "| Field | Value |",
@@ -138,9 +133,7 @@ def _benchmark_question_observability_block(r: dict[str, Any], run_id: str) -> s
     snap = r.get("moralstack_convergence_snapshot")
     if isinstance(snap, dict) and snap:
         chunks.append(
-            "#### Convergence evaluation snapshot\n\n```json\n"
-            + json.dumps(snap, indent=2, ensure_ascii=False)
-            + "\n```\n"
+            "#### Convergence evaluation snapshot\n\n```json\n" + json.dumps(snap, indent=2, ensure_ascii=False) + "\n```\n"
         )
     req = (r.get("moralstack_request_id") or "").strip()
     if run_id and req:
@@ -439,9 +432,7 @@ def export_request_markdown(run_id: str, request_id: str) -> str:
                 md += "### Guidance filter & rewrite\n\n" + guidance_md + "\n"
         if es.get("risk_assessment") or orch or vm.get("cycle_cards"):
             md += "\n\n---\n\n## Runtime observability (structured JSON)\n\n"
-            md += (
-                "> Full execution strategy snapshot for tooling; mirrors request detail UI data.\n\n"
-            )
+            md += "> Full execution strategy snapshot for tooling; mirrors request detail UI data.\n\n"
             md += "```json\n"
             md += json.dumps(
                 {
@@ -829,9 +820,7 @@ MoralStack:   [{ms_avg_fill}{ms_avg_empty}] {moralstack_avg:.1f}
         ]
         for r in results:
             if r.get("error"):
-                lines.append(
-                    f"| {r.get('question_id', '?')} | - | ERROR | - | - | - | - | - |"
-                )
+                lines.append(f"| {r.get('question_id', '?')} | - | ERROR | - | - | - | - | - |")
             else:
                 exp = (r.get("expected_action") or "REFUSE").strip().upper()
                 fa = (r.get("moralstack_final_action") or "").strip().upper()

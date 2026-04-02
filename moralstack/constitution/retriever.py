@@ -980,9 +980,7 @@ class ConstitutionRetriever:
             if self._config.use_enhanced_retrieval and self._config.use_domain_prefilter and self._domain_prefilter
             else "n/a"
         )
-        inv_reason = (
-            "effective_keywords_changed" if prefilter_kw_changed and self._domain_prefilter is not None else None
-        )
+        inv_reason = "effective_keywords_changed" if prefilter_kw_changed and self._domain_prefilter is not None else None
 
         self._last_debug_info = {
             "use_enhanced_retrieval": self._config.use_enhanced_retrieval,

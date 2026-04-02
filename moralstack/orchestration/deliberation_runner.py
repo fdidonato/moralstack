@@ -376,9 +376,7 @@ class DeliberationRunner:
         """Trace RELEVANT_PRINCIPLES + orchestration RELEVANT_PRINCIPLES_RETRIEVED (request-scoped retrieval)."""
         relevant = list(request_analysis.relevant_principles)
         principle_ids = [p.id for p in relevant]
-        relevant_principles_detail = [
-            {"id": p.id, "title": p.title or "", "level": p.level or "soft"} for p in relevant
-        ]
+        relevant_principles_detail = [{"id": p.id, "title": p.title or "", "level": p.level or "soft"} for p in relevant]
         retrieval_debug = request_analysis.retrieval_metadata
         record_decision_trace(
             request_id=request_id,
@@ -431,9 +429,7 @@ class DeliberationRunner:
             return
         try:
             relevant = list(request_analysis.relevant_principles)
-            relevant_principles_detail = [
-                {"id": p.id, "title": p.title or "", "level": p.level or "soft"} for p in relevant
-            ]
+            relevant_principles_detail = [{"id": p.id, "title": p.title or "", "level": p.level or "soft"} for p in relevant]
             rd = request_analysis.retrieval_metadata
             reuse_targets = list(self._request_analysis_reuse_targets)
             rq = DecisionTrace(
@@ -451,8 +447,7 @@ class DeliberationRunner:
                 "prefilter_cache_status": rd.get("prefilter_cache_status"),
                 "prefilter_cache_reason": rd.get("prefilter_cache_invalidation_reason"),
                 "prefilter_keywords_changed": rd.get("prefilter_keywords_changed"),
-                "prefilter_keywords_fingerprint_prefix": rd.get("prefilter_keywords_fingerprint_prefix")
-                or "",
+                "prefilter_keywords_fingerprint_prefix": rd.get("prefilter_keywords_fingerprint_prefix") or "",
                 "parallel_retrieval": True,
                 "request_scoped": True,
                 "retrieval_duration_ms": request_analysis.retrieval_duration_ms,
@@ -1015,12 +1010,7 @@ class DeliberationRunner:
                 executed.append("critic")
             if sim_ran_flag is True:
                 executed.append("simulator")
-            elif (
-                sim_ran_flag is None
-                and state.simulations
-                and self.config.enable_simulation
-                and self.simulator is not None
-            ):
+            elif sim_ran_flag is None and state.simulations and self.config.enable_simulation and self.simulator is not None:
                 executed.append("simulator")
             if state.perspectives:
                 executed.append("perspectives")
@@ -1591,8 +1581,7 @@ class DeliberationRunner:
         if rc_enum is None and rc_val in ("potentially_harmful", "clearly_harmful"):
             return True, "HIGH_RISK_POSTURE_REQUIRE_RUN"
         if bool(getattr(risk_estimation, "requested_instructions", False)) and (
-            rc_enum
-            in (RiskCategory.SENSITIVE, RiskCategory.POTENTIALLY_HARMFUL, RiskCategory.CLEARLY_HARMFUL)
+            rc_enum in (RiskCategory.SENSITIVE, RiskCategory.POTENTIALLY_HARMFUL, RiskCategory.CLEARLY_HARMFUL)
             or rc_val in ("sensitive", "potentially_harmful", "clearly_harmful")
         ):
             return True, "HIGH_RISK_POSTURE_REQUIRE_RUN"
@@ -2019,8 +2008,7 @@ class DeliberationRunner:
         elif rc_enum is None and rc_val in ("potentially_harmful", "clearly_harmful"):
             reason_set.add("HIGH_RISK_POSTURE")
         if req_ins and (
-            rc_enum
-            in (RiskCategory.SENSITIVE, RiskCategory.POTENTIALLY_HARMFUL, RiskCategory.CLEARLY_HARMFUL)
+            rc_enum in (RiskCategory.SENSITIVE, RiskCategory.POTENTIALLY_HARMFUL, RiskCategory.CLEARLY_HARMFUL)
             or rc_val in ("sensitive", "potentially_harmful", "clearly_harmful")
         ):
             reason_set.add("REQUESTED_INSTRUCTIONS_SENSITIVE_POSTURE")

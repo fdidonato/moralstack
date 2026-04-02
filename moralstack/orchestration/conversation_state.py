@@ -82,13 +82,15 @@ class ConversationGovernanceState:
             active_domain=domain if domain is not None else self.active_domain,
             active_overlay=overlay if overlay is not None else self.active_overlay,
             detected_language=detected_language if detected_language is not None else self.detected_language,
-            last_risk_posture_summary=risk_posture_summary
-            if risk_posture_summary is not None
-            else self.last_risk_posture_summary,
+            last_risk_posture_summary=(
+                risk_posture_summary if risk_posture_summary is not None else self.last_risk_posture_summary
+            ),
             principle_shortlist=principle_shortlist if principle_shortlist is not None else self.principle_shortlist,
-            last_hard_constraints_triggered=hard_constraints_triggered
-            if hard_constraints_triggered is not None
-            else self.last_hard_constraints_triggered,
+            last_hard_constraints_triggered=(
+                hard_constraints_triggered
+                if hard_constraints_triggered is not None
+                else self.last_hard_constraints_triggered
+            ),
         )
 
     def to_summary_dict(self) -> dict[str, Any]:

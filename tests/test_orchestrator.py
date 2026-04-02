@@ -1451,9 +1451,7 @@ class TestPersistencePortInjection:
         result = orch.process("Hello")
         assert any(c[0] == "set_request_context" for c in calls)
         assert any(c[0] == "ensure_run_and_upsert_request" for c in calls)
-        _, req_id, prompt, domain, _conv, _turn, _parent = next(
-            c for c in calls if c[0] == "ensure_run_and_upsert_request"
-        )
+        _, req_id, prompt, domain, _conv, _turn, _parent = next(c for c in calls if c[0] == "ensure_run_and_upsert_request")
         assert req_id == result.request_id
         assert prompt == "Hello"
         assert _conv is None and _turn is None and _parent is None

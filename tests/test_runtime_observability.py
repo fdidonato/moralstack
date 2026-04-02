@@ -25,9 +25,7 @@ def test_orchestration_events_table_created(tmp_path, monkeypatch):
     monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "db_only")
     assert init_db(str(tmp_path / "t.db")) is True
     conn = db_module._get_connection(str(tmp_path / "t.db"))
-    row = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='orchestration_events'"
-    ).fetchone()
+    row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='orchestration_events'").fetchone()
     conn.close()
     assert row is not None
 
@@ -101,9 +99,7 @@ def test_build_execution_strategy_speculative_from_events():
 
 
 def test_enrich_llm_call_speculative_used_badge():
-    row = enrich_llm_call_for_ui(
-        {"call_kind": "speculative", "call_outcome": "used", "parsed_summary_json": "{}"}
-    )
+    row = enrich_llm_call_for_ui({"call_kind": "speculative", "call_outcome": "used", "parsed_summary_json": "{}"})
     assert "speculative" in row["semantic_badges"]
     assert "used" in row["semantic_badges"]
 
