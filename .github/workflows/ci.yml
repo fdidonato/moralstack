@@ -18,6 +18,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - run: pip install -e .[dev]
-      - run: black --check .
-      - run: pytest --maxfail=1 --disable-warnings -q
+      # One shell session so `source venv/bin/activate` applies to pip, black, pytest.
+      - name: Install deps and run checks
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ui]"
+          black --check .
+          pytest --maxfail=1 --disable-warnings -q
