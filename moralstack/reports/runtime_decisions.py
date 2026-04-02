@@ -302,21 +302,17 @@ def build_execution_strategy(
                 break
     speculative = _speculative_summary_from_events_and_calls(orchestration_events or [], llm_calls)
     orch = orchestration_events or []
-    rp_retrieved = sum(
-        1 for e in orch if (e.get("event_type") or "").strip().upper() == RELEVANT_PRINCIPLES_RETRIEVED
-    )
+    rp_retrieved = sum(1 for e in orch if (e.get("event_type") or "").strip().upper() == RELEVANT_PRINCIPLES_RETRIEVED)
     rp_reused = sum(1 for e in orch if (e.get("event_type") or "").strip().upper() == RELEVANT_PRINCIPLES_REUSED)
     strat_events = [
         e
         for e in orch
-        if (e.get("event_type") or "").strip().upper()
-        in (PARALLEL_STRATEGY_SELECTED, CRITIC_SHORT_CIRCUIT_TRIGGERED)
+        if (e.get("event_type") or "").strip().upper() in (PARALLEL_STRATEGY_SELECTED, CRITIC_SHORT_CIRCUIT_TRIGGERED)
     ]
     sim_events = [
         e
         for e in orch
-        if (e.get("event_type") or "").strip().upper()
-        in (SIMULATOR_GATE_DECISION, SIMULATOR_EXECUTED, SIMULATOR_SKIPPED)
+        if (e.get("event_type") or "").strip().upper() in (SIMULATOR_GATE_DECISION, SIMULATOR_EXECUTED, SIMULATOR_SKIPPED)
     ]
     return {
         "risk_assessment": risk,
@@ -459,13 +455,10 @@ def build_retrieval_reuse_summary(
     reuse_hits = sum(
         1
         for e in evs
-        if (e.get("event_type") or "").strip().upper()
-        in ("RELEVANT_PRINCIPLES_REUSED", "DOMAIN_PREFILTER_CACHE_HIT")
+        if (e.get("event_type") or "").strip().upper() in ("RELEVANT_PRINCIPLES_REUSED", "DOMAIN_PREFILTER_CACHE_HIT")
     )
     prefilter_invalidations = sum(
-        1
-        for e in evs
-        if (e.get("event_type") or "").strip().upper() == "DOMAIN_PREFILTER_CACHE_INVALIDATED"
+        1 for e in evs if (e.get("event_type") or "").strip().upper() == "DOMAIN_PREFILTER_CACHE_INVALIDATED"
     )
     return {
         "context": ctx,
