@@ -27,6 +27,7 @@ from moralstack.models.risk import (
     RiskEstimation,
     RiskPolicyAction,
 )
+from moralstack.orchestration.conversation_state import ConversationGovernanceState
 from moralstack.orchestration.decision_logger import log_decision_explanation
 from moralstack.orchestration.decision_service import decide_action
 from moralstack.orchestration.deliberation_runner import DeliberationRunner
@@ -37,6 +38,11 @@ from moralstack.orchestration.diagnostics import (
 )
 from moralstack.orchestration.domain_exclusion import generate_domain_exclusion_response
 from moralstack.orchestration.language_resolver import resolve_prompt_with_language
+from moralstack.orchestration.orchestration_event_taxonomy import (
+    CONVERSATION_CONTEXT_ATTACHED,
+    CONVERSATION_STATE_UPDATED,
+    SPECULATIVE_STARTED,
+)
 from moralstack.orchestration.overlay_policy import (
     OVERLAY_SENSITIVE_RISK_FLOOR,
     apply_risk_floor_if_sensitive,
@@ -53,6 +59,7 @@ from moralstack.orchestration.safe_refusal_generator import (
     _iso_to_language_name,
     generate_llm_safe_refusal,
 )
+from moralstack.orchestration.speculative_overlap import SpeculativeOverlapHandle
 from moralstack.orchestration.trace import Trace
 from moralstack.orchestration.trace_lifecycle import (
     TraceLifecycle,
@@ -83,7 +90,8 @@ from moralstack.orchestration.types import (
 )
 from moralstack.persistence.null import NullPersistence
 from moralstack.persistence.port import PersistencePort
-from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace
+from moralstack.persistence.sink import persist_orchestration_event
+from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace, normalize_trace_fields
 
 _LOG = logging.getLogger(__name__)
 
@@ -181,7 +189,123 @@ class OrchestrationController:
         self._runner.logger = logger
 
     def _attach_trace_and_return(self, result: OrchestratorResult, request: ProcessedRequest) -> OrchestratorResult:
-        return self._diagnostics.attach_trace_and_return(result, request, self.execution_trace)
+        out = self._diagnostics.attach_trace_and_return(result, request, self.execution_trace)
+        self._apply_conversation_metadata_to_result(out, request)
+        return out
+
+    def _apply_conversation_metadata_to_result(self, result: OrchestratorResult, request: ProcessedRequest) -> None:
+        """Stamp optional conversation linkage and updated governance state (no routing impact)."""
+        ctx = getattr(self, "_conversation_process_ctx", None)
+        if not isinstance(ctx, dict):
+            return
+        cid = ctx.get("conversation_id")
+        tid = ctx.get("turn_index")
+        pid = ctx.get("parent_request_id")
+        state_in = ctx.get("conversation_state")
+        if cid is not None:
+            result.conversation_id = cid
+        if tid is not None:
+            result.turn_index = tid
+        if pid is not None:
+            result.parent_request_id = pid
+        if state_in is not None:
+            result.conversation_state_provided = True
+            base = state_in if isinstance(state_in, ConversationGovernanceState) else ConversationGovernanceState()
+            merged = base.with_turn_metadata(
+                conversation_id=cid if cid is not None else base.conversation_id,
+                turn_index=tid if tid is not None else base.turn_index,
+            )
+            dom = request.get_domain() if hasattr(request, "get_domain") else None
+            result.conversation_governance_state_out = merged.update_from_processing_result(
+                request_id=getattr(request, "request_id", "") or "",
+                domain=dom,
+            )
+            result.conversation_state_updated = True
+        if ctx.get("_conversation_events_emitted"):
+            return
+        ctx["_conversation_events_emitted"] = True
+        has_link = cid is not None or tid is not None or pid is not None or state_in is not None
+        if has_link:
+            try:
+                persist_orchestration_event(
+                    cycle=0,
+                    stage="orchestration",
+                    component="conversation",
+                    event_type=CONVERSATION_CONTEXT_ATTACHED,
+                    decision="attached",
+                    status="ok",
+                    sequence=0,
+                    payload={
+                        "conversation_id": cid,
+                        "turn_index": tid,
+                        "parent_request_id": pid,
+                        "conversation_state_provided": state_in is not None,
+                    },
+                )
+            except Exception:
+                pass
+        if result.conversation_state_updated and result.conversation_governance_state_out is not None:
+            try:
+                persist_orchestration_event(
+                    cycle=0,
+                    stage="orchestration",
+                    component="conversation",
+                    event_type=CONVERSATION_STATE_UPDATED,
+                    decision="updated",
+                    status="ok",
+                    sequence=1,
+                    payload={
+                        "summary": result.conversation_governance_state_out.to_summary_dict(),
+                    },
+                )
+            except Exception:
+                pass
+
+    def _emit_risk_assessment_trace(
+        self,
+        request_id: str,
+        risk_proto: RiskEstimationProtocol,
+        risk_score: float,
+    ) -> None:
+        """
+        Observability-only: persist RISK_ASSESSMENT decision trace after calibration (no routing impact).
+        """
+        try:
+            rc = getattr(risk_proto, "risk_category", None)
+            rc_str = (
+                getattr(rc, "value", str(rc or "")).strip().lower()
+                if rc is not None
+                else ""
+            )
+            op = getattr(risk_proto, "operational_risk", None)
+            op_str = str(getattr(op, "value", op) or "").strip()
+            rpa = getattr(risk_proto, "risk_policy_action", None)
+            rpa_str = str(getattr(rpa, "value", rpa) or "").strip()
+            sigs = list(getattr(risk_proto, "semantic_signals", None) or [])
+            dom = getattr(risk_proto, "detected_domain", None)
+            dom_str = (str(dom).strip() if dom is not None else "") or ""
+            em = str(getattr(risk_proto, "estimation_mode", "") or "").strip()
+            dt = DecisionTrace(
+                request_id=request_id,
+                stage="RISK_ASSESSMENT",
+                sequence=-10,
+                risk_score=float(risk_score),
+                risk_category=rc_str,
+                operational_risk=op_str,
+                intent_to_harm=bool(getattr(risk_proto, "intent_to_harm", False)),
+                requested_instructions=bool(getattr(risk_proto, "requested_instructions", False)),
+                intent_operational=bool(getattr(risk_proto, "intent_operational", False)),
+                estimation_mode=em,
+            )
+            dt.stage_payload = {
+                "risk_policy_action": rpa_str,
+                "detected_domain": dom_str or None,
+                "activated_signals": sigs,
+            }
+            normalize_trace_fields(dt)
+            append_decision_trace(dt)
+        except Exception:
+            _LOG.debug("emit RISK_ASSESSMENT trace failed", exc_info=True)
 
     def _estimate_risk(self, request: ProcessedRequest) -> RiskEstimation:
         if self.risk_estimator is None:
@@ -210,15 +334,17 @@ class OrchestrationController:
     def _speculative_generate(
         self,
         request: ProcessedRequest,
-    ) -> str | None:
+    ) -> tuple[str | None, dict[str, Any] | None]:
         """Generate a speculative draft in parallel with risk estimation.
 
         Uses the base system prompt and fallback language detection (the risk
-        estimator's ``detected_language`` is not available yet).  Returns the
-        output-protected draft text, or ``None`` on any failure.
+        estimator's ``detected_language`` is not available yet).
+
+        Returns ``(draft_text_or_None, persist_kwargs_or_None)``. Persistence is deferred
+        until join/abandon so ``call_outcome`` (used/discarded) can be set correctly.
         """
         if self.policy is None:
-            return None
+            return None, None
         try:
             prompt_text = resolve_prompt_with_language(
                 request.prompt,
@@ -240,39 +366,39 @@ class OrchestrationController:
             system_used = getattr(result, "system_used", None) or self._protected_system_prompt
             policy_model = getattr(self.policy, "model", None)
             policy_model_str = str(policy_model) if policy_model is not None else None
-            record_llm_call(
-                self.logger,
-                None,
-                {
-                    "cycle": 0,
-                    "phase": "speculative_generate",
-                    "module": "policy",
-                    "action": "generate (speculative)",
-                    "model": policy_model_str,
-                    "started_at": int(start * 1000),
-                    "duration_ms": elapsed,
-                    "prompt": prompt_used,
-                    "system_prompt": system_used or "",
-                    "raw_response": response_text,
-                    "sequence_in_cycle": 0,
-                },
-            )
-            return protection.cleaned
+            persist_kwargs: dict[str, Any] = {
+                "cycle": 0,
+                "phase": "speculative_generate",
+                "module": "policy",
+                "action": "generate (speculative)",
+                "model": policy_model_str,
+                "started_at": int(start * 1000),
+                "duration_ms": elapsed,
+                "prompt": prompt_used,
+                "system_prompt": system_used or "",
+                "raw_response": response_text,
+                "sequence_in_cycle": 0,
+                "call_kind": "speculative",
+            }
+            return protection.cleaned, persist_kwargs
         except Exception as e:
             _LOG.warning(
                 "Speculative generation failed, will regenerate: %s",
                 e,
             )
-            return None
+            return None, None
 
     def _run_speculative_overlap(
         self,
         request: ProcessedRequest,
-    ) -> tuple[str | None, RiskEstimation]:
+    ) -> SpeculativeOverlapHandle:
         """Run risk estimation and speculative draft generation in parallel.
 
-        Returns ``(speculative_draft_or_None, risk_estimation)``.
-        If risk estimation raises, the exception propagates normally.
+        Waits only for risk estimation before returning. Speculative work continues
+        in the background; join via ``SpeculativeOverlapHandle.join_for_consumer`` or
+        ``abandon`` when the route does not consume the draft.
+
+        If risk estimation raises, the exception propagates after shutting down the executor.
 
         Uses ``contextvars.copy_context()`` so that persistence context
         (run_id, request_id, cycle) is available inside the worker threads.
@@ -284,18 +410,42 @@ class OrchestrationController:
         ctx_spec = contextvars.copy_context()
 
         executor = ThreadPoolExecutor(max_workers=2)
+        spec_started_at_ms = int(time.time() * 1000)
+        risk_fut = executor.submit(ctx_risk.run, self._estimate_risk, request)
+        spec_fut = executor.submit(
+            ctx_spec.run,
+            self._speculative_generate,
+            request,
+        )
         try:
-            risk_fut = executor.submit(ctx_risk.run, self._estimate_risk, request)
-            spec_fut = executor.submit(
-                ctx_spec.run,
-                self._speculative_generate,
-                request,
+            persist_orchestration_event(
+                stage="orchestration",
+                component="speculative",
+                event_type=SPECULATIVE_STARTED,
+                decision="started",
+                status="ok",
+                started_at=spec_started_at_ms,
+                payload={
+                    "speculative_mode": True,
+                    "model": str(getattr(self.policy, "model", "") or ""),
+                },
             )
+        except Exception:
+            _LOG.debug("emit SPECULATIVE_STARTED failed", exc_info=True)
+        try:
             risk_estimation = risk_fut.result()
-            speculative_draft = spec_fut.result()
-            return speculative_draft, risk_estimation
-        finally:
-            executor.shutdown(wait=False)
+        except Exception:
+            try:
+                executor.shutdown(wait=False)
+            except Exception:
+                pass
+            raise
+        return SpeculativeOverlapHandle(
+            risk_estimation=risk_estimation,
+            spec_future=spec_fut,
+            executor=executor,
+            spec_started_at_ms=spec_started_at_ms,
+        )
 
     def _handle_timeout(self, request: ProcessedRequest, error_msg: str, start_time: float) -> OrchestratorResult:
         processing_time = int((time.time() - start_time) * 1000)
@@ -628,6 +778,11 @@ class OrchestrationController:
             decision_explanation=explanation,
             speculative_draft=speculative_draft,
         )
+        _fsnap = getattr(result, "convergence_snapshot", None)
+        if isinstance(_fsnap, dict) and request_id:
+            with self._trace_lock:
+                if request_id in self.execution_trace:
+                    self.execution_trace[request_id]["convergence_snapshot"] = dict(_fsnap)
         result.path_taken = "fast"
         fill_trace_from_result(trace, result)
         result.trace = trace
@@ -789,6 +944,12 @@ class OrchestrationController:
             constitution=constitution,
             speculative_draft=speculative_draft,
         )
+        _snap_raw = getattr(state, "_convergence_evaluation_snapshot", None)
+        _convergence_snapshot = dict(_snap_raw) if isinstance(_snap_raw, dict) else None
+        if _convergence_snapshot is not None and request_id:
+            with self._trace_lock:
+                if request_id in self.execution_trace:
+                    self.execution_trace[request_id]["convergence_snapshot"] = _convergence_snapshot
         modules_called: set[str] = set()
         if state.critiques:
             modules_called.add("critic")
@@ -976,6 +1137,7 @@ class OrchestrationController:
             total_cycles=state.cycle,
             converged=outcome.converged,
             errors=list(state.errors) if state.errors else None,
+            convergence_snapshot=_convergence_snapshot,
         )
         fill_trace_from_result(trace, result, modules_called=modules_called)
         result.trace = trace
@@ -987,29 +1149,51 @@ class OrchestrationController:
             lambda r, req: self._attach_trace_and_return(r, req),
         )
 
-    def process(self, request: ProcessedRequest | str) -> OrchestratorResult:
+    def process(
+        self,
+        request: ProcessedRequest | str,
+        *,
+        conversation_id: str | None = None,
+        turn_index: int | None = None,
+        parent_request_id: str | None = None,
+        conversation_state: ConversationGovernanceState | None = None,
+    ) -> OrchestratorResult:
         """
         Entry point principale. Il flusso è governato da decision.path.
         REFUSE/benign/SAFE_COMPLETE fanno early return solo se path != DELIBERATIVE_PATH.
+        Optional conversation_* / conversation_state are persisted for linkage only;
+        they do not change routing or request-level analysis when unset.
         """
         start_time = time.time()
         if isinstance(request, str):
             request = ProcessedRequest(prompt=request)
         request_id = request.request_id
 
+        self._conversation_process_ctx = {
+            "conversation_id": conversation_id,
+            "turn_index": turn_index,
+            "parent_request_id": parent_request_id,
+            "conversation_state": conversation_state,
+            "_conversation_events_emitted": False,
+        }
+
         self._persistence.set_request_context(request_id)
         self._persistence.ensure_run_and_upsert_request(
             request_id=request_id,
             prompt=request.prompt,
             domain=request.get_domain() if hasattr(request, "get_domain") else None,
+            conversation_id=conversation_id,
+            turn_index=turn_index,
+            parent_request_id=parent_request_id,
         )
 
         trace = self._trace_lifecycle.start_trace(request_id)
 
+        spec_handle: SpeculativeOverlapHandle | None = None
         try:
-            speculative_draft: str | None = None
             if self.config.enable_speculative_generation and self.policy is not None:
-                speculative_draft, risk_estimation = self._run_speculative_overlap(request)
+                spec_handle = self._run_speculative_overlap(request)
+                risk_estimation = spec_handle.risk_estimation
             else:
                 risk_estimation = self._estimate_risk(request)
             risk_score = risk_estimation.score if hasattr(risk_estimation, "score") else 0.5
@@ -1046,6 +1230,8 @@ class OrchestrationController:
             if self.constitution_store is not None and callable(has_excluded) and has_excluded():
                 _detected = getattr(risk_estimation, "detected_domain", None)
                 if _detected and is_domain_excluded(self.constitution_store, _detected):
+                    if spec_handle is not None:
+                        spec_handle.abandon("domain_excluded", "DOMAIN_EXCLUDED")
                     return self._route_domain_excluded(request, _detected, start_time, trace)
 
             # --- Overlay sensitivity: risk_score floor ---
@@ -1085,6 +1271,7 @@ class OrchestrationController:
                     type(risk_proto),
                     _dc_replace(risk_estimation, score=risk_score),
                 )
+            self._emit_risk_assessment_trace(request_id, risk_proto, risk_score)
             decision, explanation = decide_action(request, risk_proto, overlay_sensitive=overlay_sensitive)
             decision = apply_safe_complete_gating(
                 decision,
@@ -1121,6 +1308,8 @@ class OrchestrationController:
                 )
 
             if route == "refuse":
+                if spec_handle is not None:
+                    spec_handle.abandon("refuse_path", "refuse")
                 return self._route_refuse(
                     request,
                     decision,
@@ -1131,6 +1320,9 @@ class OrchestrationController:
                     trace,
                 )
             if route == "benign":
+                speculative_draft = (
+                    spec_handle.join_for_consumer("benign", "benign_fast_path") if spec_handle else None
+                )
                 return self._route_benign(
                     request,
                     decision,
@@ -1141,6 +1333,8 @@ class OrchestrationController:
                     speculative_draft=speculative_draft,
                 )
             if route == "safe_complete":
+                if spec_handle is not None:
+                    spec_handle.abandon("safe_complete_path", "safe_complete")
                 return self._route_safe_complete(
                     request,
                     decision,
@@ -1165,6 +1359,9 @@ class OrchestrationController:
                 )
 
             if route == "fast_path":
+                speculative_draft_fp = (
+                    spec_handle.join_for_consumer("fast_path", "run_fast_path") if spec_handle else None
+                )
                 return self._route_fast_path(
                     request,
                     decision,
@@ -1172,9 +1369,18 @@ class OrchestrationController:
                     risk_proto,
                     start_time,
                     trace,
-                    speculative_draft=speculative_draft,
+                    speculative_draft=speculative_draft_fp,
                 )
 
+            speculative_draft_delib: str | None = None
+            if spec_handle is not None:
+                if constrained_generation:
+                    spec_handle.abandon("constrained_generation_incompatible", "deliberative")
+                else:
+                    speculative_draft_delib = spec_handle.join_for_consumer(
+                        "deliberative",
+                        "run_deliberative_path",
+                    )
             return self._route_deliberative(
                 request,
                 risk_proto,
@@ -1184,7 +1390,7 @@ class OrchestrationController:
                 start_time,
                 trace,
                 pre_decision=decision,
-                speculative_draft=speculative_draft,
+                speculative_draft=speculative_draft_delib,
             )
 
         except OrchestratorTimeoutError as e:
@@ -1248,4 +1454,7 @@ class OrchestrationController:
                 request,
             )
         finally:
+            self._conversation_process_ctx = None
+            if spec_handle is not None:
+                spec_handle.shutdown_executor()
             self._trace_lifecycle.remove_parser_diagnostic_handler(request_id)

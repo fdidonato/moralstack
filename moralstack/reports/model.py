@@ -92,6 +92,10 @@ class RequestReport:
     calibration_guard_info: str = ""  # Non-empty if the calibration guard was triggered
     orchestrator_observability: dict | None = None  # Path routing / debug-derived explanations (display only)
     policy_gating_observability: dict | None = None  # PRE_POLICY + SAFE_COMPLETE gating (display only)
+    # Conversation linkage (multi-turn foundation; None when absent)
+    conversation_id: str | None = None
+    turn_index: int | None = None
+    parent_request_id: str | None = None
 
 
 def get_final_response_text(calls: list, final_action: str | None = None) -> str:
@@ -183,7 +187,8 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
             return 0
         return total
 
-    final_trace = traces[-1] if traces else {}
+    finals = [t for t in traces if (t.get("stage") or "").strip().upper() == "FINAL"]
+    final_trace = finals[-1] if finals else (traces[-1] if traces else {})
     td = trace_dict(final_trace)
     risk_score = float(td.get("risk_score", 0.0))
     risk_category = (td.get("risk_category") or "").strip()
@@ -439,6 +444,9 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
         calibration_guard_info=calibration_guard_info,
         orchestrator_observability=orch_obs,
         policy_gating_observability=pg_obs,
+        conversation_id=req.get("conversation_id"),
+        turn_index=req.get("turn_index"),
+        parent_request_id=req.get("parent_request_id"),
     )
 
 

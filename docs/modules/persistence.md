@@ -27,18 +27,26 @@ configurable via environment variables and supports three modes: `db_only`, `dua
 | `moralstack/persistence/config.py`  | Load env: DB_PATH, PERSIST_MODE, UI creds                                              |
 | `moralstack/persistence/context.py` | Contextvars: run_id, request_id, cycle                                                 |
 | `moralstack/persistence/db.py`      | SQLite schema, init_db, SqliteUnitOfWork, batch insert helpers                         |
-| `moralstack/persistence/sink.py`    | Safe insert: persist_llm_call, persist_decision_trace, persist_debug_event, batch APIs |
+| `moralstack/persistence/sink.py`    | Safe insert: persist_llm_call, persist_decision_trace, persist_debug_event, persist_orchestration_event(s), batch APIs |
 
 ## Schema
 
 - **runs** — Run metadata (run_id, run_type, started_at, ended_at, status)
-- **requests** — Per-request data (run_id, request_id, prompt, domain)
+- **requests** — Per-request data (run_id, request_id, prompt, domain, optional `conversation_id`, `turn_index`,
+  `parent_request_id` for multi-turn conversation linkage; all nullable for backward compatibility). Indexes:
+  `idx_requests_conversation_id`, `idx_requests_conversation_turn` on `(conversation_id, turn_index)`.
 - **llm_calls** — Full LLM call log (prompt, system_prompt, raw_response, phase, module, cycle,
   **sequence_in_cycle**). The optional `sequence_in_cycle` (integer) encodes the logical order within a
   deliberation cycle (1=policy, 2=critic, 3=simulator, 4=perspectives, 5=hindsight, 6=refusal/finalize). It is used by
   the UI and report to display the Deliberation Journey in execution order (policy → critic/simulator/perspectives →
   hindsight) instead of completion order when modules run in parallel.
-- **decision_traces** — Decision audit trail (stage, sequence, trace_json)
+  Optional nullable columns for semantic observability: `call_kind`, `call_outcome`, `cache_status`, `related_event_id`
+  (defaults null for legacy rows).
+- **orchestration_events** — Structured runtime/orchestration decisions (not LLM calls): `stage`, `component`,
+  `event_type`, optional JSON columns (`reason_codes_json`, `inputs_json`, `outputs_json`, `payload_json`), indexed by
+  `(run_id, request_id, cycle, sequence)` and `(run_id, request_id, event_type)`.
+- **decision_traces** — Decision audit trail (stage, sequence, trace_json); rows ordered by `created_at` for audit
+  timeline (see `get_decision_traces_for_request`).
 - **debug_events** — Debug payloads (location, message, data)
 - **exports_cache** — Cached markdown exports (optional)
 
@@ -52,10 +60,12 @@ configurable via environment variables and supports three modes: `db_only`, `dua
   `uow: SqliteUnitOfWork | None = None`. If provided and `uow.conn` is not None, they use that connection and do not
   commit or close (the UoW commits on exit). Callers can thus group multiple writes in one transaction.
 - **Batch APIs**: `persist_llm_calls_batch(entries, uow=None)`, `persist_decision_traces_batch(entries, uow=None)`,
-  and `persist_debug_events_batch(entries, uow=None)` insert multiple rows in one go. Each entry is a dict with the
-  same keys as the single-persist kwargs (context supplies run_id/request_id/cycle when missing). Low-level
-  `insert_llm_calls_batch(conn, rows)`, `insert_decision_traces_batch(conn, rows)`, and `insert_debug_events_batch(conn,
-  rows)` in `db.py` accept a connection and a list of tuples for direct use with an existing UoW.
+  `persist_debug_events_batch(entries, uow=None)`, and `persist_orchestration_events_batch(entries, uow=None)` insert
+  multiple rows in one go. Each entry is a dict with the same keys as the single-persist kwargs (context supplies
+  run_id/request_id/cycle when missing). Low-level `insert_llm_calls_batch(conn, rows)`,
+  `insert_decision_traces_batch(conn, rows)`, `insert_orchestration_events_batch(conn, rows)`, and
+  `insert_debug_events_batch(conn, rows)` in `db.py` accept a connection and a list of tuples for direct use with an
+  existing UoW.
 - **Thread-safety**: Use one UoW per thread or per request; do not share the same UoW instance across threads.
   SQLite in WAL mode with one connection per UoW is safe for typical single-thread or per-request usage.
 

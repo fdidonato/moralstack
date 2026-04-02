@@ -1254,3 +1254,53 @@ h3 {
         align-items: stretch;
     }
 }
+
+/* Runtime observability (execution strategy, orchestration events, cycle cards) */
+.runtime-strategy-card {
+    border-left: 4px solid var(--accent);
+}
+.runtime-decisions-table {
+    width: 100%;
+    font-size: 0.8rem;
+    border-collapse: collapse;
+}
+.runtime-decisions-table th,
+.runtime-decisions-table td {
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+}
+.runtime-decisions-table thead th {
+    color: var(--muted);
+    font-weight: 600;
+}
+.empty-state-msg {
+    margin: 0;
+    padding: 0.75rem 0;
+}
+.cycle-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1rem;
+}
+.cycle-summary-card {
+    border-left: 4px solid var(--green);
+}
+.cycle-card-title {
+    font-size: 1rem;
+    margin-bottom: 0.75rem;
+    color: var(--text);
+}
+.meta-grid.compact {
+    gap: 0.5rem;
+}
+.meta-item.span-2 {
+    grid-column: span 2;
+}
+.badge-semantic {
+    background: var(--yellow-bg);
+    color: var(--yellow);
+    border: 1px solid rgba(251, 191, 36, 0.35);
+    font-size: 0.65rem;
+}

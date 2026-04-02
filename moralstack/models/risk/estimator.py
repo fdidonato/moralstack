@@ -5,6 +5,7 @@ LLMBasedRiskEstimator - Classificazione rischio etico per MoralStack.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any, Literal
 
@@ -12,8 +13,13 @@ from moralstack.core.types import PolicyLLMProtocol
 from moralstack.orchestration.types import RiskEstimationError
 from moralstack.persistence.sink import persist_llm_call
 from moralstack.utils.json_utils import JSONParseError
+from moralstack.utils.llm_parse_contract import (
+    build_failed_parse_contract,
+    merge_parse_contract_into_summary,
+    parse_dict_with_contract,
+)
 
-from .calibration import merge_mini_estimator_results, parse_risk_dict, parse_risk_response
+from .calibration import merge_mini_estimator_results, parse_risk_dict
 from .categories import (
     ActionabilityRisk,
     IntentClarity,
@@ -105,6 +111,47 @@ class LLMBasedRiskEstimator:
         self._categorize_benign = get_risk_env_float(ENV_CATEGORIZE_BENIGN_THRESHOLD, 0.2, 0.0, 1.0)
         self._categorize_sensitive = get_risk_env_float(ENV_CATEGORIZE_SENSITIVE_THRESHOLD, 0.5, 0.0, 1.0)
         self._categorize_clearly_harmful = get_risk_env_float(ENV_CATEGORIZE_CLEARLY_HARMFUL_THRESHOLD, 0.85, 0.0, 1.0)
+        # Mini-estimator OpenAIPolicy reuse: keyed by model id on this estimator instance (thread-safe fill).
+        self._mini_policy_pool: dict[str, Any] = {}
+        self._mini_policy_pool_lock = threading.Lock()
+        self._mini_policy_pool_hits: int = 0
+        self._mini_policy_pool_misses: int = 0
+
+    def get_pooling_diagnostics(self) -> dict[str, Any]:
+        """
+        Optional low-noise diagnostics for mini-estimator policy pooling.
+
+        Not merged into main request UI by default; for advanced debug / benchmarks.
+        """
+        with self._mini_policy_pool_lock:
+            models = list(self._mini_policy_pool.keys())
+        return {
+            "risk_mini_policy_pool_models": models,
+            "risk_policy_pool_hits": self._mini_policy_pool_hits,
+            "risk_policy_pool_misses": self._mini_policy_pool_misses,
+        }
+
+    def _policy_for_mini_estimator_model(self, target_model: str) -> Any:
+        """
+        Return a shared OpenAIPolicy for ``target_model`` on this estimator.
+
+        Reuse scope: LLMBasedRiskEstimator instance only. Pool key is the model string
+        (same as previous per-call ``OpenAIPolicy(model=...)``). Thread-safe for parallel minis.
+        """
+        from moralstack.models.policy import OpenAIPolicy
+
+        key = str(target_model)
+        with self._mini_policy_pool_lock:
+            existing = self._mini_policy_pool.get(key)
+            if existing is not None:
+                self._mini_policy_pool_hits += 1
+                return existing
+            self._mini_policy_pool_misses += 1
+            pol = OpenAIPolicy(model=target_model)
+            if self.policy is not None and hasattr(self.policy, "tracker") and getattr(self.policy, "tracker", None):
+                pol.set_cost_tracker(self.policy.tracker)
+            self._mini_policy_pool[key] = pol
+            return pol
 
     def estimate(self, prompt: str) -> RiskEstimation:
         """
@@ -160,6 +207,8 @@ class LLMBasedRiskEstimator:
                 max_tokens=self.config.max_tokens,
                 temperature=self.config.temperature,
                 top_p=self._top_p,
+                # OpenAI Chat Completions: enforce a single JSON object (tolerant recovery still in extract_json).
+                response_format={"type": "json_object"},
             )
         except ImportError as e:
             _RISK_LOG.debug("GenerationConfig unavailable: %s", e)
@@ -227,6 +276,8 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         prompt: str,
         raw_response: str,
         attempts: int,
+        parsed_summary_json: str | None = None,
+        error: str | None = None,
     ) -> None:
         """Persist LLM call for risk estimation. Logs debug on ImportError."""
         risk_model = getattr(self.policy, "model", None) if self.policy else None
@@ -243,14 +294,20 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                 prompt=prompt,
                 system_prompt=RISK_SYSTEM_PROMPT,
                 raw_response=raw_response,
+                parsed_summary_json=parsed_summary_json,
                 attempts=attempts,
+                error=error,
             )
         except ImportError as e:
             _RISK_LOG.debug("persist_llm_call unavailable: %s", e)
 
-    def _call_llm_with_retry(self, full_prompt: str, gen_config: Any) -> str:
+    def _call_llm_with_retry(self, full_prompt: str, gen_config: Any) -> tuple[str, RiskParseResult]:
         """
-        Call policy LLM with retry loop. Returns raw_response on first successful parse.
+        Call policy LLM with retry loop. Returns (raw_response, parsed) on first successful parse.
+
+        Structured JSON output is requested via GenerationConfig.response_format; tolerant extract_json
+        remains available inside parse_dict_with_contract for parse metadata only.
+
         Raises RiskEstimationError if all retries fail (parse or generation error).
         """
         raw_response = ""
@@ -264,21 +321,30 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                 )
                 elapsed_ms = (time.time() - start_gen) * 1000
                 raw_response = result.text if hasattr(result, "text") else str(result)
+                _RISK_LOG.info(
+                    "risk_estimator raw_output (troncato): %s",
+                    (raw_response or "")[:200],
+                    extra={"raw_snippet_len": min(200, len(raw_response or ""))},
+                )
+                data, p_contract = parse_dict_with_contract(raw_response, strict_json_requested=True)
+                parsed = parse_risk_dict(data)
+                summary = merge_parse_contract_into_summary(
+                    {
+                        "estimation_mode": "monolithic",
+                        "retry_count": attempt,
+                        "parse_attempts": attempt + 1,
+                    },
+                    p_contract,
+                )
                 self._persist_risk_llm_call(
                     started_at=int(start_gen * 1000),
                     duration_ms=elapsed_ms,
                     prompt=full_prompt,
                     raw_response=raw_response,
                     attempts=attempt + 1,
+                    parsed_summary_json=summary,
                 )
-                _RISK_LOG.info(
-                    "risk_estimator raw_output (troncato): %s",
-                    (raw_response or "")[:200],
-                    extra={"raw_snippet_len": min(200, len(raw_response or ""))},
-                )
-                # Parse to validate; on success we return raw_response for caller to parse again
-                parse_risk_response(raw_response)
-                return raw_response
+                return raw_response, parsed
             except JSONParseError as e:
                 _RISK_LOG.warning(
                     "risk_estimator parse attempt %s/%s failed (JSONParseError): %s | raw_response (truncated): %s",
@@ -287,6 +353,24 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                     str(e),
                     (raw_response or "")[:500],
                     exc_info=True,
+                )
+                fc = build_failed_parse_contract(strict_json_requested=True, message=str(e))
+                summary = merge_parse_contract_into_summary(
+                    {
+                        "estimation_mode": "monolithic",
+                        "retry_count": attempt,
+                        "parse_attempts": attempt + 1,
+                    },
+                    fc,
+                )
+                self._persist_risk_llm_call(
+                    started_at=int(start_gen * 1000),
+                    duration_ms=elapsed_ms,
+                    prompt=full_prompt,
+                    raw_response=raw_response,
+                    attempts=attempt + 1,
+                    parsed_summary_json=summary,
+                    error=str(e)[:1000],
                 )
                 continue
             except Exception as e:
@@ -410,12 +494,16 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         started_at: int | None = None,
         duration_ms: float,
         attempts: int,
+        parse_contract: dict[str, Any] | None = None,
     ) -> None:
         """Persist a single mini-estimator LLM call. Logs debug on ImportError."""
         import json as _json
 
         risk_model = getattr(self.policy, "model", None) if self.policy else None
         risk_model_str = str(risk_model) if risk_model is not None else None
+        summary: dict[str, Any] = {"mini_estimator": action, "estimation_mode": "parallel"}
+        if parse_contract is not None:
+            summary["parse_contract"] = parse_contract
         try:
             persist_llm_call(
                 cycle=0,
@@ -428,7 +516,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                 prompt=prompt,
                 system_prompt=system_prompt,
                 raw_response=raw_response,
-                parsed_summary_json=_json.dumps({"mini_estimator": action, "estimation_mode": "parallel"}),
+                parsed_summary_json=_json.dumps(summary, ensure_ascii=False),
                 attempts=attempts,
             )
         except ImportError as e:
@@ -461,10 +549,9 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         signal_prompt = HARM_SIGNAL_PROMPT_TEMPLATE.format(request=prompt)
         operational_prompt = OPERATIONAL_RISK_PROMPT_TEMPLATE.format(request=prompt)
 
-        # Each future returns (data_dict, raw_response, duration_ms, attempts, started_at_ms)
+        # Each future returns (data_dict, raw_response, duration_ms, attempts, started_at_ms, parse_contract)
         def _call_and_track(system_prompt: str, full_prompt: str, mini_name: str):
-            from moralstack.models.policy import OpenAIPolicy
-            from moralstack.utils.json_utils import JSONParseError, extract_json
+            from moralstack.utils.json_utils import JSONParseError
 
             # Determine the model for this mini-call
             target_model = None
@@ -479,11 +566,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             effective_policy = self.policy
             if target_model and hasattr(self.policy, "model") and self.policy.model != target_model:
                 try:
-                    # Create a temporary policy with the specific model
-                    effective_policy = OpenAIPolicy(model=target_model)
-                    # Inherit cost tracker if present
-                    if hasattr(self.policy, "tracker") and self.policy.tracker:
-                        effective_policy.set_cost_tracker(self.policy.tracker)
+                    effective_policy = self._policy_for_mini_estimator_model(target_model)
                     _RISK_LOG.debug("mini_estimator[%s] using dedicated model: %s", mini_name, target_model)
                 except Exception as e:
                     _RISK_LOG.warning(
@@ -511,8 +594,8 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                         (raw_response or "")[:200],
                         elapsed_ms,
                     )
-                    data = extract_json(raw_response)
-                    return data, raw_response, elapsed_ms, attempt + 1, int(start_gen * 1000)
+                    data, p_contract = parse_dict_with_contract(raw_response, strict_json_requested=True)
+                    return data, raw_response, elapsed_ms, attempt + 1, int(start_gen * 1000), p_contract
                 except JSONParseError as e:
                     _RISK_LOG.warning(
                         "mini_estimator[%s] attempt %s/%s failed (JSONParseError): %s",
@@ -537,9 +620,9 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             fut3 = executor.submit(
                 _call_and_track, OPERATIONAL_RISK_SYSTEM_PROMPT, operational_prompt, "estimate_operational"
             )
-            intent_data, intent_raw, intent_ms, intent_attempts, intent_started = fut1.result()
-            signal_data, signal_raw, signal_ms, signal_attempts, signal_started = fut2.result()
-            operational_data, op_raw, op_ms, op_attempts, op_started = fut3.result()
+            intent_data, intent_raw, intent_ms, intent_attempts, intent_started, intent_pc = fut1.result()
+            signal_data, signal_raw, signal_ms, signal_attempts, signal_started, signal_pc = fut2.result()
+            operational_data, op_raw, op_ms, op_attempts, op_started, op_pc = fut3.result()
 
         # Persist all 3 mini-estimator LLM calls for UI visibility
         self._persist_mini_llm_call(
@@ -550,6 +633,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             started_at=intent_started,
             duration_ms=intent_ms,
             attempts=intent_attempts,
+            parse_contract=intent_pc,
         )
         self._persist_mini_llm_call(
             system_prompt=HARM_SIGNAL_SYSTEM_PROMPT,
@@ -559,6 +643,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             started_at=signal_started,
             duration_ms=signal_ms,
             attempts=signal_attempts,
+            parse_contract=signal_pc,
         )
         self._persist_mini_llm_call(
             system_prompt=OPERATIONAL_RISK_SYSTEM_PROMPT,
@@ -568,6 +653,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             started_at=op_started,
             duration_ms=op_ms,
             attempts=op_attempts,
+            parse_contract=op_pc,
         )
 
         merged = merge_mini_estimator_results(intent_data, signal_data, operational_data)
@@ -668,13 +754,12 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         try:
             gen_config = self._build_generation_config()
             full_prompt, detected_domain = self._build_full_prompt(prompt)
-            raw_response = self._call_llm_with_retry(full_prompt, gen_config)
+            raw_response, parsed = self._call_llm_with_retry(full_prompt, gen_config)
         except RiskEstimationError as e:
             return RiskEstimation.from_error(str(e))
         except Exception as e:
             return RiskEstimation.from_error(str(e))
 
-        parsed = parse_risk_response(raw_response)
         _RISK_LOG.info(
             "risk_estimator [mode=monolithic] parsed: score=%.2f category=%s "
             "risk_policy_action=%s lang=%s request_type=%s",

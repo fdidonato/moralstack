@@ -1366,6 +1366,14 @@ class ComparisonResult:
 
     moralstack_request_id: str = ""
     moralstack_execution_trace: dict | None = None
+    # Convergence diagnostics (from DeliberationState._convergence_evaluation_snapshot)
+    moralstack_convergence_snapshot: dict | None = None
+    moralstack_early_convergence_considered: bool = False
+    moralstack_early_convergence_accepted: bool | None = None
+    moralstack_convergence_reason_codes: list[str] = field(default_factory=list)
+    moralstack_perspectives_weighted_approval: float | None = None
+    moralstack_semantic_expected_harm: float | None = None
+    moralstack_critic_revision_guidance_present: bool = False
 
     # DCF (Decision Correctness Function) – policy diagnostics
     moralstack_correctness_verdict: str = ""  # OK | UNDERBLOCK | OVERBLOCK | SYSTEM_ERROR
@@ -2028,6 +2036,10 @@ class MoralStackRunner:
         meta = getattr(result, "response", None) and getattr(result.response, "metadata", None)
         dc = getattr(meta, "decision_correctness", None) or {}
         execution_trace = getattr(result, "execution_trace", None)
+        _conv_snap = None
+        if isinstance(execution_trace, dict):
+            _cs = execution_trace.get("convergence_snapshot")
+            _conv_snap = _cs if isinstance(_cs, dict) else None
         metadata = {
             "triggered_principles": list(getattr(meta, "triggered_principles", None) or []),
             "hard_violations": list(getattr(meta, "hard_violations", None) or []),
@@ -2039,6 +2051,7 @@ class MoralStackRunner:
             "misuse_plausibility": getattr(meta, "misuse_plausibility", "") or "",
             "actionability_risk": getattr(meta, "actionability_risk", "") or "",
             "execution_trace": execution_trace,
+            "convergence_snapshot": _conv_snap,
             "request_id": getattr(result, "request_id", "") or "",
             "decision_correctness": dc if isinstance(dc, dict) else {},
             "risk_category": getattr(meta, "risk_category", "") or "",
@@ -2443,6 +2456,29 @@ class BenchmarkRunner:
                 result.moralstack_actionability_risk = ms_meta.get("actionability_risk", "") or ""
                 result.moralstack_request_id = ms_meta.get("request_id", "") or ""
                 result.moralstack_execution_trace = ms_meta.get("execution_trace")
+                # Convergence diagnostics
+                _snap = ms_meta.get("convergence_snapshot")
+                result.moralstack_convergence_snapshot = _snap if isinstance(_snap, dict) else None
+                if isinstance(_snap, dict):
+                    result.moralstack_early_convergence_considered = bool(
+                        _snap.get("early_convergence_considered", False)
+                    )
+                    result.moralstack_early_convergence_accepted = _snap.get("early_convergence_accepted")
+                    result.moralstack_convergence_reason_codes = list(_snap.get("convergence_reason_codes") or [])
+                    result.moralstack_perspectives_weighted_approval = (
+                        float(_snap["perspectives_weighted_approval"])
+                        if _snap.get("perspectives_weighted_approval") is not None
+                        else None
+                    )
+                    result.moralstack_semantic_expected_harm = (
+                        float(_snap["semantic_expected_harm"])
+                        if _snap.get("semantic_expected_harm") is not None
+                        else None
+                    )
+                    result.moralstack_critic_revision_guidance_present = (
+                        "CRITIC_REVISION_GUIDANCE_PRESENT"
+                        in (_snap.get("convergence_reason_codes") or [])
+                    )
                 result.moralstack_risk_category = str(ms_meta.get("risk_category") or "")
                 result.moralstack_risk_score = float(ms_meta.get("risk_score") or 0.0)
                 result.moralstack_operational_risk = str(ms_meta.get("operational_risk") or "")
@@ -3464,6 +3500,13 @@ def _result_to_jsonl_record(r: ComparisonResult, include_responses: bool = False
         "moralstack_why_not_refuse": getattr(r, "moralstack_why_not_refuse", "") or "",
         "moralstack_why_not_safe_complete": getattr(r, "moralstack_why_not_safe_complete", "") or "",
         "moralstack_request_id": getattr(r, "moralstack_request_id", "") or "",
+        "moralstack_early_convergence_considered": getattr(r, "moralstack_early_convergence_considered", False),
+        "moralstack_early_convergence_accepted": getattr(r, "moralstack_early_convergence_accepted", None),
+        "moralstack_convergence_reason_codes": list(r.moralstack_convergence_reason_codes or []),
+        "moralstack_perspectives_weighted_approval": getattr(r, "moralstack_perspectives_weighted_approval", None),
+        "moralstack_semantic_expected_harm": getattr(r, "moralstack_semantic_expected_harm", None),
+        "moralstack_critic_revision_guidance_present": getattr(r, "moralstack_critic_revision_guidance_present", False),
+        "moralstack_convergence_snapshot": getattr(r, "moralstack_convergence_snapshot", None),
     }
     if r.error:
         d["error"] = r.error
@@ -3590,6 +3633,13 @@ def serialize_benchmark_report(report: BenchmarkReport) -> dict:
             "moralstack_final_action_failed": r.moralstack_final_action_failed,
             "moralstack_request_id": r.moralstack_request_id,
             "moralstack_execution_trace": r.moralstack_execution_trace,
+            "moralstack_convergence_snapshot": r.moralstack_convergence_snapshot,
+            "moralstack_early_convergence_considered": r.moralstack_early_convergence_considered,
+            "moralstack_early_convergence_accepted": r.moralstack_early_convergence_accepted,
+            "moralstack_convergence_reason_codes": list(r.moralstack_convergence_reason_codes or []),
+            "moralstack_perspectives_weighted_approval": r.moralstack_perspectives_weighted_approval,
+            "moralstack_semantic_expected_harm": r.moralstack_semantic_expected_harm,
+            "moralstack_critic_revision_guidance_present": r.moralstack_critic_revision_guidance_present,
             "moralstack_correctness_verdict": r.moralstack_correctness_verdict,
             "moralstack_risk_category": r.moralstack_risk_category,
             "moralstack_risk_score": r.moralstack_risk_score,

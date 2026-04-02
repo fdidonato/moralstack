@@ -22,6 +22,7 @@ from moralstack.core.types import (
 from moralstack.models.risk.categories import OperationalRisk, RiskCategory
 from moralstack.orchestration._policy_helpers import POLICY_SYSTEM_PROMPT
 from moralstack.orchestration.controller import OrchestrationController
+from moralstack.orchestration.conversation_state import ConversationGovernanceState
 from moralstack.orchestration.response_assembler import ResponseAssembler
 
 # Re-export tipi ed eccezioni per compatibilità (API pubblica)
@@ -70,6 +71,7 @@ __all__ = [
     "OrchestratorTimeoutError",
     "Turn",
     "UserContext",
+    "ConversationGovernanceState",
 ]
 
 
@@ -177,6 +179,6 @@ class Orchestrator:
         self.logger = logger
         self._controller.set_logger(logger)
 
-    def process(self, request: ProcessedRequest | str) -> OrchestratorResult:
-        """Entry point principale. Delega al controller."""
-        return self._controller.process(request)
+    def process(self, request: ProcessedRequest | str, **kwargs: Any) -> OrchestratorResult:
+        """Entry point principale. Delega al controller. Optional conversation_* kwargs are forwarded."""
+        return self._controller.process(request, **kwargs)

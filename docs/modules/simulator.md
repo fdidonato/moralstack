@@ -288,9 +288,11 @@ configuration is the single source of configuration — no CLI or code path over
     - **Unset or empty**: The simulator uses the same policy (and model) as the rest of the pipeline.
 
 In the recommended configuration (`.env.template`), the simulator uses `gpt-4.1-nano`.
-Benchmark testing shows this reduces average deliberative latency by ~27% compared to
-`gpt-4o-mini` on the simulator, with no compliance degradation (98.8% maintained) and
-minimal quality impact (avg score 9.39 vs 9.36 with `gpt-4o` across all modules).
+Benchmark testing shows this reduces simulator-step cost versus heavier defaults; combined
+with other stack optimizations, **benchmark run 11** reports overall mean wall-clock **~44s**
+(median **~39s**) with **98.8%** compliance maintained and overall judge score **~9.35/10**
+(vs **7.73/10** baseline), indicating minimal quality regression versus heavier simulator
+configurations on the same suite.
 
 ### LLM and retry behaviour
 

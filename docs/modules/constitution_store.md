@@ -205,6 +205,10 @@ constitution = constitution_store.get_constitution(domain=detected_domain)
 - Parallel execution with configurable batch size
 - `get_relevant_principles` internals
 
+`DomainPrefilter`, `DomainAgent`, and `EnhancedDomainAgent` reuse a single OpenAI HTTP client per component instance
+when the API key is unchanged; chat completion parameters (`model`, `messages`, `response_format`, etc.) remain per call.
+`ConstitutionRetriever.get_debug_info()` includes aggregate `retrieval_openai_client_pooling` counts for diagnostics.
+
 Public API (`get_relevant_principles`, `detect_relevant_domains`, `get_debug_info`) remains unchanged.
 
 ## Domain Selection (DomainPrefilter)
@@ -212,6 +216,20 @@ Public API (`get_relevant_principles`, `detect_relevant_domains`, `get_debug_inf
 Domains are represented via **compact keyword maps** to minimize token consumption in LLM classification. Instead of
 long textual descriptions, the DomainPrefilter uses only keywords extracted from overlays (`keywords`) or from
 `description` (deterministic extraction). This reduces token consumption by 50–80% during domain selection.
+
+**Prefilter cache:** `DomainPrefilter.set_domain_keywords` is idempotent: the in-memory prefilter cache is cleared
+only when the effective keyword map changes (canonical fingerprint over sorted domains and sorted de-duplicated
+keywords). Identical maps with different key or keyword order reuse the cache across requests. When persistence
+context (`run_id` / `request_id`) is active, cache hit / miss / invalidation are recorded as `orchestration_events`
+(`DOMAIN_PREFILTER_CACHE_HIT`, `DOMAIN_PREFILTER_CACHE_MISS`, `DOMAIN_PREFILTER_CACHE_INVALIDATED`). The latest
+retrieval exposes `prefilter_cache_status` and related fields via `ConstitutionStore.get_debug_info()` and the
+`REQUEST_ANALYSIS_CONTEXT` decision trace payload.
+
+**Structured LLM output:** Domain prefilter and domain agents use OpenAI Chat Completions with
+`response_format={"type":"json_object"}` where the model must return a JSON object; legacy `DomainAgent`
+uses an object wrapper `{"principle_ids": [...]}` (root arrays are not valid for `json_object` mode).
+Tolerant regex / `extract_json` fallbacks remain for observability and compatibility. When persistence
+context is active, `llm_calls` rows include `parse_contract` metadata (see `moralstack/utils/llm_parse_contract.py`).
 
 ## Principle Retrieval (LLM-based)
 

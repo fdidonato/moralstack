@@ -46,6 +46,10 @@ class DefaultPersistence:
         request_id: str,
         prompt: str,
         domain: str | None = None,
+        *,
+        conversation_id: str | None = None,
+        turn_index: int | None = None,
+        parent_request_id: str | None = None,
     ) -> None:
         """
         If a run_id is set in context and db_path is configured, ensure DB is initialized
@@ -66,6 +70,9 @@ class DefaultPersistence:
                 request_id=request_id,
                 prompt=prompt,
                 domain=domain,
+                conversation_id=conversation_id,
+                turn_index=turn_index,
+                parent_request_id=parent_request_id,
             )
         except Exception as e:
             logger.warning("persistence: ensure_run_and_upsert_request failed: %s", e)

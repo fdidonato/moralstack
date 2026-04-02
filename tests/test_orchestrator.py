@@ -1412,8 +1412,27 @@ class TestPersistencePortInjection:
             def set_request_context(self, request_id: str) -> None:
                 calls.append(("set_request_context", request_id))
 
-            def ensure_run_and_upsert_request(self, request_id: str, prompt: str, domain: str | None = None) -> None:
-                calls.append(("ensure_run_and_upsert_request", request_id, prompt, domain))
+            def ensure_run_and_upsert_request(
+                self,
+                request_id: str,
+                prompt: str,
+                domain: str | None = None,
+                *,
+                conversation_id: str | None = None,
+                turn_index: int | None = None,
+                parent_request_id: str | None = None,
+            ) -> None:
+                calls.append(
+                    (
+                        "ensure_run_and_upsert_request",
+                        request_id,
+                        prompt,
+                        domain,
+                        conversation_id,
+                        turn_index,
+                        parent_request_id,
+                    )
+                )
 
             def update_request_domain(self, request_id: str, domain: str | None) -> None:
                 calls.append(("update_request_domain", request_id, domain))
@@ -1432,9 +1451,12 @@ class TestPersistencePortInjection:
         result = orch.process("Hello")
         assert any(c[0] == "set_request_context" for c in calls)
         assert any(c[0] == "ensure_run_and_upsert_request" for c in calls)
-        _, req_id, prompt, domain = next(c for c in calls if c[0] == "ensure_run_and_upsert_request")
+        _, req_id, prompt, domain, _conv, _turn, _parent = next(
+            c for c in calls if c[0] == "ensure_run_and_upsert_request"
+        )
         assert req_id == result.request_id
         assert prompt == "Hello"
+        assert _conv is None and _turn is None and _parent is None
 
 
 # =============================================================================

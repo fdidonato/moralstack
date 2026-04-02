@@ -32,6 +32,7 @@ from moralstack.persistence.db import (
     get_debug_events_for_request,
     get_decision_traces_for_request,
     get_llm_calls_for_request,
+    get_orchestration_events_for_request,
     get_request,
     get_requests_for_run,
     get_run,
@@ -49,6 +50,10 @@ from moralstack.reports.markdown_export import (
 from moralstack.reports.orchestrator_observability import (
     build_orchestrator_observability,
     orchestrator_observability_to_io_annotations,
+)
+from moralstack.reports.runtime_decisions import (
+    build_runtime_decision_observability,
+    enrich_llm_call_for_ui,
 )
 from moralstack.utils.env_loader import _purge_empty_env_vars
 
@@ -165,15 +170,14 @@ def _relevant_principles_from_traces(traces: list) -> dict:
     # Build lookup by id for title/level
     by_id = {p["id"]: p for p in relevant_detail if p.get("id")}
 
-    # Final trace: triggered principle IDs and policy context
+    # Final trace: triggered principle IDs and policy context (prefer last FINAL stage row)
     final_trace = None
     for t in traces:
         stage = (t.get("stage") or "").strip().upper()
         if stage == "FINAL":
             final_trace = t
-            break
     if final_trace is None:
-        final_trace = traces[-1]
+        final_trace = traces[-1] if traces else {}
     td = _parse_trace_json(final_trace)
     triggered_ids = list(td.get("policy_principle_ids") or [])
     out["triggered"] = [by_id.get(pid, {"id": pid, "title": "", "level": ""}) for pid in triggered_ids]
@@ -511,6 +515,14 @@ def _compute_connector_labels(tiers: list[list[dict]]) -> list[str | None]:
     return labels
 
 
+def _pick_final_trace_row(traces: list) -> dict:
+    """Prefer the last row with stage FINAL (not necessarily the last row by insert order)."""
+    finals = [t for t in traces if (t.get("stage") or "").strip().upper() == "FINAL"]
+    if finals:
+        return finals[-1]
+    return traces[-1] if traces else {}
+
+
 def _execution_summary_from_request(
     traces: list,
     llm_calls: list,
@@ -519,7 +531,7 @@ def _execution_summary_from_request(
     path_val = ""
     total_cycles = 0
     converged = False
-    final_trace = traces[-1] if traces else {}
+    final_trace = _pick_final_trace_row(traces)
     trace_json = final_trace.get("trace_json")
     if trace_json:
         try:
@@ -1368,6 +1380,12 @@ button:hover{opacity:0.9}
         llm_calls = get_llm_calls_for_request(run_id, request_id)
         traces = get_decision_traces_for_request(run_id, request_id)
         debug_events = get_debug_events_for_request(run_id, request_id)
+        orchestration_events = get_orchestration_events_for_request(run_id, request_id)
+        runtime_decision_obs = build_runtime_decision_observability(
+            traces=traces,
+            orchestration_events=orchestration_events,
+            llm_calls=llm_calls,
+        )
         execution_summary = _execution_summary_from_request(traces, llm_calls)
 
         # Build final decision card
@@ -1377,9 +1395,11 @@ button:hover{opacity:0.9}
         # (parallel domain agents)
         synthetic_constitution = _synthetic_constitution_call_from_traces(traces)
 
-        # Enrich calls with I/O annotations
+        # Enrich calls with I/O annotations and semantic badges (call_kind / cache_status)
         for call in llm_calls:
             call["io_annotations"] = _build_module_io_annotations(call)
+            enriched = enrich_llm_call_for_ui(call)
+            call["semantic_badges"] = enriched.get("semantic_badges") or []
 
         all_flow_calls = list(llm_calls)
         if synthetic_constitution is not None:
@@ -1451,6 +1471,8 @@ button:hover{opacity:0.9}
                     "debug_events": debug_events,
                     "benchmark_result": benchmark_result,
                     "orchestrator_observability": orchestrator_observability,
+                    "orchestration_events": orchestration_events,
+                    "runtime_decision_obs": runtime_decision_obs,
                 },
             )
         return HTMLResponse(f"<html><body><h1>Request {request_id}</h1></body></html>")

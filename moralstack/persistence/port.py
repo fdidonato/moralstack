@@ -22,11 +22,16 @@ class PersistencePort(Protocol):
         request_id: str,
         prompt: str,
         domain: str | None = None,
+        *,
+        conversation_id: str | None = None,
+        turn_index: int | None = None,
+        parent_request_id: str | None = None,
     ) -> None:
         """
         Ensure the current run exists and upsert the request.
         No-op if no run_id in context or no db path configured.
         Does not raise; failures are logged internally.
+        Optional conversation linkage fields are persisted when provided (multi-turn foundation).
         """
         ...
 
