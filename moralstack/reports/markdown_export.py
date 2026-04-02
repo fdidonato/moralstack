@@ -25,6 +25,169 @@ from moralstack.persistence.db import (
 from moralstack.reports.benchmark_report_loader import (
     load_benchmark_report,
 )
+from moralstack.reports.runtime_decisions import build_runtime_decision_observability
+
+
+def _markdown_early_convergence_section(conv: dict[str, Any] | None) -> str:
+    """Human-readable cycle-1 early convergence + diagnostics from execution_strategy.convergence."""
+    if not conv:
+        return ""
+    considered = conv.get("cycle1_early_convergence_considered")
+    codes = conv.get("cycle1_convergence_reason_codes") or []
+    w_ap = conv.get("cycle1_perspectives_weighted_approval")
+    sem = conv.get("cycle1_semantic_expected_harm")
+    if (
+        considered is not True
+        and not codes
+        and w_ap is None
+        and sem is None
+    ):
+        return ""
+    lines = [
+        "| Field | Value |",
+        "|-------|-------|",
+        f"| cycle1_early_convergence_considered | `{considered}` |",
+        f"| cycle1_early_convergence_accepted | `{conv.get('cycle1_early_convergence_accepted')}` |",
+        f"| cycle1_convergence_reason_codes | `{', '.join(str(x) for x in codes) or '—'}` |",
+        f"| cycle1_deliberation_decision | `{conv.get('cycle1_deliberation_decision') or '—'}` |",
+        f"| cycle1_perspectives_weighted_approval | `{w_ap if w_ap is not None else '—'}` |",
+        f"| cycle1_semantic_expected_harm | `{sem if sem is not None else '—'}` |",
+        f"| last_deliberation_decision | `{conv.get('last_deliberation_decision') or '—'}` |",
+        f"| last_convergence_stop_reason | `{conv.get('last_convergence_stop_reason') or '—'}` |",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _markdown_guidance_builder_section(
+    cycle_cards: list[dict[str, Any]] | None,
+    runtime_decisions_rows: list[dict[str, Any]] | None,
+    llm_calls: list[dict[str, Any]] | None,
+) -> str:
+    """Per-cycle guidance filter summary + orchestration rows + rewrite-skipped LLM calls."""
+    parts: list[str] = []
+    cc = cycle_cards or []
+    for card in cc:
+        gsum = card.get("guidance_filter_summary")
+        rskip = card.get("rewrite_skipped_for_empty_guidance")
+        if gsum is None and rskip is None:
+            continue
+        cyc = card.get("cycle")
+        skip_txt = "yes" if rskip is True else ("no" if rskip is False else "—")
+        parts.append(
+            f"- **Cycle {cyc}**: rewrite_skipped_empty_guidance=`{skip_txt}` — {gsum or '—'}",
+        )
+    rtd = runtime_decisions_rows or []
+    agg_rows = [
+        r
+        for r in rtd
+        if "AGGREGATED_GUIDANCE" in (r.get("event") or "").upper()
+        or (r.get("component") or "").strip().lower() == "guidance_builder"
+    ]
+    if agg_rows:
+        parts.append("")
+        parts.append("| Cycle | Event | Decision | Status | Reason |")
+        parts.append("|-------|-------|----------|--------|--------|")
+        for r in agg_rows:
+            parts.append(
+                f"| `{r.get('cycle')}` | `{r.get('event') or '—'}` | `{r.get('decision') or '—'}` | "
+                f"`{r.get('status') or '—'}` | {r.get('reason') or '—'} |"
+            )
+    calls = llm_calls or []
+    skip_calls = [c for c in calls if "SKIPPED_EMPTY_GUIDANCE" in (c.get("action") or "")]
+    if skip_calls:
+        parts.append("")
+        parts.append("**Policy rewrite skipped (empty guidance after filter)**:")
+        for c in skip_calls:
+            parts.append(
+                f"- cycle `{c.get('cycle')}` · phase `{c.get('phase') or '—'}` · "
+                f"action `{c.get('action') or '—'}` · duration_ms `{c.get('duration_ms')}`",
+            )
+    if not parts:
+        return ""
+    return "\n".join(parts) + "\n"
+
+
+def _benchmark_question_observability_block(r: dict[str, Any], run_id: str) -> str:
+    """Benchmark per-question: in-memory convergence fields + optional DB replay for guidance events."""
+    if r.get("error"):
+        return ""
+    chunks: list[str] = []
+    considered = r.get("moralstack_early_convergence_considered")
+    codes = list(r.get("moralstack_convergence_reason_codes") or [])
+    w_ap = r.get("moralstack_perspectives_weighted_approval")
+    sem = r.get("moralstack_semantic_expected_harm")
+    if (
+        considered is True
+        or codes
+        or w_ap is not None
+        or sem is not None
+        or r.get("moralstack_critic_revision_guidance_present")
+    ):
+        chunks.append(
+            "#### Orchestration (early convergence & diagnostics)\n\n"
+            "| Field | Value |\n|-------|-------|\n"
+            f"| moralstack_early_convergence_considered | `{considered}` |\n"
+            f"| moralstack_early_convergence_accepted | `{r.get('moralstack_early_convergence_accepted')}` |\n"
+            f"| moralstack_convergence_reason_codes | `{', '.join(str(x) for x in codes) or '—'}` |\n"
+            f"| moralstack_perspectives_weighted_approval | `{w_ap if w_ap is not None else '—'}` |\n"
+            f"| moralstack_semantic_expected_harm | `{sem if sem is not None else '—'}` |\n"
+            f"| moralstack_critic_revision_guidance_present | `{r.get('moralstack_critic_revision_guidance_present')}` |\n"
+            f"| moralstack_total_cycles | `{r.get('moralstack_total_cycles', '—')}` |\n"
+        )
+    snap = r.get("moralstack_convergence_snapshot")
+    if isinstance(snap, dict) and snap:
+        chunks.append(
+            "#### Convergence evaluation snapshot\n\n```json\n"
+            + json.dumps(snap, indent=2, ensure_ascii=False)
+            + "\n```\n"
+        )
+    req = (r.get("moralstack_request_id") or "").strip()
+    if run_id and req:
+        db_md = _deliberation_observability_markdown_from_db(run_id, req)
+        if db_md:
+            chunks.append(db_md)
+    return "\n\n".join(chunks) if chunks else ""
+
+
+def _deliberation_observability_markdown_from_db(run_id: str, request_id: str) -> str:
+    """Load traces + orchestration + llm_calls and build the same observability markdown as export_request_markdown."""
+    from moralstack.persistence.db import (
+        get_decision_traces_for_request,
+        get_llm_calls_for_request,
+        get_orchestration_events_for_request,
+    )
+
+    path = get_db_path()
+    if not path or not run_id or not request_id:
+        return ""
+    try:
+        traces = get_decision_traces_for_request(run_id, request_id)
+        orch = get_orchestration_events_for_request(run_id, request_id)
+        calls = get_llm_calls_for_request(run_id, request_id)
+        vm = build_runtime_decision_observability(
+            traces=traces,
+            orchestration_events=orch,
+            llm_calls=calls,
+        )
+        es = vm.get("execution_strategy") or {}
+        conv = es.get("convergence") or {}
+        early = _markdown_early_convergence_section(conv)
+        guid = _markdown_guidance_builder_section(
+            vm.get("cycle_cards"),
+            vm.get("runtime_decisions"),
+            calls,
+        )
+        if not early and not guid:
+            return ""
+        out: list[str] = []
+        if early:
+            out.append("### Early convergence (cycle 1)\n\n" + early)
+        if guid:
+            out.append("### Guidance filter & rewrite\n\n" + guid)
+        return "\n".join(out)
+    except Exception:
+        return ""
 
 
 def _trace_dict(t: dict) -> dict:
@@ -245,6 +408,54 @@ def export_request_markdown(run_id: str, request_id: str) -> str:
 
     if report.benchmark_result:
         md += "\n\n" + _build_benchmark_comparison_section(report.benchmark_result)
+
+    try:
+        from moralstack.persistence.db import get_llm_calls_for_request, get_orchestration_events_for_request
+
+        orch = get_orchestration_events_for_request(run_id, request_id)
+        calls = get_llm_calls_for_request(run_id, request_id)
+        vm = build_runtime_decision_observability(
+            traces=report.decision_traces or [],
+            orchestration_events=orch,
+            llm_calls=calls,
+        )
+        es = vm.get("execution_strategy") or {}
+        conv = es.get("convergence") or {}
+        early_md = _markdown_early_convergence_section(conv)
+        guidance_md = _markdown_guidance_builder_section(
+            vm.get("cycle_cards"),
+            vm.get("runtime_decisions"),
+            calls,
+        )
+        if early_md or guidance_md:
+            md += "\n\n---\n\n## Deliberation observability\n\n"
+            md += (
+                "> Cycle-1 early convergence diagnostics, guidance filter, and rewrite-skip evidence "
+                "(from decision traces + orchestration events + persisted LLM calls).\n\n"
+            )
+            if early_md:
+                md += "### Early convergence (cycle 1)\n\n" + early_md + "\n"
+            if guidance_md:
+                md += "### Guidance filter & rewrite\n\n" + guidance_md + "\n"
+        if es.get("risk_assessment") or orch or vm.get("cycle_cards"):
+            md += "\n\n---\n\n## Runtime observability (structured JSON)\n\n"
+            md += (
+                "> Full execution strategy snapshot for tooling; mirrors request detail UI data.\n\n"
+            )
+            md += "```json\n"
+            md += json.dumps(
+                {
+                    "execution_strategy": es,
+                    "orchestration_event_count": len(orch or []),
+                    "cycle_cards": vm.get("cycle_cards") or [],
+                    "runtime_decisions_rows": len(vm.get("runtime_decisions") or []),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            md += "\n```\n"
+    except Exception:
+        pass
 
     md += "\n\n---\n\n## Decision Traces\n"
     for t in report.decision_traces:
@@ -611,12 +822,16 @@ MoralStack:   [{ms_avg_fill}{ms_avg_empty}] {moralstack_avg:.1f}
     if section_builder == "per_question_table":
         lines = [
             "---\n\n## 📋 Per-question: policy-driven routing\n\n"
-            "| # | expected_action | final_action | path | compliance | risk_score |\n"
+            "| # | expected_action | final_action | path | compliance | risk_score | "
+            "c1_early | cycles |\n"
             "|---|-----------------|--------------|------|------------|------------|"
+            "--------|--------|"
         ]
         for r in results:
             if r.get("error"):
-                lines.append(f"| {r.get('question_id', '?')} | - | ERROR | - | - | - |")
+                lines.append(
+                    f"| {r.get('question_id', '?')} | - | ERROR | - | - | - | - | - |"
+                )
             else:
                 exp = (r.get("expected_action") or "REFUSE").strip().upper()
                 fa = (r.get("moralstack_final_action") or "").strip().upper()
@@ -625,7 +840,18 @@ MoralStack:   [{ms_avg_fill}{ms_avg_empty}] {moralstack_avg:.1f}
                 path = (r.get("moralstack_path") or "-").strip() or "-"
                 comp = "✓" if r.get("moralstack_compliance") else "✗"
                 risk = r.get("moralstack_risk_score", 0.0)
-                lines.append(f"| {r.get('question_id', '?')} | {exp} | {fa} | {path} | {comp} | {risk:.2f} |")
+                cons = r.get("moralstack_early_convergence_considered")
+                acc = r.get("moralstack_early_convergence_accepted")
+                if cons is True:
+                    c1_cell = "Y" if acc is True else ("N" if acc is False else "—")
+                else:
+                    c1_cell = "—"
+                tc = r.get("moralstack_total_cycles")
+                tc_cell = f"{tc}" if tc is not None else "—"
+                lines.append(
+                    f"| {r.get('question_id', '?')} | {exp} | {fa} | {path} | {comp} | "
+                    f"{risk:.2f} | {c1_cell} | {tc_cell} |"
+                )
         return "\n".join(lines)
 
     if section_builder == "category_analysis":
@@ -651,6 +877,7 @@ MoralStack:   [{ms_avg_fill}{ms_avg_empty}] {moralstack_avg:.1f}
 
     if section_builder == "detailed_results":
         lines = ["---\n\n## 📝 Detailed Results\n\n" "> Each question with complete responses and evaluations.\n"]
+        run_id_bm = (report.get("run_id") or "").strip()
         for r in results:
             if r.get("error"):
                 lines.append(
@@ -669,6 +896,8 @@ MoralStack:   [{ms_avg_fill}{ms_avg_empty}] {moralstack_avg:.1f}
             _hv = ", ".join(r.get("moralstack_hard_violations") or []) or "-"
             _rs = ", ".join(r.get("moralstack_risk_signals") or []) or "-"
             _constitution = f"Triggered principles: {_tp} | " f"Hard violations: {_hv} | Risk signals: {_rs}"
+            obs_md = _benchmark_question_observability_block(r, run_id_bm)
+            obs_part = f"\n\n{obs_md}\n" if obs_md else ""
             q_h = (
                 f"### Question {r.get('question_id', '?')}: {r.get('category', '')} | "
                 f"expected={r.get('expected_action', '')} | "
@@ -718,8 +947,7 @@ MoralStack:   [{ms_avg_fill}{ms_avg_empty}] {moralstack_avg:.1f}
 
 *{ms_eval.get('judge_reasoning', '')}*
 
-**Constitution (MoralStack):** {_constitution}
-
+**Constitution (MoralStack):** {_constitution}{obs_part}
 ---
 
 #### Verdict: **{winner_name}** (margin: {r.get('winner_margin', 0):.1f})

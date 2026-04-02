@@ -11,6 +11,7 @@ import logging
 import os
 import threading
 from dataclasses import asdict, dataclass, field
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,9 @@ class DecisionTrace:
     total_cycles: int = 0  # total deliberative cycles executed (populated post-deliberation)
     policy_principle_ids: list[str] = field(default_factory=list)  # from policy_overlay for audit
 
+    # Extensible JSON-safe payload for audit stages (RISK_ASSESSMENT, REQUEST_ANALYSIS_CONTEXT, CYCLE_SUMMARY, …)
+    stage_payload: dict[str, Any] = field(default_factory=dict)
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -134,6 +138,7 @@ def normalize_trace_fields(trace: DecisionTrace) -> DecisionTrace:
     trace.why_not_refuse = trace.why_not_refuse or ""
     trace.why_not_safe_complete = trace.why_not_safe_complete or ""
     trace.why_not_normal_complete = getattr(trace, "why_not_normal_complete", "") or ""
+    trace.stage_payload = dict(trace.stage_payload or {})
     return trace
 
 

@@ -19,6 +19,18 @@
         <span class="meta-label">Created</span>
         <span class="meta-value ts">{{ req.created_at | fmtdate }}</span>
     </div>
+    {% if req.get('conversation_id') or req.get('turn_index') is not none or req.get('parent_request_id') %}
+    <div class="meta-item span-2">
+        <span class="meta-label">Conversation</span>
+        <span class="meta-value">
+            {% if req.get('conversation_id') %}<span class="mono">id={{ req.get('conversation_id') }}</span>{% endif %}
+            {% if req.get('turn_index') is not none %}<span class="muted">turn={{ req.get('turn_index') }}</span>{% endif %}
+            {% if req.get('parent_request_id') %}
+            <a href="/runs/{{ run_id }}/requests/{{ req.get('parent_request_id') }}" class="mono">parent={{ req.get('parent_request_id')[:12] }}…</a>
+            {% endif %}
+        </span>
+    </div>
+    {% endif %}
 </div>
 
 {% if execution_summary %}
@@ -52,6 +64,383 @@
         </div>
         {% endif %}
     </div>
+</div>
+{% endif %}
+
+{% if runtime_decision_obs %}
+<h2>Execution strategy</h2>
+<p class="muted" style="margin-bottom:0.5rem;">Structured runtime posture from decision traces (risk, retrieval
+    context, per-cycle summaries). Scheduler / speculative / gating fields appear here as they are emitted.</p>
+<div class="card runtime-strategy-card">
+    {% set es = runtime_decision_obs.get('execution_strategy') or {} %}
+    {% set ra = es.get('risk_assessment') or {} %}
+    {% set rac = es.get('request_analysis_context') or {} %}
+    <div class="meta-grid">
+        {% if ra.get('risk_score') is not none %}
+        <div class="meta-item">
+            <span class="meta-label">Risk score (assessment trace)</span>
+            <span class="meta-value mono">{{ ra.get('risk_score') }}</span>
+        </div>
+        {% endif %}
+        {% if ra.get('risk_category') %}
+        <div class="meta-item">
+            <span class="meta-label">Risk category</span>
+            <span class="meta-value">{{ ra.get('risk_category') }}</span>
+        </div>
+        {% endif %}
+        {% if ra.get('risk_policy_action') %}
+        <div class="meta-item">
+            <span class="meta-label">risk_policy_action</span>
+            <span class="meta-value mono">{{ ra.get('risk_policy_action') }}</span>
+        </div>
+        {% endif %}
+        {% if es.get('estimation_mode') %}
+        <div class="meta-item">
+            <span class="meta-label">Estimation mode</span>
+            <span class="meta-value mono">{{ es.get('estimation_mode') }}</span>
+        </div>
+        {% endif %}
+        {% if rac.get('constitution_domain') %}
+        <div class="meta-item">
+            <span class="meta-label">Constitution domain (request analysis)</span>
+            <span class="meta-value mono">{{ rac.get('constitution_domain') }}</span>
+        </div>
+        {% endif %}
+        {% if rac.get('relevant_principles_count') is not none %}
+        <div class="meta-item">
+            <span class="meta-label">Principles retrieved</span>
+            <span class="meta-value">{{ rac.get('relevant_principles_count') }}</span>
+        </div>
+        {% endif %}
+        {% if rac.get('prefilter_cache_status') %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Domain prefilter cache</span>
+            <span class="meta-value">
+                <span class="mono">{{ rac.get('prefilter_cache_status') }}</span>
+                {% if rac.get('prefilter_keywords_changed') %}
+                <span class="badge badge-running" title="Effective keyword map changed before this lookup">keywords
+                    invalidated</span>
+                {% endif %}
+                {% if rac.get('prefilter_cache_reason') %}
+                <span class="muted">({{ rac.get('prefilter_cache_reason') }})</span>
+                {% endif %}
+                {% if rac.get('prefilter_keywords_fingerprint_prefix') %}
+                <span class="muted mono" title="Keywords fingerprint prefix">fp:{{
+                    rac.get('prefilter_keywords_fingerprint_prefix') }}…</span>
+                {% endif %}
+            </span>
+        </div>
+        {% endif %}
+        {% set rpe = es.get('relevant_principles_events') or {} %}
+        {% if rpe.get('retrieved_count') %}
+        <div class="meta-item">
+            <span class="meta-label">Relevant principles retrieval (request-scoped)</span>
+            <span class="meta-value">yes <span class="muted">({{ rpe.get('retrieved_count') }} event)</span></span>
+        </div>
+        {% endif %}
+        {% if rpe.get('reused_count') is not none %}
+        <div class="meta-item">
+            <span class="meta-label">Principles reuse events</span>
+            <span class="meta-value">{{ rpe.get('reused_count') }}</span>
+        </div>
+        {% endif %}
+        {% if rac.get('reuse_count') is not none %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Reuse targets (trace)</span>
+            <span class="meta-value mono">{{ (rac.get('reuse_targets') or []) | join(', ') or '—' }}</span>
+        </div>
+        {% endif %}
+        {% if es.get('total_cycles_observed') is not none %}
+        <div class="meta-item">
+            <span class="meta-label">Cycles (summary traces)</span>
+            <span class="meta-value">{{ es.get('total_cycles_observed') }}</span>
+        </div>
+        {% endif %}
+        {% set conv = es.get('convergence') or {} %}
+        {% if conv.get('cycle1_early_convergence_considered') is sameas true %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Cycle 1 early convergence</span>
+            <span class="meta-value">
+                {% if conv.get('cycle1_early_convergence_accepted') is sameas true %}
+                <span class="badge badge-parallel"
+                    title="Deliberation stopped after cycle 1; conservative convergence criteria met">accepted</span>
+                {% else %}
+                <span class="badge" style="background:#6c757d;color:#fff;"
+                    title="Evidence insufficient for cycle-1 stop; continued or stopped for other reasons">rejected</span>
+                {% endif %}
+                {% if conv.get('cycle1_deliberation_decision') %}
+                <span class="mono muted">decision={{ conv.get('cycle1_deliberation_decision') }}</span>
+                {% endif %}
+                {% if conv.get('cycle1_convergence_reason_codes') %}
+                <span class="mono muted" title="Reason codes">{{ (conv.get('cycle1_convergence_reason_codes') or []) | join(', ') }}</span>
+                {% endif %}
+            </span>
+        </div>
+        {% if conv.get('cycle1_perspectives_weighted_approval') is not none or conv.get('cycle1_semantic_expected_harm') is not none %}
+        <div class="meta-item span-2" style="margin-top:0.35rem;">
+            <span class="meta-label">Cycle 1 diagnostics</span>
+            <span class="meta-value mono muted" style="font-size:0.9em;">
+                {% if conv.get('cycle1_perspectives_weighted_approval') is not none %}w_approval={{ conv.get('cycle1_perspectives_weighted_approval') }}{% endif %}
+                {% if conv.get('cycle1_semantic_expected_harm') is not none %}{% if conv.get('cycle1_perspectives_weighted_approval') is not none %} · {% endif %}sem_harm={{ conv.get('cycle1_semantic_expected_harm') }}{% endif %}
+            </span>
+        </div>
+        {% endif %}
+        {% endif %}
+        {% set psbc = es.get('parallel_scheduler_by_cycle') or [] %}
+        {% if psbc %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Parallel scheduler (per cycle)</span>
+            <span class="meta-value">
+                {% for row in psbc %}
+                <span class="mono" title="Reason codes: {{ (row.get('reason_codes') or []) | join(', ') }}">c{{
+                    row.get('cycle') }}: {{ row.get('strategy') or '—' }}</span>{% if row.get('critic_short_circuit')
+                %}<span class="badge badge-running" title="Critic short-circuit; downstream modules not run">short-circuit</span>{% endif %}{% if not loop.last %} · {% endif %}
+                {% endfor %}
+            </span>
+        </div>
+        {% endif %}
+        {% if es.get('scheduler_events_count') is not none and es.get('scheduler_events_count', 0) > 0 %}
+        <div class="meta-item">
+            <span class="meta-label">Scheduler orchestration events</span>
+            <span class="meta-value">{{ es.get('scheduler_events_count') }}</span>
+        </div>
+        {% endif %}
+        {% set sgc = es.get('simulator_gating_by_cycle') or [] %}
+        {% if sgc %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Simulator gating (per cycle)</span>
+            <span class="meta-value">
+                {% for row in sgc %}
+                <span class="mono" title="{{ (row.get('reason_codes') or []) | join(', ') }}">c{{ row.get('cycle') }}:
+                    {{ row.get('status') or '—' }}</span>{% if row.get('carry_forward') %}<span class="badge"
+                    title="Prior simulation evidence carried forward">carry-forward</span>{% endif %}{% if not loop.last
+                %} · {% endif %}
+                {% endfor %}
+            </span>
+        </div>
+        {% endif %}
+        {% if es.get('simulator_gating_events_count') is not none and es.get('simulator_gating_events_count', 0) > 0 %}
+        <div class="meta-item">
+            <span class="meta-label">Simulator orchestration events</span>
+            <span class="meta-value">{{ es.get('simulator_gating_events_count') }}</span>
+        </div>
+        {% endif %}
+        {% if es.get('final_action') %}
+        <div class="meta-item">
+            <span class="meta-label">Final action (FINAL trace)</span>
+            <span class="meta-value mono">{{ es.get('final_action') }}</span>
+        </div>
+        {% endif %}
+        {% if es.get('stop_reason') %}
+        <div class="meta-item">
+            <span class="meta-label">Stop reason</span>
+            <span class="meta-value mono">{{ es.get('stop_reason') }}</span>
+        </div>
+        {% endif %}
+        {% set sp = es.get('speculative') or {} %}
+        {% if sp.get('speculative_started') or (sp.get('speculative_outcome') and sp.get('speculative_outcome') != 'none') %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Speculative overlap</span>
+            <span class="meta-value">
+                {% if sp.get('speculative_started') %}
+                <span class="badge badge-parallel" title="Policy draft ran in parallel with risk">started</span>
+                {% endif %}
+                <span class="mono">outcome: {{ sp.get('speculative_outcome') or '—' }}</span>
+                {% if sp.get('join_required') %}
+                <span class="badge badge-running" title="Controller awaited speculative output for this route">join
+                    required</span>
+                {% endif %}
+                {% if sp.get('join_skipped') %}
+                <span class="badge" style="background:#6c757d;color:#fff;"
+                    title="Route did not await speculative output">join skipped</span>
+                {% endif %}
+                {% if sp.get('join_wait_ms') is not none %}
+                <span class="muted">join wait {{ sp.get('join_wait_ms') | round(1) }} ms</span>
+                {% endif %}
+                {% if sp.get('skip_elapsed_ms') is not none %}
+                <span class="muted">since spec start {{ sp.get('skip_elapsed_ms') | round(1) }} ms</span>
+                {% endif %}
+                {% if sp.get('last_discard_reason') %}
+                <span class="muted mono" title="Last discard reason from orchestration payload">{{
+                    sp.get('last_discard_reason') }}</span>
+                {% endif %}
+            </span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<h2>Runtime decisions</h2>
+<p class="muted" style="margin-bottom:0.5rem;">Orchestration events persisted independently of LLM calls (scheduler,
+    retrieval, convergence). Empty when no rows were recorded for this request.</p>
+<div class="card table-card">
+    {% set rtd = runtime_decision_obs.get('runtime_decisions') or [] %}
+    {% if rtd %}
+    <table class="data-table runtime-decisions-table">
+        <thead>
+            <tr>
+                <th>Cycle</th>
+                <th>Stage</th>
+                <th>Component</th>
+                <th>Event</th>
+                <th>Decision</th>
+                <th>Reason</th>
+                <th>Duration</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rtd %}
+            <tr>
+                <td class="mono">{{ row.get('cycle') if row.get('cycle') is not none else '—' }}</td>
+                <td>{{ row.get('stage') or '—' }}</td>
+                <td class="mono">{{ row.get('component') or '—' }}</td>
+                <td><span class="mono">{{ row.get('event') or '—' }}</span></td>
+                <td class="mono">{{ row.get('decision') or '—' }}</td>
+                <td>{{ row.get('reason') or '—' }}</td>
+                <td>{% if row.get('duration_ms') is not none %}{{ row.get('duration_ms') | round(1) }} ms{% else %}—{% endif %}</td>
+                <td>{{ row.get('status') or '—' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="muted empty-state-msg">No orchestration events recorded for this request.</p>
+    {% endif %}
+</div>
+
+<h2>Deliberation cycles</h2>
+<p class="muted" style="margin-bottom:0.5rem;">Per-cycle summaries from <code>CYCLE_SUMMARY</code> decision traces.</p>
+<div class="cycle-cards-grid">
+    {% set ccs = runtime_decision_obs.get('cycle_cards') or [] %}
+    {% if ccs %}
+    {% for card in ccs %}
+    <div class="card cycle-summary-card">
+        <h3 class="cycle-card-title">{{ card.get('cycle_label') or ('Cycle ' ~ card.get('cycle')) }}</h3>
+        <div class="meta-grid compact">
+            {% if card.get('strategy') %}
+            <div class="meta-item">
+                <span class="meta-label">Strategy</span>
+                <span class="meta-value mono">{{ card.get('strategy') }}</span>
+            </div>
+            {% endif %}
+            {% if card.get('scheduler_reason_codes') %}
+            <div class="meta-item span-2">
+                <span class="meta-label">Scheduler reasons</span>
+                <span class="meta-value mono">{{ (card.get('scheduler_reason_codes') or []) | join(', ') }}</span>
+            </div>
+            {% endif %}
+            {% if card.get('critic_short_circuit') %}
+            <div class="meta-item span-2">
+                <span class="meta-label">Critic short-circuit</span>
+                <span class="meta-value"><span class="badge badge-running" title="Simulator/perspectives not executed after critic hard signal">yes</span></span>
+            </div>
+            {% endif %}
+            {% if card.get('critic_result') %}
+            <div class="meta-item">
+                <span class="meta-label">Critic</span>
+                <span class="meta-value mono">{{ card.get('critic_result') }}</span>
+            </div>
+            {% endif %}
+            {% if card.get('principles_source_note') %}
+            <div class="meta-item span-2">
+                <span class="meta-label">Principles</span>
+                <span class="meta-value mono">{{ card.get('principles_source_note') }}</span>
+            </div>
+            {% endif %}
+            <div class="meta-item span-2">
+                <span class="meta-label">Modules executed</span>
+                <span class="meta-value mono">{{ (card.get('modules_executed') or []) | join(', ') or '—' }}</span>
+            </div>
+            {% if card.get('simulator_result') is not none %}
+            <div class="meta-item">
+                <span class="meta-label">Simulator (semantic harm)</span>
+                <span class="meta-value mono">{{ card.get('simulator_result') }}</span>
+            </div>
+            {% endif %}
+            {% if card.get('simulator_ran_this_cycle') is not none %}
+            <div class="meta-item span-2">
+                <span class="meta-label">Simulator this cycle</span>
+                <span class="meta-value">
+                    {% if card.get('simulator_ran_this_cycle') %}
+                    <span class="badge badge-parallel" title="Simulator LLM ran this cycle">executed</span>
+                    {% else %}
+                    <span class="badge" style="background:#6c757d;color:#fff;"
+                        title="Explicit gate skip; prior simulation may apply">skipped (gated)</span>
+                    {% endif %}
+                    {% if card.get('simulator_gate_reason_codes') %}
+                    <span class="mono muted">{{ (card.get('simulator_gate_reason_codes') or []) | join(', ') }}</span>
+                    {% endif %}
+                </span>
+            </div>
+            {% endif %}
+            {% if card.get('perspectives_result') is not none %}
+            <div class="meta-item">
+                <span class="meta-label">Perspectives (avg approval)</span>
+                <span class="meta-value mono">{{ card.get('perspectives_result') }}</span>
+            </div>
+            {% endif %}
+            {% if card.get('convergence_result') %}
+            <div class="meta-item">
+                <span class="meta-label">Convergence (stop reason)</span>
+                <span class="meta-value mono">{{ card.get('convergence_result') }}</span>
+            </div>
+            {% endif %}
+            {% set ns_rw = namespace(shown=false) %}
+            {% for call in llm_calls %}
+                {% if not ns_rw.shown and call.get('cycle') == card.get('cycle') and 'SKIPPED_EMPTY_GUIDANCE' in (call.get('action') or '') %}
+            <div class="meta-item span-2">
+                <span class="meta-label">Rewrite</span>
+                <span class="badge" style="background:#0369a1;color:#fff;"
+                    title="Guidance filter returned empty: all modules satisfied. Draft from previous cycle preserved without rewrite.">
+                    skipped (no substantive guidance)
+                </span>
+            </div>
+                {% set ns_rw.shown = true %}
+                {% endif %}
+            {% endfor %}
+            {% if card.get('deliberation_decision') %}
+            <div class="meta-item">
+                <span class="meta-label">Deliberation decision</span>
+                <span class="meta-value mono">{{ card.get('deliberation_decision') }}</span>
+            </div>
+            {% endif %}
+            {% if card.get('guidance_filter_summary') %}
+            <div class="meta-item span-2">
+                <span class="meta-label">Aggregated guidance (signal filter)</span>
+                <span class="meta-value">
+                    {% if card.get('rewrite_skipped_for_empty_guidance') %}
+                    <span class="badge" style="background:#64748b;color:#fff;"
+                        title="No substantive guidance after filter; cycle-2 policy rewrite was skipped">rewrite
+                        skipped</span>
+                    {% else %}
+                    <span class="badge badge-parallel" title="Guidance passed to policy rewrite">rewrite prepared</span>
+                    {% endif %}
+                    <span class="muted" style="margin-left:0.35rem;">{{ card.get('guidance_filter_summary') }}</span>
+                </span>
+            </div>
+            {% endif %}
+            {% if card.get('early_convergence_considered') is sameas true %}
+            <div class="meta-item span-2">
+                <span class="meta-label">Early convergence (cycle 1)</span>
+                <span class="meta-value">
+                    {% if card.get('early_convergence_accepted') is sameas true %}
+                    <span class="badge badge-parallel">accepted</span>
+                    {% else %}
+                    <span class="badge" style="background:#6c757d;color:#fff;">rejected</span>
+                    {% endif %}
+                    {% if card.get('convergence_reason_codes') %}
+                    <span class="mono muted">{{ (card.get('convergence_reason_codes') or []) | join(', ') }}</span>
+                    {% endif %}
+                </span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <p class="muted empty-state-msg">No per-cycle summary traces for this request.</p>
+    {% endif %}
 </div>
 {% endif %}
 
@@ -530,6 +919,11 @@
                 {% if call.model %}
                 <span class="badge">{{ call.model }}</span>
                 {% endif %}
+                {% if call.semantic_badges %}
+                {% for b in call.semantic_badges %}
+                <span class="badge badge-semantic" title="Call semantics">{{ b }}</span>
+                {% endfor %}
+                {% endif %}
                 {% if call.duration_ms %}
                 <span class="muted">{{ call.duration_ms | round(0) | int }}ms</span>
                 {% endif %}
@@ -577,6 +971,11 @@
             {% endif %}
             {% if call.model %}
             <span class="badge">{{ call.model }}</span>
+            {% endif %}
+            {% if call.semantic_badges %}
+            {% for b in call.semantic_badges %}
+            <span class="badge badge-semantic" title="Call semantics">{{ b }}</span>
+            {% endfor %}
             {% endif %}
             {% if call.duration_ms %}
             <span class="muted">{{ call.duration_ms | round(0) | int }}ms</span>

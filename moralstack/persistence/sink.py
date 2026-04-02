@@ -23,6 +23,7 @@ from moralstack.persistence.db import (
     insert_debug_events_batch,
     insert_decision_traces_batch,
     insert_llm_calls_batch,
+    insert_orchestration_events_batch,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,10 @@ def persist_llm_call(
     attempts: int | None = None,
     error: str | None = None,
     sequence_in_cycle: int | None = None,
+    call_kind: str | None = None,
+    call_outcome: str | None = None,
+    cache_status: str | None = None,
+    related_event_id: int | None = None,
     uow: SqliteUnitOfWork | None = None,
 ) -> bool:
     """
@@ -81,8 +86,9 @@ def persist_llm_call(
             INSERT INTO llm_calls (run_id, request_id, cycle, phase, module, action, model,
                                    started_at, duration_ms, prompt, system_prompt, raw_response,
                                    parsed_json, parsed_summary_json, token_usage_json,
-                                   attempts, error, sequence_in_cycle)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                   attempts, error, sequence_in_cycle,
+                                   call_kind, call_outcome, cache_status, related_event_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -103,6 +109,10 @@ def persist_llm_call(
                 attempts,
                 error,
                 sequence_in_cycle,
+                call_kind,
+                call_outcome,
+                cache_status,
+                related_event_id,
             ),
         )
         if owned:
@@ -241,6 +251,10 @@ def _llm_call_row(
     attempts: int | None,
     error: str | None,
     sequence_in_cycle: int | None,
+    call_kind: str | None,
+    call_outcome: str | None,
+    cache_status: str | None,
+    related_event_id: int | None,
 ) -> tuple[Any, ...]:
     return (
         run_id,
@@ -261,6 +275,10 @@ def _llm_call_row(
         attempts,
         error,
         sequence_in_cycle,
+        call_kind,
+        call_outcome,
+        cache_status,
+        related_event_id,
     )
 
 
@@ -310,6 +328,10 @@ def persist_llm_calls_batch(
                 attempts=e.get("attempts"),
                 error=e.get("error"),
                 sequence_in_cycle=seq,
+                call_kind=e.get("call_kind"),
+                call_outcome=e.get("call_outcome"),
+                cache_status=e.get("cache_status"),
+                related_event_id=e.get("related_event_id"),
             )
         )
     if not rows:
@@ -428,6 +450,157 @@ def persist_debug_events_batch(
         return True
     except Exception as e:
         logger.warning("persistence: persist_debug_events_batch failed: %s", e)
+        if owned and conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False
+    finally:
+        if owned and conn is not None:
+            conn.close()
+
+
+def _json_or_none(obj: Any) -> str | None:
+    if obj is None:
+        return None
+    try:
+        return json.dumps(obj, ensure_ascii=False)
+    except Exception:
+        return None
+
+
+def persist_orchestration_event(
+    *,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    cycle: int | None = None,
+    stage: str,
+    component: str,
+    event_type: str,
+    decision: str | None = None,
+    status: str | None = None,
+    sequence: int | None = None,
+    started_at: int | None = None,
+    duration_ms: float | None = None,
+    reason_codes: list[str] | None = None,
+    inputs: dict[str, Any] | None = None,
+    outputs: dict[str, Any] | None = None,
+    payload: dict[str, Any] | None = None,
+    uow: SqliteUnitOfWork | None = None,
+) -> int | None:
+    """
+    Persist a single orchestration_events row. Returns last inserted row id, or None on skip/error.
+    """
+    if not _should_persist():
+        return None
+    path = get_db_path()
+    if not path:
+        return None
+    run_id = run_id or get_current_run_id()
+    request_id = request_id or get_current_request_id()
+    if not run_id or not request_id:
+        return None
+    owned = uow is None or uow.conn is None
+    conn = None
+    try:
+        conn = uow.conn if not owned else _get_connection(path)
+        cur = conn.execute(
+            """
+            INSERT INTO orchestration_events (
+                run_id, request_id, cycle, stage, component, event_type,
+                decision, status, sequence, started_at, duration_ms,
+                reason_codes_json, inputs_json, outputs_json, payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                request_id,
+                cycle,
+                stage,
+                component,
+                event_type,
+                decision,
+                status,
+                sequence,
+                started_at if started_at is not None else int(time.time() * 1000),
+                duration_ms,
+                _json_or_none(reason_codes),
+                _json_or_none(inputs),
+                _json_or_none(outputs),
+                _json_or_none(payload),
+            ),
+        )
+        if owned:
+            conn.commit()
+        return int(cur.lastrowid) if cur.lastrowid is not None else None
+    except Exception as e:
+        logger.warning("persistence: persist_orchestration_event failed: %s", e)
+        if owned and conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return None
+    finally:
+        if owned and conn is not None:
+            conn.close()
+
+
+def persist_orchestration_events_batch(
+    entries: list[dict[str, Any]],
+    uow: SqliteUnitOfWork | None = None,
+) -> bool:
+    """
+    Batch persist orchestration_events. Each row dict uses keys aligned with persist_orchestration_event.
+    Optional JSON fields: reason_codes, inputs, outputs, payload (serialized like persist_llm_call).
+    """
+    if not _should_persist() or not entries:
+        return True
+    path = get_db_path()
+    if not path:
+        return False
+    default_run = get_current_run_id()
+    default_req = get_current_request_id()
+    now_ms = int(time.time() * 1000)
+    rows: list[tuple[Any, ...]] = []
+    for e in entries:
+        run_id = e.get("run_id") or default_run
+        request_id = e.get("request_id") or default_req
+        if not run_id or not request_id:
+            continue
+        rows.append(
+            (
+                run_id,
+                request_id,
+                e.get("cycle"),
+                e.get("stage", ""),
+                e.get("component", ""),
+                e.get("event_type", ""),
+                e.get("decision"),
+                e.get("status"),
+                e.get("sequence"),
+                e.get("started_at", now_ms),
+                e.get("duration_ms"),
+                _json_or_none(e.get("reason_codes")),
+                _json_or_none(e.get("inputs")),
+                _json_or_none(e.get("outputs")),
+                _json_or_none(e.get("payload")),
+            )
+        )
+    if not rows:
+        return True
+    owned = uow is None or uow.conn is None
+    conn = None
+    try:
+        conn = uow.conn if not owned else _get_connection(path)
+        insert_orchestration_events_batch(conn, rows)
+        if owned:
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.warning("persistence: persist_orchestration_events_batch failed: %s", e)
         if owned and conn is not None:
             try:
                 conn.rollback()

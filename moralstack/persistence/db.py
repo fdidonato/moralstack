@@ -1,7 +1,8 @@
 """
 SQLite database layer for MoralStack persistence.
 
-Schema: runs, requests, llm_calls, decision_traces, debug_events, exports_cache.
+Schema: runs, requests, llm_calls, decision_traces, debug_events, exports_cache,
+orchestration_events.
 Uses WAL mode and foreign_keys=ON.
 """
 
@@ -143,6 +144,14 @@ _SCHEMA = """
               TEXT,
               sequence_in_cycle
               INTEGER,
+              call_kind
+              TEXT,
+              call_outcome
+              TEXT,
+              cache_status
+              TEXT,
+              related_event_id
+              INTEGER,
               FOREIGN
               KEY
           (
@@ -157,6 +166,71 @@ _SCHEMA = """
 
           CREATE INDEX IF NOT EXISTS idx_llm_calls_request
               ON llm_calls(run_id, request_id, cycle, phase);
+
+          CREATE TABLE IF NOT EXISTS orchestration_events
+          (
+              id
+              INTEGER
+              PRIMARY
+              KEY
+              AUTOINCREMENT,
+              run_id
+              TEXT
+              NOT
+              NULL,
+              request_id
+              TEXT
+              NOT
+              NULL,
+              cycle
+              INTEGER,
+              stage
+              TEXT
+              NOT
+              NULL,
+              component
+              TEXT
+              NOT
+              NULL,
+              event_type
+              TEXT
+              NOT
+              NULL,
+              decision
+              TEXT,
+              status
+              TEXT,
+              sequence
+              INTEGER,
+              started_at
+              INTEGER,
+              duration_ms
+              REAL,
+              reason_codes_json
+              TEXT,
+              inputs_json
+              TEXT,
+              outputs_json
+              TEXT,
+              payload_json
+              TEXT,
+              FOREIGN
+              KEY
+          (
+              run_id,
+              request_id
+          ) REFERENCES requests
+          (
+              run_id,
+              request_id
+          ) ON DELETE CASCADE
+              );
+
+          CREATE INDEX IF NOT EXISTS idx_orch_events_run_req_cycle_seq
+              ON orchestration_events(run_id, request_id, cycle, sequence);
+
+          CREATE INDEX IF NOT EXISTS idx_orch_events_run_req_type
+              ON orchestration_events(run_id, request_id, event_type);
 
           CREATE TABLE IF NOT EXISTS decision_traces
           (
@@ -326,8 +400,9 @@ _LLM_CALLS_INSERT = """
     INSERT INTO llm_calls (run_id, request_id, cycle, phase, module, action, model,
                            started_at, duration_ms, prompt, system_prompt, raw_response,
                            parsed_json, parsed_summary_json, token_usage_json,
-                           attempts, error, sequence_in_cycle)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           attempts, error, sequence_in_cycle,
+                           call_kind, call_outcome, cache_status, related_event_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _DECISION_TRACES_INSERT = """
@@ -341,12 +416,22 @@ _DEBUG_EVENTS_INSERT = """
 """
 
 
+_ORCH_EVENTS_INSERT = """
+    INSERT INTO orchestration_events (
+        run_id, request_id, cycle, stage, component, event_type,
+        decision, status, sequence, started_at, duration_ms,
+        reason_codes_json, inputs_json, outputs_json, payload_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+
 def insert_llm_calls_batch(conn: sqlite3.Connection, rows: list[tuple[Any, ...]]) -> None:
     """
     Batch insert into llm_calls. Each row: (run_id, request_id, cycle, phase, module,
     action, model, started_at, duration_ms, prompt, system_prompt, raw_response,
     parsed_json, parsed_summary_json, token_usage_json, attempts, error,
-    sequence_in_cycle).
+    sequence_in_cycle, call_kind, call_outcome, cache_status, related_event_id).
     """
     if not rows:
         return
@@ -361,6 +446,17 @@ def insert_decision_traces_batch(conn: sqlite3.Connection, rows: list[tuple[Any,
     if not rows:
         return
     conn.executemany(_DECISION_TRACES_INSERT, rows)
+
+
+def insert_orchestration_events_batch(conn: sqlite3.Connection, rows: list[tuple[Any, ...]]) -> None:
+    """
+    Batch insert into orchestration_events. Each row: (run_id, request_id, cycle, stage,
+    component, event_type, decision, status, sequence, started_at, duration_ms,
+    reason_codes_json, inputs_json, outputs_json, payload_json).
+    """
+    if not rows:
+        return
+    conn.executemany(_ORCH_EVENTS_INSERT, rows)
 
 
 def insert_debug_events_batch(conn: sqlite3.Connection, rows: list[tuple[Any, ...]]) -> None:
@@ -396,12 +492,45 @@ def init_db(db_path: str | None = None) -> bool:
             conn.commit()
         except Exception:
             pass
+        for _, _conv_sql in (
+            ("conversation_id", "ALTER TABLE requests ADD COLUMN conversation_id TEXT"),
+            ("turn_index", "ALTER TABLE requests ADD COLUMN turn_index INTEGER"),
+            ("parent_request_id", "ALTER TABLE requests ADD COLUMN parent_request_id TEXT"),
+        ):
+            try:
+                conn.execute(_conv_sql)
+                conn.commit()
+            except Exception:
+                pass
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_requests_conversation_id ON requests(conversation_id)")
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_requests_conversation_turn ON requests(conversation_id, turn_index)"
+            )
+            conn.commit()
+        except Exception:
+            pass
         # Migration: add sequence_in_cycle for logical journey order (safe no-op if already present)
         try:
             conn.execute("ALTER TABLE llm_calls ADD COLUMN sequence_in_cycle INTEGER")
             conn.commit()
         except Exception:
             pass
+        for _col, _sql in (
+            ("call_kind", "ALTER TABLE llm_calls ADD COLUMN call_kind TEXT"),
+            ("call_outcome", "ALTER TABLE llm_calls ADD COLUMN call_outcome TEXT"),
+            ("cache_status", "ALTER TABLE llm_calls ADD COLUMN cache_status TEXT"),
+            ("related_event_id", "ALTER TABLE llm_calls ADD COLUMN related_event_id INTEGER"),
+        ):
+            try:
+                conn.execute(_sql)
+                conn.commit()
+            except Exception:
+                pass
         conn.close()
         return True
     except Exception as e:
@@ -482,6 +611,10 @@ def upsert_request(
     prompt: str,
     domain: str | None = None,
     meta: dict[str, Any] | None = None,
+    *,
+    conversation_id: str | None = None,
+    turn_index: int | None = None,
+    parent_request_id: str | None = None,
 ) -> bool:
     """Inserts or replaces a request. Returns True on success."""
     mode = get_persist_mode()
@@ -496,9 +629,10 @@ def upsert_request(
         conn.execute(
             """
             INSERT OR IGNORE INTO requests (
-                run_id, request_id, prompt, domain, created_at, meta_json
+                run_id, request_id, prompt, domain, created_at, meta_json,
+                conversation_id, turn_index, parent_request_id
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -507,6 +641,9 @@ def upsert_request(
                 domain or "",
                 int(time.time() * 1000),
                 json.dumps(meta or {}),
+                conversation_id,
+                turn_index,
+                parent_request_id,
             ),
         )
         conn.commit()
@@ -676,7 +813,7 @@ def get_decision_traces_for_request(
     run_id: str,
     request_id: str,
 ) -> list[dict[str, Any]]:
-    """Returns decision traces for a request, ordered by sequence."""
+    """Returns decision traces for a request, ordered by creation time then sequence (audit timeline)."""
     path = get_db_path()
     if not path:
         return []
@@ -688,7 +825,7 @@ def get_decision_traces_for_request(
             FROM decision_traces
             WHERE run_id = ?
               AND request_id = ?
-            ORDER BY sequence
+            ORDER BY created_at ASC, sequence ASC, id ASC
             """,
             (run_id, request_id),
         ).fetchall()
@@ -696,6 +833,33 @@ def get_decision_traces_for_request(
         return [dict(r) for r in rows]
     except Exception as e:
         logger.warning("persistence: get_decision_traces_for_request failed: %s", e)
+        return []
+
+
+def get_orchestration_events_for_request(
+    run_id: str,
+    request_id: str,
+) -> list[dict[str, Any]]:
+    """Returns orchestration_events for a request, stable ordering by cycle, sequence, time."""
+    path = get_db_path()
+    if not path:
+        return []
+    try:
+        conn = _get_connection(path)
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM orchestration_events
+            WHERE run_id = ?
+              AND request_id = ?
+            ORDER BY COALESCE(cycle, -1), COALESCE(sequence, 999999), COALESCE(started_at, 0), id ASC
+            """,
+            (run_id, request_id),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.warning("persistence: get_orchestration_events_for_request failed: %s", e)
         return []
 
 

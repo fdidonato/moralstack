@@ -11,11 +11,12 @@ import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.delib_context import DelibContext
-from moralstack.models.risk import RiskPolicyAction
+from moralstack.models.risk.categories import OperationalRisk, RiskCategory, RiskPolicyAction
 from moralstack.orchestration._policy_helpers import (
     CONSTRAINED_GENERATION_INSTRUCTION,
     SAFE_COMPLETE_GENERATION_INSTRUCTION,
@@ -30,6 +31,19 @@ from moralstack.orchestration.convergence_evaluator import ConvergenceEvaluator
 from moralstack.orchestration.diagnostics import orch_debug_log
 from moralstack.orchestration.guidance_builder import build_aggregated_guidance
 from moralstack.orchestration.language_resolver import resolve_prompt_with_language
+from moralstack.orchestration.orchestration_event_taxonomy import (
+    AGGREGATED_GUIDANCE_EVALUATED,
+    CONVERGENCE_EVALUATED,
+    CRITIC_SHORT_CIRCUIT_TRIGGERED,
+    EARLY_CONVERGENCE_ACCEPTED,
+    EARLY_CONVERGENCE_REJECTED,
+    PARALLEL_STRATEGY_SELECTED,
+    RELEVANT_PRINCIPLES_RETRIEVED,
+    RELEVANT_PRINCIPLES_REUSED,
+    SIMULATOR_EXECUTED,
+    SIMULATOR_GATE_DECISION,
+    SIMULATOR_SKIPPED,
+)
 from moralstack.orchestration.overlay_policy import get_constitution_safe
 from moralstack.orchestration.persistence_helpers import record_decision_trace, record_llm_call
 from moralstack.orchestration.response_assembler import ResponseAssembler
@@ -47,14 +61,59 @@ from moralstack.orchestration.types import (
     OrchestratorTimeoutError,
     PolicyGenerationResultProtocol,
     ProcessedRequest,
+    RequestAnalysisContext,
     ResponseMetadata,
     ResponseType,
     RiskEstimationProtocol,
     risk_category_str,
 )
 from moralstack.persistence.context import set_current_cycle
+from moralstack.persistence.sink import persist_orchestration_event
+from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace, normalize_trace_fields
+from moralstack.runtime.trace.trace_stages import CYCLE_SUMMARY, REQUEST_ANALYSIS_CONTEXT
 
 _LOG = logging.getLogger(__name__)
+
+
+def _emit_aggregated_guidance_observability(
+    state: DeliberationState,
+    guidance: str,
+    telemetry: dict[str, Any],
+) -> None:
+    """Persist orchestration event and structured log for aggregated guidance (rewrite path)."""
+    empty = not guidance.strip()
+    reason_codes = [
+        "AGGREGATED_GUIDANCE_EVALUATED",
+        "REWRITE_SKIPPED_NO_SUBSTANTIVE_GUIDANCE" if empty else "REWRITE_GUIDANCE_READY",
+    ]
+    _LOG.info(
+        "aggregated_guidance_evaluated cycle=%s empty=%s telemetry=%s",
+        state.cycle,
+        empty,
+        telemetry,
+    )
+    try:
+        persist_orchestration_event(
+            cycle=state.cycle,
+            stage="deliberation",
+            component="guidance_builder",
+            event_type=AGGREGATED_GUIDANCE_EVALUATED,
+            decision="rewrite_skipped" if empty else "rewrite_prepared",
+            status="skipped" if empty else "ok",
+            reason_codes=reason_codes,
+            payload={
+                **telemetry,
+                "guidance_char_len": len(guidance),
+                "guidance_empty": empty,
+                "short_summary": (
+                    "No substantive guidance after signal filter; rewrite skipped."
+                    if empty
+                    else "Substantive guidance aggregated for policy rewrite."
+                ),
+            },
+        )
+    except Exception:
+        _LOG.debug("emit AGGREGATED_GUIDANCE_EVALUATED failed", exc_info=True)
 
 
 def _policy_llm_model_for_action(policy: Any, action: str) -> str | None:
@@ -93,6 +152,43 @@ SEQ_SIMULATOR = 3
 SEQ_PERSPECTIVES = 4
 SEQ_HINDSIGHT = 5
 SEQ_REFUSAL_OR_FINALIZE = 6
+
+ParallelSchedulerStrategy = Literal["critic_gated", "full_parallel"]
+
+_SCHEDULER_REASON_ORDER: tuple[str, ...] = (
+    "PREVIOUS_HARD_VIOLATION",
+    "INTENT_TO_HARM_TRUE",
+    "OPERATIONAL_RISK_HIGH",
+    "RISK_POLICY_ACTION_DENY",
+    "HIGH_RISK_POSTURE",
+    "REQUESTED_INSTRUCTIONS_SENSITIVE_POSTURE",
+)
+
+
+@dataclass(frozen=True)
+class ParallelStrategySelection:
+    """Risk-aware parallel module scheduling (execution only; no governance semantics)."""
+
+    strategy: ParallelSchedulerStrategy
+    reason_codes: tuple[str, ...]
+    posture_summary: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SimulatorGateDecision:
+    """Conservative simulator run vs skip (execution only; does not change governance)."""
+
+    should_run: bool
+    reason_codes: tuple[str, ...]
+    diagnostics: dict[str, Any]
+
+
+def _prior_cycle_hard_violation_critiques(state: DeliberationState) -> bool:
+    """True if any critique from a prior cycle reported violated_hard (current cycle critique not yet run)."""
+    for cr in state.critiques:
+        if getattr(cr, "violated_hard", False):
+            return True
+    return False
 
 
 def _emit_hindsight_diagnostic(
@@ -182,6 +278,7 @@ class DeliberationRunner:
         self._convergence_evaluator = ConvergenceEvaluator(config)
         self._current_start_time: float = 0.0
         self._executor: ThreadPoolExecutor | None = None
+        self._request_analysis_reuse_targets: list[str] = []
 
     def _effective_max_cycles(self, risk_estimation: RiskEstimationProtocol) -> int:
         risk_score = risk_estimation.score if hasattr(risk_estimation, "score") else 0.5
@@ -204,6 +301,167 @@ class DeliberationRunner:
         if self._executor is not None:
             self._executor.shutdown(wait=True)
             self._executor = None
+
+    def _retrieval_top_k_for_request(self) -> int:
+        """Align single-shot retrieval with critic.critique_with_relevant_principles (top_k_principles)."""
+        if self.critic is not None:
+            cfg = getattr(self.critic, "config", None)
+            if cfg is not None:
+                tk = getattr(cfg, "top_k_principles", None)
+                if isinstance(tk, int) and tk > 0:
+                    return tk
+        return 10
+
+    def _try_build_request_analysis_context(
+        self,
+        request: ProcessedRequest,
+    ) -> RequestAnalysisContext | None:
+        """Single constitution-store retrieval for relevant principles + constitution object (per request path)."""
+        if self.constitution_store is None:
+            return None
+        request_id = request.request_id or ""
+        top_k = self._retrieval_top_k_for_request()
+        try:
+            t0 = time.time()
+            started_ms = int(t0 * 1000)
+            relevant = self.constitution_store.get_relevant_principles(
+                query=request.prompt,
+                top_k=top_k,
+                domain=request.get_domain(),
+            )
+            t1 = time.time()
+            constitution = get_constitution_safe(self.constitution_store, request.get_domain())
+            retrieval_debug: dict[str, Any] = {}
+            try:
+                gd = getattr(self.constitution_store, "get_debug_info", None)
+                if callable(gd):
+                    retrieval_debug = gd() or {}
+            except Exception:
+                retrieval_debug = {}
+            pc = retrieval_debug.get("prefilter_cache_status")
+            pc_str: str | None
+            if isinstance(pc, str):
+                pc_str = pc
+            elif pc is None:
+                pc_str = None
+            else:
+                pc_str = str(pc)
+            return RequestAnalysisContext(
+                relevant_principles=tuple(relevant),
+                constitution=constitution,
+                detected_domain=request.get_domain(),
+                retrieval_metadata=dict(retrieval_debug),
+                prefilter_cache_status=pc_str,
+                retrieval_count=len(relevant),
+                retrieval_duration_ms=round((t1 - t0) * 1000, 1),
+                retrieval_started_at_ms=started_ms,
+                retrieval_top_k=top_k,
+            )
+        except Exception as e:
+            _LOG.warning(
+                "get_relevant_principles failed request_id=%s error_type=%s error=%s",
+                request_id,
+                type(e).__name__,
+                e,
+            )
+            return None
+
+    def _record_retrieval_start_and_event(
+        self,
+        *,
+        request_id: str,
+        request: ProcessedRequest,
+        request_analysis: RequestAnalysisContext,
+    ) -> None:
+        """Trace RELEVANT_PRINCIPLES + orchestration RELEVANT_PRINCIPLES_RETRIEVED (request-scoped retrieval)."""
+        relevant = list(request_analysis.relevant_principles)
+        principle_ids = [p.id for p in relevant]
+        relevant_principles_detail = [
+            {"id": p.id, "title": p.title or "", "level": p.level or "soft"} for p in relevant
+        ]
+        retrieval_debug = request_analysis.retrieval_metadata
+        record_decision_trace(
+            request_id=request_id,
+            stage="RELEVANT_PRINCIPLES",
+            sequence=0,
+            trace_json=json.dumps(
+                {
+                    "relevant_principle_ids": principle_ids,
+                    "relevant_principles": relevant_principles_detail,
+                    "domain": (request.get_domain() or "") or "",
+                    "started_at": request_analysis.retrieval_started_at_ms,
+                    "duration_ms": request_analysis.retrieval_duration_ms,
+                    "parallel_retrieval": True,
+                    "retrieval_top_k": request_analysis.retrieval_top_k,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        try:
+            persist_orchestration_event(
+                cycle=None,
+                stage="retrieval",
+                component="constitution",
+                event_type=RELEVANT_PRINCIPLES_RETRIEVED,
+                decision=str(len(relevant)),
+                status="ok",
+                duration_ms=request_analysis.retrieval_duration_ms,
+                payload={
+                    "principles_count": len(relevant),
+                    "principle_ids": principle_ids,
+                    "constitution_domain": (request.get_domain() or "") or "",
+                    "prefilter_cache_status": retrieval_debug.get("prefilter_cache_status"),
+                    "retrieval_count": len(relevant),
+                    "retrieval_top_k": request_analysis.retrieval_top_k,
+                    "source": "deliberation_runner",
+                },
+            )
+        except Exception:
+            _LOG.debug("emit RELEVANT_PRINCIPLES_RETRIEVED failed", exc_info=True)
+
+    def _emit_request_analysis_context_finalize(
+        self,
+        *,
+        request_id: str,
+        request_analysis: RequestAnalysisContext | None,
+        risk_estimation: RiskEstimationProtocol,
+    ) -> None:
+        """Single REQUEST_ANALYSIS_CONTEXT trace at end of deliberation with reuse_targets populated."""
+        if request_analysis is None:
+            return
+        try:
+            relevant = list(request_analysis.relevant_principles)
+            relevant_principles_detail = [
+                {"id": p.id, "title": p.title or "", "level": p.level or "soft"} for p in relevant
+            ]
+            rd = request_analysis.retrieval_metadata
+            reuse_targets = list(self._request_analysis_reuse_targets)
+            rq = DecisionTrace(
+                request_id=request_id,
+                stage=REQUEST_ANALYSIS_CONTEXT,
+                sequence=100,
+                risk_score=float(getattr(risk_estimation, "score", 0.5) or 0.5),
+            )
+            rq.stage_payload = {
+                "relevant_principles": relevant_principles_detail,
+                "constitution_domain": (request_analysis.detected_domain or "") or "",
+                "retrieval_count": request_analysis.retrieval_count,
+                "reuse_targets": reuse_targets,
+                "reuse_count": len(reuse_targets),
+                "prefilter_cache_status": rd.get("prefilter_cache_status"),
+                "prefilter_cache_reason": rd.get("prefilter_cache_invalidation_reason"),
+                "prefilter_keywords_changed": rd.get("prefilter_keywords_changed"),
+                "prefilter_keywords_fingerprint_prefix": rd.get("prefilter_keywords_fingerprint_prefix")
+                or "",
+                "parallel_retrieval": True,
+                "request_scoped": True,
+                "retrieval_duration_ms": request_analysis.retrieval_duration_ms,
+                "retrieval_top_k": request_analysis.retrieval_top_k,
+            }
+            normalize_trace_fields(rq)
+            append_decision_trace(rq)
+        except Exception:
+            _LOG.debug("emit REQUEST_ANALYSIS_CONTEXT finalize failed", exc_info=True)
 
     def run_benign_fast_path(
         self,
@@ -715,6 +973,8 @@ class DeliberationRunner:
                 )
             except Exception:
                 pass
+        _snap_raw = getattr(state, "_convergence_evaluation_snapshot", None)
+        _conv_snap = dict(_snap_raw) if isinstance(_snap_raw, dict) else None
         return OrchestratorResult(
             response=response,
             request_id=request.request_id,
@@ -723,7 +983,190 @@ class DeliberationRunner:
             total_cycles=state.cycle,
             converged=converged,
             errors=list(state.errors) if state.errors else None,
+            convergence_snapshot=_conv_snap,
         )
+
+    def _emit_cycle_summary_trace(
+        self,
+        *,
+        request_id: str,
+        state: DeliberationState,
+        outcome: ConvergenceOutcome,
+        max_cycles: int,
+        risk_estimation: RiskEstimationProtocol,
+    ) -> None:
+        """Observability-only: one CYCLE_SUMMARY decision trace per deliberation cycle."""
+        try:
+            dyn_strat = getattr(state, "_parallel_scheduler_strategy", None)
+            if self.config.parallel_module_calls:
+                strat = str(dyn_strat) if isinstance(dyn_strat, str) else "parallel_modules"
+            else:
+                strat = "sequential_modules"
+            sched_reasons = list(getattr(state, "_parallel_scheduler_reason_codes", None) or [])
+            short_circuit = bool(getattr(state, "_critic_short_circuit", False))
+            planned: list[str] = ["critic", "simulator", "perspectives"]
+            if self.config.enable_hindsight:
+                planned.append("hindsight")
+            sim_ran_flag = getattr(state, "_simulator_ran_this_cycle", None)
+            sim_gate_codes = list(getattr(state, "_simulator_gate_reason_codes", None) or [])
+            sim_carry = bool(getattr(state, "_simulator_carry_forward", False))
+            executed: list[str] = []
+            if state.last_critique is not None:
+                executed.append("critic")
+            if sim_ran_flag is True:
+                executed.append("simulator")
+            elif (
+                sim_ran_flag is None
+                and state.simulations
+                and self.config.enable_simulation
+                and self.simulator is not None
+            ):
+                executed.append("simulator")
+            if state.perspectives:
+                executed.append("perspectives")
+            if state.hindsight is not None:
+                executed.append("hindsight")
+            skipped: list[str] = []
+            mod_sk = getattr(state, "modules_skipped", None)
+            if isinstance(mod_sk, dict):
+                skipped = [str(k) for k in mod_sk.keys()]
+            sched_skip = getattr(state, "_scheduler_skipped_modules", None)
+            if isinstance(sched_skip, list) and sched_skip:
+                for m in sched_skip:
+                    if m not in skipped:
+                        skipped.append(m)
+            if (
+                sim_ran_flag is False
+                and self.config.enable_simulation
+                and self.simulator is not None
+                and "simulator" not in skipped
+            ):
+                skipped.append("simulator")
+            lc = state.last_critique
+            critic_decision = (getattr(lc, "decision", "") or "").strip().upper() if lc is not None else ""
+            violations_count = 0
+            violated_hard = False
+            if lc is not None:
+                viol = getattr(lc, "violations", None) or []
+                violations_count = len(viol)
+                violated_hard = bool(getattr(lc, "violated_hard", False))
+            sem_harm: float | None = None
+            if state.simulations:
+                last_sim = state.simulations[-1]
+                sem_harm = float(getattr(last_sim, "semantic_expected_harm", 0.0) or 0.0)
+            perspectives_weighted_approval: float | None = None
+            if state.perspectives:
+                ap = [float(getattr(p, "approval_score", 0.0) or 0.0) for p in state.perspectives]
+                perspectives_weighted_approval = sum(ap) / max(len(ap), 1)
+            conv_snap = getattr(state, "_convergence_evaluation_snapshot", None)
+            if not isinstance(conv_snap, dict):
+                conv_snap = {}
+            delib_decision = state.decision.value if state.decision is not None else None
+            early_considered = conv_snap.get("early_convergence_considered")
+            early_accepted = conv_snap.get("early_convergence_accepted")
+            conv_reason_codes = conv_snap.get("convergence_reason_codes") or []
+            payload = {
+                "cycle": state.cycle,
+                "scheduler_strategy": strat,
+                "scheduler_reason_codes": sched_reasons,
+                "critic_short_circuit": short_circuit,
+                "modules_planned": planned,
+                "modules_executed": executed,
+                "modules_skipped": skipped,
+                "modules_cancelled": [],
+                "critic_decision": critic_decision,
+                "violations_count": violations_count,
+                "violated_hard": violated_hard,
+                "semantic_expected_harm": sem_harm,
+                "simulator_gate_enabled": bool(self.config.enable_simulator_gating),
+                "simulator_ran_this_cycle": sim_ran_flag,
+                "simulator_gate_reason_codes": sim_gate_codes,
+                "simulator_carry_forward": sim_carry,
+                "perspectives_weighted_approval": perspectives_weighted_approval,
+                "convergence_decision": outcome.stop_reason,
+                "convergence_reason": outcome.stop_reason,
+                "deliberation_decision": delib_decision,
+                "early_convergence_considered": early_considered,
+                "early_convergence_accepted": early_accepted,
+                "convergence_reason_codes": list(conv_reason_codes),
+                "next_action": "continue" if outcome.should_continue else "stop",
+                "max_cycles": max_cycles,
+            }
+            dt = DecisionTrace(
+                request_id=request_id,
+                stage=CYCLE_SUMMARY,
+                sequence=200 + int(state.cycle),
+                risk_score=float(getattr(risk_estimation, "score", 0.5) or 0.5),
+            )
+            dt.stage_payload = payload
+            normalize_trace_fields(dt)
+            append_decision_trace(dt)
+            ce_payload: dict[str, Any] = {
+                "should_continue": outcome.should_continue,
+                "converged": outcome.converged,
+                "stop_reason": outcome.stop_reason,
+                "cycle": state.cycle,
+                "deliberation_decision": delib_decision,
+                "critic_decision": critic_decision,
+                "violations_count": violations_count,
+                "violated_hard": violated_hard,
+                "semantic_expected_harm": sem_harm,
+                "perspectives_weighted_approval": perspectives_weighted_approval,
+                "early_convergence_considered": early_considered,
+                "early_convergence_accepted": early_accepted,
+                "decision": str(outcome.stop_reason or ""),
+                "reason_codes": list(conv_reason_codes),
+            }
+            persist_orchestration_event(
+                cycle=state.cycle,
+                stage="deliberation",
+                component="convergence",
+                event_type=CONVERGENCE_EVALUATED,
+                decision=str(outcome.stop_reason or ""),
+                status="ok" if outcome.converged else "continue",
+                sequence=state.cycle,
+                reason_codes=list(conv_reason_codes),
+                payload=ce_payload,
+            )
+            if state.cycle == 1 and early_considered is True:
+                if early_accepted is True:
+                    persist_orchestration_event(
+                        cycle=1,
+                        stage="deliberation",
+                        component="convergence",
+                        event_type=EARLY_CONVERGENCE_ACCEPTED,
+                        decision=str(delib_decision or ""),
+                        status="ok",
+                        sequence=state.cycle * 100 + 1,
+                        reason_codes=list(conv_reason_codes),
+                        payload={
+                            "cycle": 1,
+                            "reason_codes": list(conv_reason_codes),
+                            "next_action": "stop" if not outcome.should_continue else "continue",
+                            "deliberation_decision": delib_decision,
+                            "evidence_summary": conv_snap.get("cycle1_evidence_summary") or {},
+                            "stop_reason": outcome.stop_reason,
+                        },
+                    )
+                elif early_accepted is False:
+                    persist_orchestration_event(
+                        cycle=1,
+                        stage="deliberation",
+                        component="convergence",
+                        event_type=EARLY_CONVERGENCE_REJECTED,
+                        decision=str(delib_decision or ""),
+                        status="continue",
+                        sequence=state.cycle * 100 + 2,
+                        reason_codes=list(conv_reason_codes),
+                        payload={
+                            "cycle": 1,
+                            "reason_codes": list(conv_reason_codes),
+                            "deliberation_decision": delib_decision,
+                            "evidence_not_strong_enough": list(conv_reason_codes),
+                        },
+                    )
+        except Exception:
+            _LOG.debug("emit CYCLE_SUMMARY trace failed", exc_info=True)
 
     def run_deliberative_path(
         self,
@@ -778,43 +1221,16 @@ class DeliberationRunner:
         # constrained_generation explicitly forbids. Cap to 1 cycle for full determinism.
         if constrained_generation:
             max_cycles = 1
-        # Persist relevant principles identified at the start of deliberation
-        # (parallel domain agents; used by critic and policy)
+        # Request-scoped retrieval: single get_relevant_principles + constitution for downstream reuse.
+        self._request_analysis_reuse_targets = []
+        request_analysis: RequestAnalysisContext | None = None
         if self.constitution_store is not None:
-            try:
-                t0 = time.time()
-                relevant = self.constitution_store.get_relevant_principles(
-                    query=request.prompt,
-                    top_k=10,
-                    domain=request.get_domain(),
-                )
-                t1 = time.time()
-                principle_ids = [p.id for p in relevant]
-                relevant_principles_detail = [
-                    {"id": p.id, "title": p.title or "", "level": p.level or "soft"} for p in relevant
-                ]
-                record_decision_trace(
+            request_analysis = self._try_build_request_analysis_context(request)
+            if request_analysis is not None:
+                self._record_retrieval_start_and_event(
                     request_id=request_id,
-                    stage="RELEVANT_PRINCIPLES",
-                    sequence=0,
-                    trace_json=json.dumps(
-                        {
-                            "relevant_principle_ids": principle_ids,
-                            "relevant_principles": relevant_principles_detail,
-                            "domain": (request.get_domain() or "") or "",
-                            "started_at": int(t0 * 1000),
-                            "duration_ms": round((t1 - t0) * 1000, 1),
-                            "parallel_retrieval": True,
-                        },
-                        ensure_ascii=False,
-                    ),
-                )
-            except Exception as e:
-                _LOG.warning(
-                    "get_relevant_principles failed request_id=%s error_type=%s error=%s",
-                    request_id,
-                    type(e).__name__,
-                    e,
+                    request=request,
+                    request_analysis=request_analysis,
                 )
         orch_debug_log(
             "orchestrator.py:_deliberative_path",
@@ -847,6 +1263,7 @@ class DeliberationRunner:
                 constrained_generation=constrained_generation,
                 max_cycles=max_cycles,
                 constitution=constitution,
+                request_analysis=request_analysis,
             )
             raw = build_raw_outcome_for_log(state.cycle, max_cycles, state.decision)
             log_convergence_event("CONVERGENCE_RAW", request_id=request_id, **raw)
@@ -860,6 +1277,13 @@ class DeliberationRunner:
                 stop_reason=outcome.stop_reason,
                 cycle=outcome.cycle,
                 max_cycles=outcome.max_cycles,
+            )
+            self._emit_cycle_summary_trace(
+                request_id=request_id,
+                state=state,
+                outcome=outcome,
+                max_cycles=max_cycles,
+                risk_estimation=risk_estimation,
             )
             if not outcome.should_continue:
                 break
@@ -892,6 +1316,11 @@ class DeliberationRunner:
             "H-delib-exit",
             request_id=request_id,
         )
+        self._emit_request_analysis_context_finalize(
+            request_id=request_id,
+            request_analysis=request_analysis,
+            risk_estimation=risk_estimation,
+        )
         return state, risk_score, last_outcome
 
     def _deliberation_cycle(
@@ -903,11 +1332,15 @@ class DeliberationRunner:
         constrained_generation: bool = False,
         max_cycles: int = 1,
         constitution: Any | None = None,
+        request_analysis: RequestAnalysisContext | None = None,
     ) -> DeliberationState:
         """Singolo ciclo deliberativo: generate/revisione, critique, simulate,
         perspectives, hindsight, decisione."""
         state.cycle += 1
         set_current_cycle(state.cycle)
+        state._simulator_ran_this_cycle = None
+        state._simulator_gate_reason_codes = []
+        state._simulator_carry_forward = False
         state_info = (
             f"Ciclo #{state.cycle}\nDraft response length: "
             f"{len(state.draft_response)} chars\nCritiques: {len(state.critiques)}\n"
@@ -933,7 +1366,9 @@ class DeliberationRunner:
             constrained_generation=constrained_generation,
         )
 
-        delib_context, context_mode, max_cycles = self._build_delib_context(state, request, risk_estimation)
+        delib_context, context_mode, max_cycles = self._build_delib_context(
+            state, request, risk_estimation, request_analysis=request_analysis
+        )
 
         if self.config.parallel_module_calls:
             state = self._run_critique_simulate_perspectives_parallel(
@@ -944,6 +1379,7 @@ class DeliberationRunner:
                 risk_estimation=risk_estimation,
                 max_cycles=max_cycles,
                 constitution=constitution,
+                request_analysis=request_analysis,
             )
         else:
             state = self._run_critique_simulate_perspectives_sequential(
@@ -954,6 +1390,7 @@ class DeliberationRunner:
                 risk_estimation=risk_estimation,
                 max_cycles=max_cycles,
                 constitution=constitution,
+                request_analysis=request_analysis,
             )
         # Constitutional override: perspectives cannot approve content
         # that violates HARD constraints
@@ -971,13 +1408,14 @@ class DeliberationRunner:
             state, request, delib_context, context_mode=context_mode, max_cycles=max_cycles
         )
 
-        return self._finalize_cycle(state, max_cycles)
+        return self._finalize_cycle(state, max_cycles, risk_estimation=risk_estimation)
 
     def _build_delib_context(
         self,
         state: DeliberationState,
         request: ProcessedRequest,
         risk_estimation: RiskEstimationProtocol | None,
+        request_analysis: RequestAnalysisContext | None = None,
     ) -> tuple[DelibContext | None, str, int]:
         """Build DelibContext for thin prompts in cycle 2+ and compute effective max_cycles."""
         delib_context = None
@@ -999,6 +1437,8 @@ class DeliberationRunner:
             # Propagate simulator_domain_guidance from overlay (if available)
             if self.constitution_store is not None:
                 _dc_constitution = get_constitution_safe(self.constitution_store, request.get_domain())
+                if request_analysis is not None and request_analysis.constitution is not None:
+                    _dc_constitution = request_analysis.constitution
                 _dc_overlay = getattr(_dc_constitution, "active_overlay", None) if _dc_constitution else None
                 if _dc_overlay is not None:
                     _guidance = getattr(_dc_overlay, "simulator_domain_guidance", "") or ""
@@ -1095,9 +1535,11 @@ class DeliberationRunner:
         self,
         state: DeliberationState,
         max_cycles: int,
+        *,
+        risk_estimation: RiskEstimationProtocol | None = None,
     ) -> DeliberationState:
         """Determine decision, clean up resources, and log cycle completion."""
-        state.decision = self._convergence_evaluator.determine_decision(state)
+        state.decision = self._convergence_evaluator.determine_decision(state, risk_estimation=risk_estimation)
         decision_str = state.decision.value if state.decision is not None else str(state.decision)
         cycles_exhausted_display = state.cycle >= max_cycles
         decision_converged = state.decision in (DecisionType.CONVERGED, DecisionType.CONVERGED_WITH_SUGGESTIONS)
@@ -1125,35 +1567,302 @@ class DeliberationRunner:
         )
         return state
 
-    def _should_run_simulator(
+    def _risk_posture_requires_simulator_run(
+        self,
+        risk_estimation: RiskEstimationProtocol,
+    ) -> tuple[bool, str]:
+        """Elevated request posture: always re-run simulator when in doubt."""
+        rc = risk_estimation.risk_category
+        rc_enum = rc if isinstance(rc, RiskCategory) else None
+        rc_val = str(getattr(rc, "value", rc) or "").strip().lower()
+        op = risk_estimation.operational_risk
+        op_val = str(getattr(op, "value", op) or "").strip().upper()
+        rpa = risk_estimation.risk_policy_action
+        rpa_val = str(getattr(rpa, "value", rpa) or "").strip().upper()
+
+        if bool(getattr(risk_estimation, "intent_to_harm", False)):
+            return True, "HIGH_RISK_POSTURE_REQUIRE_RUN"
+        if op_val == OperationalRisk.HIGH.value:
+            return True, "HIGH_RISK_POSTURE_REQUIRE_RUN"
+        if rpa_val == RiskPolicyAction.DENY.value:
+            return True, "HIGH_RISK_POSTURE_REQUIRE_RUN"
+        if rc_enum in (RiskCategory.POTENTIALLY_HARMFUL, RiskCategory.CLEARLY_HARMFUL):
+            return True, "HIGH_RISK_POSTURE_REQUIRE_RUN"
+        if rc_enum is None and rc_val in ("potentially_harmful", "clearly_harmful"):
+            return True, "HIGH_RISK_POSTURE_REQUIRE_RUN"
+        if bool(getattr(risk_estimation, "requested_instructions", False)) and (
+            rc_enum
+            in (RiskCategory.SENSITIVE, RiskCategory.POTENTIALLY_HARMFUL, RiskCategory.CLEARLY_HARMFUL)
+            or rc_val in ("sensitive", "potentially_harmful", "clearly_harmful")
+        ):
+            return True, "HIGH_RISK_POSTURE_REQUIRE_RUN"
+        return False, ""
+
+    def _critique_blocks_simulator_skip(self, lc: Any) -> tuple[bool, str]:
+        """Current-cycle critic must be clean to allow conservative skip."""
+        if lc is None:
+            return True, "CURRENT_CRITIC_MISSING_REQUIRE_RUN"
+        if getattr(lc, "violated_hard", False):
+            return True, "CURRENT_CRITIC_HARD_VIOLATION_REQUIRE_RUN"
+        if bool(getattr(lc, "has_critical_violations", False)):
+            return True, "CURRENT_CRITIC_CRITICAL_VIOLATION_REQUIRE_RUN"
+        dec = (getattr(lc, "decision", "") or "").strip().upper()
+        if dec == "REFUSE":
+            return True, "CURRENT_CRITIC_REFUSE_REQUIRE_RUN"
+        viol = getattr(lc, "violations", None) or []
+        if len(viol) > 0:
+            return True, "CURRENT_CRITIC_VIOLATIONS_PRESENT_REQUIRE_RUN"
+        return False, ""
+
+    def _parallel_precritic_allows_conservative_skip(
+        self,
+        risk_estimation: RiskEstimationProtocol,
+        prev_sem: float,
+    ) -> bool:
+        """Allow skip without current critic only when prior-only signals are strong."""
+        if prev_sem >= self.config.simulator_gate_skip_max_prior_semantic_harm:
+            return False
+        rc = risk_estimation.risk_category
+        rc_enum = rc if isinstance(rc, RiskCategory) else None
+        rc_val = str(getattr(rc, "value", rc) or "").strip().lower()
+        if rc_enum not in (RiskCategory.BENIGN, RiskCategory.MORALLY_NUANCED) and rc_val not in (
+            "benign",
+            "morally_nuanced",
+        ):
+            return False
+        if float(risk_estimation.score) >= self.config.risk_thresholds.medium:
+            return False
+        if bool(getattr(risk_estimation, "intent_to_harm", False)):
+            return False
+        op = risk_estimation.operational_risk
+        op_val = str(getattr(op, "value", op) or "").strip().upper()
+        if op_val == OperationalRisk.HIGH.value:
+            return False
+        return True
+
+    def _evaluate_simulator_gate(
         self,
         state: DeliberationState,
         risk_estimation: RiskEstimationProtocol | None,
         delib_context: DelibContext | None,
         cycle: int,
-        max_cycles: int,
-    ) -> bool:
-        """Gating: cycle 2+ skip simulator when safe to carry forward."""
-        if not self.config.enable_simulator_gating or cycle <= 1:
-            return True
+        *,
+        current_critique_available: bool,
+    ) -> SimulatorGateDecision:
+        """
+        Conservative simulator gating: default to run; skip only with strong evidence.
+        When `current_critique_available` is False (full parallel), critic-based skip checks are not used;
+        skip is allowed only under stricter prior-only conditions.
+        """
+        diagnostics: dict[str, Any] = {
+            "cycle": cycle,
+            "current_critique_available": current_critique_available,
+        }
+        if not self.config.enable_simulator_gating:
+            return SimulatorGateDecision(
+                True,
+                ("GATING_DISABLED_ALWAYS_RUN",),
+                diagnostics,
+            )
+        if cycle <= 1:
+            return SimulatorGateDecision(True, ("FIRST_CYCLE_REQUIRE_RUN",), diagnostics)
+
         if not state.simulations:
-            return True
+            return SimulatorGateDecision(True, ("NO_PRIOR_SIMULATION_REQUIRE_RUN",), diagnostics)
+
         if risk_estimation is None:
-            return True
+            return SimulatorGateDecision(True, ("INSUFFICIENT_EVIDENCE_REQUIRE_RUN",), diagnostics)
+
         prev_sim = state.simulations[-1]
-        sem_harm = prev_sim.semantic_expected_harm
-        if sem_harm >= self.config.simulator_gate_semantic_harm_threshold:
-            return True
+        prev_sem = float(getattr(prev_sim, "semantic_expected_harm", 0.0) or 0.0)
+        diagnostics["prior_semantic_expected_harm"] = prev_sem
+
+        need_run, risk_code = self._risk_posture_requires_simulator_run(risk_estimation)
+        if need_run:
+            diagnostics["risk_posture"] = "elevated"
+            return SimulatorGateDecision(True, (risk_code,), diagnostics)
+
+        if prev_sem >= self.config.simulator_gate_semantic_harm_threshold:
+            return SimulatorGateDecision(
+                True,
+                ("PRIOR_SEMANTIC_HARM_ELEVATED_REQUIRE_RUN",),
+                diagnostics,
+            )
+
+        if prev_sem >= self.config.simulator_gate_skip_max_prior_semantic_harm:
+            return SimulatorGateDecision(
+                True,
+                ("PRIOR_HARM_BORDERLINE_BAND_REQUIRE_RUN",),
+                diagnostics,
+            )
+
+        delta_chars = 0
         if delib_context and delib_context.change_log:
             delta_chars = sum(len(c) for c in delib_context.change_log)
-            if delta_chars >= self.config.simulator_gate_delta_chars_threshold:
-                return True
+        diagnostics["candidate_delta_chars"] = delta_chars
+        if delta_chars >= self.config.simulator_gate_delta_chars_threshold:
+            return SimulatorGateDecision(
+                True,
+                ("CANDIDATE_CHANGED_MATERIAL_REQUIRE_RUN",),
+                diagnostics,
+            )
+
         risk_score = risk_estimation.score
         ar = risk_estimation.actionability_risk
         ar_val = getattr(ar, "value", str(ar or "")) if ar is not None else ""
+        diagnostics["risk_score"] = risk_score
+        diagnostics["actionability_risk"] = ar_val
         if 0.3 <= risk_score <= 0.7 and ar_val == "HIGH":
-            return True
-        return False
+            return SimulatorGateDecision(
+                True,
+                ("BORDERLINE_ACTIONABILITY_HIGH_REQUIRE_RUN",),
+                diagnostics,
+            )
+
+        if current_critique_available:
+            lc = state.last_critique
+            crit_need, crit_code = self._critique_blocks_simulator_skip(lc)
+            if crit_need:
+                diagnostics["critic_decision"] = (getattr(lc, "decision", "") or "").strip().upper() if lc else ""
+                diagnostics["violations_count"] = len(getattr(lc, "violations", None) or [])
+                return SimulatorGateDecision(True, (crit_code,), diagnostics)
+        elif not self._parallel_precritic_allows_conservative_skip(risk_estimation, prev_sem):
+            return SimulatorGateDecision(
+                True,
+                ("PARALLEL_PRECRITIC_INSUFFICIENT_SIGNAL_REQUIRE_RUN",),
+                diagnostics,
+            )
+
+        skip_codes: list[str] = ["LOW_PRIOR_HARM_CONSERVATIVE_SKIP"]
+        if current_critique_available:
+            skip_codes.append("CRITIC_CLEAN_SKIP")
+        else:
+            skip_codes.append("PARALLEL_PRIOR_ONLY_SIGNAL")
+        diagnostics["carry_forward_prior_simulation"] = True
+        return SimulatorGateDecision(False, tuple(skip_codes), diagnostics)
+
+    def _emit_simulator_gate_decision_event(
+        self,
+        *,
+        state: DeliberationState,
+        gate: SimulatorGateDecision,
+    ) -> None:
+        """Persist SIMULATOR_GATE_DECISION (best-effort)."""
+        payload: dict[str, Any] = {
+            "cycle": state.cycle,
+            "should_run": gate.should_run,
+            "reason_codes": list(gate.reason_codes),
+        }
+        if gate.diagnostics:
+            payload.update(dict(gate.diagnostics))
+        try:
+            persist_orchestration_event(
+                cycle=state.cycle,
+                stage="deliberation",
+                component="simulator",
+                event_type=SIMULATOR_GATE_DECISION,
+                decision="run" if gate.should_run else "skip",
+                status="ok",
+                sequence=state.cycle * 10 + 3,
+                reason_codes=list(gate.reason_codes),
+                payload=payload,
+            )
+        except Exception:
+            _LOG.debug("emit SIMULATOR_GATE_DECISION failed", exc_info=True)
+
+    def _emit_simulator_executed_event(
+        self,
+        *,
+        state: DeliberationState,
+        duration_ms: float,
+        gate: SimulatorGateDecision,
+    ) -> None:
+        try:
+            persist_orchestration_event(
+                cycle=state.cycle,
+                stage="deliberation",
+                component="simulator",
+                event_type=SIMULATOR_EXECUTED,
+                decision="run",
+                status="ok",
+                sequence=state.cycle * 10 + 4,
+                duration_ms=duration_ms,
+                reason_codes=list(gate.reason_codes),
+                payload={
+                    "cycle": state.cycle,
+                    "duration_ms": duration_ms,
+                    "gate_reason_codes": list(gate.reason_codes),
+                },
+            )
+        except Exception:
+            _LOG.debug("emit SIMULATOR_EXECUTED failed", exc_info=True)
+
+    def _emit_simulator_skipped_event(
+        self,
+        *,
+        state: DeliberationState,
+        gate: SimulatorGateDecision,
+    ) -> None:
+        try:
+            persist_orchestration_event(
+                cycle=state.cycle,
+                stage="deliberation",
+                component="simulator",
+                event_type=SIMULATOR_SKIPPED,
+                decision="skip",
+                status="ok",
+                sequence=state.cycle * 10 + 4,
+                reason_codes=list(gate.reason_codes),
+                payload={
+                    "cycle": state.cycle,
+                    "reason_codes": list(gate.reason_codes),
+                    "carry_forward_prior_simulation": bool(
+                        gate.diagnostics.get("carry_forward_prior_simulation"),
+                    ),
+                },
+            )
+        except Exception:
+            _LOG.debug("emit SIMULATOR_SKIPPED failed", exc_info=True)
+
+    def _run_simulator_after_gate(
+        self,
+        state: DeliberationState,
+        request: ProcessedRequest,
+        *,
+        delib_context: DelibContext | None,
+        context_mode: str,
+        gate: SimulatorGateDecision,
+        emit_gate_decision: bool = True,
+    ) -> DeliberationState:
+        """Execute simulator or record explicit skip; updates observability fields on state."""
+        state._simulator_gate_reason_codes = list(gate.reason_codes)
+        if emit_gate_decision:
+            self._emit_simulator_gate_decision_event(state=state, gate=gate)
+        if not self.config.enable_simulation or self.simulator is None:
+            return state
+        if gate.should_run:
+            t0 = time.time()
+            state = self._simulate(state, request, delib_context=delib_context, context_mode=context_mode)
+            elapsed = (time.time() - t0) * 1000
+            state._simulator_ran_this_cycle = True
+            state._simulator_carry_forward = False
+            self._emit_simulator_executed_event(state=state, duration_ms=elapsed, gate=gate)
+        else:
+            state._simulator_ran_this_cycle = False
+            state._simulator_carry_forward = True
+            record_llm_call(
+                self.logger,
+                {
+                    "module": "orchestrator",
+                    "action": "simulate (GATED)",
+                    "prompt": "Simulator skipped: carry forward previous result",
+                    "response": "",
+                    "duration_ms": 0.0,
+                },
+                None,
+            )
+            self._emit_simulator_skipped_event(state=state, gate=gate)
+        return state
 
     def _should_run_hindsight(
         self,
@@ -1176,31 +1885,31 @@ class DeliberationRunner:
         risk_estimation: RiskEstimationProtocol | None = None,
         max_cycles: int = 2,
         constitution: Any | None = None,
+        request_analysis: RequestAnalysisContext | None = None,
     ) -> DeliberationState:
         state = self._critique(
-            state, request, delib_context=delib_context, context_mode=context_mode, constitution=constitution
+            state,
+            request,
+            delib_context=delib_context,
+            context_mode=context_mode,
+            constitution=constitution,
+            request_analysis=request_analysis,
         )
         if self.config.enable_simulation and self.simulator is not None:
-            if self._should_run_simulator(
+            gate = self._evaluate_simulator_gate(
                 state,
                 risk_estimation,
                 delib_context,
                 state.cycle,
-                max_cycles,
-            ):
-                state = self._simulate(state, request, delib_context=delib_context, context_mode=context_mode)
-            else:
-                record_llm_call(
-                    self.logger,
-                    {
-                        "module": "orchestrator",
-                        "action": "simulate (GATED)",
-                        "prompt": "Simulator skipped: carry forward previous result",
-                        "response": "",
-                        "duration_ms": 0.0,
-                    },
-                    None,
-                )
+                current_critique_available=True,
+            )
+            state = self._run_simulator_after_gate(
+                state,
+                request,
+                delib_context=delib_context,
+                context_mode=context_mode,
+                gate=gate,
+            )
         elif self.config.enable_simulation:
             record_llm_call(
                 self.logger,
@@ -1253,6 +1962,111 @@ class DeliberationRunner:
             )
         return state
 
+    def _select_parallel_strategy(
+        self,
+        *,
+        risk_estimation: RiskEstimationProtocol | None,
+        state: DeliberationState,
+    ) -> ParallelStrategySelection:
+        """
+        Conservative risk-aware choice between critic_gated and full_parallel.
+        Uses only existing risk/cycle signals; does not affect governance semantics.
+        """
+        if risk_estimation is None:
+            strat: ParallelSchedulerStrategy = (
+                "full_parallel" if self.config.parallel_critic_with_modules else "critic_gated"
+            )
+            return ParallelStrategySelection(
+                strategy=strat,
+                reason_codes=("CONFIG_FALLBACK_NO_RISK_ESTIMATION",),
+                posture_summary={},
+            )
+
+        rc = risk_estimation.risk_category
+        rc_enum = rc if isinstance(rc, RiskCategory) else None
+        rc_val = str(getattr(rc, "value", rc) or "").strip().lower()
+
+        op = risk_estimation.operational_risk
+        op_val = str(getattr(op, "value", op) or "").strip().upper()
+
+        rpa = risk_estimation.risk_policy_action
+        rpa_val = str(getattr(rpa, "value", rpa) or "").strip().upper()
+
+        intent_harm = bool(getattr(risk_estimation, "intent_to_harm", False))
+        req_ins = bool(getattr(risk_estimation, "requested_instructions", False))
+        prior_hard = _prior_cycle_hard_violation_critiques(state)
+
+        posture_summary: dict[str, Any] = {
+            "risk_category": rc_val,
+            "operational_risk": op_val,
+            "intent_to_harm": intent_harm,
+            "requested_instructions": req_ins,
+            "risk_policy_action": rpa_val,
+            "prior_hard_violation": prior_hard,
+        }
+
+        reason_set: set[str] = set()
+        if prior_hard:
+            reason_set.add("PREVIOUS_HARD_VIOLATION")
+        if intent_harm:
+            reason_set.add("INTENT_TO_HARM_TRUE")
+        if op_val == OperationalRisk.HIGH.value:
+            reason_set.add("OPERATIONAL_RISK_HIGH")
+        if rpa_val == RiskPolicyAction.DENY.value:
+            reason_set.add("RISK_POLICY_ACTION_DENY")
+        if rc_enum in (RiskCategory.POTENTIALLY_HARMFUL, RiskCategory.CLEARLY_HARMFUL):
+            reason_set.add("HIGH_RISK_POSTURE")
+        elif rc_enum is None and rc_val in ("potentially_harmful", "clearly_harmful"):
+            reason_set.add("HIGH_RISK_POSTURE")
+        if req_ins and (
+            rc_enum
+            in (RiskCategory.SENSITIVE, RiskCategory.POTENTIALLY_HARMFUL, RiskCategory.CLEARLY_HARMFUL)
+            or rc_val in ("sensitive", "potentially_harmful", "clearly_harmful")
+        ):
+            reason_set.add("REQUESTED_INSTRUCTIONS_SENSITIVE_POSTURE")
+
+        if reason_set:
+            ordered = tuple(r for r in _SCHEDULER_REASON_ORDER if r in reason_set)
+            return ParallelStrategySelection(
+                strategy="critic_gated",
+                reason_codes=ordered,
+                posture_summary=posture_summary,
+            )
+        return ParallelStrategySelection(
+            strategy="full_parallel",
+            reason_codes=("DEFAULT_LOWER_RISK_PARALLEL",),
+            posture_summary=posture_summary,
+        )
+
+    def _emit_parallel_strategy_selected_event(
+        self,
+        *,
+        state: DeliberationState,
+        selection: ParallelStrategySelection,
+    ) -> None:
+        """Persist PARALLEL_STRATEGY_SELECTED for audit (best-effort)."""
+        payload: dict[str, Any] = {
+            "cycle": state.cycle,
+            "selected_strategy": selection.strategy,
+            "reason_codes": list(selection.reason_codes),
+        }
+        if selection.posture_summary:
+            payload["posture"] = dict(selection.posture_summary)
+        try:
+            persist_orchestration_event(
+                cycle=state.cycle,
+                stage="deliberation",
+                component="runner",
+                event_type=PARALLEL_STRATEGY_SELECTED,
+                decision=selection.strategy,
+                status="ok",
+                sequence=state.cycle * 10 + 1,
+                reason_codes=list(selection.reason_codes),
+                payload=payload,
+            )
+        except Exception:
+            _LOG.debug("emit PARALLEL_STRATEGY_SELECTED failed", exc_info=True)
+
     def _run_critique_simulate_perspectives_parallel(
         self,
         state: DeliberationState,
@@ -1263,13 +2077,31 @@ class DeliberationRunner:
         risk_estimation: RiskEstimationProtocol | None = None,
         max_cycles: int = 2,
         constitution: Any | None = None,
+        request_analysis: RequestAnalysisContext | None = None,
     ) -> DeliberationState:
         # Pre-import prompt modules to avoid deadlock when threads import concurrently
         import moralstack.prompts.critic_prompt  # noqa: F401
         import moralstack.prompts.perspectives_prompt  # noqa: F401
         import moralstack.prompts.simulator_prompt  # noqa: F401
 
-        if self.config.parallel_critic_with_modules:
+        state._critic_short_circuit = False
+        state._scheduler_skipped_modules = []
+
+        if self.config.enable_dynamic_parallel_scheduler:
+            selection = self._select_parallel_strategy(risk_estimation=risk_estimation, state=state)
+        else:
+            legacy = "full_parallel" if self.config.parallel_critic_with_modules else "critic_gated"
+            selection = ParallelStrategySelection(
+                strategy=legacy,
+                reason_codes=("LEGACY_STATIC_PARALLEL_CRITIC_CONFIG",),
+                posture_summary={},
+            )
+
+        state._parallel_scheduler_strategy = selection.strategy
+        state._parallel_scheduler_reason_codes = list(selection.reason_codes)
+        self._emit_parallel_strategy_selected_event(state=state, selection=selection)
+
+        if selection.strategy == "full_parallel":
             return self._run_full_parallel_evaluation(
                 state,
                 request,
@@ -1278,6 +2110,7 @@ class DeliberationRunner:
                 risk_estimation=risk_estimation,
                 max_cycles=max_cycles,
                 constitution=constitution,
+                request_analysis=request_analysis,
             )
 
         return self._run_critic_gated_parallel(
@@ -1288,6 +2121,7 @@ class DeliberationRunner:
             risk_estimation=risk_estimation,
             max_cycles=max_cycles,
             constitution=constitution,
+            request_analysis=request_analysis,
         )
 
     def _run_critic_gated_parallel(
@@ -1300,6 +2134,7 @@ class DeliberationRunner:
         risk_estimation: RiskEstimationProtocol | None = None,
         max_cycles: int = 2,
         constitution: Any | None = None,
+        request_analysis: RequestAnalysisContext | None = None,
     ) -> DeliberationState:
         """Original two-stage approach: critic runs first as a gate, then
         simulator + perspectives run in parallel only if no hard violation."""
@@ -1309,8 +2144,40 @@ class DeliberationRunner:
             delib_context=delib_context,
             context_mode=context_mode,
             constitution=constitution,
+            request_analysis=request_analysis,
         )
         if state.has_critical_violations or getattr(state.last_critique, "violated_hard", False):
+            state._critic_short_circuit = True
+            downstream: list[str] = []
+            if self.config.enable_simulation and self.simulator is not None:
+                downstream.append("simulator")
+            if self.config.enable_perspectives and self.perspectives is not None:
+                downstream.append("perspectives")
+            state._scheduler_skipped_modules = list(downstream)
+            lc = state.last_critique
+            crit_dec = (getattr(lc, "decision", "") or "").strip().upper() if lc is not None else ""
+            viol_n = 0
+            if lc is not None:
+                viol_n = len(getattr(lc, "violations", None) or [])
+            try:
+                persist_orchestration_event(
+                    cycle=state.cycle,
+                    stage="deliberation",
+                    component="critic",
+                    event_type=CRITIC_SHORT_CIRCUIT_TRIGGERED,
+                    decision=crit_dec or "HARD_VIOLATION",
+                    status="short_circuit",
+                    sequence=state.cycle * 10 + 2,
+                    payload={
+                        "cycle": state.cycle,
+                        "critic_decision": crit_dec,
+                        "violations_count": viol_n,
+                        "violated_hard": bool(getattr(lc, "violated_hard", False)),
+                        "downstream_modules_skipped": downstream,
+                    },
+                )
+            except Exception:
+                _LOG.debug("emit CRITIC_SHORT_CIRCUIT_TRIGGERED failed", exc_info=True)
             return state
 
         n_errors_after_critic = len(state.errors)
@@ -1323,19 +2190,19 @@ class DeliberationRunner:
         ) -> DeliberationState:
             if not self.config.enable_simulation or self.simulator is None:
                 return s
-            if not self._should_run_simulator(
+            gate = self._evaluate_simulator_gate(
                 s,
                 risk_estimation,
                 delib_context,
                 s.cycle,
-                max_cycles,
-            ):
-                return s
-            return self._simulate(
+                current_critique_available=True,
+            )
+            return self._run_simulator_after_gate(
                 s,
                 r,
                 delib_context=delib_context,
                 context_mode=context_mode,
+                gate=gate,
             )
 
         def do_perspectives(
@@ -1361,6 +2228,9 @@ class DeliberationRunner:
         state.perspectives = s3.perspectives
         state._perspectives_aggregation = s3._perspectives_aggregation
         state.errors = list(state.errors) + list(s2.errors[n_errors_after_critic:]) + list(s3.errors[n_errors_after_critic:])
+        state._simulator_ran_this_cycle = getattr(s2, "_simulator_ran_this_cycle", None)
+        state._simulator_carry_forward = bool(getattr(s2, "_simulator_carry_forward", False))
+        state._simulator_gate_reason_codes = list(getattr(s2, "_simulator_gate_reason_codes", None) or [])
         return state
 
     def _run_full_parallel_evaluation(
@@ -1373,6 +2243,7 @@ class DeliberationRunner:
         risk_estimation: RiskEstimationProtocol | None = None,
         max_cycles: int = 2,
         constitution: Any | None = None,
+        request_analysis: RequestAnalysisContext | None = None,
     ) -> DeliberationState:
         """Full parallel: critic, simulator, and perspectives all run
         concurrently. On hard violation the sim/persp results are discarded,
@@ -1384,6 +2255,16 @@ class DeliberationRunner:
         state_sim = state.fork()
         state_persp = state.fork()
 
+        gate_sim = self._evaluate_simulator_gate(
+            state_sim,
+            risk_estimation,
+            delib_context,
+            state.cycle,
+            current_critique_available=False,
+        )
+        self._emit_simulator_gate_decision_event(state=state, gate=gate_sim)
+        state._simulator_gate_reason_codes = list(gate_sim.reason_codes)
+
         def do_critique(
             s: DeliberationState,
             r: ProcessedRequest,
@@ -1394,6 +2275,7 @@ class DeliberationRunner:
                 delib_context=delib_context,
                 context_mode=context_mode,
                 constitution=constitution,
+                request_analysis=request_analysis,
             )
 
         def do_simulate(
@@ -1402,19 +2284,13 @@ class DeliberationRunner:
         ) -> DeliberationState:
             if not self.config.enable_simulation or self.simulator is None:
                 return s
-            if not self._should_run_simulator(
-                s,
-                risk_estimation,
-                delib_context,
-                s.cycle,
-                max_cycles,
-            ):
-                return s
-            return self._simulate(
+            return self._run_simulator_after_gate(
                 s,
                 r,
                 delib_context=delib_context,
                 context_mode=context_mode,
+                gate=gate_sim,
+                emit_gate_decision=False,
             )
 
         def do_perspectives(
@@ -1471,6 +2347,9 @@ class DeliberationRunner:
         state.perspectives = sp.perspectives
         state._perspectives_aggregation = sp._perspectives_aggregation
         state.errors = list(state.errors) + list(ss.errors[n_errors_before:]) + list(sp.errors[n_errors_before:])
+        state._simulator_ran_this_cycle = getattr(ss, "_simulator_ran_this_cycle", None)
+        state._simulator_carry_forward = bool(getattr(ss, "_simulator_carry_forward", False))
+        state._simulator_gate_reason_codes = list(getattr(ss, "_simulator_gate_reason_codes", None) or [])
         return state
 
     def _apply_constitutional_perspective_override(self, state: DeliberationState) -> None:
@@ -1584,9 +2463,43 @@ class DeliberationRunner:
                 },
             )
             return state
+        det_iso = (risk_estimation.detected_language or "") if risk_estimation is not None else ""
+        pre_rewrite_guidance: str | None = None
+        pre_rewrite_telemetry: dict[str, Any] | None = None
+        will_rewrite = not (state.cycle == 1 or not state.draft_response)
+        if will_rewrite:
+            pre_rewrite_telemetry = {}
+            pre_rewrite_guidance = build_aggregated_guidance(state, telemetry=pre_rewrite_telemetry)
+            _emit_aggregated_guidance_observability(state, pre_rewrite_guidance, pre_rewrite_telemetry)
+            if not pre_rewrite_guidance.strip():
+                rw_model = _policy_llm_model_for_action(self.policy, "rewrite")
+                record_llm_call(
+                    self.logger,
+                    {
+                        "module": "policy",
+                        "action": "rewrite (SKIPPED_EMPTY_GUIDANCE)",
+                        "prompt": request.prompt[:200],
+                        "response": (state.draft_response[:200] if state.draft_response else ""),
+                        "duration_ms": 0.0,
+                        "model": rw_model,
+                    },
+                    {
+                        "phase": "policy_rewrite",
+                        "module": "policy",
+                        "action": "rewrite (SKIPPED_EMPTY_GUIDANCE)",
+                        "model": rw_model,
+                        "started_at": int(time.time() * 1000),
+                        "duration_ms": 0.0,
+                        "prompt": request.prompt[:200],
+                        "system_prompt": "",
+                        "raw_response": "",
+                        "sequence_in_cycle": SEQ_POLICY,
+                        "cycle": state.cycle,
+                    },
+                )
+                return state
         try:
             start = time.time()
-            det_iso = risk_estimation.detected_language or ""
             if state.cycle == 1 or not state.draft_response:
                 action = "generate"
                 prompt_text = resolve_prompt_with_language(request.prompt, det_iso, request.prompt)
@@ -1599,7 +2512,7 @@ class DeliberationRunner:
                     result = self.policy.generate(prompt_text)
             else:
                 action = "rewrite"
-                guidance = build_aggregated_guidance(state)
+                guidance = pre_rewrite_guidance or ""
                 prompt_text = f"REVISIONE\nPrompt originale: {request.prompt}\nGuidance: {guidance}"
                 user_prompt_with_lang = resolve_prompt_with_language(request.prompt, det_iso, request.prompt)
                 # Propagate constrained_generation to rewrite: defense-in-depth.
@@ -1688,6 +2601,7 @@ class DeliberationRunner:
         delib_context: DelibContext | None = None,
         context_mode: str = "full",
         constitution: Any | None = None,
+        request_analysis: RequestAnalysisContext | None = None,
     ) -> DeliberationState:
         if self.critic is None or (self.constitution_store is None and constitution is None):
             return state
@@ -1711,7 +2625,52 @@ class DeliberationRunner:
                     )
                 prev_guidance = (state.last_critique.revision_guidance or "") if state.last_critique else ""
             has_critique_with_principles = getattr(self.critic, "critique_with_relevant_principles", None) is not None
-            if has_critique_with_principles and getattr(self.critic, "store", None) is not None:
+            use_precomputed = (
+                request_analysis is not None
+                and len(request_analysis.relevant_principles) > 0
+                and getattr(self.critic, "critique", None) is not None
+            )
+            const_for_precomputed: Any | None = None
+            if use_precomputed:
+                const_for_precomputed = request_analysis.constitution
+                if const_for_precomputed is None:
+                    const_for_precomputed = constitution
+                if const_for_precomputed is None and self.constitution_store is not None:
+                    const_for_precomputed = get_constitution_safe(self.constitution_store, request.get_domain())
+                if const_for_precomputed is None:
+                    use_precomputed = False
+            if use_precomputed and const_for_precomputed is not None:
+                critique = self.critic.critique(
+                    request.prompt,
+                    state.draft_response,
+                    const_for_precomputed,
+                    principles=list(request_analysis.relevant_principles),
+                    request_id=request.request_id or "",
+                    delib_context=delib_context,
+                    context_mode=context_mode,
+                    previous_violations=prev_violations,
+                    previous_guidance=prev_guidance,
+                )
+                if "critic" not in self._request_analysis_reuse_targets:
+                    self._request_analysis_reuse_targets.append("critic")
+                try:
+                    persist_orchestration_event(
+                        cycle=state.cycle,
+                        stage="deliberation",
+                        component="critic",
+                        event_type=RELEVANT_PRINCIPLES_REUSED,
+                        decision=str(len(request_analysis.relevant_principles)),
+                        status="ok",
+                        payload={
+                            "reuse_target": "critic",
+                            "principles_count": len(request_analysis.relevant_principles),
+                            "cycle": state.cycle,
+                            "request_scoped": True,
+                        },
+                    )
+                except Exception:
+                    _LOG.debug("emit RELEVANT_PRINCIPLES_REUSED failed", exc_info=True)
+            elif has_critique_with_principles and getattr(self.critic, "store", None) is not None:
                 critique = self.critic.critique_with_relevant_principles(
                     request=request.prompt,
                     response=state.draft_response,

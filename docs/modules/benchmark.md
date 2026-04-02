@@ -10,6 +10,9 @@ The judge evaluates both Baseline and MoralStack responses with two distinct sig
 CORRECT/DEBATABLE/WRONG), (2) `response_quality_score` (0–10 conditioned on decision). The judge does **not** decide
 REFUSE/SAFE_COMPLETE/NORMAL_COMPLETE; that is determined by the policy layer.
 
+**Published latency and quality figures** (mean/median wall-clock, overall judge score, compliance) are maintained in
+the project README under **Benchmark Results** (latest full run documented there: benchmark 11, same 84-question suite).
+
 ## Language
 
 The benchmark dataset questions are in **English**. The judge is **language-aware**: it evaluates and provides reasoning

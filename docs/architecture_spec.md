@@ -151,8 +151,10 @@ class OrchestratorConfig:
     enable_hindsight: bool = True
     borderline_refuse_upper: float = 0.95  # Upper bound (inclusive) for borderline REFUSE deliberation
     parallel_module_calls: bool = True
-    parallel_critic_with_modules: bool = True   # *[impl]* critic || sim || persp when parallel_module_calls
+    parallel_critic_with_modules: bool = True   # *[impl]* static fork when dynamic scheduler off / no risk
+    enable_dynamic_parallel_scheduler: bool = True  # *[impl]* per-cycle critic_gated vs full_parallel from risk posture
     enable_speculative_generation: bool = True  # *[impl]* risk || speculative generate at controller entry
+    simulator_gate_skip_max_prior_semantic_harm: float = 0.25  # *[impl]* conservative skip only if prior harm below this
 
 @dataclass
 class RiskThresholds:
@@ -235,7 +237,7 @@ def check_convergence(state: DeliberationState) -> bool:
     return state.hindsight_score >= config.min_hindsight_score
 ```
 
-*[impl]* Convergence and decision logic live in `moralstack/orchestration/convergence_evaluator.py` (`ConvergenceEvaluator.check_convergence`, `determine_decision`). Loop invariants and structured logging remain in `moralstack/orchestration/convergence.py` (`enforce_convergence_invariants`, `log_convergence_event`). Aggregated guidance is built by `moralstack/orchestration/guidance_builder.py` (`build_aggregated_guidance`).
+*[impl]* Convergence and decision logic live in `moralstack/orchestration/convergence_evaluator.py` (`ConvergenceEvaluator.check_convergence`, `determine_decision`). Loop invariants and structured logging remain in `moralstack/orchestration/convergence.py` (`enforce_convergence_invariants`, `log_convergence_event`). Aggregated guidance is built by `moralstack/orchestration/guidance_builder.py` (`build_aggregated_guidance(state, *, filter_marginal=True, telemetry=None)`). By default, marginal signals are dropped using state-only thresholds (critic, weighted perspective approval, hindsight score, semantic expected harm); when no substantive guidance remains, the string is empty and cycle-2 policy rewrite is skipped. `filter_marginal=False` preserves the legacy unfiltered aggregation. Observability: `AGGREGATED_GUIDANCE_EVALUATED` orchestration events.
 
 **Token Optimization (DelibContext, thin prompts)**:
 
@@ -261,8 +263,11 @@ primary model for baseline quality. To disable the split, set `MORALSTACK_POLICY
 `OPENAI_MODEL`.
 
 In benchmark testing, this optimization reduces rewrite step latency and, combined with
-`gpt-4.1-nano` on the simulator, brings average deliberative latency from ~82s to ~60s
-(~27% reduction) with no measurable compliance degradation (98.8% maintained).
+`gpt-4.1-nano` on the simulator, contributed to large reductions versus heavier simulator
+and rewrite defaults (historically on the order of ~82s → ~60s mean deliberative latency
+in prior runs). **Benchmark run 11** (84 questions) reports overall MoralStack **mean**
+wall-clock **~44s** and **median ~39s**, with **98.8%** compliance unchanged and overall
+judge score **~9.35/10** (vs **7.73/10** baseline).
 
 #### Rewrite prompt constraints
 

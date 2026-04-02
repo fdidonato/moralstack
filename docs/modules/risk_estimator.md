@@ -108,9 +108,9 @@ RiskEstimation(
 
 Semantic analysis in `LLMBasedRiskEstimator._semantic_analysis` is split into:
 
-1. **Prompt building** — `_build_generation_config()`, `_build_full_prompt(prompt)` (base template + optional principles from constitution store).
-2. **LLM call with retry** — `_call_llm_with_retry(full_prompt, gen_config)` runs the policy LLM, persists the call via `_persist_risk_llm_call` (when persistence is available), and returns the raw response string; on parse/generation failure it retries up to `max_retries`, then raises `RiskEstimationError`.
-3. **Parsing** — `parse_risk_response(raw_response)` produces a `RiskParseResult`.
+1. **Prompt building** — `_build_generation_config()`, `_build_full_prompt(prompt)` (base template + optional principles from constitution store). `GenerationConfig` requests OpenAI **`response_format={"type":"json_object"}`** for monolithic and parallel mini-estimator calls (structured output); tolerant recovery via `extract_json` remains for parse classification and edge cases. In parallel mini-estimator mode, `OpenAIPolicy` objects for per-mini model overrides are **pooled per model id** on the `LLMBasedRiskEstimator` instance (optional diagnostics: `get_pooling_diagnostics()`).
+2. **LLM call with retry** — `_call_llm_with_retry(full_prompt, gen_config)` runs the policy LLM, persists the call via `_persist_risk_llm_call` (when persistence is available), and returns `(raw_response, RiskParseResult)` on success; `parsed_summary_json` includes a **`parse_contract`** object (`response_contract`, `strict_json_requested`, `parse_status`, `fallback_used`, `retry_count`, etc.). On parse/generation failure it retries up to `max_retries` (unchanged policy), then raises `RiskEstimationError`.
+3. **Parsing** — `parse_risk_dict` after `parse_dict_with_contract` (direct `json.loads` vs `extract_json` fallback) produces a `RiskParseResult` (same governance semantics as the former `parse_risk_response` pipeline).
 4. **Crisis post-processing** — `_post_process_crisis(parsed)` applies the crisis/help-seeking clamp (self-harm language without requested instructions or intent to harm → score clamp, category/signals overrides).
 5. **Mapping** — `_to_risk_estimation(...)` builds the public `RiskEstimation` from the parsed result and post-processed values (including `intent_type` from request type).
 

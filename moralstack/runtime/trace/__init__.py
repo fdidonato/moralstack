@@ -6,4 +6,6 @@ from moralstack.runtime.trace.decision_trace import (
     normalize_trace_fields,
 )
 
-__all__ = ["DecisionTrace", "append_decision_trace", "normalize_trace_fields"]
+from . import trace_stages
+
+__all__ = ["DecisionTrace", "append_decision_trace", "normalize_trace_fields", "trace_stages"]

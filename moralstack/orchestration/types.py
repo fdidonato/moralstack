@@ -440,7 +440,16 @@ class OrchestratorResult:
     error: str | None = None
     errors: list[str] | None = None
     execution_trace: dict[str, Any] | None = None
+    # Populated for deliberative runs; also set when fast_path falls through to deliberation.
+    convergence_snapshot: dict[str, Any] | None = None
     trace: Any = None  # orchestration Trace (request-scoped diagnostica)
+    # Optional conversation linkage (multi-turn foundation; dormant when unset)
+    conversation_id: str | None = None
+    turn_index: int | None = None
+    parent_request_id: str | None = None
+    conversation_state_provided: bool = False
+    conversation_governance_state_out: Any | None = None  # ConversationGovernanceState when set
+    conversation_state_updated: bool = False
 
     @property
     def cycles(self) -> int:
@@ -490,6 +499,8 @@ class OrchestratorConfig:
     enable_hindsight_gating: bool = True  # Default True: skip hindsight except in final cycle; set False to run every cycle
     simulator_gate_semantic_harm_threshold: float = 0.4  # Run if prev sim semantic_expected_harm >= this
     simulator_gate_delta_chars_threshold: int = 100  # Run if draft changed by >= this many chars
+    # Conservative skip: only if prior semantic_expected_harm is strictly below this (and other gates pass).
+    simulator_gate_skip_max_prior_semantic_harm: float = 0.25
     # Upper bound for borderline REFUSE deliberation (inclusive).
     # When a REFUSE decision has a risk_score between
     # risk_thresholds.medium and borderline_refuse_upper inclusive,
@@ -505,10 +516,18 @@ class OrchestratorConfig:
     # Hard violations are still honoured: sim/persp results are discarded when
     # the critic finds a hard violation. Default True for latency savings.
     parallel_critic_with_modules: bool = True
+    # When True (default), each deliberation cycle picks critic_gated vs
+    # full_parallel from risk posture; when False, only parallel_critic_with_modules
+    # selects between them (legacy static fork).
+    enable_dynamic_parallel_scheduler: bool = True
     # When True, risk estimation and speculative draft generation run in
     # parallel. The draft is used directly for benign/fast/deliberative
     # routes and discarded on REFUSE. Zero impact on decision quality.
     enable_speculative_generation: bool = True
+    # Stricter than early_exit_perspectives_threshold; used only for cycle-1 early convergence.
+    cycle1_early_convergence_min_weighted_approval: float = 0.78
+    cycle1_early_convergence_max_semantic_harm: float = 0.35
+    cycle1_early_convergence_min_per_perspective_approval: float = 0.70
 
 
 # =============================================================================
@@ -722,6 +741,12 @@ class DeliberationState:
     # Soft revision tracking
     soft_revision_applied: bool = False
     soft_revision_guidance_used: str = ""
+    # Simulator gating observability (set by DeliberationRunner per cycle)
+    _simulator_ran_this_cycle: bool | None = field(default=None, repr=False)
+    _simulator_gate_reason_codes: list[str] = field(default_factory=list, repr=False)
+    _simulator_carry_forward: bool = field(default=False, repr=False)
+    # Last convergence evaluation (observability; set by ConvergenceEvaluator.determine_decision)
+    _convergence_evaluation_snapshot: dict[str, Any] | None = field(default=None, repr=False)
 
     @property
     def last_critique(self) -> CriticReportProtocol | None:
@@ -780,6 +805,12 @@ class DeliberationState:
             _perspectives_aggregation=self._perspectives_aggregation,
             soft_revision_applied=self.soft_revision_applied,
             soft_revision_guidance_used=self.soft_revision_guidance_used,
+            _simulator_ran_this_cycle=self._simulator_ran_this_cycle,
+            _simulator_gate_reason_codes=list(self._simulator_gate_reason_codes),
+            _simulator_carry_forward=self._simulator_carry_forward,
+            _convergence_evaluation_snapshot=(
+                dict(self._convergence_evaluation_snapshot) if self._convergence_evaluation_snapshot else None
+            ),
         )
 
 
@@ -797,6 +828,27 @@ class ConstitutionStoreProtocol(Protocol):
     def detect_relevant_domains(self, prompt: str) -> list[str]:
         """Returns list of relevant domain names for the prompt (optional)."""
         ...
+
+
+@dataclass(frozen=True)
+class RequestAnalysisContext:
+    """
+    Request-scoped constitution analysis for a single deliberative path.
+
+    Built once from the constitution store (relevant principles + constitution object)
+    and passed to consumers (critic, delib overlay) to avoid redundant retrieval calls.
+    Treat as read-only after construction.
+    """
+
+    relevant_principles: tuple[Any, ...]
+    constitution: Any
+    detected_domain: str | None
+    retrieval_metadata: dict[str, Any] = field(default_factory=dict)
+    prefilter_cache_status: str | None = None
+    retrieval_count: int = 0
+    retrieval_duration_ms: float = 0.0
+    retrieval_started_at_ms: int = 0
+    retrieval_top_k: int = 10
 
 
 class OutputProtectorProtocol(Protocol):

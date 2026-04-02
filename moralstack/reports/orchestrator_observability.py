@@ -32,7 +32,6 @@ def _final_trace_dict(traces: list | None) -> dict[str, Any]:
         stage = (t.get("stage") or "").strip().upper()
         if stage == "FINAL":
             final_trace = t
-            break
     if final_trace is None:
         final_trace = traces[-1]
     tj = final_trace.get("trace_json", "{}")

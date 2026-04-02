@@ -22,6 +22,11 @@ The Orchestrator handles:
 - Guidance aggregation from modules
 - Final response assembly
 
+**Conversation linkage (optional, foundation only)**: `OrchestrationController.process` / `Orchestrator.process` accept
+optional keyword-only arguments `conversation_id`, `turn_index`, `parent_request_id`, and `conversation_state`
+(`ConversationGovernanceState`). When provided, metadata is persisted on the request row and echoed on
+`OrchestratorResult`; they do not change routing or `decide_action` when omitted. See `moralstack/orchestration/conversation_state.py`.
+
 ---
 
 ## Architecture
@@ -74,8 +79,8 @@ Protocols include: `PolicyGenerationResultProtocol`, `CriticReportProtocol`, `Qu
 
 `DeliberationRunner` delegates to dedicated modules to keep responsibilities separated:
 
-- **guidance_builder** — Builds aggregated guidance string from critic, perspectives, hindsight, and simulator state (`build_aggregated_guidance(state)`).
-- **convergence_evaluator** — Evaluates whether the deliberation has converged and which `DecisionType` to apply (`ConvergenceEvaluator(config).check_convergence(state)`, `determine_decision(state)`). Invariants and structured logging for the loop remain in **convergence.py** (`enforce_convergence_invariants`, `log_convergence_event`).
+- **guidance_builder** — Builds aggregated guidance string from critic, perspectives, hindsight, and simulator state (`build_aggregated_guidance(state, *, filter_marginal=True, telemetry=None)`). Applies **signal-strength filtering** by default (`filter_marginal=True`): critic guidance is included only when violations exist or critic decision is `REVISE`/`REFUSE`; perspective suggestions only from dissatisfied perspectives (`approval_score` < 0.75) and only when weighted approval < 0.85; hindsight only when a real hindsight signal exists and `hindsight_score` < 0.7; simulator only when `semantic_expected_harm` ≥ 0.35. Hard violations bypass all filters. When all modules are satisfied, guidance returns empty and the rewrite is skipped (draft from the previous cycle is preserved). Emits `rewrite (SKIPPED_EMPTY_GUIDANCE)` in persisted LLM call rows when the rewrite is skipped; logs `guidance_filter:` lines at INFO. Also emits `AGGREGATED_GUIDANCE_EVALUATED` orchestration events for the request detail UI.
+- **convergence_evaluator** — Evaluates whether the deliberation has converged and which `DecisionType` to apply (`ConvergenceEvaluator(config).determine_decision(state, risk_estimation=None)`). **Cycle 1** may stop early only via a conservative `_evaluate_cycle1_early_convergence` gate (stricter than the legacy cycle>=2 weighted-perspectives path); rejection is explicit and observable. Invariants and structured logging for the loop remain in **convergence.py** (`enforce_convergence_invariants`, `log_convergence_event`). Observability: `CONVERGENCE_EVALUATED`, `EARLY_CONVERGENCE_ACCEPTED`, `EARLY_CONVERGENCE_REJECTED`; `CYCLE_SUMMARY` includes `early_convergence_considered`, `early_convergence_accepted`, `convergence_reason_codes`, `deliberation_decision`.
 - **language_resolver** — Resolves explicit language and builds prompt with language prefix (`resolve_prompt_with_language(prompt, detected_iso, fallback_prompt)`), reusing logic from `safe_refusal_generator` and `_policy_helpers`.
 - **persistence_helpers** — Centralizes optional diagnostics logging and LLM call persistence (`record_llm_call(logger, diagnostics_payload, persist_kwargs)`).
 
@@ -119,12 +124,22 @@ config = OrchestratorConfig(
 | `min_hindsight_score`                  | 0.8     | Minimum hindsight score for convergence                          |
 | `borderline_refuse_upper`              | 0.95    | Upper bound for borderline REFUSE deliberation                   |
 | `early_exit_perspectives_threshold`    | 0.85    | Weighted approval threshold for early exit (critic PROCEED path) |
-| `parallel_critic_with_modules`         | `True`  | When `True` and `parallel_module_calls` is `True`, the critic runs in parallel with the simulator and perspectives instead of as a sequential gate. See [Latency-oriented parameters](#latency-oriented-parameters). |
+| `cycle1_early_convergence_min_weighted_approval` | 0.78 | Minimum weighted perspectives approval for cycle-1 early convergence. Perspectives with weights: vulnerable ×1.2, compliance ×1.1, adversary ×0.8, user/observer ×1.0. |
+| `cycle1_early_convergence_max_semantic_harm` | 0.35 | Maximum simulator `semantic_expected_harm` for cycle-1 early convergence (when simulation is enabled). Queries with harm above this threshold always get cycle 2. |
+| `cycle1_early_convergence_min_per_perspective_approval` | 0.70 | Minimum `approval_score` for each individual perspective. If any single perspective scores below this, cycle 2 is forced. |
+| `parallel_critic_with_modules`         | `True`  | Legacy static fork when `enable_dynamic_parallel_scheduler` is `False` or risk estimation is unavailable: when `True` and `parallel_module_calls` is `True`, critic runs in parallel with simulator and perspectives. See [Latency-oriented parameters](#latency-oriented-parameters). |
+| `enable_dynamic_parallel_scheduler`   | `True`  | When `True` and `parallel_module_calls` is `True`, each cycle selects `critic_gated` vs `full_parallel` from risk posture (execution only; governance unchanged). See [Latency-oriented parameters](#latency-oriented-parameters). |
 | `enable_speculative_generation`        | `True`  | When `True`, risk estimation and speculative draft generation run in parallel before routing. The draft is reused on benign, fast, and deliberative routes when applicable. See [Latency-oriented parameters](#latency-oriented-parameters). |
 
 ### Latency-oriented parameters
 
 These flags reduce wall-clock latency **without changing routing policy** (`decide_action`, `get_route`, overlay floors, or convergence invariants). They do not change how `final_action` is computed from risk and module outputs.
+
+**`enable_dynamic_parallel_scheduler` (default `True`)**
+
+- **Requires** `parallel_module_calls=True`. When both are `True`, `DeliberationRunner` chooses **`critic_gated`** (critic first; simulator and perspectives only if no hard violation) vs **`full_parallel`** (critic, simulator, perspectives concurrently) **per cycle** using existing risk fields (`risk_category`, `operational_risk`, `intent_to_harm`, `requested_instructions`, `risk_policy_action`, prior-cycle hard critiques). Emits `PARALLEL_STRATEGY_SELECTED` and enriches `CYCLE_SUMMARY` traces (`scheduler_reason_codes`, `critic_short_circuit`).
+- **When `critic_gated` short-circuits** (hard violation after critic): simulator and perspectives are not invoked; emits `CRITIC_SHORT_CIRCUIT_TRIGGERED`.
+- **When `False`**: the runner uses the legacy **`parallel_critic_with_modules`** boolean alone to choose the fork (same behavior as before dynamic scheduling).
 
 **`parallel_critic_with_modules` (default `True`)**
 
@@ -139,6 +154,16 @@ These flags reduce wall-clock latency **without changing routing policy** (`deci
 - **Reuse**: On benign fast path, fast path, and deliberative path, the draft is reused when it is still valid (skipping a duplicate first `generate` where implemented). On **REFUSE**, the speculative call is unused (wasted latency/token trade-off). **`SAFE_COMPLETE`** path does not reuse this draft (different system instructions).
 - **Constrained generation** (`CLEARLY_HARMFUL` deliberation): the speculative draft is **not** applied as cycle-1 output; the constrained system prompt is used instead.
 - **Note**: Speculative generation uses language resolution **before** the risk estimator’s `detected_language` is available (fallback path). Routing and safety decisions are unchanged; draft wording may differ slightly from a strictly sequential generate-after-risk for the same request.
+
+**`enable_simulator_gating` (default `false`)**
+
+- **Requires** `enable_simulation=True` and an available simulator module. When `true`, each cycle evaluates a conservative
+  simulator gate (see env vars `MORALSTACK_ORCHESTRATOR_SIMULATOR_GATE_*`). Cycle 1 always runs the simulator; cycle 2+
+  may skip only when prior harm is very low, the draft has not materially changed, risk posture is not elevated, and
+  (when the critic has already run) the critic is clean. **Full parallel** scheduling uses a stricter prior-only
+  check before the critic runs because the critic is not visible to the gate yet.
+- **Observability**: `SIMULATOR_GATE_DECISION`, `SIMULATOR_EXECUTED`, `SIMULATOR_SKIPPED`; `CYCLE_SUMMARY` includes
+  `simulator_ran_this_cycle`, `simulator_gate_reason_codes`, and `simulator_carry_forward`.
 
 ### Borderline REFUSE Upper Bound
 
@@ -211,9 +236,10 @@ For significant-risk requests:
 5. **Hindsight Evaluation**: Retrospective evaluation
 6. **Convergence Check**: Verify termination criteria
 
-**Typical latency**: Deliberative path averages ~45-60s for standard queries,
-~70-85s for sensitive-domain queries (1 cycle ~35s, 2 cycles ~65s).
-Fast path averages ~10-12s.
+**Typical latency** (84-question benchmark, run 11): overall deliberative workload
+**mean ~44s**, **median ~39s**; SAFE_COMPLETE **one-cycle** subset **~33s** mean;
+two-cycle SAFE_COMPLETE is higher per query. Sensitive-domain queries often sit at
+the upper end of the range. Fast path averages ~10-12s.
 
 ---
 
@@ -455,11 +481,21 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
   `MORALSTACK_ORCHESTRATOR_ENABLE_SIMULATION`, and `MORALSTACK_ORCHESTRATOR_ENABLE_HINDSIGHT` determine which modules run
   and thus which calls are recorded and visible in the UI.
 
+#### MORALSTACK_ORCHESTRATOR_ENABLE_DYNAMIC_PARALLEL_SCHEDULER
+
+- **Default**: `true`
+- **Type**: bool
+- **Description**: When `true` and `MORALSTACK_ORCHESTRATOR_PARALLEL_MODULE_CALLS` is `true`, each deliberation cycle
+  selects `critic_gated` vs `full_parallel` from existing risk posture signals (execution scheduling only). When `false`,
+  the static fork uses only `MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES`. See
+  [Latency-oriented parameters](#latency-oriented-parameters).
+
 #### MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES
 
 - **Default**: `true`
 - **Type**: bool
-- **Description**: When `true` and `MORALSTACK_ORCHESTRATOR_PARALLEL_MODULE_CALLS` is `true`, the critic runs in parallel
+- **Description**: Legacy static fork when `MORALSTACK_ORCHESTRATOR_ENABLE_DYNAMIC_PARALLEL_SCHEDULER` is `false` or risk
+  estimation is unavailable: when `true` and `MORALSTACK_ORCHESTRATOR_PARALLEL_MODULE_CALLS` is `true`, the critic runs in parallel
   with the simulator and perspectives (full parallel evaluation). When `false`, the critic runs first as a gate; simulator
   and perspectives run in parallel only after the critic reports no hard violation. See
   [Latency-oriented parameters](#latency-oriented-parameters).
@@ -572,7 +608,10 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
 
 - **Default**: `false`
 - **Type**: bool
-- **Description**: When true, skip simulator in cycle 2+ when previous cycle was safe.
+- **Description**: When `true`, `DeliberationRunner` may **skip** re-running the simulator in cycle 2+ only when conservative
+  evidence supports it (low prior `semantic_expected_harm`, stable draft, clean critic when available, low risk posture).
+  Emits `SIMULATOR_GATE_DECISION`, `SIMULATOR_EXECUTED`, and `SIMULATOR_SKIPPED` and enriches `CYCLE_SUMMARY` traces.
+  When `false`, the simulator always runs (unless disabled or unavailable).
 
 #### MORALSTACK_ORCHESTRATOR_ENABLE_HINDSIGHT_GATING
 
@@ -587,6 +626,32 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
 - **Description**: Weighted perspectives approval threshold for early exit when critic returns PROCEED (zero violations). When approval ≥ this value, the cycle converges without waiting for hindsight. Set to `1.0` to effectively disable this early-exit path. Respects perspective weights (`vulnerable` ×1.2, `compliance` ×1.1, `adversary` ×0.8).
 - **Configuration source**: This is currently a dataclass config field (`OrchestratorConfig.early_exit_perspectives_threshold`) and is **not** loaded from `MORALSTACK_ORCHESTRATOR_*` environment variables.
 
+#### MORALSTACK_ORCHESTRATOR_CYCLE1_EARLY_CONVERGENCE_MIN_WEIGHTED_APPROVAL
+
+- **Default**: `0.78`
+- **Type**: float (0–1)
+- **Description**: Minimum weighted perspectives approval for cycle-1 early convergence. When all cycle-1 gates pass
+  (critic clean, no hard violations, risk posture not elevated, perspectives aligned, simulator harm low), the
+  deliberation stops after 1 cycle. This threshold is stricter than `early_exit_perspectives_threshold` (0.85) because
+  it applies without hindsight confirmation. Set to `1.0` to effectively disable cycle-1 early convergence.
+
+#### MORALSTACK_ORCHESTRATOR_CYCLE1_EARLY_CONVERGENCE_MAX_SEMANTIC_HARM
+
+- **Default**: `0.35`
+- **Type**: float (0–1)
+- **Description**: Maximum simulator `semantic_expected_harm` allowed for cycle-1 early convergence. Queries where the
+  simulator reports harm above this threshold always proceed to cycle 2 for additional review. Only evaluated when
+  `enable_simulation=True` and the simulator produced results. Set to `0.0` to require zero simulated harm for early
+  convergence.
+
+#### MORALSTACK_ORCHESTRATOR_CYCLE1_EARLY_CONVERGENCE_MIN_PER_PERSPECTIVE_APPROVAL
+
+- **Default**: `0.70`
+- **Type**: float (0–1)
+- **Description**: Minimum `approval_score` required from each individual perspective for cycle-1 early convergence.
+  If any single perspective (user, vulnerable, observer, adversary, compliance) scores below this, cycle 2 is forced.
+  This prevents early convergence when one perspective is dissatisfied even if the weighted average is high.
+
 #### MORALSTACK_ORCHESTRATOR_SIMULATOR_GATE_SEMANTIC_HARM_THRESHOLD
 
 - **Default**: `0.4`
@@ -598,6 +663,14 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
 - **Default**: `100`
 - **Type**: int (>= 0)
 - **Description**: Run simulator if draft changed by >= this many characters.
+
+#### MORALSTACK_ORCHESTRATOR_SIMULATOR_GATE_SKIP_MAX_PRIOR_SEMANTIC_HARM
+
+- **Default**: `0.25`
+- **Type**: float (0–1)
+- **Description**: Conservative skip is allowed only when the previous cycle’s `semantic_expected_harm` is **strictly
+  below** this value (and other gates pass). Values in `[skip_max, simulator_gate_semantic_harm_threshold)` still
+  require a simulator run (borderline band).
 
 ---
 

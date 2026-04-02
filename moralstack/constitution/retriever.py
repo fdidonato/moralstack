@@ -8,6 +8,7 @@ parallel execution, and get_relevant_principles internals.
 from __future__ import annotations
 
 import concurrent.futures
+import copy
 import hashlib
 import json
 import logging
@@ -19,12 +20,119 @@ from moralstack.constitution.helpers import resolve_conflict, tokenize
 from moralstack.constitution.openai_config import OpenAIClientConfig
 from moralstack.constitution.prompt_formatter import format_principles_for_prompt
 from moralstack.constitution.schema import Overlay, Principle
+from moralstack.utils.llm_parse_contract import (
+    merge_parse_contract_into_summary,
+    parse_dict_with_contract,
+    parse_principle_id_list_with_contract,
+)
 from moralstack.utils.openai_params import completion_tokens_param
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def _persist_constitution_llm_call(
+    *,
+    action: str,
+    system_prompt: str,
+    prompt: str,
+    raw_response: str,
+    duration_ms: float,
+    started_at: int | None,
+    parse_contract: dict[str, Any],
+    model: str | None,
+) -> None:
+    """
+    Best-effort persistence for constitution retrieval LLM calls (parse metadata in parsed_summary_json).
+
+    Skips silently when no DB context or persistence is disabled.
+    """
+    try:
+        from moralstack.persistence.sink import persist_llm_call
+
+        summary = merge_parse_contract_into_summary({"module": "constitution_retriever"}, parse_contract)
+        persist_llm_call(
+            phase="constitution_retrieval",
+            module="constitution_retriever",
+            action=action,
+            model=model or "",
+            started_at=started_at,
+            duration_ms=duration_ms,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            raw_response=raw_response,
+            parsed_summary_json=summary,
+            attempts=1,
+        )
+    except Exception:
+        logger.debug("constitution retrieval llm_call persist skipped", exc_info=True)
+
+
+def _normalize_domain_keywords(keywords: dict[str, list[str]]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """
+    Canonical form for comparison: sorted domain keys, sorted de-duplicated keyword strings per domain.
+    Does not alter governance semantics of a keyword map; used only for fingerprinting/equality.
+    """
+    items: list[tuple[str, tuple[str, ...]]] = []
+    for domain in sorted(keywords.keys()):
+        raw = keywords.get(domain) or []
+        seen: set[str] = set()
+        collected: list[str] = []
+        for w in raw:
+            s = str(w)
+            if s not in seen:
+                seen.add(s)
+                collected.append(s)
+        collected.sort()
+        items.append((str(domain), tuple(collected)))
+    return tuple(items)
+
+
+def _fingerprint_domain_keywords(keywords: dict[str, list[str]]) -> str:
+    """Stable SHA-256 hex digest over the normalized keyword map."""
+    norm = _normalize_domain_keywords(keywords)
+    blob = json.dumps(norm, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _snapshot_domain_keywords(keywords: dict[str, list[str]]) -> dict[str, list[str]]:
+    """
+    Deep copy of keyword lists so later mutation of provider-owned structures cannot desync fingerprints.
+    """
+    return {str(k): copy.deepcopy(list(v or [])) for k, v in keywords.items()}
+
+
+def _emit_domain_prefilter_orchestration_event(event_type: str, payload: dict[str, Any]) -> None:
+    """Best-effort orchestration_events row; no-op when persistence context or DB is unavailable."""
+    try:
+        from moralstack.persistence.sink import persist_orchestration_event
+    except ImportError:
+        return
+    try:
+        persist_orchestration_event(
+            stage="retrieval",
+            component="domain_prefilter",
+            event_type=event_type,
+            decision=str(payload.get("decision") or ""),
+            status="ok",
+            payload=payload,
+        )
+    except Exception:
+        logger.debug("domain prefilter orchestration event emission failed", exc_info=True)
+
+
+def _prefilter_combined_cache_status(keywords_changed: bool, cache_hit: bool | None) -> str:
+    if cache_hit is None:
+        return "unknown"
+    if keywords_changed and cache_hit:
+        return "invalidated_then_hit"
+    if keywords_changed and not cache_hit:
+        return "invalidated_then_miss"
+    if cache_hit:
+        return "hit"
+    return "miss"
 
 
 # =============================================================================
@@ -92,29 +200,127 @@ class DomainPrefilter:
     ) -> None:
         self.openai_config = openai_config or OpenAIClientConfig.default()
         self.max_domains = max_domains
-        self._domain_keywords = domain_keywords or {}
+        raw_kw = domain_keywords or {}
+        self._domain_keywords = _snapshot_domain_keywords(raw_kw)
+        self._keywords_fingerprint = _fingerprint_domain_keywords(raw_kw)
         self._cache: dict[str, list[str]] = {}
         self._cost_tracker = cost_tracker
+        self._last_keywords_changed: bool = False
+        self._last_cache_lookup_hit: bool | None = None
+        # Instance-scoped OpenAI HTTP client: stateless; per-call args stay on chat.completions.create.
+        self._openai_http_client: Any | None = None
+        self._openai_http_client_key: str | None = None
+        self._openai_client_creates: int = 0
+        self._openai_client_reuses_after_cache: int = 0
 
     def set_cost_tracker(self, tracker: Any | None) -> None:
         """Set TokenCostTracker for OpenAI call cost tracking."""
         self._cost_tracker = tracker
 
-    def set_domain_keywords(self, keywords: dict[str, list[str]]) -> None:
-        """Update domain keywords. Invalidates cache."""
-        self._domain_keywords = keywords
+    def set_domain_keywords(
+        self,
+        keywords: dict[str, list[str]],
+        *,
+        invalidation_reason: str = "effective_keywords_changed",
+    ) -> bool:
+        """
+        Update domain keywords when the effective map changes. Idempotent: same semantic map does not clear cache.
+
+        Returns:
+            True if keywords changed and cache was invalidated; False if state was already equivalent.
+        """
+        from moralstack.orchestration.orchestration_event_taxonomy import DOMAIN_PREFILTER_CACHE_INVALIDATED
+
+        fp_new = _fingerprint_domain_keywords(keywords)
+        if fp_new == self._keywords_fingerprint:
+            self._last_keywords_changed = False
+            return False
+
+        fp_before = self._keywords_fingerprint
+        self._keywords_fingerprint = fp_new
+        self._domain_keywords = _snapshot_domain_keywords(keywords)
         self._cache.clear()
+        self._last_keywords_changed = True
+
+        kcount = sum(len(v or []) for v in (keywords or {}).values())
+        _emit_domain_prefilter_orchestration_event(
+            DOMAIN_PREFILTER_CACHE_INVALIDATED,
+            {
+                "reason": invalidation_reason,
+                "keywords_fingerprint_before": fp_before,
+                "keywords_fingerprint_after": fp_new,
+                "domain_count": len(keywords or {}),
+                "keyword_count_total": kcount,
+                "decision": "invalidated",
+            },
+        )
+        return True
+
+    def clear_cache(self, *, reason: str = "forced_refresh") -> None:
+        """
+        Clear prefilter entries without requiring keyword mutation (e.g. full retriever refresh).
+        Emits INVALIDATED only when entries were present.
+        """
+        from moralstack.orchestration.orchestration_event_taxonomy import DOMAIN_PREFILTER_CACHE_INVALIDATED
+
+        if not self._cache:
+            return
+        self._cache.clear()
+        self._last_keywords_changed = reason != "no_op"
+        fp = self._keywords_fingerprint
+        _emit_domain_prefilter_orchestration_event(
+            DOMAIN_PREFILTER_CACHE_INVALIDATED,
+            {
+                "reason": reason,
+                "keywords_fingerprint_before": fp,
+                "keywords_fingerprint_after": fp,
+                "domain_count": len(self._domain_keywords),
+                "keyword_count_total": sum(len(v) for v in self._domain_keywords.values()),
+                "decision": "invalidated",
+            },
+        )
 
     def filter_domains(self, query: str, available_domains: list[str]) -> list[str]:
         """Identify domains most relevant to the query."""
+        from moralstack.orchestration.orchestration_event_taxonomy import (
+            DOMAIN_PREFILTER_CACHE_HIT,
+            DOMAIN_PREFILTER_CACHE_MISS,
+        )
+
         cache_key = hashlib.md5(f"{query}_{','.join(sorted(available_domains))}".encode()).hexdigest()
+        domains_to_check = [d for d in available_domains if d not in self.ALWAYS_EVALUATE]
+        candidate_domain_count = len(domains_to_check)
+
         if cache_key in self._cache:
-            return self._cache[cache_key]
+            self._last_cache_lookup_hit = True
+            cached = self._cache[cache_key]
+            _emit_domain_prefilter_orchestration_event(
+                DOMAIN_PREFILTER_CACHE_HIT,
+                {
+                    "decision": "hit",
+                    "cache_key_digest": cache_key,
+                    "matched_domains": list(cached),
+                    "candidate_domain_count": candidate_domain_count,
+                    "keywords_fingerprint": self._keywords_fingerprint,
+                },
+            )
+            return cached
+
+        self._last_cache_lookup_hit = False
+        _emit_domain_prefilter_orchestration_event(
+            DOMAIN_PREFILTER_CACHE_MISS,
+            {
+                "decision": "miss",
+                "cache_key_digest": cache_key,
+                "candidate_domain_count": candidate_domain_count,
+                "keywords_fingerprint": self._keywords_fingerprint,
+            },
+        )
 
         relevant = list(self.ALWAYS_EVALUATE & set(available_domains))
-        domains_to_check = [d for d in available_domains if d not in self.ALWAYS_EVALUATE]
 
         if not domains_to_check:
+            self._cache[cache_key] = relevant
             return relevant
 
         domain_list = "\n".join(
@@ -161,24 +367,35 @@ Return JSON ONLY:
             return list(self.ALWAYS_EVALUATE & set(available_domains))
 
     def _call_openai(self, prompt: str) -> dict[str, Any]:
+        import time
+
+        from moralstack.utils.json_utils import JSONParseError
+
         try:
             import openai
 
             if not self.openai_config.api_key:
                 return {}
 
-            client = openai.OpenAI(api_key=self.openai_config.api_key)
-
+            key = self.openai_config.api_key
+            if self._openai_http_client is None or self._openai_http_client_key != key:
+                self._openai_http_client = openai.OpenAI(api_key=key)
+                self._openai_http_client_key = key
+                self._openai_client_creates += 1
+            else:
+                self._openai_client_reuses_after_cache += 1
+            client = self._openai_http_client
+            sys_msg = "You are a strict domain classifier. Always respond with valid JSON only."
+            t0 = time.time()
+            started_ms = int(t0 * 1000)
             response = client.chat.completions.create(
                 model=self.openai_config.model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": ("You are a strict domain classifier. " "Always respond with valid JSON only."),
-                    },
+                    {"role": "system", "content": sys_msg},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.1,
+                response_format={"type": "json_object"},
                 **completion_tokens_param(self.openai_config.model, 200),
             )
 
@@ -193,11 +410,57 @@ Return JSON ONLY:
                     ct = total - pt if total else 0
                 self._cost_tracker.add_call(self.openai_config.model, pt, ct)
 
-            text = response.choices[0].message.content.strip()
-            json_match = re.search(r"\{[\s\S]*\}", text)
-            if json_match:
-                return json.loads(json_match.group())
-            return {}
+            text = (response.choices[0].message.content or "").strip()
+            elapsed_ms = (time.time() - t0) * 1000
+            data: dict[str, Any]
+            p_contract: dict[str, Any]
+            try:
+                data, p_contract = parse_dict_with_contract(text, strict_json_requested=True)
+            except JSONParseError:
+                json_match = re.search(r"\{[\s\S]*\}", text)
+                if json_match:
+                    try:
+                        raw_obj = json.loads(json_match.group())
+                        data = raw_obj if isinstance(raw_obj, dict) else {}
+                        p_contract = {
+                            "response_contract": "json_object",
+                            "strict_json_requested": True,
+                            "parse_status": "fallback_ok",
+                            "fallback_used": True,
+                            "parse_attempts": 1,
+                            "retry_count": 0,
+                        }
+                    except json.JSONDecodeError:
+                        data = {}
+                        p_contract = {
+                            "response_contract": "json_object",
+                            "strict_json_requested": True,
+                            "parse_status": "failed",
+                            "fallback_used": True,
+                            "parse_attempts": 1,
+                            "retry_count": 0,
+                        }
+                else:
+                    data = {}
+                    p_contract = {
+                        "response_contract": "json_object",
+                        "strict_json_requested": True,
+                        "parse_status": "failed",
+                        "fallback_used": False,
+                        "parse_attempts": 1,
+                        "retry_count": 0,
+                    }
+            _persist_constitution_llm_call(
+                action="domain_prefilter",
+                system_prompt=sys_msg,
+                prompt=prompt,
+                raw_response=text,
+                duration_ms=elapsed_ms,
+                started_at=started_ms,
+                parse_contract=p_contract,
+                model=self.openai_config.model,
+            )
+            return data
 
         except Exception as e:
             logger.debug(f"OpenAI prefilter call failed: {e}")
@@ -259,6 +522,10 @@ class EnhancedDomainAgent:
         self._domain_description = domain_description or f"Principles specific to {domain_name} domain"
         self._cache: dict[str, AgentResult] = {}
         self._cost_tracker = cost_tracker
+        self._openai_http_client: Any | None = None
+        self._openai_http_client_key: str | None = None
+        self._openai_client_creates: int = 0
+        self._openai_client_reuses_after_cache: int = 0
 
     def evaluate(self, query: str) -> AgentResult:
         """Evaluate query and return AgentResult with principles and confidence."""
@@ -350,28 +617,39 @@ Output valid JSON only:"""
             return AgentResult(principle_ids=[], confidence=0.0, domain_match=False, reasoning=str(e))
 
     def _call_openai(self, prompt: str) -> dict[str, Any]:
+        import time
+
+        from moralstack.utils.json_utils import JSONParseError
+
         try:
             import openai
 
             if not self.openai_config.api_key:
                 return {}
 
-            client = openai.OpenAI(api_key=self.openai_config.api_key)
-
+            key = self.openai_config.api_key
+            if self._openai_http_client is None or self._openai_http_client_key != key:
+                self._openai_http_client = openai.OpenAI(api_key=key)
+                self._openai_http_client_key = key
+                self._openai_client_creates += 1
+            else:
+                self._openai_client_reuses_after_cache += 1
+            client = self._openai_http_client
+            sys_msg = (
+                "You are a STRICT semantic matching system. "
+                "Be conservative - when uncertain, return empty results. "
+                "Always respond with valid JSON only."
+            )
+            t0 = time.time()
+            started_ms = int(t0 * 1000)
             response = client.chat.completions.create(
                 model=self.openai_config.model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a STRICT semantic matching system. "
-                            "Be conservative - when uncertain, return empty results. "
-                            "Always respond with valid JSON only."
-                        ),
-                    },
+                    {"role": "system", "content": sys_msg},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.1,
+                response_format={"type": "json_object"},
                 **completion_tokens_param(self.openai_config.model, 300),
             )
 
@@ -386,11 +664,57 @@ Output valid JSON only:"""
                     ct = total - pt if total else 0
                 self._cost_tracker.add_call(self.openai_config.model, pt, ct)
 
-            text = response.choices[0].message.content.strip()
-            json_match = re.search(r"\{[\s\S]*\}", text)
-            if json_match:
-                return json.loads(json_match.group())
-            return {}
+            text = (response.choices[0].message.content or "").strip()
+            elapsed_ms = (time.time() - t0) * 1000
+            data: dict[str, Any]
+            p_contract: dict[str, Any]
+            try:
+                data, p_contract = parse_dict_with_contract(text, strict_json_requested=True)
+            except JSONParseError:
+                json_match = re.search(r"\{[\s\S]*\}", text)
+                if json_match:
+                    try:
+                        raw_obj = json.loads(json_match.group())
+                        data = raw_obj if isinstance(raw_obj, dict) else {}
+                        p_contract = {
+                            "response_contract": "json_object",
+                            "strict_json_requested": True,
+                            "parse_status": "fallback_ok",
+                            "fallback_used": True,
+                            "parse_attempts": 1,
+                            "retry_count": 0,
+                        }
+                    except json.JSONDecodeError:
+                        data = {}
+                        p_contract = {
+                            "response_contract": "json_object",
+                            "strict_json_requested": True,
+                            "parse_status": "failed",
+                            "fallback_used": True,
+                            "parse_attempts": 1,
+                            "retry_count": 0,
+                        }
+                else:
+                    data = {}
+                    p_contract = {
+                        "response_contract": "json_object",
+                        "strict_json_requested": True,
+                        "parse_status": "failed",
+                        "fallback_used": False,
+                        "parse_attempts": 1,
+                        "retry_count": 0,
+                    }
+            _persist_constitution_llm_call(
+                action="enhanced_domain_agent",
+                system_prompt=sys_msg,
+                prompt=prompt,
+                raw_response=text,
+                duration_ms=elapsed_ms,
+                started_at=started_ms,
+                parse_contract=p_contract,
+                model=self.openai_config.model,
+            )
+            return data
 
         except Exception as e:
             logger.debug(f"OpenAI agent call failed: {e}")
@@ -419,6 +743,10 @@ class DomainAgent:
         self.openai_config = openai_config or OpenAIClientConfig.default()
         self._cost_tracker = cost_tracker
         self._cache: dict[str, list[str]] = {}
+        self._openai_http_client: Any | None = None
+        self._openai_http_client_key: str | None = None
+        self._openai_client_creates: int = 0
+        self._openai_client_reuses_after_cache: int = 0
 
     def evaluate(self, query: str) -> list[str]:
         """Evaluate query and return relevant principle IDs."""
@@ -451,12 +779,12 @@ CRITICAL RULES:
 3. **Domain relevance**: Only return principles that are relevant to THIS specific domain
 4. **Relevance ordering**: Order by semantic relevance, HARD constraints first
 
-Return ONLY a JSON list of principle IDs that are relevant, ordered by relevance:
-["PRINCIPLE.ID.1", "PRINCIPLE.ID.2", ...]
+Return a single JSON object with key "principle_ids" whose value is an array of principle ID strings,
+ordered by relevance (most relevant first). Example shape: {{"principle_ids": ["PRINCIPLE.ID.1", "PRINCIPLE.ID.2"]}}
 
-If no principles from this domain are relevant, return empty list [].
+If no principles from this domain are relevant, return: {{"principle_ids": []}}
 
-Output ONLY valid JSON, nothing else:"""
+Output ONLY one JSON object (not a bare array), nothing else:"""
 
         try:
             result_ids = self._call_openai(prompt)
@@ -470,24 +798,35 @@ Output ONLY valid JSON, nothing else:"""
             return []
 
     def _call_openai(self, prompt: str) -> list[str]:
+        import time
+
+        from moralstack.utils.json_utils import JSONParseError
+
         try:
             import openai
 
             if not self.openai_config.api_key:
                 return []
 
-            client = openai.OpenAI(api_key=self.openai_config.api_key)
-
+            key = self.openai_config.api_key
+            if self._openai_http_client is None or self._openai_http_client_key != key:
+                self._openai_http_client = openai.OpenAI(api_key=key)
+                self._openai_http_client_key = key
+                self._openai_client_creates += 1
+            else:
+                self._openai_client_reuses_after_cache += 1
+            client = self._openai_http_client
+            sys_msg = "You are a precise semantic matching system. Always respond with valid JSON only."
+            t0 = time.time()
+            started_ms = int(t0 * 1000)
             response = client.chat.completions.create(
                 model=self.openai_config.model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": ("You are a precise semantic matching system. " "Always respond with valid JSON only."),
-                    },
+                    {"role": "system", "content": sys_msg},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.1,
+                response_format={"type": "json_object"},
                 **completion_tokens_param(self.openai_config.model, 256),
             )
 
@@ -502,12 +841,31 @@ Output ONLY valid JSON, nothing else:"""
                     ct = total - pt if total else 0
                 self._cost_tracker.add_call(self.openai_config.model, pt, ct)
 
-            text = response.choices[0].message.content.strip()
-            json_match = re.search(r"\[[\s\S]*?\]", text)
-            if json_match:
-                return json.loads(json_match.group())
-
-            return []
+            text = (response.choices[0].message.content or "").strip()
+            elapsed_ms = (time.time() - t0) * 1000
+            try:
+                ids, p_contract = parse_principle_id_list_with_contract(text, strict_json_requested=True)
+            except JSONParseError:
+                ids = []
+                p_contract = {
+                    "response_contract": "json_object",
+                    "strict_json_requested": True,
+                    "parse_status": "failed",
+                    "fallback_used": True,
+                    "parse_attempts": 1,
+                    "retry_count": 0,
+                }
+            _persist_constitution_llm_call(
+                action="legacy_domain_agent",
+                system_prompt=sys_msg,
+                prompt=prompt,
+                raw_response=text,
+                duration_ms=elapsed_ms,
+                started_at=started_ms,
+                parse_contract=p_contract,
+                model=self.openai_config.model,
+            )
+            return ids
 
         except Exception as e:
             logger.debug(f"OpenAI agent call failed: {e}")
@@ -583,8 +941,8 @@ class ConstitutionRetriever:
         """Invalidate all caches (agents, prefilter)."""
         self._domain_agents.clear()
         self._enhanced_agents.clear()
-        if self._domain_prefilter is not None and hasattr(self._domain_prefilter, "_cache"):
-            self._domain_prefilter._cache.clear()
+        if self._domain_prefilter is not None and hasattr(self._domain_prefilter, "clear_cache"):
+            self._domain_prefilter.clear_cache(reason="forced_refresh")
 
     def get_relevant_principles(
         self,
@@ -605,13 +963,26 @@ class ConstitutionRetriever:
 
         available_domains = ["core"] + self._provider._get_available_domains()
 
+        prefilter_kw_changed = False
+        prefilter_cache_hit: bool | None = None
         if self._config.use_enhanced_retrieval and self._config.use_domain_prefilter and self._domain_prefilter:
-            self._domain_prefilter.set_domain_keywords(self._provider.get_domain_keywords())
+            assert self._domain_prefilter is not None
+            prefilter_kw_changed = self._domain_prefilter.set_domain_keywords(self._provider.get_domain_keywords())
             relevant_domains = self._domain_prefilter.filter_domains(query, available_domains)
+            prefilter_cache_hit = self._domain_prefilter._last_cache_lookup_hit
             if domain and domain not in relevant_domains:
                 relevant_domains.append(domain)
         else:
             relevant_domains = available_domains
+
+        prefilter_status = (
+            _prefilter_combined_cache_status(prefilter_kw_changed, prefilter_cache_hit)
+            if self._config.use_enhanced_retrieval and self._config.use_domain_prefilter and self._domain_prefilter
+            else "n/a"
+        )
+        inv_reason = (
+            "effective_keywords_changed" if prefilter_kw_changed and self._domain_prefilter is not None else None
+        )
 
         self._last_debug_info = {
             "use_enhanced_retrieval": self._config.use_enhanced_retrieval,
@@ -619,6 +990,19 @@ class ConstitutionRetriever:
             "available_domains": available_domains,
             "prefiltered_domains": relevant_domains,
             "confidence_threshold": self._config.confidence_threshold,
+            "prefilter_cache_status": prefilter_status,
+            "prefilter_keywords_changed": (
+                bool(prefilter_kw_changed)
+                if self._config.use_enhanced_retrieval and self._config.use_domain_prefilter and self._domain_prefilter
+                else None
+            ),
+            "prefilter_cache_invalidation_reason": inv_reason,
+            "prefilter_cache_lookup_hit": prefilter_cache_hit,
+            "prefilter_keywords_fingerprint_prefix": (
+                (self._domain_prefilter._keywords_fingerprint[:16] if self._domain_prefilter else "")
+                if self._config.use_enhanced_retrieval and self._config.use_domain_prefilter
+                else ""
+            ),
         }
 
         all_principle_ids: set[str] = set()
@@ -731,6 +1115,7 @@ class ConstitutionRetriever:
             {
                 "final_principles_count": len(relevant_principles),
                 "principles_by_domain": self._get_principles_by_domain(relevant_principles),
+                "retrieval_openai_client_pooling": self._snapshot_retrieval_openai_pooling(),
             }
         )
 
@@ -743,12 +1128,36 @@ class ConstitutionRetriever:
             by_domain[domain] = by_domain.get(domain, 0) + 1
         return by_domain
 
+    def _snapshot_retrieval_openai_pooling(self) -> dict[str, Any]:
+        """
+        Low-noise diagnostics: aggregate OpenAI HTTP client reuse across prefilter and agents.
+
+        Instance-scoped clients; counts are creates vs. subsequent uses of the same client.
+        """
+        total_creates = 0
+        total_reuses = 0
+        if self._domain_prefilter is not None:
+            pf = self._domain_prefilter
+            total_creates += int(getattr(pf, "_openai_client_creates", 0))
+            total_reuses += int(getattr(pf, "_openai_client_reuses_after_cache", 0))
+        for ag in self._domain_agents.values():
+            total_creates += int(getattr(ag, "_openai_client_creates", 0))
+            total_reuses += int(getattr(ag, "_openai_client_reuses_after_cache", 0))
+        for ag in self._enhanced_agents.values():
+            total_creates += int(getattr(ag, "_openai_client_creates", 0))
+            total_reuses += int(getattr(ag, "_openai_client_reuses_after_cache", 0))
+        return {
+            "retrieval_openai_client_creates": total_creates,
+            "retrieval_openai_client_reuses_after_cache": total_reuses,
+            "retrieval_client_reused": total_reuses > 0,
+        }
+
     def detect_relevant_domains(self, query: str) -> list[str]:
         """Return domains relevant to the query, ordered by relevance."""
         try:
             available = ["core"] + self._provider._get_available_domains()
             if self._domain_prefilter is not None:
-                self._domain_prefilter.set_domain_keywords(self._provider.get_domain_keywords())
+                _ = self._domain_prefilter.set_domain_keywords(self._provider.get_domain_keywords())
                 return self._domain_prefilter.filter_domains(query, available)
             return []
         except Exception:

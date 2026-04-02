@@ -20,6 +20,10 @@ class NullPersistence:
         request_id: str,
         prompt: str,
         domain: str | None = None,
+        *,
+        conversation_id: str | None = None,
+        turn_index: int | None = None,
+        parent_request_id: str | None = None,
     ) -> None:
         """No-op."""
         pass
