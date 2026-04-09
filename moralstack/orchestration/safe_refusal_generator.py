@@ -1,10 +1,8 @@
 """
 Safe Refusal Generator: genera la forma linguistica del rifiuto tramite LLM.
 
-PRINCIPIO: Il LLM NON decide, NON valuta il rischio, NON vede la richiesta originale.
-Scrive SOLO la forma linguistica del rifiuto, DOPO che la decisione REFUSE è già stata presa.
-
-Usato esclusivamente nel FAST_PATH di rifiuto; nessun leakage operativo.
+PRINCIPIO: Il LLM NON decide, NON valuta il rischio.
+Riceve solo contesto non operativo dopo che REFUSE è già stato deciso.
 """
 
 from __future__ import annotations
@@ -31,6 +29,17 @@ _ISO_TO_LANGUAGE: dict[str, str] = {
     "ru": "Russian",
     "ja": "Japanese",
     "zh": "Chinese",
+}
+
+# Risk signal -> overlay domain mapping used by REFUSE generation.
+SIGNAL_DOMAIN_MAP: dict[str, str] = {
+    "Q5:physical_harm": "science",
+    "Q9:cyber_malware": "cybersecurity",
+    "Q10:weapons_explosives_toxins": "science",
+    "Q11:privacy_doxxing_stalking": "cybersecurity",
+    "Q12:medical_harmful": "medical",
+    "Q4:fraud": "financial",
+    "Q8:self_harm_suicide": "mental_health",
 }
 
 
@@ -61,6 +70,56 @@ def _detect_language_fallback(prompt: str | None) -> str:
         return "English"
 
 
+def domain_from_signals(signals: list[str]) -> str | None:
+    """Map risk signals to an overlay domain for refusal redirection."""
+    for signal in signals:
+        domain = SIGNAL_DOMAIN_MAP.get(signal)
+        if domain:
+            return domain
+    return None
+
+
+def resolve_refusal_domain_and_redirection(
+    *,
+    request_prompt: str,
+    request_domain: str | None,
+    detected_domain: str | None,
+    risk_signals: list[str] | None,
+    constitution_store: Any | None,
+) -> tuple[str, str]:
+    """
+    Resolve domain and refusal_redirection for REFUSE generation.
+
+    Order:
+    1) request_domain
+    2) detected_domain
+    3) risk signal mapping
+    4) constitution_store.detect_relevant_domains(prompt)
+    """
+    domain = (request_domain or detected_domain or "") or "general"
+    if domain == "general" and risk_signals:
+        domain = domain_from_signals(list(risk_signals)) or domain
+    if domain == "general" and constitution_store is not None:
+        try:
+            detected = constitution_store.detect_relevant_domains(request_prompt)
+            chosen = next((d for d in detected if d != "core"), None)
+            if chosen:
+                domain = chosen
+        except Exception as e:
+            logger.warning("resolve_refusal_domain_and_redirection: domain detection failed: %s", e)
+
+    refusal_redirection = ""
+    if domain != "general" and constitution_store is not None:
+        try:
+            constitution = constitution_store.get_constitution(domain)
+            overlay = getattr(constitution, "active_overlay", None)
+            if overlay is not None:
+                refusal_redirection = getattr(overlay, "refusal_redirection", "") or ""
+        except Exception as e:
+            logger.warning("resolve_refusal_domain_and_redirection: overlay read failed: %s", e)
+    return domain, refusal_redirection
+
+
 def _build_system_message() -> str:
     return (
         "You are an AI assistant responsible for generating safe refusal responses. "
@@ -71,6 +130,7 @@ def _build_system_message() -> str:
 
 
 def _build_user_message(
+    user_prompt: str,
     risk_category: str,
     policy_reason_codes: list[str],
     language: str,
@@ -112,7 +172,15 @@ def _build_user_message(
                 "Tailor your redirection to the domain context provided above.\n\n"
             )
 
+    request_context_block = ""
+    if str(user_prompt).strip():
+        request_context_block = (
+            "Original user request context (relevance only; never provide operational details):\n"
+            f"{str(user_prompt).strip()}\n\n"
+        )
+
     return (
+        f"{request_context_block}"
         f"The user's request has been classified as:\n"
         f"- Risk category: {risk_category}\n"
         f"- Policy reasons: {reasons_str}\n"
@@ -141,6 +209,7 @@ class _LLMGenerateProtocol(Protocol):
 
 
 def generate_llm_safe_refusal(
+    user_prompt: str,
     risk_category: str,
     policy_reason_codes: list[str],
     language: str,
@@ -152,8 +221,8 @@ def generate_llm_safe_refusal(
     """
     Genera la forma linguistica del rifiuto tramite LLM.
 
-    NON riceve: user_input, prompt originale, testo pericoloso.
-    Riceve: risk_category, policy_reason_codes, language, domain, rationale (opzionale).
+    Riceve user_prompt (contesto), risk_category, reason_codes, language,
+    domain, rationale (opzionale).
 
     Vincoli di sicurezza (rispettati dal prompt):
     - Nessun nome di sostanze, processi chimici, esempi concreti
@@ -184,7 +253,13 @@ def generate_llm_safe_refusal(
 
     system = _build_system_message()
     user_msg = _build_user_message(
-        risk_cat, reason_codes, lang, dom, rationale=rational, refusal_redirection=refusal_redirection
+        str(user_prompt or ""),
+        risk_cat,
+        reason_codes,
+        lang,
+        dom,
+        rationale=rational,
+        refusal_redirection=refusal_redirection,
     )
 
     try:

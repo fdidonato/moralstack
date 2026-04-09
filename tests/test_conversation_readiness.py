@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from moralstack.observability import obs
+from moralstack.observability.sinks import sqlite_sink as db_module
+from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
 from moralstack.orchestration.conversation_state import ConversationGovernanceState
 from moralstack.orchestration.types import ProcessedRequest
-from moralstack.persistence import db as db_module
-from moralstack.persistence.db import create_run, get_request, init_db, upsert_request
 from moralstack.runtime.orchestrator import create_orchestrator
 from tests.test_orchestrator import MockPolicyLLM, MockRiskEstimator
+
+get_request = obs.read_store.get_request
 
 
 def test_conversation_governance_state_minimal_and_helpers():

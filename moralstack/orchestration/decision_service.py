@@ -728,6 +728,8 @@ def decide_action(
 
     hard_violations, triggered_principles = _extract_critic_violations(critic_result)
     semantic_signals = list(getattr(risk_assessment, "semantic_signals", []) or [])
+    # Keep activated_signals coherent across PRE_POLICY, FINAL and DECISION_EXPLANATION.
+    trace.activated_signals = list(semantic_signals)
     inputs = _DecisionInputs(
         intent_clarity=intent_clarity,
         misuse_plausibility=misuse_plausibility,

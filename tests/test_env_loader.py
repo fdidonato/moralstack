@@ -4,6 +4,7 @@ Characterization tests for env_loader.
 Documents current behavior of load_env and _find_project_root.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -13,8 +14,22 @@ from moralstack.utils.env_loader import _find_project_root, load_env
 
 def test_load_env_returns_bool():
     """load_env returns a boolean."""
-    result = load_env()
-    assert isinstance(result, bool)
+    tracked_keys = (
+        "MORALSTACK_DB_PATH",
+        "MORALSTACK_PERSIST_MODE",
+        "MORALSTACK_OBSERVABILITY_DB_PATH",
+        "MORALSTACK_OBSERVABILITY_MODE",
+    )
+    old_values = {k: os.environ.get(k) for k in tracked_keys}
+    try:
+        result = load_env()
+        assert isinstance(result, bool)
+    finally:
+        for key, value in old_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def test_find_project_root_returns_path_or_none():

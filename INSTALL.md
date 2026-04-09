@@ -86,12 +86,14 @@ See [docs/modules/openai_params.md](docs/modules/openai_params.md) for details a
 | OPENAI_MAX_RETRIES             | 3                         | Retries on 429/503                                             |
 | OPENAI_TEMPERATURE             | 0.7 (fallback)            | Generation temperature (`.env.template` starter: 0.1)         |
 | OPENAI_TOP_P                   | 0.9 (fallback)            | Nucleus sampling parameter (`.env.template` starter: 0.8)     |
-| MORALSTACK_DB_PATH             | -                         | SQLite DB path (enables persistence)                           |
-| MORALSTACK_PERSIST_MODE        | db_only if DB_PATH set    | db_only \| dual \| file_only                                   |
+| MORALSTACK_OBSERVABILITY_DB_PATH    | -                      | SQLite DB path (enables persistence)                           |
+| MORALSTACK_OBSERVABILITY_MODE       | db_only if DB set      | db_only \| dual \| file_only                                   |
+| MORALSTACK_OBSERVABILITY_JSONL_DIR  | logs/observability     | JSONL output directory (file_only and dual modes)              |
+| MORALSTACK_DB_PATH             | -                         | Deprecated alias for MORALSTACK_OBSERVABILITY_DB_PATH          |
+| MORALSTACK_PERSIST_MODE        | -                         | Deprecated alias for MORALSTACK_OBSERVABILITY_MODE             |
 | MORALSTACK_UI_PORT             | 8765                      | Web UI port                                                    |
 | MORALSTACK_UI_USERNAME         | -                         | Basic Auth for UI (required when running moralstack-ui)        |
 | MORALSTACK_UI_PASSWORD         | -                         | Basic Auth for UI                                              |
-| MORALSTACK_DECISION_TRACE_PATH | logs/decision_trace.jsonl | Trace file path                                                |
 | MORALSTACK_VERBOSE             | -                         | Set to 1 for verbose output                                    |
 
 **Risk Estimator**: Optional overrides (e.g. `MORALSTACK_RISK_MODEL`, `MORALSTACK_RISK_LOW_THRESHOLD`,
@@ -186,12 +188,12 @@ moralstack
 Type a prompt in the interactive shell; the system will evaluate the risk and respond accordingly.
 
 > **Note**: You can also use `python scripts/mstack_run.py` as a legacy wrapper, but the preferred method is
-> `moralstack`. Run `moralstack --verbose` for detailed deliberation output. With `MORALSTACK_DB_PATH` set, use
+> `moralstack`. Run `moralstack --verbose` for detailed deliberation output. With `MORALSTACK_OBSERVABILITY_DB_PATH` set, use
 > `moralstack-ui` to browse runs and export markdown reports on demand.
 
 ## Web UI (moralstack-ui)
 
-With `pip install -e .[ui]` and `MORALSTACK_DB_PATH` set, run:
+With `pip install -e .[ui]` and `MORALSTACK_OBSERVABILITY_DB_PATH` set, run:
 
 ```bash
 moralstack-ui

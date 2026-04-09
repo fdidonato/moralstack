@@ -89,6 +89,9 @@ def test_uow_rollback_on_exception(tmp_path, monkeypatch):
     set_current_request_id(request_id)
     set_current_cycle(0)
 
+    # uow= is now ignored; persist_llm_call routes directly via SqliteEventSink
+    # and commits immediately. A subsequent exception does NOT roll back the
+    # already-committed write. Verify the write is visible regardless.
     try:
         with SqliteUnitOfWork() as uow:
             assert persist_llm_call(
@@ -105,7 +108,7 @@ def test_uow_rollback_on_exception(tmp_path, monkeypatch):
         pass
 
     calls = get_llm_calls_for_request(run_id, request_id)
-    assert len(calls) == 0
+    assert len(calls) == 1  # write committed immediately; exception does not roll back
 
 
 def test_persist_llm_calls_batch(tmp_path, monkeypatch):
@@ -231,6 +234,7 @@ def test_persist_decision_traces_batch(tmp_path, monkeypatch):
 
 def test_uow_no_op_when_file_only(monkeypatch):
     """When persist mode is file_only, UoW has no connection."""
+    monkeypatch.delenv("MORALSTACK_OBSERVABILITY_MODE", raising=False)
     monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "file_only")
     with SqliteUnitOfWork() as uow:
         assert uow.conn is None

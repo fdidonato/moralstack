@@ -1504,6 +1504,223 @@ class TestPathRouter:
         assert route == "deliberative"
         assert rpa == RiskPolicyAction.DELIBERATE
 
+    def test_get_route_refuse_when_borderline_with_hard_signal_active(self):
+        from moralstack.orchestration.path_router import get_route
+
+        decision = Decision(
+            final_action="REFUSE",
+            path="FAST_PATH",
+            intent_clarity="LOW",
+            misuse_plausibility="HIGH",
+            actionability_risk="HIGH",
+            triggered_principles=[],
+            hard_violations=[],
+            risk_signals=["Q10:weapons_explosives_toxins"],
+            reason_codes=["risk_clearly_harmful"],
+        )
+        config = OrchestratorConfig(
+            risk_thresholds=RiskThresholds(low=0.3, medium=0.7),
+            borderline_refuse_upper=0.95,
+        )
+        risk_est = MockRiskEstimation(
+            score=0.95,
+            semantic_signals=["Q10:weapons_explosives_toxins"],
+            risk_policy_action=RiskPolicyAction.DENY,
+        )
+        route, borderline, _ = get_route(decision, risk_est, 0.95, config, OperationalRisk.HIGH)
+        assert route == "refuse"
+        assert borderline is False
+
+    def test_get_route_deliberative_when_borderline_without_hard_signal(self):
+        from moralstack.orchestration.path_router import get_route
+
+        decision = Decision(
+            final_action="REFUSE",
+            path="FAST_PATH",
+            intent_clarity="LOW",
+            misuse_plausibility="HIGH",
+            actionability_risk="HIGH",
+            triggered_principles=[],
+            hard_violations=[],
+            risk_signals=[],
+            reason_codes=[],
+        )
+        config = OrchestratorConfig(
+            risk_thresholds=RiskThresholds(low=0.3, medium=0.7),
+            borderline_refuse_upper=0.95,
+        )
+        risk_est = MockRiskEstimation(score=0.80, semantic_signals=[], risk_policy_action=RiskPolicyAction.DELIBERATE)
+        route, borderline, _ = get_route(decision, risk_est, 0.80, config, OperationalRisk.LOW)
+        assert route == "deliberative"
+        assert borderline is True
+
+
+class TestObservabilityFixes:
+    def test_deliberation_cycle_preserves_authoritative_max_cycles_for_hindsight(self):
+        config = OrchestratorConfig(
+            max_deliberation_cycles=2,
+            parallel_module_calls=False,
+            enable_hindsight=True,
+            enable_hindsight_gating=True,
+        )
+        orchestrator = Orchestrator(
+            config=config,
+            policy=MockPolicyLLM(),
+            risk_estimator=MockRiskEstimator(default_score=0.9),
+            critic=MockCritic(has_violations=False),
+            simulator=MockSimulator(),
+            hindsight=MockHindsight(score=0.9, recommendation="proceed"),
+            perspectives=MockPerspectives(approval=0.9),
+            constitution_store=MockConstitutionStore(),
+        )
+        runner = orchestrator._controller._runner
+        request = ProcessedRequest(prompt="consistency check")
+        state = DeliberationState(cycle=0, draft_response="seed draft")
+        risk_estimation = MockRiskEstimation(score=0.95, risk_category=RiskCategory.CLEARLY_HARMFUL)
+        captured: dict[str, int] = {}
+
+        def _capture_hindsight(state_arg, *args, **kwargs):
+            captured["max_cycles"] = int(kwargs.get("max_cycles", -1))
+            return state_arg
+
+        with patch.object(runner, "_generate_or_revise", side_effect=lambda s, *_a, **_k: s):
+            with patch.object(runner, "_build_delib_context", return_value=(None, "full", 2)):
+                with patch.object(
+                    runner, "_run_critique_simulate_perspectives_sequential", side_effect=lambda s, *_a, **_k: s
+                ):
+                    with patch.object(runner, "_apply_hindsight_if_needed", side_effect=_capture_hindsight):
+                        with patch.object(runner, "_finalize_cycle", side_effect=lambda s, *_a, **_k: s):
+                            with patch("moralstack.orchestration.deliberation_runner.orch_debug_log") as mdebug:
+                                out = runner._deliberation_cycle(
+                                    state,
+                                    request,
+                                    risk_estimation=risk_estimation,
+                                    constrained_generation=True,
+                                    max_cycles=1,
+                                )
+
+        assert out.cycle == 1
+        assert captured["max_cycles"] == 1
+        assert any(c.kwargs.get("hypothesis_id") == "H-max-cycles-drift" for c in mdebug.call_args_list)
+
+    def test_process_logs_hard_signal_bypass_event(self):
+        orchestrator = create_minimal_orchestrator(
+            policy=MockPolicyLLM(),
+            risk_estimator=_RefuseRiskEstimator(score=0.95),
+        )
+        decision = Decision(
+            final_action="REFUSE",
+            path="FAST_PATH",
+            intent_clarity="LOW",
+            misuse_plausibility="HIGH",
+            actionability_risk="HIGH",
+            triggered_principles=[],
+            hard_violations=[],
+            risk_signals=["Q10:weapons_explosives_toxins"],
+            reason_codes=["risk_clearly_harmful"],
+        )
+        explanation = DecisionExplanation(
+            final_action="REFUSE",
+            risk_score=0.95,
+            risk_category="clearly_harmful",
+            overlay_applied="",
+            winning_rule="normative_refuse_guards",
+            reason_codes=["RISK_CLEARLY_HARMFUL"],
+            why_not_refuse="N/A",
+            why_not_safe_complete="N/A",
+            why_not_normal_complete="N/A",
+            activated_signals=["Q10:weapons_explosives_toxins"],
+        )
+        sentinel = OrchestratorResult(
+            response=FinalResponse.safe_default(0),
+            request_id="sentinel",
+            path_taken="fast",
+            path="FAST_PATH",
+            total_cycles=0,
+            converged=False,
+        )
+
+        with patch("moralstack.orchestration.controller.decide_action", return_value=(decision, explanation)):
+            with patch.object(orchestrator._controller, "_route_refuse", return_value=sentinel):
+                with patch("moralstack.orchestration.controller.orch_debug_log") as mdebug:
+                    orchestrator.process("test hard signal bypass")
+
+        assert any(len(c.args) >= 4 and c.args[3] == "H-hard-signal-bypass" for c in mdebug.call_args_list)
+
+    def test_deliberative_refuse_hard_signal_normalizes_stop_reason(self):
+        from moralstack.orchestration.types import ConvergenceOutcome
+
+        orchestrator = create_orchestrator(
+            policy=MockPolicyLLM(),
+            risk_estimator=MockRiskEstimator(default_score=0.95),
+            critic=MockCritic(has_violations=False),
+            constitution_store=MockConstitutionStore(),
+            max_cycles=1,
+            enable_hindsight=False,
+            enable_perspectives=False,
+            enable_simulation=False,
+        )
+        pre_decision = Decision(
+            final_action="REFUSE",
+            path="FAST_PATH",
+            intent_clarity="LOW",
+            misuse_plausibility="HIGH",
+            actionability_risk="HIGH",
+            triggered_principles=[],
+            hard_violations=[],
+            risk_signals=["Q10:weapons_explosives_toxins"],
+            reason_codes=["risk_clearly_harmful"],
+        )
+        post_decision = Decision(
+            final_action="REFUSE",
+            path="DELIBERATIVE_PATH",
+            intent_clarity="LOW",
+            misuse_plausibility="HIGH",
+            actionability_risk="HIGH",
+            triggered_principles=[],
+            hard_violations=[],
+            risk_signals=["Q10:weapons_explosives_toxins"],
+            reason_codes=["risk_clearly_harmful"],
+        )
+        explanation = DecisionExplanation(
+            final_action="REFUSE",
+            risk_score=0.95,
+            risk_category="clearly_harmful",
+            overlay_applied="",
+            winning_rule="normative_refuse_guards",
+            reason_codes=["RISK_CLEARLY_HARMFUL"],
+            why_not_refuse="N/A",
+            why_not_safe_complete="N/A",
+            why_not_normal_complete="N/A",
+            activated_signals=["Q10:weapons_explosives_toxins"],
+        )
+        state = DeliberationState(cycle=1, draft_response="Cannot provide that.")
+        outcome = ConvergenceOutcome(
+            should_continue=False,
+            converged=False,
+            stop_reason="CYCLES_EXHAUSTED",
+            cycle=1,
+            max_cycles=1,
+        )
+
+        with patch(
+            "moralstack.orchestration.controller.decide_action",
+            side_effect=[(pre_decision, explanation), (post_decision, explanation)],
+        ):
+            with patch(
+                "moralstack.orchestration.controller.get_route",
+                return_value=("deliberative", False, RiskPolicyAction.DELIBERATE),
+            ):
+                with patch.object(
+                    orchestrator._controller._runner, "run_deliberative_path", return_value=(state, 0.95, outcome)
+                ):
+                    with patch("moralstack.orchestration.controller.log_decision_explanation") as mlog:
+                        result = orchestrator.process("harmful request")
+
+        assert result.response.response_type == ResponseType.FULL_REFUSAL
+        stop_reasons = [c.kwargs.get("stop_reason") for c in mlog.call_args_list if "stop_reason" in c.kwargs]
+        assert "HARD_VIOLATION_STOP" in stop_reasons
+
 
 class TestDeliberationOverride:
     """Unit tests for _evaluate_deliberation_override (REFUSE -> SAFE_COMPLETE when modules unanimous)."""

@@ -17,6 +17,7 @@ from typing import Any, Literal
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.delib_context import DelibContext
 from moralstack.models.risk.categories import OperationalRisk, RiskCategory, RiskPolicyAction
+from moralstack.observability.context import set_current_cycle
 from moralstack.orchestration._policy_helpers import (
     CONSTRAINED_GENERATION_INSTRUCTION,
     SAFE_COMPLETE_GENERATION_INSTRUCTION,
@@ -67,7 +68,6 @@ from moralstack.orchestration.types import (
     RiskEstimationProtocol,
     risk_category_str,
 )
-from moralstack.persistence.context import set_current_cycle
 from moralstack.persistence.sink import persist_orchestration_event
 from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace, normalize_trace_fields
 from moralstack.runtime.trace.trace_stages import CYCLE_SUMMARY, REQUEST_ANALYSIS_CONTEXT
@@ -204,12 +204,12 @@ def _emit_hindsight_diagnostic(
     ``file_only`` -> NDJSON file only. Does not raise.
     """
     try:
-        from moralstack.persistence.config import get_persist_mode
+        from moralstack.observability.config import get_observability_mode
 
         data: dict[str, Any] = {
             "component": "hindsight_diagnostic",
             "outcome": outcome,
-            "persist_mode": get_persist_mode(),
+            "persist_mode": get_observability_mode(),
         }
         if extra:
             data.update(extra)
@@ -851,6 +851,7 @@ class DeliberationRunner:
             constitution=constitution,
             risk_estimation=risk_estimation,
             decision_explanation=decision_explanation,
+            constitution_store=self.constitution_store,
         )
         if getattr(response.metadata, "final_action", "") == "REFUSE" or response.response_type == ResponseType.FULL_REFUSAL:
             record_llm_call(
@@ -933,6 +934,7 @@ class DeliberationRunner:
             constitution=constitution,
             risk_estimation=risk_estimation,
             decision_explanation=explanation1,
+            constitution_store=self.constitution_store,
         )
         if getattr(response.metadata, "final_action", "") == "REFUSE" or response.response_type == ResponseType.FULL_REFUSAL:
             record_llm_call(
@@ -1356,9 +1358,21 @@ class DeliberationRunner:
             constrained_generation=constrained_generation,
         )
 
-        delib_context, context_mode, max_cycles = self._build_delib_context(
+        delib_context, context_mode, computed_max_cycles = self._build_delib_context(
             state, request, risk_estimation, request_analysis=request_analysis
         )
+        if computed_max_cycles != max_cycles:
+            orch_debug_log(
+                "deliberation_runner.py:_deliberation_cycle",
+                "max_cycles drift detected between loop and context",
+                {
+                    "authoritative_max_cycles": max_cycles,
+                    "computed_max_cycles": computed_max_cycles,
+                    "cycle": state.cycle,
+                },
+                hypothesis_id="H-max-cycles-drift",
+                request_id=request.request_id or "",
+            )
 
         if self.config.parallel_module_calls:
             state = self._run_critique_simulate_perspectives_parallel(

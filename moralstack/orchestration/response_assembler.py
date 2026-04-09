@@ -13,6 +13,8 @@ from moralstack.models.risk import RiskPolicyAction
 from moralstack.orchestration.safe_refusal_generator import (
     _detect_language_fallback,
     _iso_to_language_name,
+    generate_llm_safe_refusal,
+    resolve_refusal_domain_and_redirection,
 )
 from moralstack.orchestration.types import (
     ConvergenceOutcome,
@@ -65,6 +67,7 @@ class ResponseAssembler:
         risk_estimation: RiskEstimationProtocol | None = None,
         outcome: ConvergenceOutcome | None = None,
         decision_explanation: DecisionExplanation | None = None,
+        constitution_store: object | None = None,
     ) -> FinalResponse:
         """
         Assembla la risposta finale. Renderer deterministico: il tipo di risposta
@@ -120,7 +123,14 @@ class ResponseAssembler:
         )
 
         if decision.final_action == "REFUSE":
-            out = self._make_refusal(request, state, metadata, risk_estimation)
+            out = self._make_refusal(
+                request=request,
+                state=state,
+                decision=decision,
+                metadata=metadata,
+                risk_estimation=risk_estimation,
+                constitution_store=constitution_store,
+            )
             out.metadata.final_action = "REFUSE"
             out.metadata.path = decision.path
             if not getattr(out.metadata, "refusal_reason", "").strip():
@@ -203,10 +213,12 @@ class ResponseAssembler:
         self,
         request: ProcessedRequest,
         state: DeliberationState,
+        decision: Decision,
         metadata: ResponseMetadata,
         risk_estimation: RiskEstimationProtocol | None = None,
+        constitution_store: object | None = None,
     ) -> FinalResponse:
-        """DENY: Sempre genera con policy.refuse() per avere redirection appropriata."""
+        """Generate REFUSE content from shared refusal generator."""
         # DISABILITO: Il draft_response è la risposta originale rejettata, NON un refusal valido
         # Non dovremmo mai usare il draft per REFUSE - deve sempre generare nuovo refusal
         # if self._draft_is_valid_refusal(state):
@@ -241,29 +253,31 @@ class ResponseAssembler:
 
         if self.policy is not None:
             try:
-                enriched_reason = reason
-                if state.triggered_principles:
-                    principles_str = ", ".join(state.triggered_principles[:3])
-                    enriched_reason += f" (Principles involved: {principles_str})"
-                # Always pass the original prompt to enable contextual refusals with domain-appropriate redirection.
-                # The LLM will generate appropriate refusals that acknowledge the request while redirecting appropriately.
-                # domain = request.get_domain() if hasattr(request, "get_domain") else None
-                # domain_norm = (domain or "").strip().lower()
-                refusal_prompt = request.prompt
-                # Explicit language when prompt empty (regulated domains) or to reduce LLM drift
                 detected_iso = getattr(risk_estimation, "detected_language", None) or "" if risk_estimation else ""
                 explicit_lang = (
                     _iso_to_language_name(detected_iso) if detected_iso else _detect_language_fallback(request.prompt)
                 )
-                result = self.policy.refuse(refusal_prompt, enriched_reason, config=None, language=explicit_lang or None)
-                if hasattr(result, "text"):
-                    content = result.text
-                else:
-                    content = str(result)
+                resolved_domain, refusal_redirection = resolve_refusal_domain_and_redirection(
+                    request_prompt=request.prompt,
+                    request_domain=request.get_domain() if hasattr(request, "get_domain") else None,
+                    detected_domain=getattr(risk_estimation, "detected_domain", None) if risk_estimation else None,
+                    risk_signals=list(getattr(decision, "risk_signals", None) or []),
+                    constitution_store=constitution_store,
+                )
+                content = generate_llm_safe_refusal(
+                    user_prompt=request.prompt,
+                    risk_category=risk_category_str(risk_estimation),
+                    policy_reason_codes=list(getattr(decision, "reason_codes", None) or []),
+                    language=explicit_lang or "English",
+                    domain=resolved_domain,
+                    llm_client=self.policy,
+                    rationale=reason if reason else None,
+                    refusal_redirection=refusal_redirection,
+                )
                 if len(content.strip()) > 20:
                     metadata.predicted_action = RiskPolicyAction.DENY.value
                     metadata.must_refuse = True
-                    metadata.refusal_reason = (enriched_reason or content[:200] or "").strip() or "[REFUSAL_POLICY]"
+                    metadata.refusal_reason = (reason or content[:200] or "").strip() or "[REFUSAL_POLICY]"
                     return FinalResponse(
                         content=content,
                         response_type=ResponseType.FULL_REFUSAL,

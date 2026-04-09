@@ -87,10 +87,10 @@ Evaluated on 84 questions spanning adversarial prompts, dual-use domains, regula
 
 | | Baseline | MoralStack | Tie |
 |---|---|---|---|
-| **Wins** | 1 | **53** | 30 |
-| **Avg Safety Score** | 7.73/10 | **9.35/10** | — |
+| **Wins** | 6 | **54** | 24 |
+| **Avg Safety Score** | 7.83/10 | **9.27/10** | — |
 
-*(Latest full run: benchmark 11, same 84-question suite and judge.)*
+*(Latest full run: benchmark 12, same 84-question suite and judge.)*
 
 ### Decision Accuracy
 
@@ -111,10 +111,10 @@ REFUSE         0     0    22
 
 | | Baseline | MoralStack |
 |---|---|---|
-| **Mean wall-clock** | ~5s | **~44s** |
-| **Median wall-clock** | — | **~39s** |
+| **Mean wall-clock** | ~6s | **~36s** |
+| **Median wall-clock** | — | **~26s** |
 
-*(Benchmark 11, 84 questions; mean ~40% lower than an earlier benchmark configuration ~73s mean, median ~52% lower than ~83s median.)*
+*(Benchmark 12, 84 questions; mean ~51% lower than the original benchmark configuration ~73s mean. Fast path rate ~37% vs ~11% previously, due to REFUSE queries now routed through fast path.)*
 
 Deliberative paths add latency by design. Latency-reducing optimizations include dynamic scheduling, speculative overlap, parallel risk estimation, early convergence on cycle 1, lighter models for simulator and policy rewrite (see [Limitations](#limitations--trade-offs) and [Configuration](#configuration)).
 
@@ -190,8 +190,10 @@ Key variables:
 - `OPENAI_MAX_RETRIES` (default `3`)
 - `OPENAI_TEMPERATURE` (code fallback default `0.7`; `.env.template` starter value `0.1`)
 - `OPENAI_TOP_P` (code fallback default `0.9`; `.env.template` starter value `0.8`)
-- `MORALSTACK_DB_PATH` (enable SQLite persistence)
-- `MORALSTACK_PERSIST_MODE` (`db_only`, `dual`, `file_only`)
+- `MORALSTACK_OBSERVABILITY_DB_PATH` (enable SQLite persistence)
+- `MORALSTACK_OBSERVABILITY_MODE` (`db_only`, `dual`, `file_only`)
+- `MORALSTACK_OBSERVABILITY_JSONL_DIR` (JSONL output dir; default `logs/observability`)
+- `MORALSTACK_DB_PATH` / `MORALSTACK_PERSIST_MODE` (deprecated aliases; still work)
 - `MORALSTACK_ORCHESTRATOR_BORDERLINE_REFUSE_UPPER` (default `0.95`)
 
 For full variable reference see [INSTALL.md](INSTALL.md) and `docs/modules/*.md`.
@@ -257,7 +259,7 @@ Open [http://localhost:8765/](http://localhost:8765/) (or `MORALSTACK_UI_PORT`).
 
 MoralStack makes deliberate trade-offs:
 
-- **Latency over speed**: deliberative paths run multiple LLM calls (risk → critic → simulator → perspectives → hindsight). On the latest benchmark run, mean wall-clock is ~44s (median ~39s) vs ~5s for raw GPT-4o. This is a design choice — governance takes time.
+- **Latency over speed**: deliberative paths run multiple LLM calls (risk → critic → simulator → perspectives → hindsight). On the latest benchmark run, mean wall-clock is ~36s (median ~26s) vs ~6s for raw GPT-4o. This is a design choice — governance takes time.
 - **Multi-model cost**: a single deliberative request makes 7-9 LLM calls. Example profiles: `.env.minimal` uses `gpt-4.1-nano` for policy rewrite and simulator, and `gpt-4o-mini` for perspectives (all overridable via env).
 - **Benchmark scope**: 84 curated questions demonstrate the approach but do not cover all edge cases. We recommend running your own evaluations on domain-specific inputs.
 - **LLM non-determinism**: despite low temperature settings across all modules, LLM outputs can vary between runs. The system includes deterministic guardrails in code to bound this variance, but perfect reproducibility is not guaranteed.

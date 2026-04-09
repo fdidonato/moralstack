@@ -88,7 +88,7 @@ Protocols include: `PolicyGenerationResultProtocol`, `CriticReportProtocol`, `Qu
 
 `DeliberationRunner._apply_hindsight_if_needed` and `_evaluate_hindsight` emit structured events via `orch_debug_log` with `hypothesisId` `H-hindsight-path` and payload `component: hindsight_diagnostic`. The `outcome` field records the branch taken, for example: `disabled_by_config`, `skipped_no_module`, `gated_not_final_cycle`, `invoke_evaluate`, `evaluate_ok`, `evaluate_aborted_timeout_guard`, `evaluate_failed`, `evaluate_failed_orchestrator_timeout`.
 
-Persistence matches **`MORALSTACK_PERSIST_MODE`** (see `moralstack/persistence/config.py`): **`db_only`** inserts into SQLite `debug_events`; **`dual`** writes both DB and `.debug/debug.log` (NDJSON); **`file_only`** writes the NDJSON file only. The same events appear in the root logger at **INFO** as `hindsight_diagnostic outcome=...`.
+Observability routing follows **`MORALSTACK_OBSERVABILITY_MODE`** (see `moralstack/observability/config.py`): **`db_only`** inserts into SQLite `debug_events`; **`dual`** writes both DB and `logs/observability/debug.event.jsonl`; **`file_only`** writes the JSONL file only. The legacy alias `MORALSTACK_PERSIST_MODE` is still accepted with a deprecation warning. The same events appear in the root logger at **INFO** as `hindsight_diagnostic outcome=...`.
 
 ---
 
@@ -236,10 +236,10 @@ For significant-risk requests:
 5. **Hindsight Evaluation**: Retrospective evaluation
 6. **Convergence Check**: Verify termination criteria
 
-**Typical latency** (84-question benchmark, run 11): overall deliberative workload
-**mean ~44s**, **median ~39s**; SAFE_COMPLETE **one-cycle** subset **~33s** mean;
+**Typical latency** (84-question benchmark, run 12): overall deliberative workload
+**mean ~36s**, **median ~26s**; SAFE_COMPLETE **one-cycle** subset **~23s** mean;
 two-cycle SAFE_COMPLETE is higher per query. Sensitive-domain queries often sit at
-the upper end of the range. Fast path averages ~10-12s.
+the upper end of the range. Fast path averages ~12s (~37% of queries, including REFUSE).
 
 ---
 

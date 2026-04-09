@@ -20,6 +20,7 @@ from moralstack.constitution.helpers import resolve_conflict, tokenize
 from moralstack.constitution.openai_config import OpenAIClientConfig
 from moralstack.constitution.prompt_formatter import format_principles_for_prompt
 from moralstack.constitution.schema import Overlay, Principle
+from moralstack.persistence.sink import persist_llm_call, persist_orchestration_event
 from moralstack.utils.llm_parse_contract import (
     merge_parse_contract_into_summary,
     parse_dict_with_contract,
@@ -50,8 +51,6 @@ def _persist_constitution_llm_call(
     Skips silently when no DB context or persistence is disabled.
     """
     try:
-        from moralstack.persistence.sink import persist_llm_call
-
         summary = merge_parse_contract_into_summary({"module": "constitution_retriever"}, parse_contract)
         persist_llm_call(
             phase="constitution_retrieval",
@@ -106,10 +105,6 @@ def _snapshot_domain_keywords(keywords: dict[str, list[str]]) -> dict[str, list[
 
 def _emit_domain_prefilter_orchestration_event(event_type: str, payload: dict[str, Any]) -> None:
     """Best-effort orchestration_events row; no-op when persistence context or DB is unavailable."""
-    try:
-        from moralstack.persistence.sink import persist_orchestration_event
-    except ImportError:
-        return
     try:
         persist_orchestration_event(
             stage="retrieval",

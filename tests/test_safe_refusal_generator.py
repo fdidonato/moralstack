@@ -57,6 +57,7 @@ def test_fallback_refusal():
 def test_generate_llm_safe_refusal_no_client():
     """generate_llm_safe_refusal with no LLM client returns fallback marker."""
     result = generate_llm_safe_refusal(
+        user_prompt="Harmful request",
         risk_category="clearly_harmful",
         policy_reason_codes=["risk_clearly_harmful"],
         language="Italian",

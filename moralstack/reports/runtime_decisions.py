@@ -26,6 +26,20 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
 )
 
 
+def _safe_float(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    if value < lower:
+        return lower
+    if value > upper:
+        return upper
+    return value
+
+
 def _parse_json_field(raw: Any) -> Any:
     if raw is None:
         return None
@@ -50,10 +64,22 @@ def _trace_payload(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _risk_assessment_from_traces(traces: list[dict[str, Any]]) -> dict[str, Any]:
+    final_signals: list[str] = []
+    for t in traces:
+        if (t.get("stage") or "").strip().upper() == "FINAL":
+            td = _trace_payload(t)
+            sigs = td.get("activated_signals")
+            if isinstance(sigs, list):
+                final_signals = [str(x) for x in sigs if str(x).strip()]
     for t in traces:
         if (t.get("stage") or "").strip().upper() == "RISK_ASSESSMENT":
             td = _trace_payload(t)
             sp = td.get("stage_payload") if isinstance(td.get("stage_payload"), dict) else {}
+            raw_signals = sp.get("activated_signals")
+            activated_signals = [str(x) for x in raw_signals] if isinstance(raw_signals, list) else []
+            # Keep signal source coherent across traces for the same request.
+            if not activated_signals and final_signals:
+                activated_signals = list(final_signals)
             return {
                 "risk_score": td.get("risk_score"),
                 "risk_category": td.get("risk_category"),
@@ -64,7 +90,10 @@ def _risk_assessment_from_traces(traces: list[dict[str, Any]]) -> dict[str, Any]
                 "estimation_mode": td.get("estimation_mode"),
                 "risk_policy_action": sp.get("risk_policy_action"),
                 "detected_domain": sp.get("detected_domain"),
-                "activated_signals": sp.get("activated_signals") or [],
+                "detected_domains_raw": sp.get("detected_domains_raw") or [],
+                "selected_domain": sp.get("selected_domain"),
+                "selection_reason": sp.get("selection_reason"),
+                "activated_signals": activated_signals,
             }
     return {}
 
@@ -267,6 +296,12 @@ def _speculative_summary_from_events_and_calls(
         elif co == "discarded" and outcome not in ("used", "unavailable"):
             outcome = "discarded"
 
+    total_duration_ms = sum(float(c.get("duration_ms") or 0.0) for c in (llm_calls or []))
+    if skip_elapsed_ms is not None and total_duration_ms > 0.0:
+        skip_elapsed_ms = _clamp(skip_elapsed_ms, 0.0, total_duration_ms)
+    if join_wait_ms is not None:
+        join_wait_ms = max(0.0, join_wait_ms)
+
     return {
         "speculative_started": started,
         "speculative_outcome": outcome,
@@ -274,7 +309,89 @@ def _speculative_summary_from_events_and_calls(
         "join_skipped": join_skipped,
         "join_wait_ms": join_wait_ms,
         "skip_elapsed_ms": skip_elapsed_ms,
+        "total_duration_ms": total_duration_ms,
         "last_discard_reason": last_discard_reason,
+    }
+
+
+def _trace_activated_signals(traces: list[dict[str, Any]]) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for stage in ("RISK_ASSESSMENT", "PRE_POLICY", "FINAL"):
+        for t in traces:
+            if (t.get("stage") or "").strip().upper() != stage:
+                continue
+            td = _trace_payload(t)
+            source = td.get("stage_payload") if stage == "RISK_ASSESSMENT" else td
+            sigs = source.get("activated_signals")
+            if isinstance(sigs, list):
+                out[stage] = [str(x) for x in sigs if str(x).strip()]
+            break
+    return out
+
+
+def build_runtime_observability_contract(
+    *,
+    traces: list[dict[str, Any]],
+    execution_strategy: dict[str, Any],
+    orchestration_events: list[dict[str, Any]] | None,
+    runtime_decisions: list[dict[str, Any]] | None,
+    cycle_cards: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """
+    Validate minimal report/export metric contract.
+    """
+    orch = orchestration_events or []
+    rtd = runtime_decisions or []
+    cards = cycle_cards or []
+    anomalies: list[str] = []
+    path_val = str((execution_strategy.get("final_action_path") or "")).strip().upper()
+    if not path_val:
+        for t in reversed(traces):
+            if (t.get("stage") or "").strip().upper() == "FINAL":
+                path_val = str(_trace_payload(t).get("path") or "").strip().upper()
+                break
+    if not path_val:
+        path_val = "UNKNOWN"
+
+    speculative = execution_strategy.get("speculative") or {}
+    skip_elapsed_ms = _safe_float(speculative.get("skip_elapsed_ms"))
+    total_duration_ms = _safe_float(speculative.get("total_duration_ms")) or 0.0
+    if skip_elapsed_ms is not None and not (0.0 <= skip_elapsed_ms <= total_duration_ms):
+        anomalies.append("skip_elapsed_ms_out_of_range")
+
+    sigs_by_stage = _trace_activated_signals(traces)
+    final_sigs = sigs_by_stage.get("FINAL") or []
+    if final_sigs:
+        for prev_stage in ("RISK_ASSESSMENT", "PRE_POLICY"):
+            if not (sigs_by_stage.get(prev_stage) or []):
+                anomalies.append(f"activated_signals_missing_in_{prev_stage}")
+
+    if len(rtd) != len(orch):
+        anomalies.append("runtime_decisions_rows_mismatch_orchestration_event_count")
+
+    if path_val == "FAST_PATH" and len(cards) != 0:
+        anomalies.append("fast_path_with_cycle_cards")
+    if path_val == "DELIBERATIVE_PATH" and len(cards) == 0:
+        anomalies.append("deliberative_path_without_cycle_cards")
+
+    return {
+        "version": "v1",
+        "path": path_val,
+        "valid": len(anomalies) == 0,
+        "anomalies": anomalies,
+        "required_fields_present": {
+            "execution_strategy": bool(execution_strategy),
+            "runtime_decisions_rows": isinstance(rtd, list),
+            "cycle_cards": isinstance(cards, list),
+            "orchestration_event_count": isinstance(orch, list),
+        },
+        "ranges": {
+            "skip_elapsed_ms": skip_elapsed_ms,
+            "total_duration_ms": total_duration_ms,
+            "orchestration_event_count": len(orch),
+            "runtime_decisions_rows": len(rtd),
+            "cycle_cards": len(cards),
+        },
     }
 
 
@@ -322,6 +439,7 @@ def build_execution_strategy(
         "parallel_scheduler_by_cycle": _parallel_scheduler_rollups(cycles),
         "simulator_gating_by_cycle": _simulator_gating_from_cycles(cycles),
         "total_cycles_observed": len(cycles),
+        "final_action_path": final_td.get("path"),
         "final_action": final_td.get("final_action"),
         "stop_reason": final_td.get("stop_reason"),
         "estimation_mode": estimation_mode,

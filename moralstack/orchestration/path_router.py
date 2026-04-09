@@ -9,14 +9,60 @@ from __future__ import annotations
 
 from typing import Literal
 
-from moralstack.models.risk import (
-    OperationalRisk,
-    RiskPolicyAction,
-    coerce_risk_policy_action,
-)
+from moralstack.models.risk import OperationalRisk, RiskPolicyAction, coerce_risk_policy_action
 from moralstack.orchestration.types import Decision, OrchestratorConfig, RiskEstimationProtocol
 
 Route = Literal["refuse", "benign", "safe_complete", "fast_path", "deliberative"]
+
+_HARD_SEMANTIC_SIGNALS: frozenset[str] = frozenset(
+    {
+        "Q4:fraud",
+        "Q5:physical_harm",
+        "Q8:self_harm_suicide",
+        "Q9:cyber_malware",
+        "Q10:weapons_explosives_toxins",
+        "Q11:privacy_doxxing_stalking",
+        "Q12:medical_harmful",
+    }
+)
+
+_NON_OVERRIDABLE_REFUSE_REASON_CODES: frozenset[str] = frozenset(
+    {
+        "normative_refuse_non_overridable",
+        "operational_risk_high_refuse",
+        "requested_instructions_refuse",
+        "intent_to_harm_refuse",
+        "risk_clearly_harmful",
+        "hard_violations",
+    }
+)
+
+
+def is_hard_signal_refuse(
+    decision: Decision,
+    risk_estimation: RiskEstimationProtocol,
+    op_risk: OperationalRisk,
+) -> bool:
+    """
+    True when REFUSE is anchored by hard policy evidence, so borderline deliberation
+    must be bypassed.
+    """
+    if decision.final_action != "REFUSE":
+        return False
+    if bool(getattr(decision, "hard_violations", None)):
+        return True
+
+    reason_codes = {
+        str(code).strip().lower() for code in (getattr(decision, "reason_codes", None) or []) if str(code).strip()
+    }
+    if reason_codes & _NON_OVERRIDABLE_REFUSE_REASON_CODES:
+        return True
+
+    decision_signals = {str(sig).strip() for sig in (getattr(decision, "risk_signals", None) or []) if str(sig).strip()}
+    risk_signals = {
+        str(sig).strip() for sig in (getattr(risk_estimation, "semantic_signals", None) or []) if str(sig).strip()
+    }
+    return bool((decision_signals | risk_signals) & _HARD_SEMANTIC_SIGNALS)
 
 
 def get_route(
@@ -38,12 +84,13 @@ def get_route(
     medium = config.risk_thresholds.medium
     borderline_upper = config.borderline_refuse_upper
 
-    _has_confirmed_hard_violation = bool(getattr(decision, "hard_violations", None))
+    hard_signal_refuse = is_hard_signal_refuse(decision, risk_estimation, op_risk)
     borderline_refuse = (
         final_action_str == "REFUSE"
         and path != "DELIBERATIVE_PATH"
         and risk_score >= medium
-        and (risk_score <= borderline_upper or not _has_confirmed_hard_violation)
+        and risk_score <= borderline_upper
+        and not hard_signal_refuse
     )
 
     risk_policy_action = coerce_risk_policy_action(getattr(risk_estimation, "risk_policy_action", None))

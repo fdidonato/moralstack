@@ -50,7 +50,7 @@ from moralstack.orchestration.overlay_policy import (
     is_domain_excluded,
     is_overlay_sensitive,
 )
-from moralstack.orchestration.path_router import get_route
+from moralstack.orchestration.path_router import get_route, is_hard_signal_refuse
 from moralstack.orchestration.persistence_helpers import record_decision_trace, record_llm_call
 from moralstack.orchestration.response_assembler import ResponseAssembler
 from moralstack.orchestration.safe_complete_gating import apply_safe_complete_gating
@@ -58,6 +58,7 @@ from moralstack.orchestration.safe_refusal_generator import (
     _detect_language_fallback,
     _iso_to_language_name,
     generate_llm_safe_refusal,
+    resolve_refusal_domain_and_redirection,
 )
 from moralstack.orchestration.speculative_overlap import SpeculativeOverlapHandle
 from moralstack.orchestration.trace import Trace
@@ -162,27 +163,6 @@ class OrchestrationController:
             self._parser_diagnostic_handlers,
         )
 
-    # Risk signal → overlay domain mapping (for refusal redirection).
-    # Maps semantic risk signals to the overlay YAML that contains
-    # the appropriate refusal_redirection text.
-    _SIGNAL_DOMAIN_MAP: dict[str, str] = {
-        "Q5:physical_harm": "science",
-        "Q9:cyber_malware": "cybersecurity",
-        "Q10:weapons_explosives_toxins": "science",
-        "Q11:privacy_doxxing_stalking": "cybersecurity",
-        "Q12:medical_harmful": "medical",
-        "Q4:fraud": "financial",
-        "Q8:self_harm_suicide": "mental_health",
-    }
-
-    def _domain_from_signals(self, signals: list[str]) -> str | None:
-        """Map risk signals to an overlay domain for refusal redirection."""
-        for signal in signals:
-            domain = self._SIGNAL_DOMAIN_MAP.get(signal)
-            if domain:
-                return domain
-        return None
-
     def set_logger(self, logger: LoggerProtocol | None) -> None:
         """Set the logger for tracking LLM calls (propagated to runner)."""
         self.logger = logger
@@ -226,40 +206,34 @@ class OrchestrationController:
         ctx["_conversation_events_emitted"] = True
         has_link = cid is not None or tid is not None or pid is not None or state_in is not None
         if has_link:
-            try:
-                persist_orchestration_event(
-                    cycle=0,
-                    stage="orchestration",
-                    component="conversation",
-                    event_type=CONVERSATION_CONTEXT_ATTACHED,
-                    decision="attached",
-                    status="ok",
-                    sequence=0,
-                    payload={
-                        "conversation_id": cid,
-                        "turn_index": tid,
-                        "parent_request_id": pid,
-                        "conversation_state_provided": state_in is not None,
-                    },
-                )
-            except Exception:
-                pass
+            persist_orchestration_event(
+                cycle=0,
+                stage="orchestration",
+                component="conversation",
+                event_type=CONVERSATION_CONTEXT_ATTACHED,
+                decision="attached",
+                status="ok",
+                sequence=0,
+                payload={
+                    "conversation_id": cid,
+                    "turn_index": tid,
+                    "parent_request_id": pid,
+                    "conversation_state_provided": state_in is not None,
+                },
+            )
         if result.conversation_state_updated and result.conversation_governance_state_out is not None:
-            try:
-                persist_orchestration_event(
-                    cycle=0,
-                    stage="orchestration",
-                    component="conversation",
-                    event_type=CONVERSATION_STATE_UPDATED,
-                    decision="updated",
-                    status="ok",
-                    sequence=1,
-                    payload={
-                        "summary": result.conversation_governance_state_out.to_summary_dict(),
-                    },
-                )
-            except Exception:
-                pass
+            persist_orchestration_event(
+                cycle=0,
+                stage="orchestration",
+                component="conversation",
+                event_type=CONVERSATION_STATE_UPDATED,
+                decision="updated",
+                status="ok",
+                sequence=1,
+                payload={
+                    "summary": result.conversation_governance_state_out.to_summary_dict(),
+                },
+            )
 
     def _emit_risk_assessment_trace(
         self,
@@ -280,6 +254,8 @@ class OrchestrationController:
             sigs = list(getattr(risk_proto, "semantic_signals", None) or [])
             dom = getattr(risk_proto, "detected_domain", None)
             dom_str = (str(dom).strip() if dom is not None else "") or ""
+            raw_domains = list(getattr(risk_proto, "detected_domains_raw", None) or [])
+            selection_reason = str(getattr(risk_proto, "domain_selection_reason", "") or "").strip()
             em = str(getattr(risk_proto, "estimation_mode", "") or "").strip()
             dt = DecisionTrace(
                 request_id=request_id,
@@ -296,6 +272,9 @@ class OrchestrationController:
             dt.stage_payload = {
                 "risk_policy_action": rpa_str,
                 "detected_domain": dom_str or None,
+                "detected_domains_raw": raw_domains,
+                "selected_domain": dom_str or None,
+                "selection_reason": selection_reason or None,
                 "activated_signals": sigs,
             }
             normalize_trace_fields(dt)
@@ -510,35 +489,17 @@ class OrchestrationController:
         risk_cat_str = risk_category_str(risk_estimation)
         detected_iso = getattr(risk_estimation, "detected_language", None) or ""
         language = _iso_to_language_name(detected_iso) if detected_iso else _detect_language_fallback(request.prompt)
-        domain = (request.get_domain() or getattr(risk_estimation, "detected_domain", None) or "") or "general"
-        # if "general", map from risk_signals
-        if domain == "general" and decision.risk_signals:
-            domain = self._domain_from_signals(decision.risk_signals) or domain
-        # if "general" and constitution store available, try detect_relevant_domains
-        if domain == "general" and self.constitution_store is not None:
-            try:
-                detected = self.constitution_store.detect_relevant_domains(request.prompt)
-                chosen = next((d for d in detected if d != "core"), None)
-                if chosen:
-                    domain = chosen
-            except Exception as e:
-                _LOG.warning(f"Failed to detect relevant domains for prompt: {request.prompt}. Error: {e}")
-
+        domain, refusal_redirection = resolve_refusal_domain_and_redirection(
+            request_prompt=request.prompt,
+            request_domain=request.get_domain(),
+            detected_domain=getattr(risk_estimation, "detected_domain", None),
+            risk_signals=list(getattr(decision, "risk_signals", None) or []),
+            constitution_store=self.constitution_store,
+        )
         rationale = getattr(risk_estimation, "rationale", None) or ""
 
-        # Load refusal redirection from overlay YAML (if available)
-        # Load refusal redirection from overlay YAML (if available)
-        refusal_redirection = ""
-        if domain != "general" and self.constitution_store is not None:
-            try:
-                constitution = self.constitution_store.get_constitution(domain)
-                overlay = getattr(constitution, "active_overlay", None)
-                if overlay is not None:
-                    refusal_redirection = getattr(overlay, "refusal_redirection", "") or ""
-            except Exception:
-                pass
-
         refusal_content = generate_llm_safe_refusal(
+            user_prompt=request.prompt,
             risk_category=risk_cat_str,
             policy_reason_codes=list(decision.reason_codes),
             language=language,
@@ -1079,6 +1040,32 @@ class OrchestrationController:
             request_id=request_id,
             overlay_sensitive=overlay_sensitive,
         )
+        op_risk_post = getattr(risk_estimation, "operational_risk", OperationalRisk.NONE)
+        if (
+            outcome.stop_reason == "CYCLES_EXHAUSTED"
+            and decision1.final_action == "REFUSE"
+            and is_hard_signal_refuse(decision1, risk_estimation, op_risk_post)
+        ):
+            orch_debug_log(
+                "orchestrator.py:_route_deliberative",
+                "hard-signal REFUSE -> normalizing stop_reason",
+                {
+                    "old_stop_reason": outcome.stop_reason,
+                    "new_stop_reason": "HARD_VIOLATION_STOP",
+                    "risk_score": risk_score,
+                    "reason_codes": list(getattr(decision1, "reason_codes", None) or []),
+                    "activated_signals": list(getattr(decision1, "risk_signals", None) or []),
+                },
+                "H-hard-signal-stop-reason",
+                request_id=request_id,
+            )
+            outcome = ConvergenceOutcome(
+                should_continue=False,
+                converged=False,
+                stop_reason="HARD_VIOLATION_STOP",
+                cycle=outcome.cycle,
+                max_cycles=outcome.max_cycles,
+            )
         # Update trace to reflect the FINAL decision (post-deliberation),
         # not the stale pre-deliberation values set at first decide_action() call.
         trace.decision_path = decision1.path
@@ -1121,6 +1108,7 @@ class OrchestrationController:
             risk_estimation=risk_estimation,
             outcome=outcome,
             decision_explanation=expl_for_assembler,
+            constitution_store=self.constitution_store,
         )
         result = OrchestratorResult(
             response=response,
@@ -1289,6 +1277,7 @@ class OrchestrationController:
             log_decision_explanation(explanation, request_id, hypothesis_id="H-decision")
 
             route, borderline_refuse, risk_policy_action = get_route(decision, risk_proto, risk_score, self.config, op_risk)
+            hard_signal_refuse = is_hard_signal_refuse(decision, risk_proto, op_risk)
 
             if borderline_refuse:
                 orch_debug_log(
@@ -1300,6 +1289,29 @@ class OrchestrationController:
                         "upper_bound": self.config.borderline_refuse_upper,
                     },
                     "H-refuse-borderline",
+                    request_id=request_id,
+                )
+
+            if (
+                route == "refuse"
+                and decision.final_action == "REFUSE"
+                and decision.path != "DELIBERATIVE_PATH"
+                and hard_signal_refuse
+            ):
+                activated_signals = list(getattr(decision, "risk_signals", None) or [])
+                if not activated_signals:
+                    activated_signals = list(getattr(risk_proto, "semantic_signals", None) or [])
+                orch_debug_log(
+                    "orchestrator.py:process",
+                    "hard-signal REFUSE -> bypass deliberative loop",
+                    {
+                        "risk_score": risk_score,
+                        "lower_bound": self.config.risk_thresholds.medium,
+                        "upper_bound": self.config.borderline_refuse_upper,
+                        "activated_signals": activated_signals,
+                        "reason_codes": list(getattr(decision, "reason_codes", None) or []),
+                    },
+                    "H-hard-signal-bypass",
                     request_id=request_id,
                 )
 
