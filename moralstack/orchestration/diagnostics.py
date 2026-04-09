@@ -61,17 +61,15 @@ def log_deliberation_inconsistency(
 
 
 def orch_debug_log(location: str, message: str, data: dict, hypothesis_id: str = "", request_id: str = "") -> None:
-    """Writes one NDJSON line to the debug file and/or DB; does not raise exceptions.
+    """Emits a debug event via observability. Does not raise.
 
-    Thread-safe: concurrent calls are serialized via _DEBUG_LOG_LOCK to prevent
-    interleaved writes that would corrupt JSON lines.
-
-    Persist mode: db_only -> DB only; dual -> DB + file; file_only -> file only.
-
-    Persist mode: db_only -> DB only; dual -> DB + file; file_only -> file only.
+    Routing is controlled by MORALSTACK_OBSERVABILITY_MODE:
+      db_only   -> SQLite only
+      dual      -> SQLite + logs/observability/debug.event.jsonl
+      file_only -> logs/observability/debug.event.jsonl only
     """
     try:
-        import json
+        from moralstack.persistence.write_queue import async_persist_debug_event
 
         payload = {
             "location": location,
@@ -84,61 +82,10 @@ def orch_debug_log(location: str, message: str, data: dict, hypothesis_id: str =
         if hypothesis_id:
             payload["hypothesisId"] = hypothesis_id
 
-        # Persist to DB when db_only or dual
-        try:
-            from moralstack.persistence.config import get_persist_mode
-            from moralstack.persistence.context import get_current_run_id
-            from moralstack.persistence.write_queue import async_persist_debug_event
-
-            mode = get_persist_mode()
-            if mode in ("db_only", "dual"):
-                async_persist_debug_event(
-                    run_id=get_current_run_id(),
-                    request_id=request_id or None,
-                    payload=payload,
-                )
-        except ImportError as e:
-            _ORCH_MODULE_LOG.debug("orch_debug_log: persistence unavailable (optional): %s", e)
-        except Exception as e:
-            _ORCH_MODULE_LOG.warning(
-                "orch_debug_log: persist_debug_event failed request_id=%s error_type=%s error=%s",
-                request_id or "",
-                type(e).__name__,
-                e,
-            )
-
-        # Skip file write when db_only
-        try:
-            from moralstack.persistence.config import get_persist_mode
-
-            if get_persist_mode() == "db_only":
-                return
-        except ImportError as e:
-            _ORCH_MODULE_LOG.debug("orch_debug_log: get_persist_mode unavailable (optional): %s", e)
-        except Exception as e:
-            _ORCH_MODULE_LOG.warning(
-                "orch_debug_log: get_persist_mode failed request_id=%s error_type=%s error=%s",
-                request_id or "",
-                type(e).__name__,
-                e,
-            )
-
-        line = json.dumps(payload, ensure_ascii=False) + "\n"
-        try:
-            with _DEBUG_LOG_LOCK:
-                log_dir = os.path.dirname(_DEBUG_LOG_PATH)
-                if not os.path.exists(log_dir):
-                    os.makedirs(log_dir, exist_ok=True)
-                with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-                    f.write(line)
-        except Exception as e:
-            _ORCH_MODULE_LOG.error(
-                "orch_debug_log: file write failed request_id=%s path=%s error_type=%s error=%s",
-                request_id or "",
-                _DEBUG_LOG_PATH,
-                type(e).__name__,
-                e,
-            )
+        async_persist_debug_event(
+            request_id=request_id or None,
+            payload=payload,
+        )
     except Exception as e:
         _ORCH_MODULE_LOG.warning(
             "orch_debug_log failed location=%s request_id=%s error_type=%s error=%s",

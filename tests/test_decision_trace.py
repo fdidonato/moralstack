@@ -1,13 +1,18 @@
 """
-Test per decision_trace: path configurabile, I/O robusto, formato invariato.
+Test per decision_trace: routing via observability, formato invariato.
+
+append_decision_trace() ora richiede run_id nel contesto e instrada
+via observability router (file_only → logs/observability/decision.trace.jsonl).
+Il parametro path= è accettato per compatibilità ma ignorato.
 """
 
 from __future__ import annotations
 
 import json
-import os
-import threading
+import uuid
 
+from moralstack.observability.context import set_current_run_id
+from moralstack.observability.service import get_obs
 from moralstack.runtime.trace import (
     DecisionTrace,
     append_decision_trace,
@@ -15,124 +20,136 @@ from moralstack.runtime.trace import (
 )
 
 
-def test_append_decision_trace_default_path(tmp_path, monkeypatch):
-    """Default path: logs/decision_trace.jsonl."""
+def _flush():
+    get_obs().flush(timeout=5.0)
+
+
+def test_append_decision_trace_writes_to_jsonl(tmp_path, monkeypatch):
+    """In file_only mode, traces are written to logs/observability/decision.trace.jsonl."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("MORALSTACK_DECISION_TRACE_PATH", raising=False)
     monkeypatch.delenv("MORALSTACK_DB_PATH", raising=False)
-    monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "file_only")
-    trace = DecisionTrace(request_id="req-1")
-    trace.stage = "FINAL"
-    trace.final_action = "NORMAL_COMPLETE"
+    monkeypatch.delenv("MORALSTACK_OBSERVABILITY_DB_PATH", raising=False)
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "file_only")
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_JSONL_DIR", str(tmp_path / "logs" / "observability"))
+
+    run_id = str(uuid.uuid4())
+    set_current_run_id(run_id)
+    try:
+        trace = DecisionTrace(request_id="req-1")
+        trace.stage = "FINAL"
+        trace.final_action = "NORMAL_COMPLETE"
+        normalize_trace_fields(trace)
+        append_decision_trace(trace)
+        _flush()
+
+        expected = tmp_path / "logs" / "observability" / "decision.trace.jsonl"
+        assert expected.exists(), f"Expected {expected} to exist"
+        lines = [ln for ln in expected.read_text(encoding="utf-8").strip().split("\n") if ln]
+        assert len(lines) >= 1
+        obj = json.loads(lines[-1])
+        payload = obj.get("payload", obj)
+        trace_json_str = payload.get("trace_json", "{}")
+        td = json.loads(trace_json_str) if isinstance(trace_json_str, str) else trace_json_str
+        assert td["request_id"] == "req-1"
+        assert td["stage"] == "FINAL"
+    finally:
+        set_current_run_id(None)
+
+
+def test_append_decision_trace_path_param_ignored(tmp_path, monkeypatch):
+    """The path= parameter is accepted for backwards compat but has no effect on routing."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MORALSTACK_DB_PATH", raising=False)
+    monkeypatch.delenv("MORALSTACK_OBSERVABILITY_DB_PATH", raising=False)
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "file_only")
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_JSONL_DIR", str(tmp_path / "logs" / "observability"))
+
+    run_id = str(uuid.uuid4())
+    set_current_run_id(run_id)
+    try:
+        custom = tmp_path / "custom" / "trace.jsonl"
+        trace = DecisionTrace(request_id="req-2")
+        trace.stage = "PRE_POLICY"
+        normalize_trace_fields(trace)
+        # path= is ignored in new implementation
+        append_decision_trace(trace, path=str(custom))
+        _flush()
+        # custom path should NOT be created (routing is controlled by mode, not path param)
+        assert not custom.exists()
+    finally:
+        set_current_run_id(None)
+
+
+def test_append_decision_trace_no_run_id_noop(tmp_path, monkeypatch):
+    """Without run_id in context, append_decision_trace is a no-op."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MORALSTACK_DB_PATH", raising=False)
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "file_only")
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_JSONL_DIR", str(tmp_path / "logs" / "observability"))
+
+    set_current_run_id(None)
+    trace = DecisionTrace(request_id="req-noop")
     normalize_trace_fields(trace)
     append_decision_trace(trace)
-    expected = tmp_path / "logs" / "decision_trace.jsonl"
-    assert expected.exists()
-    lines = expected.read_text(encoding="utf-8").strip().split("\n")
-    assert len(lines) == 1
-    obj = json.loads(lines[0])
-    assert obj["request_id"] == "req-1"
-    assert obj["stage"] == "FINAL"
-    assert obj["final_action"] == "NORMAL_COMPLETE"
+    _flush()
+    # No file should be created
+    obs_dir = tmp_path / "logs" / "observability"
+    if obs_dir.exists():
+        files = list(obs_dir.glob("decision.trace.jsonl"))
+        assert len(files) == 0
 
 
-def test_append_decision_trace_custom_path_param(tmp_path, monkeypatch):
-    """Path custom via parametro opzionale."""
-    monkeypatch.delenv("MORALSTACK_DB_PATH", raising=False)
-    monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "file_only")
-    custom = tmp_path / "custom" / "trace.jsonl"
-    trace = DecisionTrace(request_id="req-2")
-    trace.stage = "PRE_POLICY"
-    normalize_trace_fields(trace)
-    append_decision_trace(trace, path=str(custom))
-    assert custom.exists()
-    lines = custom.read_text(encoding="utf-8").strip().split("\n")
-    assert len(lines) == 1
-    assert json.loads(lines[0])["request_id"] == "req-2"
-
-
-def test_append_decision_trace_env_var(tmp_path, monkeypatch):
-    """Path configurabile via MORALSTACK_DECISION_TRACE_PATH."""
-    custom = tmp_path / "env_trace.jsonl"
+def test_append_decision_trace_format_fields(tmp_path, monkeypatch):
+    """Fields written to JSONL match the DecisionTrace dataclass."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("MORALSTACK_DB_PATH", raising=False)
-    monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "file_only")
-    monkeypatch.setenv("MORALSTACK_DECISION_TRACE_PATH", str(custom))
-    trace = DecisionTrace(request_id="req-3")
+    monkeypatch.delenv("MORALSTACK_OBSERVABILITY_DB_PATH", raising=False)
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "file_only")
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_JSONL_DIR", str(tmp_path / "logs" / "observability"))
+
+    run_id = str(uuid.uuid4())
+    set_current_run_id(run_id)
+    try:
+        trace = DecisionTrace(request_id="req-format")
+        trace.stage = "FINAL"
+        trace.sequence = 2
+        trace.risk_category = "BENIGN"
+        trace.risk_score = 0.1
+        trace.final_action = "NORMAL_COMPLETE"
+        trace.path = "FAST_PATH"
+        trace.decision_reason = "test"
+        normalize_trace_fields(trace)
+        append_decision_trace(trace)
+        _flush()
+
+        path = tmp_path / "logs" / "observability" / "decision.trace.jsonl"
+        assert path.exists()
+        lines = [ln for ln in path.read_text(encoding="utf-8").strip().split("\n") if ln]
+        assert len(lines) >= 1
+        # The envelope payload contains trace_json (serialised DecisionTrace)
+        obj = json.loads(lines[-1])
+        payload = obj.get("payload", {})
+        trace_json_str = payload.get("trace_json", "{}")
+        td = json.loads(trace_json_str) if isinstance(trace_json_str, str) else trace_json_str
+        assert td["request_id"] == "req-format"
+        assert td["stage"] == "FINAL"
+        assert td["sequence"] == 2
+        assert td["risk_category"] == "BENIGN"
+        assert td["risk_score"] == 0.1
+        assert td["final_action"] == "NORMAL_COMPLETE"
+        assert td["path"] == "FAST_PATH"
+        assert td["decision_reason"] == "test"
+    finally:
+        set_current_run_id(None)
+
+
+def test_append_decision_trace_no_block_on_missing_context():
+    """Without run_id in context, append_decision_trace does not raise."""
+    set_current_run_id(None)
+    trace = DecisionTrace(request_id="req-err")
     normalize_trace_fields(trace)
+    # Must not raise even with bad state
     append_decision_trace(trace)
-    assert custom.exists()
-    lines = custom.read_text(encoding="utf-8").strip().split("\n")
-    assert len(lines) == 1
-    assert json.loads(lines[0])["request_id"] == "req-3"
-
-
-def test_append_decision_trace_format_unchanged(tmp_path, monkeypatch):
-    """Formato JSONL invariato: una riga per trace, campi identici."""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("MORALSTACK_DECISION_TRACE_PATH", raising=False)
-    monkeypatch.delenv("MORALSTACK_DB_PATH", raising=False)
-    monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "file_only")
-    trace = DecisionTrace(request_id="req-format")
-    trace.stage = "FINAL"
-    trace.sequence = 2
-    trace.risk_category = "BENIGN"
-    trace.risk_score = 0.1
-    trace.final_action = "NORMAL_COMPLETE"
-    trace.path = "FAST_PATH"
-    trace.decision_reason = "test"
-    normalize_trace_fields(trace)
-    append_decision_trace(trace)
-    path = tmp_path / "logs" / "decision_trace.jsonl"
-    line = path.read_text(encoding="utf-8").strip()
-    obj = json.loads(line)
-    assert obj["request_id"] == "req-format"
-    assert obj["stage"] == "FINAL"
-    assert obj["sequence"] == 2
-    assert obj["risk_category"] == "BENIGN"
-    assert obj["risk_score"] == 0.1
-    assert obj["final_action"] == "NORMAL_COMPLETE"
-    assert obj["path"] == "FAST_PATH"
-    assert obj["decision_reason"] == "test"
-
-
-def test_append_decision_trace_thread_safe(tmp_path, monkeypatch):
-    """Scritture concorrenti: nessuna riga persa o duplicata."""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("MORALSTACK_DECISION_TRACE_PATH", raising=False)
-    monkeypatch.delenv("MORALSTACK_DB_PATH", raising=False)
-    monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "file_only")
-
-    def write_n(thread_id: int, n: int) -> None:
-        for i in range(n):
-            trace = DecisionTrace(request_id=f"req-{thread_id}-{i}")
-            normalize_trace_fields(trace)
-            append_decision_trace(trace)
-
-    threads = [threading.Thread(target=write_n, args=(tid, 10)) for tid in range(5)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    path = tmp_path / "logs" / "decision_trace.jsonl"
-    lines = path.read_text(encoding="utf-8").strip().split("\n")
-    assert len(lines) == 50
-    ids = [json.loads(line)["request_id"] for line in lines]
-    assert len(set(ids)) == 50
-
-
-def test_append_decision_trace_directory_created(tmp_path, monkeypatch):
-    """Directory di output creata se non esiste."""
-    custom = tmp_path / "a" / "b" / "c" / "trace.jsonl"
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("MORALSTACK_DB_PATH", raising=False)
-    monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "file_only")
-    assert not custom.parent.exists()
-    trace = DecisionTrace(request_id="req-dir")
-    normalize_trace_fields(trace)
-    append_decision_trace(trace, path=str(custom))
-    assert custom.exists()
 
 
 def test_decision_trace_to_dict_includes_sim_fields():
@@ -163,17 +180,3 @@ def test_decision_trace_to_dict_includes_token_optimization_fields():
     d = trace.to_dict()
     assert d["context_mode_by_module"] == {"critic": "thin", "simulator": "full"}
     assert d["modules_skipped"] == {"simulator": "carried_forward"}
-
-
-def test_append_decision_trace_no_block_on_error(tmp_path, monkeypatch):
-    """Errore di scrittura: non blocca, sistema continua."""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("MORALSTACK_DECISION_TRACE_PATH", raising=False)
-    monkeypatch.delenv("MORALSTACK_DB_PATH", raising=False)
-    monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "file_only")
-    # Path invalido (es. dispositivo)
-    bad_path = "Z:\\nonexistent\\trace.jsonl" if os.name == "nt" else "/dev/full"
-    trace = DecisionTrace(request_id="req-err")
-    normalize_trace_fields(trace)
-    # Non deve sollevare
-    append_decision_trace(trace, path=bad_path)

@@ -3,21 +3,28 @@
 from __future__ import annotations
 
 import json
+import re
 
-from moralstack.persistence import db as db_module
-from moralstack.persistence.context import set_current_request_id, set_current_run_id
-from moralstack.persistence.db import (
-    create_run,
-    get_orchestration_events_for_request,
-    init_db,
-    upsert_request,
+from moralstack.observability import obs
+from moralstack.observability.context import set_current_request_id, set_current_run_id
+from moralstack.observability.sinks import sqlite_sink as db_module
+from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
+from moralstack.persistence.sink import (
+    persist_decision_trace,
+    persist_llm_call,
+    persist_orchestration_event,
+    persist_orchestration_events_batch,
 )
-from moralstack.persistence.sink import persist_orchestration_event, persist_orchestration_events_batch
+from moralstack.reports.markdown_export import export_request_markdown
 from moralstack.reports.runtime_decisions import (
     build_execution_strategy,
     build_runtime_decision_observability,
+    build_runtime_observability_contract,
     enrich_llm_call_for_ui,
 )
+
+get_orchestration_events_for_request = obs.read_store.get_orchestration_events_for_request
+get_llm_calls_for_request = obs.read_store.get_llm_calls_for_request
 
 
 def test_orchestration_events_table_created(tmp_path, monkeypatch):
@@ -40,17 +47,14 @@ def test_orchestration_events_insert_and_order(tmp_path, monkeypatch):
     assert upsert_request("run-a", "req-1", prompt="p", domain="d")
     set_current_run_id("run-a")
     set_current_request_id("req-1")
-    assert (
-        persist_orchestration_event(
-            stage="deliberation",
-            component="runner",
-            event_type="PARALLEL_STRATEGY_SELECTED",
-            decision="parallel",
-            status="ok",
-            sequence=1,
-            payload={"x": 1},
-        )
-        is not None
+    persist_orchestration_event(
+        stage="deliberation",
+        component="runner",
+        event_type="PARALLEL_STRATEGY_SELECTED",
+        decision="parallel",
+        status="ok",
+        sequence=1,
+        payload={"x": 1},
     )
     assert persist_orchestration_events_batch(
         [
@@ -153,10 +157,144 @@ def test_llm_calls_extended_columns_roundtrip(tmp_path, monkeypatch):
         call_outcome="used",
         cache_status="miss",
     )
-    from moralstack.persistence.db import get_llm_calls_for_request
-
     rows = get_llm_calls_for_request("r1", "q1")
     assert len(rows) == 1
     assert rows[0].get("call_kind") == "normal"
     assert rows[0].get("call_outcome") == "used"
     assert rows[0].get("cache_status") == "miss"
+
+
+def test_speculative_skip_elapsed_is_clamped_to_total_duration():
+    orch = [
+        {"event_type": "SPECULATIVE_STARTED", "payload_json": "{}"},
+        {
+            "event_type": "SPECULATIVE_JOIN_SKIPPED",
+            "payload_json": '{"elapsed_since_spec_start_ms": 99.0}',
+        },
+    ]
+    llm_calls = [{"duration_ms": 12.0}, {"duration_ms": 8.0}]
+    es = build_execution_strategy([], llm_calls=llm_calls, orchestration_events=orch)
+    sp = es.get("speculative") or {}
+    assert sp.get("total_duration_ms") == 20.0
+    assert 0.0 <= float(sp.get("skip_elapsed_ms")) <= float(sp.get("total_duration_ms"))
+
+
+def test_cross_trace_activated_signals_coherence_and_contract():
+    traces = [
+        {
+            "stage": "RISK_ASSESSMENT",
+            "trace_json": json.dumps(
+                {
+                    "risk_score": 0.6,
+                    "stage_payload": {
+                        "activated_signals": [],
+                    },
+                }
+            ),
+        },
+        {
+            "stage": "PRE_POLICY",
+            "trace_json": json.dumps({"activated_signals": []}),
+        },
+        {
+            "stage": "FINAL",
+            "trace_json": json.dumps(
+                {
+                    "path": "FAST_PATH",
+                    "final_action": "REFUSE",
+                    "activated_signals": ["Q10:weapons_explosives_toxins"],
+                }
+            ),
+        },
+    ]
+    vm = build_runtime_decision_observability(traces=traces, orchestration_events=[], llm_calls=[])
+    risk = (vm.get("execution_strategy") or {}).get("risk_assessment") or {}
+    assert risk.get("activated_signals") == ["Q10:weapons_explosives_toxins"]
+    contract = build_runtime_observability_contract(
+        traces=traces,
+        execution_strategy=vm.get("execution_strategy") or {},
+        orchestration_events=[],
+        runtime_decisions=vm.get("runtime_decisions") or [],
+        cycle_cards=vm.get("cycle_cards") or [],
+    )
+    assert contract["valid"] is False
+    assert "activated_signals_missing_in_PRE_POLICY" in contract["anomalies"]
+
+
+def test_export_fast_path_refuse_contract_and_models(tmp_path, monkeypatch):
+    dbp = str(tmp_path / "exp.db")
+    monkeypatch.setenv("MORALSTACK_DB_PATH", dbp)
+    monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "db_only")
+    init_db(dbp)
+    assert create_run("run-exp", run_type="test", meta={})
+    assert upsert_request("run-exp", "req-exp", prompt="p", domain="")
+    set_current_run_id("run-exp")
+    set_current_request_id("req-exp")
+
+    assert persist_llm_call(
+        phase="fast",
+        module="policy",
+        action="generate",
+        model="gpt-4o",
+        call_outcome="used",
+        raw_response="I cannot assist with that.",
+    )
+    assert persist_llm_call(
+        phase="fast",
+        module="policy",
+        action="rewrite",
+        model="gpt-4o-mini",
+        call_outcome="skipped",
+        raw_response="",
+    )
+    assert persist_decision_trace(
+        stage="RISK_ASSESSMENT",
+        sequence=-10,
+        trace_json=json.dumps(
+            {
+                "risk_score": 0.92,
+                "stage_payload": {
+                    "activated_signals": ["Q10:weapons_explosives_toxins"],
+                },
+            }
+        ),
+    )
+    assert persist_decision_trace(
+        stage="PRE_POLICY",
+        sequence=1,
+        trace_json=json.dumps(
+            {
+                "path": "FAST_PATH",
+                "activated_signals": ["Q10:weapons_explosives_toxins"],
+            }
+        ),
+    )
+    assert persist_decision_trace(
+        stage="FINAL",
+        sequence=2,
+        trace_json=json.dumps(
+            {
+                "path": "FAST_PATH",
+                "final_action": "REFUSE",
+                "risk_score": 0.92,
+                "activated_signals": ["Q10:weapons_explosives_toxins"],
+            }
+        ),
+    )
+    persist_orchestration_event(
+        stage="orchestration",
+        component="router",
+        event_type="ROUTE_SELECTED",
+        decision="refuse",
+        status="ok",
+        sequence=1,
+    )
+    md = export_request_markdown("run-exp", "req-exp")
+    assert "| **MoralStack policy (rewrite)** | gpt-4o |" in md
+    assert "gpt-4o-mini" not in md
+
+    match = re.search(r"## Runtime observability \(structured JSON\).*?```json\n(.*?)\n```", md, re.S)
+    assert match is not None
+    payload = json.loads(match.group(1))
+    contract = payload.get("metric_contract") or {}
+    assert contract.get("valid") is True

@@ -1,19 +1,28 @@
 """
-MoralStack Persistence - SQLite-based telemetry and audit storage.
+MoralStack Persistence — deprecated; use moralstack.observability instead.
 
-Provides configurable persistence (db_only | dual | file_only) for:
-- Runs and requests
-- LLM calls (full prompt, system, raw_response)
-- Decision traces
-- Debug events
+This package is kept as a backwards-compatible alias. All symbols re-export
+from moralstack.observability and moralstack.observability.sinks.sqlite_sink.
 """
 
-from moralstack.persistence.config import (
+from __future__ import annotations
+
+import warnings
+
+warnings.warn(
+    "moralstack.persistence is deprecated; use moralstack.observability instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from moralstack.observability.config import (  # noqa: E402, F401
     get_db_path,
-    get_persist_mode,
     get_ui_credentials,
 )
-from moralstack.persistence.context import (
+from moralstack.observability.config import (  # noqa: E402
+    get_observability_mode as get_persist_mode,
+)
+from moralstack.observability.context import (  # noqa: E402, F401
     get_current_cycle,
     get_current_request_id,
     get_current_run_id,
@@ -21,32 +30,36 @@ from moralstack.persistence.context import (
     set_current_request_id,
     set_current_run_id,
 )
-from moralstack.persistence.db import (
+from moralstack.observability.sinks.sqlite_sink import (  # noqa: E402, F401
     SqliteUnitOfWork,
     create_run,
     delete_request,
     delete_run,
     end_run,
-    get_all_runs,
-    get_debug_events_for_request,
-    get_decision_traces_for_request,
-    get_llm_calls_for_request,
-    get_orchestration_events_for_request,
-    get_requests_for_run,
-    get_run,
     init_db,
     insert_debug_events_batch,
     insert_decision_traces_batch,
     insert_llm_calls_batch,
     insert_orchestration_events_batch,
     invalidate_exports_cache,
+    update_request_domain,
     update_request_response,
     upsert_request,
 )
-from moralstack.persistence.default import DefaultPersistence
-from moralstack.persistence.null import NullPersistence
-from moralstack.persistence.port import PersistencePort
-from moralstack.persistence.sink import (
+from moralstack.persistence.db import (  # noqa: E402, F401
+    get_all_runs,
+    get_debug_events_for_request,
+    get_decision_traces_for_request,
+    get_llm_calls_for_request,
+    get_orchestration_events_for_request,
+    get_request,
+    get_requests_for_run,
+    get_run,
+)
+from moralstack.persistence.default import DefaultPersistence  # noqa: E402, F401
+from moralstack.persistence.null import NullPersistence  # noqa: E402, F401
+from moralstack.persistence.port import PersistencePort  # noqa: E402, F401
+from moralstack.persistence.sink import (  # noqa: E402, F401
     persist_debug_event,
     persist_debug_events_batch,
     persist_decision_trace,
@@ -56,7 +69,7 @@ from moralstack.persistence.sink import (
     persist_orchestration_event,
     persist_orchestration_events_batch,
 )
-from moralstack.persistence.write_queue import (
+from moralstack.persistence.write_queue import (  # noqa: E402, F401
     PersistenceWriteQueue,
     async_persist_debug_event,
     async_persist_decision_trace,
@@ -87,6 +100,7 @@ __all__ = [
     "get_orchestration_events_for_request",
     "get_debug_events_for_request",
     "get_run",
+    "get_request",
     "get_requests_for_run",
     "get_all_runs",
     "delete_run",

@@ -24,19 +24,9 @@ from fastapi.responses import (  # type: ignore[import-not-found]
 from fastapi.staticfiles import StaticFiles  # type: ignore[import-not-found]
 from starlette.templating import Jinja2Templates  # type: ignore[import-not-found]
 
-from moralstack.persistence.config import get_db_path
-from moralstack.persistence.db import (
-    delete_request,
-    delete_run,
-    get_all_runs,
-    get_debug_events_for_request,
-    get_decision_traces_for_request,
-    get_llm_calls_for_request,
-    get_orchestration_events_for_request,
-    get_request,
-    get_requests_for_run,
-    get_run,
-)
+from moralstack.observability import obs
+from moralstack.observability.config import get_db_path
+from moralstack.observability.sinks.sqlite_sink import delete_request, delete_run
 from moralstack.reports.benchmark_report_loader import (
     get_benchmark_result_by_request_id,
     get_questions_by_category,
@@ -56,6 +46,16 @@ from moralstack.reports.runtime_decisions import (
     enrich_llm_call_for_ui,
 )
 from moralstack.utils.env_loader import _purge_empty_env_vars
+
+_rs = obs.read_store
+get_all_runs = _rs.get_all_runs
+get_debug_events_for_request = _rs.get_debug_events_for_request
+get_decision_traces_for_request = _rs.get_decision_traces_for_request
+get_llm_calls_for_request = _rs.get_llm_calls_for_request
+get_orchestration_events_for_request = _rs.get_orchestration_events_for_request
+get_request = _rs.get_request
+get_requests_for_run = _rs.get_requests_for_run
+get_run = _rs.get_run
 
 _root = Path(__file__).resolve().parent.parent.parent
 _env_path = _root / ".env"

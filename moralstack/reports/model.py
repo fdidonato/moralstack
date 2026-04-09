@@ -130,14 +130,15 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
     from collections import defaultdict
     from datetime import datetime
 
-    from moralstack.persistence.config import get_db_path
-    from moralstack.persistence.db import (
-        get_debug_events_for_request,
-        get_decision_traces_for_request,
-        get_llm_calls_for_request,
-        get_request,
-        get_run,
-    )
+    from moralstack.observability import obs
+    from moralstack.observability.config import get_db_path
+
+    _rs = obs.read_store
+    get_debug_events_for_request = _rs.get_debug_events_for_request
+    get_decision_traces_for_request = _rs.get_decision_traces_for_request
+    get_llm_calls_for_request = _rs.get_llm_calls_for_request
+    get_request = _rs.get_request
+    get_run = _rs.get_run
     from moralstack.reports.benchmark_report_loader import (
         get_benchmark_result_by_request_id,
         load_benchmark_report,

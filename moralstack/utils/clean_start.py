@@ -16,19 +16,16 @@ def clean_db_artifacts(db_path: str | None = None) -> bool:
     Cleans DB artifacts. When db_path is set, deletes the DB file.
     Returns True if something was cleaned.
     """
-    try:
-        from moralstack.persistence.config import get_db_path
+    from moralstack.observability.config import get_db_path
 
-        path = db_path or get_db_path()
-        if not path:
-            return False
-        p = Path(path)
-        if p.is_file():
-            p.unlink()
-            return True
+    path = db_path or get_db_path()
+    if not path:
         return False
-    except ImportError:
-        return False
+    p = Path(path)
+    if p.is_file():
+        p.unlink()
+        return True
+    return False
 
 
 def get_project_root() -> Path:
@@ -41,8 +38,7 @@ def clean_start_artifacts(root: Path | None = None, clean_db: bool = False) -> N
     Removes artifacts from previous runs before starting:
     - All .md files in reports/
     - All .md, .json, .jsonl files in benchmark_outputs/
-    - logs/decision_trace.jsonl
-    - .debug/debug.log
+    - logs/observability/ directory (new observability JSONL output)
     - If clean_db=True and PERSIST_MODE=db_only: deletes DB file
 
     Args:
@@ -54,15 +50,12 @@ def clean_start_artifacts(root: Path | None = None, clean_db: bool = False) -> N
     removed: list[str] = []
 
     if clean_db:
-        try:
-            from moralstack.persistence.config import get_db_path, get_persist_mode
+        from moralstack.observability.config import get_db_path, get_observability_mode
 
-            if get_persist_mode() == "db_only":
-                path = get_db_path()
-                if path and clean_db_artifacts(path):
-                    removed.append(path)
-        except ImportError:
-            pass
+        if get_observability_mode() == "db_only":
+            path = get_db_path()
+            if path and clean_db_artifacts(path):
+                removed.append(path)
 
     for dir_name, pattern in [
         ("reports", "*.md"),
@@ -78,20 +71,21 @@ def clean_start_artifacts(root: Path | None = None, clean_db: bool = False) -> N
                     removed.append(str(f.relative_to(root)))
                 except OSError as e:
                     if os.getenv("MORALSTACK_VERBOSE"):
-                        print(f"  ⚠️  Unable to remove {f}: {e}")
+                        print(f"  Unable to remove {f}: {e}")
 
-    for rel_path in ["logs/decision_trace.jsonl", ".debug/debug.log"]:
-        p = root / rel_path
-        if p.is_file():
+    # Clean observability JSONL output directory
+    obs_dir = root / "logs" / "observability"
+    if obs_dir.is_dir():
+        for f in obs_dir.glob("*.jsonl"):
             try:
-                p.unlink()
-                removed.append(rel_path)
+                f.unlink()
+                removed.append(str(f.relative_to(root)))
             except OSError as e:
                 if os.getenv("MORALSTACK_VERBOSE"):
-                    print(f"  ⚠️  Unable to remove {p}: {e}")
+                    print(f"  Unable to remove {f}: {e}")
 
     if removed:
-        print("\n🧹 Clean start: removed previous artifacts:")
+        print("\nClean start: removed previous artifacts:")
         for r in removed:
-            print(f"   • {r}")
+            print(f"   - {r}")
         print()

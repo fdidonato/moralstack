@@ -82,7 +82,7 @@ class SpeculativeOverlapHandle:
                 "route": route,
                 "consumer": consumer,
                 "reason": "route_consumes_speculative",
-                "elapsed_since_spec_start_ms": round(t_join * 1000 - self._spec_started_at_ms, 1),
+                "elapsed_since_spec_start_ms": round(max(0.0, t_join * 1000 - self._spec_started_at_ms), 1),
             },
         )
         try:
@@ -140,7 +140,7 @@ class SpeculativeOverlapHandle:
             {
                 "final_route": final_route,
                 "reason": discard_reason,
-                "elapsed_since_spec_start_ms": round(now_ms - self._spec_started_at_ms, 1),
+                "elapsed_since_spec_start_ms": round(max(0.0, now_ms - self._spec_started_at_ms), 1),
             },
         )
         self._emit(

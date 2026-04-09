@@ -265,9 +265,9 @@ primary model for baseline quality. To disable the split, set `MORALSTACK_POLICY
 In benchmark testing, this optimization reduces rewrite step latency and, combined with
 `gpt-4.1-nano` on the simulator, contributed to large reductions versus heavier simulator
 and rewrite defaults (historically on the order of ~82s → ~60s mean deliberative latency
-in prior runs). **Benchmark run 11** (84 questions) reports overall MoralStack **mean**
-wall-clock **~44s** and **median ~39s**, with **98.8%** compliance unchanged and overall
-judge score **~9.35/10** (vs **7.73/10** baseline).
+in prior runs). **Benchmark run 12** (84 questions) reports overall MoralStack **mean**
+wall-clock **~36s** and **median ~26s**, with **98.8%** compliance unchanged and overall
+judge score **~9.27/10** (vs **7.83/10** baseline).
 
 #### Rewrite prompt constraints
 

@@ -289,9 +289,9 @@ configuration is the single source of configuration — no CLI or code path over
 
 In the recommended configuration (`.env.template`), the simulator uses `gpt-4.1-nano`.
 Benchmark testing shows this reduces simulator-step cost versus heavier defaults; combined
-with other stack optimizations, **benchmark run 11** reports overall mean wall-clock **~44s**
-(median **~39s**) with **98.8%** compliance maintained and overall judge score **~9.35/10**
-(vs **7.73/10** baseline), indicating minimal quality regression versus heavier simulator
+with other stack optimizations, **benchmark run 12** reports overall mean wall-clock **~36s**
+(median **~26s**) with **98.8%** compliance maintained and overall judge score **~9.27/10**
+(vs **7.83/10** baseline), indicating minimal quality regression versus heavier simulator
 configurations on the same suite.
 
 ### LLM and retry behaviour

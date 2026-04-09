@@ -144,72 +144,35 @@ def normalize_trace_fields(trace: DecisionTrace) -> DecisionTrace:
 
 def append_decision_trace(trace: DecisionTrace, path: str | None = None) -> None:
     """
-    Appende una riga JSON (trace serializzato) al file di trace e/o DB.
+    Emits a decision trace via observability (fire-and-forget).
 
-    Path configurabile via MORALSTACK_DECISION_TRACE_PATH o parametro opzionale.
-    Default: logs/decision_trace.jsonl
+    Routing is controlled by MORALSTACK_OBSERVABILITY_MODE:
+      db_only   -> SQLite only
+      dual      -> SQLite + logs/observability/decision.trace.jsonl
+      file_only -> logs/observability/decision.trace.jsonl only
 
-    Persist mode: db_only -> DB only; dual -> DB + file; file_only -> file only.
+    The path= parameter is accepted for backwards compatibility but ignored;
+    output location is controlled by MORALSTACK_OBSERVABILITY_JSONL_DIR.
     """
-    global _trace_file, _trace_file_path
+    from moralstack.observability.context import get_current_run_id
+    from moralstack.observability.events import EVENT_DECISION_TRACE, make_envelope
+    from moralstack.observability.service import get_obs
 
-    # Persist to DB when db_only or dual
+    run_id = get_current_run_id()
+    request_id = trace.request_id or ""
+    if not run_id or not request_id:
+        return
     try:
-        from moralstack.persistence.config import get_persist_mode
-        from moralstack.persistence.context import get_current_run_id
-        from moralstack.persistence.write_queue import async_persist_decision_trace
-
-        mode = get_persist_mode()
-        if mode in ("db_only", "dual"):
-            run_id = get_current_run_id()
-            request_id = trace.request_id or ""
-            if run_id and request_id:
-                async_persist_decision_trace(
-                    run_id=run_id,
-                    request_id=request_id,
-                    stage=trace.stage or "",
-                    sequence=trace.sequence or 0,
-                    trace_json=json.dumps(trace.to_dict(), ensure_ascii=False),
-                )
-    except ImportError:
-        pass
-
-    # Skip file write when db_only
-    try:
-        from moralstack.persistence.config import get_persist_mode
-
-        if get_persist_mode() == "db_only":
-            return
-    except ImportError:
-        pass
-
-    target_path = _get_trace_path(path)
-    line = json.dumps(trace.to_dict(), ensure_ascii=False) + "\n"
-
-    with _trace_lock:
-        if path is not None:
-            try:
-                dirname = os.path.dirname(target_path)
-                if dirname:
-                    os.makedirs(dirname, exist_ok=True)
-                with open(target_path, "a", encoding="utf-8") as f:
-                    f.write(line)
-                    f.flush()
-            except OSError as e:
-                logger.warning("decision_trace: scrittura fallita su %s: %s", target_path, e)
-            return
-
-        fh = _ensure_trace_file(target_path)
-        if fh is None:
-            return
-        try:
-            fh.write(line)
-            fh.flush()
-        except OSError as e:
-            logger.warning("decision_trace: scrittura fallita su %s: %s", target_path, e)
-            try:
-                fh.close()
-            except OSError:
-                pass
-            _trace_file = None
-            _trace_file_path = None
+        envelope = make_envelope(
+            EVENT_DECISION_TRACE,
+            run_id=run_id,
+            request_id=request_id,
+            payload={
+                "stage": trace.stage or "",
+                "sequence": trace.sequence or 0,
+                "trace_json": json.dumps(trace.to_dict(), ensure_ascii=False),
+            },
+        )
+        get_obs().emit(envelope)
+    except Exception as e:
+        logger.warning("decision_trace: persist failed: %s", e)

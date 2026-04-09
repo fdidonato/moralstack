@@ -10,8 +10,13 @@ import time
 from typing import Any, Literal
 
 from moralstack.core.types import PolicyLLMProtocol
+from moralstack.observability.context import get_current_cycle as _get_cycle
+from moralstack.observability.context import get_current_request_id as _get_request_id
+from moralstack.observability.context import get_current_run_id as _get_run_id
+from moralstack.observability.events import EVENT_LLM_CALL
+from moralstack.observability.events import make_envelope as _make_envelope
+from moralstack.observability.router import route as _obs_route
 from moralstack.orchestration.types import RiskEstimationError
-from moralstack.persistence.sink import persist_llm_call
 from moralstack.utils.json_utils import JSONParseError
 from moralstack.utils.llm_parse_contract import (
     build_failed_parse_contract,
@@ -55,6 +60,63 @@ from .schema import RiskEstimation, RiskEstimatorConfig
 from .utils import _intent_type_from_request_type
 
 _RISK_LOG = logging.getLogger(__name__)
+
+
+def persist_llm_call(
+    *,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    cycle: int | None = None,
+    phase: str = "",
+    module: str = "",
+    action: str = "",
+    model: str | None = None,
+    started_at: int | None = None,
+    duration_ms: float | None = None,
+    prompt: str = "",
+    system_prompt: str = "",
+    raw_response: str = "",
+    parsed_json: str | None = None,
+    parsed_summary_json: str | None = None,
+    token_usage_json: str | None = None,
+    attempts: int | None = None,
+    error: str | None = None,
+    sequence_in_cycle: int | None = None,
+    **kwargs: Any,
+) -> bool:
+    _run_id = run_id or _get_run_id()
+    _request_id = request_id or _get_request_id()
+    if not _run_id or not _request_id:
+        return False
+    _cycle = cycle if cycle is not None else _get_cycle()
+    envelope = _make_envelope(
+        EVENT_LLM_CALL,
+        run_id=_run_id,
+        request_id=_request_id,
+        cycle=_cycle,
+        payload={
+            "phase": phase,
+            "module": module,
+            "action": action,
+            "model": model,
+            "started_at": started_at if started_at is not None else int(time.time() * 1000),
+            "duration_ms": duration_ms,
+            "prompt": prompt,
+            "system_prompt": system_prompt,
+            "raw_response": raw_response,
+            "parsed_json": parsed_json,
+            "parsed_summary_json": parsed_summary_json,
+            "token_usage_json": token_usage_json,
+            "attempts": attempts,
+            "error": error,
+            "sequence_in_cycle": sequence_in_cycle,
+        },
+    )
+    try:
+        _obs_route(envelope)
+        return True
+    except Exception:
+        return False
 
 
 class LLMBasedRiskEstimator:
@@ -298,8 +360,8 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                 attempts=attempts,
                 error=error,
             )
-        except ImportError as e:
-            _RISK_LOG.debug("persist_llm_call unavailable: %s", e)
+        except Exception as e:
+            _RISK_LOG.debug("persist_llm_call failed: %s", e)
 
     def _call_llm_with_retry(self, full_prompt: str, gen_config: Any) -> tuple[str, RiskParseResult]:
         """
@@ -519,8 +581,8 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                 parsed_summary_json=_json.dumps(summary, ensure_ascii=False),
                 attempts=attempts,
             )
-        except ImportError as e:
-            _RISK_LOG.debug("persist_mini_llm_call unavailable: %s", e)
+        except Exception as e:
+            _RISK_LOG.debug("persist_mini_llm_call failed: %s", e)
 
     def _parallel_mini_analysis(self, prompt: str) -> RiskEstimation:
         """

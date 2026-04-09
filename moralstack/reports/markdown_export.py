@@ -15,17 +15,22 @@ import os
 from datetime import datetime
 from typing import Any
 
-from moralstack.persistence.config import get_db_path
-from moralstack.persistence.db import (
-    get_decision_traces_for_request,
-    get_models_used_for_run,
-    get_requests_for_run,
-    get_run,
+from moralstack.observability import obs
+from moralstack.observability.config import get_db_path
+from moralstack.reports.benchmark_report_loader import load_benchmark_report
+from moralstack.reports.runtime_decisions import (
+    build_runtime_decision_observability,
+    build_runtime_observability_contract,
 )
-from moralstack.reports.benchmark_report_loader import (
-    load_benchmark_report,
-)
-from moralstack.reports.runtime_decisions import build_runtime_decision_observability
+
+# Read-store helpers — bound to the process-wide read store for convenience
+_rs = obs.read_store
+get_run = _rs.get_run
+get_models_used_for_run = _rs.get_models_used_for_run
+get_requests_for_run = _rs.get_requests_for_run
+get_decision_traces_for_request = _rs.get_decision_traces_for_request
+get_llm_calls_for_request = _rs.get_llm_calls_for_request
+get_orchestration_events_for_request = _rs.get_orchestration_events_for_request
 
 
 def _markdown_early_convergence_section(conv: dict[str, Any] | None) -> str:
@@ -145,12 +150,6 @@ def _benchmark_question_observability_block(r: dict[str, Any], run_id: str) -> s
 
 def _deliberation_observability_markdown_from_db(run_id: str, request_id: str) -> str:
     """Load traces + orchestration + llm_calls and build the same observability markdown as export_request_markdown."""
-    from moralstack.persistence.db import (
-        get_decision_traces_for_request,
-        get_llm_calls_for_request,
-        get_orchestration_events_for_request,
-    )
-
     path = get_db_path()
     if not path or not run_id or not request_id:
         return ""
@@ -403,8 +402,6 @@ def export_request_markdown(run_id: str, request_id: str) -> str:
         md += "\n\n" + _build_benchmark_comparison_section(report.benchmark_result)
 
     try:
-        from moralstack.persistence.db import get_llm_calls_for_request, get_orchestration_events_for_request
-
         orch = get_orchestration_events_for_request(run_id, request_id)
         calls = get_llm_calls_for_request(run_id, request_id)
         vm = build_runtime_decision_observability(
@@ -431,6 +428,13 @@ def export_request_markdown(run_id: str, request_id: str) -> str:
             if guidance_md:
                 md += "### Guidance filter & rewrite\n\n" + guidance_md + "\n"
         if es.get("risk_assessment") or orch or vm.get("cycle_cards"):
+            contract = build_runtime_observability_contract(
+                traces=report.decision_traces or [],
+                execution_strategy=es,
+                orchestration_events=orch,
+                runtime_decisions=vm.get("runtime_decisions"),
+                cycle_cards=vm.get("cycle_cards"),
+            )
             md += "\n\n---\n\n## Runtime observability (structured JSON)\n\n"
             md += "> Full execution strategy snapshot for tooling; mirrors request detail UI data.\n\n"
             md += "```json\n"
@@ -440,6 +444,7 @@ def export_request_markdown(run_id: str, request_id: str) -> str:
                     "orchestration_event_count": len(orch or []),
                     "cycle_cards": vm.get("cycle_cards") or [],
                     "runtime_decisions_rows": len(vm.get("runtime_decisions") or []),
+                    "metric_contract": contract,
                 },
                 indent=2,
                 ensure_ascii=False,

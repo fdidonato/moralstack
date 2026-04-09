@@ -411,7 +411,7 @@ class LLMConsequenceSimulator:
                             raw_response=raw_response or "",
                             duration_ms=0.0,
                         )
-                    except ImportError:
+                    except Exception:
                         pass
                 continue
         # Tutti i retry falliti: errore esplicito, nessun fallback decisionale

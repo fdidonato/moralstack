@@ -77,7 +77,7 @@ draft on the primary model while allowing a lighter model for deliberative revis
 The rewrite prompt also includes explicit constraints that prevent lighter models from adding
 new operational content not present in the original draft. This ensures that `gpt-4.1-nano`
 rewrites maintain quality comparable to `gpt-4o` rewrites on the benchmark (zero
-information leakage; overall stack judge score ~9.35/10 on benchmark run 11).
+information leakage; overall stack judge score ~9.27/10 on benchmark run 12).
 
 ---
 

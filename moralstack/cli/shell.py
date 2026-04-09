@@ -289,9 +289,9 @@ class MoralStackCLI:
         try:
             import uuid
 
-            from moralstack.persistence import create_run, init_db
-            from moralstack.persistence.config import get_db_path
-            from moralstack.persistence.context import set_current_run_id
+            from moralstack.observability.config import get_db_path
+            from moralstack.observability.context import set_current_run_id
+            from moralstack.observability.sinks.sqlite_sink import create_run, init_db
 
             db_path = get_db_path()
             if db_path:
@@ -299,7 +299,7 @@ class MoralStackCLI:
                 init_db(db_path)
                 create_run(run_id, "single", {"prompt_preview": prompt[:100]})
                 set_current_run_id(run_id)
-        except ImportError:
+        except Exception:
             pass
 
         self.current_trace = DeliberationTrace(
@@ -576,8 +576,8 @@ class MoralStackCLI:
             self._update_trace(result)
             self._display_result(result, elapsed)
             try:
-                from moralstack.persistence.context import get_current_request_id
-                from moralstack.persistence.db import update_request_response
+                from moralstack.observability.context import get_current_request_id
+                from moralstack.observability.sinks.sqlite_sink import update_request_response
 
                 req_id = get_current_request_id()
                 if run_id and req_id:
@@ -605,7 +605,7 @@ class MoralStackCLI:
 
         finally:
             try:
-                from moralstack.persistence.write_queue import get_write_queue
+                from moralstack.observability.write_queue import get_write_queue
 
                 get_write_queue().flush(timeout=10.0)
             except Exception:
@@ -613,10 +613,10 @@ class MoralStackCLI:
 
             try:
                 if run_id is not None:
-                    from moralstack.persistence import end_run
+                    from moralstack.observability.sinks.sqlite_sink import end_run
 
                     end_run(run_id, status="error" if _process_error else "ok")
-            except (ImportError, NameError):
+            except Exception:
                 pass
 
         print_separator()
