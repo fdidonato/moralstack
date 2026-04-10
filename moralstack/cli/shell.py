@@ -26,6 +26,8 @@ import time
 import warnings
 from typing import Any, Optional
 
+from moralstack.constitution.schema import Constitution, Principle
+from moralstack.orchestration.types import OrchestratorResult
 from moralstack.utils.clean_start import clean_start_artifacts
 from moralstack.utils.env_loader import load_env
 
@@ -353,11 +355,13 @@ class MoralStackCLI:
 
     def _get_detected_domain(self, prompt: str) -> Optional[str]:
         try:
-            from moralstack.constitution.store import _detect_domain
+            from moralstack.constitution.store import detect_domain
 
-            available_domains = self.constitution_store._get_available_domains()
+            if self.constitution_store is None:
+                return None
+            available_domains = self.constitution_store.get_available_domains()
             domain_descriptions = self.constitution_store.get_domain_descriptions()
-            return _detect_domain(
+            return detect_domain(
                 prompt,
                 self.constitution_store.policy_llm,
                 domain_descriptions,
@@ -366,7 +370,7 @@ class MoralStackCLI:
         except Exception:
             return None
 
-    def _display_constitution_debug_info(self, domain, constitution) -> None:
+    def _display_constitution_debug_info(self, domain: str | None, constitution: Constitution) -> None:
         if not self.verbose:
             return
 
@@ -389,7 +393,9 @@ class MoralStackCLI:
                 "blue",
             )
 
-    def _display_agent_debug_info(self, debug_info, relevant_principles, constitution) -> None:
+    def _display_agent_debug_info(
+        self, debug_info: dict[str, Any], relevant_principles: list[Principle], constitution: Constitution
+    ) -> None:
         if not self.verbose:
             return
 
@@ -411,7 +417,7 @@ class MoralStackCLI:
         # 6. Risultato finale e fallback
         self._display_final_summary_and_fallback(relevant_principles, constitution)
 
-    def _display_agent_creation_info(self, debug_info: dict) -> None:
+    def _display_agent_creation_info(self, debug_info: dict[str, Any]) -> None:
         n_agents = debug_info.get("agents_created", 0)
         print_colored(f"  [DEBUG] Created parallel agents: {n_agents}", "blue")
 
@@ -420,13 +426,13 @@ class MoralStackCLI:
             domains_str = ", ".join(agent_domains)
             print_colored(f"  [DEBUG] Agent domains: {domains_str}", "blue")
 
-    def _display_agent_principle_counts(self, debug_info: dict) -> None:
+    def _display_agent_principle_counts(self, debug_info: dict[str, Any]) -> None:
         agent_principles = debug_info.get("agent_principles_count", {})
         if agent_principles:
             for domain, count in agent_principles.items():
                 print_colored(f"    - {domain}: {count} principles", "blue")
 
-    def _display_agent_results_details(self, debug_info: dict) -> None:
+    def _display_agent_results_details(self, debug_info: dict[str, Any]) -> None:
         agent_results = debug_info.get("agent_results", {})
         if not agent_results:
             return
@@ -457,7 +463,7 @@ class MoralStackCLI:
 
         print_colored(f"  [DEBUG] Total principles found by agents: {total_found}", "blue")
 
-    def _display_domain_status(self, debug_info: dict) -> None:
+    def _display_domain_status(self, debug_info: dict[str, Any]) -> None:
         accepted = debug_info.get("accepted_domains", [])
         rejected = debug_info.get("rejected_domains", {})
         if accepted:
@@ -466,14 +472,14 @@ class MoralStackCLI:
             rejected_names = list(rejected.keys())
             print_colored(f"  [DEBUG] Rejected domains: {', '.join(rejected_names)}", "yellow")
 
-    def _display_final_per_domain_counts(self, debug_info: dict) -> None:
+    def _display_final_per_domain_counts(self, debug_info: dict[str, Any]) -> None:
         principles_by_domain = debug_info.get("principles_by_domain", {})
         if principles_by_domain:
             print_colored("  [DEBUG] Final principles per domain:", "blue")
             for domain, count in principles_by_domain.items():
                 print_colored(f"    - {domain}: {count} principles", "cyan")
 
-    def _display_final_summary_and_fallback(self, relevant_principles, constitution) -> None:
+    def _display_final_summary_and_fallback(self, relevant_principles: list[Principle], constitution: Constitution) -> None:
         print_colored(f"  [DEBUG] Final relevant principles: {len(relevant_principles)}", "blue")
 
         if len(relevant_principles) == 0:
@@ -495,12 +501,15 @@ class MoralStackCLI:
         else:
             print_colored("\n⚠️  No relevant principles found", "yellow")
 
-    def _call_orchestrator(self, prompt: str):
+    def _call_orchestrator(self, prompt: str) -> OrchestratorResult:
         """Call orchestrator and return the result (no side effects)."""
         assert self.orchestrator is not None, "Orchestrator not initialized"
-        return self.orchestrator.process(prompt)
+        result = self.orchestrator.process(prompt)
+        if not isinstance(result, OrchestratorResult):
+            raise TypeError("Orchestrator returned invalid result type")
+        return result
 
-    def _update_trace(self, result) -> None:
+    def _update_trace(self, result: OrchestratorResult) -> None:
         """Update current_trace from orchestrator result and build phases from call_logger."""
         if not self.current_trace:
             return
@@ -528,7 +537,7 @@ class MoralStackCLI:
 
         self._build_trace_from_calls()
 
-    def _display_result(self, result, elapsed: float) -> None:
+    def _display_result(self, result: OrchestratorResult, elapsed: float) -> None:
         """Show final response, metadata (if verbose), and optional cost/deliberation report."""
         print_colored("\n" + "=" * 80, "green")
         print_colored("📝 FINAL RESPONSE:", "green")
@@ -605,12 +614,11 @@ class MoralStackCLI:
 
         finally:
             try:
-                from moralstack.observability.write_queue import get_write_queue
+                from moralstack.observability.service import get_obs
 
-                get_write_queue().flush(timeout=10.0)
+                get_obs().flush(timeout=10.0)
             except Exception:
                 pass
-
             try:
                 if run_id is not None:
                     from moralstack.observability.sinks.sqlite_sink import end_run
@@ -661,13 +669,12 @@ class MoralStackCLI:
         current_cycle = 0
 
         for call in self.call_logger.calls:
-            module = call.get("module", "")
-            action = call.get("action", "")
-            prompt = call.get("full_prompt", call.get("prompt", ""))
-            response = call.get("full_response", call.get("response", ""))
+            parse_result: TraceParseResult | None = None
+            module: str = call.get("module") or ""
+            action: str = call.get("action") or ""
+            prompt: str = call.get("full_prompt") or call.get("prompt") or ""
+            response: str = call.get("full_response") or call.get("response") or ""
             duration = call.get("duration_ms", 0.0)
-
-            None
 
             if module == "risk_estimator":
                 parse_result = _parse_risk_trace(call)
@@ -691,7 +698,7 @@ class MoralStackCLI:
                     continue  # Skip logging this meta-event
 
                 if "deliberation_cycle" in action and "complete" in action:
-                    orch_details: dict = {}
+                    orch_details: dict[str, Any] = {}
                     orch_decision = None
                     orch_decision_reason = None
                     if "Decision:" in prompt:
@@ -944,7 +951,7 @@ class MoralStackCLI:
             PhaseType.GENERATION: "Response generation",
         }
 
-        if self.current_trace.path == "deliberative":
+        if self.current_trace and self.current_trace.path == "deliberative":
             expected_phases.update({PhaseType.CRITIQUE: "Constitutional critique"})
             if self.orch_config:
                 if self.orch_config.enable_simulation:
@@ -955,7 +962,12 @@ class MoralStackCLI:
                     expected_phases[PhaseType.PERSPECTIVES] = "Perspective evaluation"
         return expected_phases
 
-    def _display_missing_phases(self, expected_dict: dict, missing_set: set, early_refusal: bool) -> bool:
+    def _display_missing_phases(
+        self,
+        expected_dict: dict[PhaseType, str],
+        missing_set: set[PhaseType],
+        early_refusal: bool,
+    ) -> bool:
         if early_refusal:
             missing_set = {
                 p for p in missing_set if p in {PhaseType.RISK_ESTIMATION, PhaseType.GENERATION, PhaseType.CRITIQUE}
@@ -977,14 +989,14 @@ class MoralStackCLI:
             "dim",
         )
 
-    def _display_phase_errors(self, phases_with_errors: list) -> None:
+    def _display_phase_errors(self, phases_with_errors: list[PhaseResult]) -> None:
         print_colored("\n❌ PHASES WITH ERRORS:", "red")
         for phase in phases_with_errors:
             print_colored(f"   • {phase.phase.value.upper()} (Cycle {phase.cycle}):", "red")
             for error in phase.errors:
                 print_colored(f"     - {error}", "red")
 
-    def _display_phase_warnings(self, phases_with_warnings: list) -> None:
+    def _display_phase_warnings(self, phases_with_warnings: list[PhaseResult]) -> None:
         print_colored("\n⚠️  WARNINGS:", "yellow")
         for phase in phases_with_warnings:
             print_colored(f"   • {phase.phase.value.upper()} (Cycle {phase.cycle}):", "yellow")
@@ -992,6 +1004,8 @@ class MoralStackCLI:
                 print_colored(f"     - {warning}", "yellow")
 
     def _display_convergence_issues(self) -> None:
+        if self.current_trace is None:
+            return
         print_colored("\n⚠️  CONVERGENCE NOT REACHED:", "yellow")
         print_colored("   The deliberative process did not reach convergence.", "yellow")
 
@@ -1011,8 +1025,11 @@ class MoralStackCLI:
             print_colored("   → Critical violations not resolved", "dim")
 
     def _display_violated_principles(self) -> None:
+        trace = self.current_trace
+        if trace is None:
+            return
         print_colored("\n⚖️  CONSTITUTIONAL PRINCIPLES VIOLATED:", "cyan")
-        for principle_id in self.current_trace.triggered_principles:
+        for principle_id in trace.triggered_principles:
             constraint_type = "UNKNOWN"
             if self.constitution_store is not None:
                 try:
@@ -1031,6 +1048,8 @@ class MoralStackCLI:
             print_colored(f"   • [{constraint_type}] {principle_id}", color)
 
     def _display_processing_time_issues(self) -> bool:
+        if self.current_trace is None:
+            return False
         total_time = self.current_trace.total_duration_ms()
         timeout = self.orch_config.timeout_ms if self.orch_config else 600000
         if total_time > timeout * 0.8:

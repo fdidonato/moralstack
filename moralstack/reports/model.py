@@ -76,29 +76,29 @@ class RequestReport:
     decision_reason: str
     response_content: str
     domain: str = ""
-    phases_by_cycle: list = field(default_factory=list)
+    phases_by_cycle: list[tuple[int, list[PhaseInfo]]] = field(default_factory=list)
     hindsight_score: float | None = None
-    phase_durations: dict = field(default_factory=dict)
-    module_stats: dict = field(default_factory=dict)
-    policy_overlay: dict | None = None
-    revision_history: list = field(default_factory=list)
-    call_log: list = field(default_factory=list)
-    benchmark_result: dict | None = None
-    decision_traces: list = field(default_factory=list)
-    debug_events: list = field(default_factory=list)
+    phase_durations: dict[str, float] = field(default_factory=dict)
+    module_stats: dict[str, dict[str, float | int]] = field(default_factory=dict)
+    policy_overlay: dict[str, Any] | None = None
+    revision_history: list[RevisionEntry] = field(default_factory=list)
+    call_log: list[CallLogEntry] = field(default_factory=list)
+    benchmark_result: dict[str, Any] | None = None
+    decision_traces: list[dict[str, Any]] = field(default_factory=list)
+    debug_events: list[dict[str, Any]] = field(default_factory=list)
     soft_revision_applied: bool = False
     soft_revision_guidance_used: str = ""
     risk_rationale: str = ""  # Combined rationale from risk estimator (intent + operational)
     calibration_guard_info: str = ""  # Non-empty if the calibration guard was triggered
-    orchestrator_observability: dict | None = None  # Path routing / debug-derived explanations (display only)
-    policy_gating_observability: dict | None = None  # PRE_POLICY + SAFE_COMPLETE gating (display only)
+    orchestrator_observability: dict[str, Any] | None = None  # Path routing / debug-derived explanations (display only)
+    policy_gating_observability: dict[str, Any] | None = None  # PRE_POLICY + SAFE_COMPLETE gating (display only)
     # Conversation linkage (multi-turn foundation; None when absent)
     conversation_id: str | None = None
     turn_index: int | None = None
     parent_request_id: str | None = None
 
 
-def get_final_response_text(calls: list, final_action: str | None = None) -> str:
+def get_final_response_text(calls: list[dict[str, Any]], final_action: str | None = None) -> str:
     """
     Determine the final response text from LLM calls for report display.
 
@@ -162,16 +162,17 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
             if br and not br.get("error"):
                 benchmark_result = br
 
-    def trace_dict(t):
+    def trace_dict(t: dict[str, Any]) -> dict[str, Any]:
         tj = t.get("trace_json", "{}")
         if isinstance(tj, str):
             try:
-                return json.loads(tj)
+                parsed = json.loads(tj)
+                return parsed if isinstance(parsed, dict) else {}
             except Exception:
                 return {}
-        return tj or {}
+        return tj if isinstance(tj, dict) else {}
 
-    def derive_total_cycles(trace_list, calls, path_val):
+    def derive_total_cycles(trace_list: list[dict[str, Any]], calls: list[dict[str, Any]], path_val: str) -> int:
         total = 0
         for t in trace_list:
             td = trace_dict(t)
@@ -275,11 +276,11 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
     else:
         status = "📋 **COMPLETED** - Outcome from trace."
 
-    by_cycle = defaultdict(list)
+    by_cycle: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for c in llm_calls:
-        cy = c.get("cycle") if c.get("cycle") is not None else 0
+        cy = int(c.get("cycle") or 0)
         by_cycle[cy].append(c)
-    phases_by_cycle = []
+    phases_by_cycle: list[tuple[int, list[PhaseInfo]]] = []
     for cycle_num in sorted(by_cycle.keys()):
         phase_infos = []
         for c in by_cycle[cycle_num]:
@@ -310,12 +311,12 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
         dur = c.get("duration_ms")
         if dur is not None:
             by_module[mod].append(dur)
-    module_stats = {}
+    module_stats: dict[str, dict[str, float | int]] = {}
     for mod in sorted(by_module.keys()):
         durs = by_module[mod]
         total = sum(durs)
         module_stats[mod] = {"calls": len(durs), "total_ms": total, "avg_ms": total / len(durs) if durs else 0.0}
-    phase_durations = {}
+    phase_durations: dict[str, float] = {}
     for _, pi_list in phases_by_cycle:
         for pi in pi_list:
             key = pi.phase_type
@@ -451,7 +452,7 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
     )
 
 
-def request_report_from_cli(trace, call_logger, result, prompt) -> RequestReport:
+def request_report_from_cli(trace: Any, call_logger: Any, result: Any, prompt: str) -> RequestReport:
     """Build RequestReport from CLI (DeliberationTrace, CallLogger, result, prompt)."""
     from datetime import datetime
 
@@ -474,7 +475,7 @@ def request_report_from_cli(trace, call_logger, result, prompt) -> RequestReport
         status = "✅ **APPROVED** - All modules satisfied"
     else:
         status = "὾6 **COMPLETED** - Max cycles reached without full convergence"
-    calls_by_module = {}
+    calls_by_module: dict[str, list[dict[str, Any]]] = {}
     if call_logger and call_logger.calls:
         for call in call_logger.calls:
             module = call.get("module", "unknown")
@@ -482,7 +483,7 @@ def request_report_from_cli(trace, call_logger, result, prompt) -> RequestReport
                 calls_by_module[module] = []
             calls_by_module[module].append(call)
 
-    def get_full_data(phase, cycle):
+    def get_full_data(phase: Any, cycle: int) -> tuple[str, str]:
         phase_to_module = {
             PhaseType.RISK_ESTIMATION: "risk_estimator",
             PhaseType.GENERATION: "policy",
@@ -510,11 +511,11 @@ def request_report_from_cli(trace, call_logger, result, prompt) -> RequestReport
         elif phase.phase == PhaseType.REVISION:
             rewrite_calls = [c for c in module_calls if "rewrite" in c.get("action", "").lower()]
             if cycle >= 2 and len(rewrite_calls) >= cycle - 1:
-                call = rewrite_calls[cycle - 2] if cycle - 2 < len(rewrite_calls) else None
-                if call:
+                rewrite_call = rewrite_calls[cycle - 2] if cycle - 2 < len(rewrite_calls) else None
+                if rewrite_call:
                     return (
-                        call.get("full_prompt", call.get("prompt", "")),
-                        call.get("full_response", call.get("response", "")),
+                        rewrite_call.get("full_prompt", rewrite_call.get("prompt", "")),
+                        rewrite_call.get("full_response", rewrite_call.get("response", "")),
                     )
             return (phase.input_summary or "", phase.output_summary or "")
         else:
@@ -527,8 +528,8 @@ def request_report_from_cli(trace, call_logger, result, prompt) -> RequestReport
             )
         return (phase.input_summary or "", phase.output_summary or "")
 
-    phases_by_cycle = []
-    phase_durations = {}
+    phases_by_cycle: list[tuple[int, list[PhaseInfo]]] = []
+    phase_durations: dict[str, float] = {}
     for cycle_num, phases in sorted(trace.get_phases_by_cycle().items()):
         phase_infos = []
         for phase in phases:

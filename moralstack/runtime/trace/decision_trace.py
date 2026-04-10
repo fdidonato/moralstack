@@ -62,7 +62,7 @@ class DecisionTrace:
     sequence: int = 0  # 1 = PRE, 2 = FINAL
 
     # Risk estimator
-    risk_raw: dict | None = None
+    risk_raw: dict[str, Any] | None = None
     risk_category: str = ""
     risk_score: float = 0.0
     operational_risk: str = ""
@@ -101,7 +101,7 @@ class DecisionTrace:
     sim_expected_valence: float = 0.0
     sim_semantic_expected_harm: float = 0.0
     sim_dominant_harm_types: list[str] = field(default_factory=list)
-    sim_worst_harm: dict | None = None
+    sim_worst_harm: dict[str, Any] | None = None
 
     # Token optimization (optional, for reporting)
     context_mode_by_module: dict[str, str] = field(default_factory=dict)  # e.g. {"critic":"thin","simulator":"full"}
@@ -115,7 +115,7 @@ class DecisionTrace:
     # Extensible JSON-safe payload for audit stages (RISK_ASSESSMENT, REQUEST_ANALYSIS_CONTEXT, CYCLE_SUMMARY, …)
     stage_payload: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 

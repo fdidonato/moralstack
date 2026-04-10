@@ -8,7 +8,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import patch
 
 import pytest
@@ -307,6 +307,28 @@ class MockCritic:
             )
 
         return MockQuickCheckResult(passed=True)
+
+    def critique_with_relevant_principles(
+        self,
+        request: str,
+        response: str,
+        domain: str | None = None,
+        request_id: str = "",
+        delib_context: Any = None,
+        context_mode: Literal["full", "thin"] = "full",
+        previous_violations: str = "",
+        previous_guidance: str = "",
+    ) -> MockCritiqueReport:
+        return self.critique(
+            request,
+            response,
+            None,
+            request_id=request_id,
+            delib_context=delib_context,
+            context_mode=context_mode,
+            previous_violations=previous_violations,
+            previous_guidance=previous_guidance,
+        )
 
 
 class MockSimulator:

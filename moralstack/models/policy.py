@@ -133,8 +133,8 @@ class OpenAIPolicy:
             final_max_retries = max_retries
 
         self.api_key = final_api_key
-        self.model = final_model
-        self._rewrite_model = final_rewrite_model if final_rewrite_model is not None else final_model
+        self.model: str = final_model or "gpt-4o"
+        self._rewrite_model: str = final_rewrite_model if final_rewrite_model is not None else self.model
         self._timeout = (final_timeout_ms / 1000.0) if final_timeout_ms is not None else 60.0
         self._max_retries = final_max_retries if final_max_retries is not None else 3
         self._default_temperature = final_temperature if final_temperature is not None else 0.7

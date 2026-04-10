@@ -266,7 +266,7 @@ class ResponseAssembler:
                 )
                 content = generate_llm_safe_refusal(
                     user_prompt=request.prompt,
-                    risk_category=risk_category_str(risk_estimation),
+                    risk_category=risk_category_str(risk_estimation) if risk_estimation is not None else "",
                     policy_reason_codes=list(getattr(decision, "reason_codes", None) or []),
                     language=explicit_lang or "English",
                     domain=resolved_domain,

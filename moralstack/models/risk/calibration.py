@@ -424,10 +424,10 @@ def _parse_action(
     """
     action_raw = str(data.get("risk_policy_action", "")).strip().upper()
     valid_actions = (
-        RiskPolicyAction.ALLOW,
-        RiskPolicyAction.ALLOW_WITH_CAVEAT,
-        RiskPolicyAction.DELIBERATE,
-        RiskPolicyAction.DENY,
+        RiskPolicyAction.ALLOW.value,
+        RiskPolicyAction.ALLOW_WITH_CAVEAT.value,
+        RiskPolicyAction.DELIBERATE.value,
+        RiskPolicyAction.DENY.value,
     )
     if action_raw in valid_actions:
         risk_policy_action = coerce_risk_policy_action(action_raw)

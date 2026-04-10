@@ -637,7 +637,7 @@ class LLMHindsightEvaluator:
             cache = get_global_cache()
             consequences_hash = hashlib.md5("|".join(c.scenario_id for c in consequences).encode()).hexdigest()
             cached_result = cache.get_hindsight_result(request, response, consequences_hash)
-            if cached_result is not None:
+            if isinstance(cached_result, HindsightResult):
                 return cached_result
 
         if self.config.use_batch_evaluation and len(consequences) > 1:

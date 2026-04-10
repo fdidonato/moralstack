@@ -34,7 +34,7 @@ class DecisionExplanation:
 
     timestamp: float = field(default_factory=time.time)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, object]:
         """Export to dict for JSON serialization. Ensures no None in output."""
         d = asdict(self)
         # Normalize for serialization: None -> "" or []

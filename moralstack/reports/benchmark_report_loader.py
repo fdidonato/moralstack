@@ -40,7 +40,8 @@ def load_benchmark_report(run_id: str) -> dict[str, Any] | None:
         return None
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            loaded = json.load(f)
+            return loaded if isinstance(loaded, dict) else None
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -58,6 +59,8 @@ def get_benchmark_result_by_request_id(
         return None
     results = report.get("results") or []
     for r in results:
+        if not isinstance(r, dict):
+            continue
         if (r.get("moralstack_request_id") or "").strip() == request_id.strip():
             return r
     return None

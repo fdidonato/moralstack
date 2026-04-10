@@ -19,7 +19,7 @@ from moralstack.orchestration.types import OrchestratorResult
 _LOG = logging.getLogger(__name__)
 
 
-def log_trace_event(event: str, location: str, trace: Trace, data: dict) -> None:
+def log_trace_event(event: str, location: str, trace: Trace, data: dict[str, Any]) -> None:
     """
     Log a structured JSON event (one line) with request_id and trace_id for parallel execution.
     Does not raise; logs warning on failure.

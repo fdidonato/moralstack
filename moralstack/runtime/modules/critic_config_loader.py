@@ -7,7 +7,12 @@ to hardcoded defaults. Used when no explicit CriticConfig is passed.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from moralstack.utils.env_helpers import get_env_bool, get_env_float, get_env_int, get_env_str
+
+if TYPE_CHECKING:
+    from moralstack.runtime.modules.critic_module import CriticConfig
 
 # Backward-compatible aliases for external consumers
 get_critic_env_float = get_env_float
@@ -25,7 +30,7 @@ ENV_TOP_K_PRINCIPLES = "MORALSTACK_CRITIC_TOP_K_PRINCIPLES"
 ENV_INCLUDE_EXAMPLES = "MORALSTACK_CRITIC_INCLUDE_EXAMPLES"
 
 
-def load_critic_config_from_env():  # -> CriticConfig (imported inside)
+def load_critic_config_from_env() -> CriticConfig:
     """
     Build CriticConfig from environment variables.
 

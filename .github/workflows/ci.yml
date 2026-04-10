@@ -18,12 +18,29 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # One shell session so `source venv/bin/activate` applies to pip, black, pytest.
-      - name: Install deps and run checks
+      # One shell session so `source venv/bin/activate` applies to all tools.
+      - name: Install dependencies
         run: |
           python -m venv venv
           source venv/bin/activate
           python -m pip install --upgrade pip
           pip install -e ".[dev,ui]"
+
+      - name: Lint & Format
+        run: |
+          source venv/bin/activate
+          ruff check .
           black --check .
-          pytest --maxfail=1 --disable-warnings -q
+
+      - name: Type Check
+        run: |
+          source venv/bin/activate
+          mypy moralstack --ignore-missing-imports
+
+      - name: Tests with Coverage
+        run: |
+          source venv/bin/activate
+          pytest --cov=moralstack --cov-report=xml --cov-report=term --maxfail=3
+
+      - name: Upload Coverage
+        uses: codecov/codecov-action@v4

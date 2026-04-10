@@ -47,7 +47,8 @@ def _trace_dict(t: dict[str, Any]) -> dict[str, Any]:
     tj = t.get("trace_json", "{}")
     if isinstance(tj, str):
         try:
-            return json.loads(tj)
+            parsed = json.loads(tj)
+            return parsed if isinstance(parsed, dict) else {}
         except Exception:
             return {}
     return tj if isinstance(tj, dict) else {}
@@ -59,7 +60,8 @@ def _parse_debug_payload(ev: dict[str, Any]) -> dict[str, Any]:
         pj = ev.get("payload")
     if isinstance(pj, str):
         try:
-            return json.loads(pj)
+            parsed = json.loads(pj)
+            return parsed if isinstance(parsed, dict) else {}
         except Exception:
             return {}
     return pj if isinstance(pj, dict) else {}

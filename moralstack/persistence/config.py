@@ -9,5 +9,6 @@ MORALSTACK_PERSIST_MODE and MORALSTACK_DB_PATH are still read as legacy aliases.
 from __future__ import annotations
 
 from moralstack.observability.config import ObservabilityMode as PersistMode
-from moralstack.observability.config import get_db_path, get_ui_credentials
+from moralstack.observability.config import get_db_path as get_db_path
 from moralstack.observability.config import get_observability_mode as get_persist_mode
+from moralstack.observability.config import get_ui_credentials as get_ui_credentials

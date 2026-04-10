@@ -2,7 +2,7 @@
 Mock modules for MoralStack CLI testing without API.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 
 class MockPolicy:
@@ -66,24 +66,47 @@ class MockRiskEstimator:
 class MockCritic:
     """Constitutional critic mock."""
 
-    def critique(self, request: Any, response: str, constitution: Any = None, **kwargs) -> Any:
+    def critique(self, request: Any, response: str, constitution: Any = None, **kwargs: Any) -> Any:
         """Mock critique."""
         from dataclasses import dataclass, field
 
         @dataclass
         class MockCritique:
-            violations: list = field(default_factory=list)
+            violations: list[Any] = field(default_factory=list)
             severity_score: float = 0.0
             has_critical_violations: bool = False
             revision_guidance: str = ""
 
         return MockCritique()
 
+    def critique_with_relevant_principles(
+        self,
+        request: str,
+        response: str,
+        domain: str | None = None,
+        request_id: str = "",
+        delib_context: Any = None,
+        context_mode: Literal["full", "thin"] = "full",
+        previous_violations: str = "",
+        previous_guidance: str = "",
+    ) -> Any:
+        """Mock path aligned with LLMConstitutionalCritic (delegates to critique)."""
+        return self.critique(
+            request,
+            response,
+            None,
+            request_id=request_id,
+            delib_context=delib_context,
+            context_mode=context_mode,
+            previous_violations=previous_violations,
+            previous_guidance=previous_guidance,
+        )
+
 
 class MockSimulator:
     """Consequence simulator mock."""
 
-    def simulate(self, request: Any, response: str, num_scenarios: int = 3, **kwargs) -> list:
+    def simulate(self, request: Any, response: str, num_scenarios: int = 3, **kwargs: Any) -> list[Any]:
         """Simulates mock consequences."""
         return []
 
@@ -91,7 +114,7 @@ class MockSimulator:
 class MockHindsight:
     """Hindsight evaluator mock."""
 
-    def evaluate(self, request: str, response: str, consequences: list, **kwargs) -> Any:
+    def evaluate(self, request: str, response: str, consequences: list[Any], **kwargs: Any) -> Any:
         """Mock hindsight evaluation."""
         from dataclasses import dataclass, field
 
@@ -111,7 +134,7 @@ class MockHindsight:
 
         @dataclass
         class MockHindsightResult:
-            evaluations: list = field(default_factory=list)
+            evaluations: list[Any] = field(default_factory=list)
             aggregated: MockAggregatedHindsight = field(default_factory=MockAggregatedHindsight)
 
         return MockHindsightResult()
@@ -120,19 +143,19 @@ class MockHindsight:
 class MockPerspectives:
     """Perspective ensemble mock."""
 
-    def evaluate(self, request: Any, response: str, **kwargs) -> Any:
+    def evaluate(self, request: Any, response: str, **kwargs: Any) -> Any:
         """Mock perspectives evaluation."""
         from dataclasses import dataclass, field
 
         @dataclass
         class MockPerspectiveAggregation:
             overall_score: float = 0.8
-            concerns: list = field(default_factory=list)
+            concerns: list[Any] = field(default_factory=list)
             consensus_level: float = 0.9
 
         @dataclass
         class MockPerspectiveResult:
-            results: list = field(default_factory=list)
+            results: list[Any] = field(default_factory=list)
             aggregation: MockPerspectiveAggregation = field(default_factory=MockPerspectiveAggregation)
 
         return MockPerspectiveResult()
@@ -147,10 +170,10 @@ class MockConstitutionStore:
 
         @dataclass
         class MockConstitution:
-            principles: list = field(default_factory=list)
+            principles: list[Any] = field(default_factory=list)
 
         return MockConstitution()
 
-    def get_relevant_principles(self, query: str, top_k: int = 10, domain: str | None = None) -> list:
+    def get_relevant_principles(self, query: str, top_k: int = 10, domain: str | None = None) -> list[Any]:
         """Returns empty list (no principles needed for mock)."""
         return []

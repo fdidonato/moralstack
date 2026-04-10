@@ -253,6 +253,8 @@ class ResponseMetadata:
     intent_to_harm: bool = False
     intent_operational: bool = False
     routing_reason_codes: list[str] = field(default_factory=list)
+    # Decision Correctness Framework payload (diagnostics.attach_decision_correctness).
+    decision_correctness: dict[str, Any] | None = None
     reason_codes: list[str] = field(default_factory=list)
     decision_reason: str = ""
     overlay_applied: str = ""
@@ -745,6 +747,10 @@ class DeliberationState:
     _simulator_ran_this_cycle: bool | None = field(default=None, repr=False)
     _simulator_gate_reason_codes: list[str] = field(default_factory=list, repr=False)
     _simulator_carry_forward: bool = field(default=False, repr=False)
+    _parallel_scheduler_strategy: Literal["critic_gated", "full_parallel"] | None = field(default=None, repr=False)
+    _parallel_scheduler_reason_codes: list[str] = field(default_factory=list, repr=False)
+    _critic_short_circuit: bool = field(default=False, repr=False)
+    _scheduler_skipped_modules: list[str] = field(default_factory=list, repr=False)
     # Last convergence evaluation (observability; set by ConvergenceEvaluator.determine_decision)
     _convergence_evaluation_snapshot: dict[str, Any] | None = field(default=None, repr=False)
 
@@ -808,6 +814,10 @@ class DeliberationState:
             _simulator_ran_this_cycle=self._simulator_ran_this_cycle,
             _simulator_gate_reason_codes=list(self._simulator_gate_reason_codes),
             _simulator_carry_forward=self._simulator_carry_forward,
+            _parallel_scheduler_strategy=self._parallel_scheduler_strategy,
+            _parallel_scheduler_reason_codes=list(self._parallel_scheduler_reason_codes),
+            _critic_short_circuit=self._critic_short_circuit,
+            _scheduler_skipped_modules=list(self._scheduler_skipped_modules),
             _convergence_evaluation_snapshot=(
                 dict(self._convergence_evaluation_snapshot) if self._convergence_evaluation_snapshot else None
             ),

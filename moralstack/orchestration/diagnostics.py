@@ -60,7 +60,13 @@ def log_deliberation_inconsistency(
         )
 
 
-def orch_debug_log(location: str, message: str, data: dict, hypothesis_id: str = "", request_id: str = "") -> None:
+def orch_debug_log(
+    location: str,
+    message: str,
+    data: dict[str, Any],
+    hypothesis_id: str = "",
+    request_id: str = "",
+) -> None:
     """Emits a debug event via observability. Does not raise.
 
     Routing is controlled by MORALSTACK_OBSERVABILITY_MODE:

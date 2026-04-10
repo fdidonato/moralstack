@@ -46,6 +46,7 @@ from moralstack.observability.sinks.sqlite_sink import (  # noqa: E402, F401
     update_request_response,
     upsert_request,
 )
+from moralstack.observability.write_queue import ObservabilityWriteQueue as PersistenceWriteQueue  # noqa: E402, F401
 from moralstack.persistence.db import (  # noqa: E402, F401
     get_all_runs,
     get_debug_events_for_request,
@@ -70,7 +71,6 @@ from moralstack.persistence.sink import (  # noqa: E402, F401
     persist_orchestration_events_batch,
 )
 from moralstack.persistence.write_queue import (  # noqa: E402, F401
-    PersistenceWriteQueue,
     async_persist_debug_event,
     async_persist_decision_trace,
     async_persist_llm_call,

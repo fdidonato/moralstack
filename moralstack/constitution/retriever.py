@@ -395,15 +395,15 @@ Return JSON ONLY:
             )
 
             usage = response.usage
-            has_tracker = self._cost_tracker is not None and usage and hasattr(self._cost_tracker, "add_call")
-            if has_tracker:
+            tracker = self._cost_tracker
+            if tracker is not None and usage and hasattr(tracker, "add_call"):
                 pt = getattr(usage, "prompt_tokens", None)
                 ct = getattr(usage, "completion_tokens", None)
                 total = getattr(usage, "total_tokens", 0) or 0
                 if pt is None or ct is None:
                     pt = int(total * 0.7) if total else 0
                     ct = total - pt if total else 0
-                self._cost_tracker.add_call(self.openai_config.model, pt, ct)
+                tracker.add_call(self.openai_config.model, pt, ct)
 
             text = (response.choices[0].message.content or "").strip()
             elapsed_ms = (time.time() - t0) * 1000
@@ -649,15 +649,15 @@ Output valid JSON only:"""
             )
 
             usage = response.usage
-            has_tracker = self._cost_tracker is not None and usage and hasattr(self._cost_tracker, "add_call")
-            if has_tracker:
+            tracker = self._cost_tracker
+            if tracker is not None and usage and hasattr(tracker, "add_call"):
                 pt = getattr(usage, "prompt_tokens", None)
                 ct = getattr(usage, "completion_tokens", None)
                 total = getattr(usage, "total_tokens", 0) or 0
                 if pt is None or ct is None:
                     pt = int(total * 0.7) if total else 0
                     ct = total - pt if total else 0
-                self._cost_tracker.add_call(self.openai_config.model, pt, ct)
+                tracker.add_call(self.openai_config.model, pt, ct)
 
             text = (response.choices[0].message.content or "").strip()
             elapsed_ms = (time.time() - t0) * 1000
@@ -826,15 +826,15 @@ Output ONLY one JSON object (not a bare array), nothing else:"""
             )
 
             usage = response.usage
-            has_tracker = self._cost_tracker is not None and usage and hasattr(self._cost_tracker, "add_call")
-            if has_tracker:
+            tracker = self._cost_tracker
+            if tracker is not None and usage and hasattr(tracker, "add_call"):
                 pt = getattr(usage, "prompt_tokens", None)
                 ct = getattr(usage, "completion_tokens", None)
                 total = getattr(usage, "total_tokens", 0) or 0
                 if pt is None or ct is None:
                     pt = int(total * 0.7) if total else 0
                     ct = total - pt if total else 0
-                self._cost_tracker.add_call(self.openai_config.model, pt, ct)
+                tracker.add_call(self.openai_config.model, pt, ct)
 
             text = (response.choices[0].message.content or "").strip()
             elapsed_ms = (time.time() - t0) * 1000
@@ -1136,9 +1136,9 @@ class ConstitutionRetriever:
         for ag in self._domain_agents.values():
             total_creates += int(getattr(ag, "_openai_client_creates", 0))
             total_reuses += int(getattr(ag, "_openai_client_reuses_after_cache", 0))
-        for ag in self._enhanced_agents.values():
-            total_creates += int(getattr(ag, "_openai_client_creates", 0))
-            total_reuses += int(getattr(ag, "_openai_client_reuses_after_cache", 0))
+        for enhanced_ag in self._enhanced_agents.values():
+            total_creates += int(getattr(enhanced_ag, "_openai_client_creates", 0))
+            total_reuses += int(getattr(enhanced_ag, "_openai_client_reuses_after_cache", 0))
         return {
             "retrieval_openai_client_creates": total_creates,
             "retrieval_openai_client_reuses_after_cache": total_reuses,

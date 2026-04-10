@@ -281,10 +281,10 @@ class LLMBasedRiskEstimator:
         if self.constitution_store is None:
             return "", None
         try:
-            from moralstack.constitution.store import _detect_domain
+            from moralstack.constitution.store import detect_domain
 
             domain_descriptions = self.constitution_store.get_domain_descriptions() if self.constitution_store else {}
-            domain = _detect_domain(prompt, self.policy, domain_descriptions)
+            domain = detect_domain(prompt, self.policy, domain_descriptions)
             relevant_principles = self.constitution_store.get_relevant_principles(
                 query=prompt, top_k=self._top_k, domain=domain
             )
@@ -372,6 +372,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
 
         Raises RiskEstimationError if all retries fail (parse or generation error).
         """
+        assert self.policy is not None, "policy must be set before calling _call_llm_with_retry"
         raw_response = ""
         for attempt in range(self.config.max_retries):
             try:
@@ -601,6 +602,8 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         if self.policy is None:
             raise RiskEstimationError("policy not set")
 
+        _policy = self.policy  # narrowed non-optional for closure capture
+
         gen_config = self._build_generation_config()
         context, detected_domain = self._get_principles_context(prompt)
 
@@ -612,7 +615,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         operational_prompt = OPERATIONAL_RISK_PROMPT_TEMPLATE.format(request=prompt)
 
         # Each future returns (data_dict, raw_response, duration_ms, attempts, started_at_ms, parse_contract)
-        def _call_and_track(system_prompt: str, full_prompt: str, mini_name: str):
+        def _call_and_track(system_prompt: str, full_prompt: str, mini_name: str) -> tuple[Any, str, float, int, int, Any]:
             from moralstack.utils.json_utils import JSONParseError
 
             # Determine the model for this mini-call
@@ -625,8 +628,8 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                 target_model = self.config.operational_model
 
             # Use dedicated policy if model override is present and different from main policy
-            effective_policy = self.policy
-            if target_model and hasattr(self.policy, "model") and self.policy.model != target_model:
+            effective_policy = _policy
+            if target_model and hasattr(_policy, "model") and _policy.model != target_model:
                 try:
                     effective_policy = self._policy_for_mini_estimator_model(target_model)
                     _RISK_LOG.debug("mini_estimator[%s] using dedicated model: %s", mini_name, target_model)
@@ -637,7 +640,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                         target_model,
                         e,
                     )
-                    effective_policy = self.policy
+                    effective_policy = _policy
 
             raw_response = ""
             for attempt in range(self.config.max_retries):

@@ -402,6 +402,7 @@ class ResponseMetadata:
     intent_clarity: str  # LOW | MEDIUM | HIGH (semantic signals)
     misuse_plausibility: str  # LOW | MEDIUM | HIGH
     actionability_risk: str  # LOW | MEDIUM | HIGH
+    decision_correctness: dict[str, Any] | None  # optional DCF payload from diagnostics
 ```
 
 **Construction**: Always build metadata via factory methods for consistency across paths (fast, deliberative, safe_complete, domain_excluded, system error). Use `ResponseMetadata.from_decision(...)` for flows that have a `Decision` (and optional `DecisionExplanation`); use `ResponseMetadata.for_system_error(...)`, `for_domain_excluded(...)`, or `for_fail_safe(...)` for timeout, domain-excluded, and FAIL_SAFE fallback respectively. See `docs/architecture_spec.md` (ResponseMetadata Construction) for the full list.

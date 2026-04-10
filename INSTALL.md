@@ -29,7 +29,7 @@ points.
 pip install -e ".[dev,ui]"
 ```
 
-**Development only (pytest, ruff):**
+**Development only (pytest, pytest-cov, ruff, black, mypy):**
 
 ```bash
 pip install -e .[dev]

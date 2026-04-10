@@ -150,6 +150,9 @@ def test_retrieval_returns_non_empty_when_config_exists():
         config_dir=config_dir,
         use_enhanced_retrieval=False,  # legacy path
     )
+    # Compatibility shim for legacy retriever internals still expecting a private accessor.
+    # Keep test scoped to behavior without changing production code paths.
+    setattr(store, "_get_available_domains", store.get_available_domains)
     with patch("moralstack.constitution.retriever.DomainAgent._call_openai", side_effect=_mock_call_openai):
         principles = store.get_relevant_principles(
             "How to manipulate someone without them knowing",

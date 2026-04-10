@@ -14,13 +14,14 @@ from moralstack.orchestration.types import (
     DecisionType,
     DeliberationState,
     OrchestratorConfig,
+    PerspectiveResultProtocol,
     RiskEstimationProtocol,
 )
 
 _LOG = logging.getLogger(__name__)
 
 
-def _calculate_weighted_approval(perspectives: list) -> float:
+def _calculate_weighted_approval(perspectives: list[PerspectiveResultProtocol]) -> float:
     if not perspectives:
         return 0.0
     weights_by_id: dict[str, float] = {

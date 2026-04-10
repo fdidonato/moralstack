@@ -77,9 +77,9 @@ class PhaseResult:
     output_summary: str
     decision: Optional[str] = None
     decision_reason: Optional[str] = None
-    details: dict = field(default_factory=dict)
-    errors: list = field(default_factory=list)
-    warnings: list = field(default_factory=list)
+    details: dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -99,18 +99,18 @@ class TraceParseResult:
     phase_type: PhaseType
     decision: Optional[str] = None
     decision_reason: Optional[str] = None
-    details: dict = field(default_factory=dict)
-    errors: list = field(default_factory=list)
-    warnings: list = field(default_factory=list)
+    details: dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     risk_score: Optional[float] = None
     risk_category: Optional[str] = None
-    draft_revisions: list = field(default_factory=list)
+    draft_revisions: list[DraftRevision] = field(default_factory=list)
 
 
-def _parse_risk_trace(call: dict) -> TraceParseResult:
+def _parse_risk_trace(call: dict[str, Any]) -> TraceParseResult:
     """Parse risk_estimator call into trace phase data."""
     response = call.get("full_response", call.get("response", ""))
-    details: dict = {}
+    details: dict[str, Any] = {}
     risk_score: Optional[float] = None
     risk_category: Optional[str] = None
 
@@ -155,7 +155,7 @@ def _parse_risk_trace(call: dict) -> TraceParseResult:
     )
 
 
-def _parse_policy_trace(call: dict, current_cycle: int) -> Optional[TraceParseResult]:
+def _parse_policy_trace(call: dict[str, Any], current_cycle: int) -> Optional[TraceParseResult]:
     """Parse policy call into trace phase data."""
     action = call.get("action", "")
     prompt = call.get("full_prompt", call.get("prompt", ""))
@@ -213,12 +213,12 @@ def _parse_policy_trace(call: dict, current_cycle: int) -> Optional[TraceParseRe
     return None
 
 
-def _parse_critic_trace(call: dict) -> TraceParseResult:
+def _parse_critic_trace(call: dict[str, Any]) -> TraceParseResult:
     """Parse critic call into trace phase data."""
     action = call.get("action", "")
     response = call.get("full_response", call.get("response", ""))
-    details: dict = {}
-    errors: list = []
+    details: dict[str, Any] = {}
+    errors: list[str] = []
     decision = None
     decision_reason = None
 
@@ -275,10 +275,10 @@ def _parse_critic_trace(call: dict) -> TraceParseResult:
     )
 
 
-def _parse_simulator_trace(call: dict) -> TraceParseResult:
+def _parse_simulator_trace(call: dict[str, Any]) -> TraceParseResult:
     """Parse simulator call into trace phase data."""
     response = call.get("full_response", call.get("response", ""))
-    details: dict = {}
+    details: dict[str, Any] = {}
     decision = None
     decision_reason = None
 
@@ -342,10 +342,10 @@ def _parse_simulator_trace(call: dict) -> TraceParseResult:
     )
 
 
-def _parse_hindsight_trace(call: dict) -> TraceParseResult:
+def _parse_hindsight_trace(call: dict[str, Any]) -> TraceParseResult:
     """Parse hindsight call into trace phase data."""
     response = call.get("full_response", call.get("response", ""))
-    details: dict = {}
+    details: dict[str, Any] = {}
     decision = None
     decision_reason = None
 
@@ -381,10 +381,10 @@ def _parse_hindsight_trace(call: dict) -> TraceParseResult:
     )
 
 
-def _parse_perspectives_trace(call: dict) -> TraceParseResult:
+def _parse_perspectives_trace(call: dict[str, Any]) -> TraceParseResult:
     """Parse perspectives call into trace phase data."""
     response = call.get("full_response", call.get("response", ""))
-    details: dict = {}
+    details: dict[str, Any] = {}
     decision = None
     decision_reason = None
 
@@ -436,13 +436,13 @@ class DeliberationTrace:
     # Risk estimation
     risk_score: float = 0.0
     risk_category: str = ""
-    risk_signals: list = field(default_factory=list)
+    risk_signals: list[str] = field(default_factory=list)
 
     # Phases
-    phases: list = field(default_factory=list)
+    phases: list[PhaseResult] = field(default_factory=list)
 
     # Draft revision history
-    draft_history: list = field(default_factory=list)  # List[DraftRevision]
+    draft_history: list[DraftRevision] = field(default_factory=list)
 
     # Final outcome
     response_type: str = ""
@@ -451,12 +451,12 @@ class DeliberationTrace:
     converged: bool = False
 
     # Errors and warnings
-    errors: list = field(default_factory=list)
-    warnings: list = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     # Constitution
-    relevant_principles: list = field(default_factory=list)
-    triggered_principles: list = field(default_factory=list)
+    relevant_principles: list[str] = field(default_factory=list)
+    triggered_principles: list[str] = field(default_factory=list)
 
     def add_phase(self, phase: PhaseResult) -> None:
         """Adds a phase to the trace."""
@@ -466,11 +466,11 @@ class DeliberationTrace:
         """Total duration in milliseconds."""
         if self.end_time > 0 and self.start_time > 0:
             return (self.end_time - self.start_time) * 1000
-        return sum(p.duration_ms for p in self.phases)
+        return float(sum(p.duration_ms for p in self.phases))
 
-    def get_phases_by_cycle(self) -> dict:
+    def get_phases_by_cycle(self) -> dict[int, list[PhaseResult]]:
         """Groups phases by cycle."""
-        by_cycle: dict[int, list[Any]] = {}
+        by_cycle: dict[int, list[PhaseResult]] = {}
         for phase in self.phases:
             if phase.cycle not in by_cycle:
                 by_cycle[phase.cycle] = []

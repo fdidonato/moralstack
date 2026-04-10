@@ -16,3 +16,11 @@ repos:
     hooks:
       - id: black
         language_version: python3.11
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: mypy moralstack --ignore-missing-imports
+        language: system
+        pass_filenames: false

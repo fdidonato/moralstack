@@ -160,7 +160,7 @@ def test_domain_selection_stable_pre_post_idempotence():
 
     store = ConstitutionStore(config_dir=config_dir, use_enhanced_retrieval=True, use_domain_prefilter=True)
     q = "neutral test query for domain prefilter"
-    avail = ["core"] + store._get_available_domains()
+    avail = ["core"] + store.get_available_domains()
     with patch("moralstack.constitution.retriever.DomainPrefilter._call_openai", side_effect=_mock_prefilter_openai):
         d1 = store.detect_relevant_domains(q)
         d2 = store.detect_relevant_domains(q)

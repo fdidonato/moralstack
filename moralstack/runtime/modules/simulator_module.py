@@ -103,7 +103,7 @@ class SimulationResult:
     expected_valence: float = 0.0
     semantic_expected_harm: float = 0.0
     dominant_harm_types: list[str] = field(default_factory=list)
-    worst_harm: dict | None = None
+    worst_harm: dict[str, Any] | None = None
     raw_response: str = ""
     parse_attempts: int = 1
     prompt: str = ""
@@ -328,7 +328,7 @@ class LLMConsequenceSimulator:
             cache = get_global_cache()
             cached_result = cache.get_simulation_result(request, response)
             if cached_result is not None:
-                return cached_result
+                return cast(SimulationResult, cached_result)
 
         k = num_scenarios or self.config.default_num_scenarios
         k = max(1, min(k, 10))  # Limita range
@@ -547,7 +547,7 @@ class LLMConsequenceSimulator:
 
         semantic_expected_harm = max((r[0] for r in risk_records), default=0.0)
         dominant_harm_types: list[str] = []
-        worst_harm: dict | None = None
+        worst_harm: dict[str, Any] | None = None
 
         if risk_records:
             sorted_by_risk = sorted(risk_records, key=lambda x: -x[0])

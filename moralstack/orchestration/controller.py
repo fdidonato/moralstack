@@ -162,6 +162,7 @@ class OrchestrationController:
             self.execution_trace,
             self._parser_diagnostic_handlers,
         )
+        self._conversation_process_ctx: dict[str, Any] | None = None
 
     def set_logger(self, logger: LoggerProtocol | None) -> None:
         """Set the logger for tracking LLM calls (propagated to runner)."""
@@ -482,10 +483,7 @@ class OrchestrationController:
         )
         constitution = get_constitution_safe(self.constitution_store, request.get_domain())
         processing_time_ms = int((time.time() - start_time) * 1000)
-        path_taken_refuse = cast(
-            PathTakenType,
-            "fast" if decision.path == "FAST_PATH" else "deliberative",
-        )
+        path_taken_refuse: PathTakenType = "fast" if decision.path == "FAST_PATH" else "deliberative"
         risk_cat_str = risk_category_str(risk_estimation)
         detected_iso = getattr(risk_estimation, "detected_language", None) or ""
         language = _iso_to_language_name(detected_iso) if detected_iso else _detect_language_fallback(request.prompt)
@@ -622,7 +620,7 @@ class OrchestrationController:
                 metadata=metadata,
             ),
             request_id=request.request_id,
-            path_taken=cast(PathTakenType, "domain_excluded"),
+            path_taken="domain_excluded",
             path="DOMAIN_EXCLUDED",
             total_cycles=0,
             converged=False,
@@ -1113,10 +1111,7 @@ class OrchestrationController:
         result = OrchestratorResult(
             response=response,
             request_id=request.request_id,
-            path_taken=cast(
-                PathTakenType,
-                ("deliberative_sensitive" if risk_category == RiskCategory.SENSITIVE else "deliberative"),
-            ),
+            path_taken=("deliberative_sensitive" if risk_category == RiskCategory.SENSITIVE else "deliberative"),
             path="DELIBERATIVE_PATH",
             total_cycles=state.cycle,
             converged=outcome.converged,
@@ -1251,10 +1246,7 @@ class OrchestrationController:
             # lo score corretto (0.35 invece di 0.1) quando l'overlay ha alzato il floor.
             # RiskEstimation è frozen=True: usare dataclasses.replace() per creare una copia.
             if overlay_sensitive and risk_score != original_risk:
-                risk_proto = cast(
-                    type(risk_proto),
-                    _dc_replace(risk_estimation, score=risk_score),
-                )
+                risk_proto = cast(RiskEstimationProtocol, _dc_replace(risk_estimation, score=risk_score))
             self._emit_risk_assessment_trace(request_id, risk_proto, risk_score)
             decision, explanation = decide_action(request, risk_proto, overlay_sensitive=overlay_sensitive)
             decision = apply_safe_complete_gating(

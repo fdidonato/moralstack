@@ -155,7 +155,7 @@ class DeliberationVisualizer:
 
         return "\n".join(lines)
 
-    def _render_phase_node(self, phase: PhaseResult) -> list:
+    def _render_phase_node(self, phase: PhaseResult) -> list[str]:
         """Renders a phase node."""
         lines = []
 
@@ -315,7 +315,7 @@ class DeliberationVisualizer:
         for phase in trace.phases:
             phase_name = phase.phase.value
             if phase_name not in phase_times:
-                phase_times[phase_name] = 0
+                phase_times[phase_name] = 0.0
             phase_times[phase_name] += phase.duration_ms
 
         for phase_name, duration in sorted(phase_times.items(), key=lambda x: -x[1]):

@@ -182,12 +182,13 @@ def _deliberation_observability_markdown_from_db(run_id: str, request_id: str) -
         return ""
 
 
-def _trace_dict(t: dict) -> dict:
+def _trace_dict(t: dict[str, Any]) -> dict[str, Any]:
     """Parse trace_json from a decision_traces row into a dict."""
     tj = t.get("trace_json", "{}")
     if isinstance(tj, str):
         try:
-            return json.loads(tj)
+            result: dict[str, Any] = json.loads(tj)
+            return result
         except Exception:
             return {}
     return tj or {}
@@ -337,9 +338,9 @@ def _resolve_models_config_for_run(run_id: str) -> tuple[dict[str, Any], str]:
             model = br.get("model") or env_policy
             bm = br.get("baseline_model") or model
             jm = br.get("judge_model") or model
-            cfg = _get_benchmark_models_config_fallback(bm, jm, moralstack_policy_model=model)
-            _overlay_db_models(cfg, run_id)
-            return cfg, model
+            bm_cfg = _get_benchmark_models_config_fallback(bm, jm, moralstack_policy_model=model)
+            _overlay_db_models(bm_cfg, run_id)
+            return bm_cfg, model
 
     # --- Single / interactive run: build from DB ---
     db_models = get_models_used_for_run(run_id)
@@ -531,7 +532,7 @@ def _get_benchmark_models_config_fallback(
     }
 
 
-def _build_benchmark_section_from_dict(report: dict, section_builder: str) -> str:
+def _build_benchmark_section_from_dict(report: dict[str, Any], section_builder: str) -> str:
     """Builds a benchmark report section from dict; section_builder is one of
     header, executive_summary, etc."""
     # Build full markdown from report dict (mirrors MarkdownReportGenerator in benchmark script)

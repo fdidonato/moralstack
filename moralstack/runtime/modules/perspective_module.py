@@ -448,7 +448,7 @@ class LLMPerspectiveEnsemble:
         if self.config.enable_caching:
             cache = get_global_cache()
             cached_result = cache.get_perspective_result(request, response)
-            if cached_result is not None:
+            if isinstance(cached_result, EnsembleResult):
                 return cached_result
 
         active_perspectives = perspectives or self.perspectives

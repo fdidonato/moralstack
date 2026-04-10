@@ -12,13 +12,18 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, cast
 
 
 class JSONParseError(Exception):
     """Errore nel parsing JSON."""
 
     pass
+
+
+def _loads_json_object(text: str) -> dict[str, Any]:
+    """Parse JSON object from text. Call sites assume the root value is an object."""
+    return cast(dict[str, Any], json.loads(text))
 
 
 def _preprocess_text(text: str) -> str:
@@ -138,7 +143,7 @@ def extract_json(text: str) -> dict[str, Any]:
 
     # Tentativo 1: Parsing diretto (caso ideale)
     try:
-        return json.loads(text)
+        return _loads_json_object(text)
     except json.JSONDecodeError:
         pass
 
@@ -151,7 +156,7 @@ def extract_json(text: str) -> dict[str, Any]:
         match = re.search(pattern, text, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group(1))
+                return _loads_json_object(match.group(1))
             except json.JSONDecodeError:
                 # Prova a riparare il contenuto
                 pass
@@ -160,7 +165,7 @@ def extract_json(text: str) -> dict[str, Any]:
     json_text = _extract_json_object(text)
     if json_text:
         try:
-            return json.loads(json_text)
+            return _loads_json_object(json_text)
         except json.JSONDecodeError:
             pass
 
@@ -168,7 +173,7 @@ def extract_json(text: str) -> dict[str, Any]:
         completed = _try_complete_truncated_json(json_text)
         if completed:
             try:
-                return json.loads(completed)
+                return _loads_json_object(completed)
             except json.JSONDecodeError:
                 pass
 
@@ -179,7 +184,7 @@ def extract_json(text: str) -> dict[str, Any]:
     if start_idx != -1 and end_idx > start_idx:
         json_content = text[start_idx : end_idx + 1]
         try:
-            return json.loads(json_content)
+            return _loads_json_object(json_content)
         except json.JSONDecodeError:
             # Tentativo 6: Riparazione newline nelle stringhe
             try:
@@ -188,7 +193,7 @@ def extract_json(text: str) -> dict[str, Any]:
                     lambda m: ': "' + m.group(1).replace("\n", " ").replace("\r", "") + '"',
                     json_content,
                 )
-                return json.loads(repaired)
+                return _loads_json_object(repaired)
             except Exception:
                 pass
 
@@ -196,7 +201,7 @@ def extract_json(text: str) -> dict[str, Any]:
             completed = _try_complete_truncated_json(json_content)
             if completed and completed != json_content:
                 try:
-                    return json.loads(completed)
+                    return _loads_json_object(completed)
                 except json.JSONDecodeError:
                     pass
 
@@ -207,7 +212,7 @@ def extract_json(text: str) -> dict[str, Any]:
         completed = _try_complete_truncated_json(truncated)
         if completed:
             try:
-                return json.loads(completed)
+                return _loads_json_object(completed)
             except json.JSONDecodeError:
                 pass
 

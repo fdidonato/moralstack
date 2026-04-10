@@ -12,17 +12,14 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form, HTTPException, Request  # type: ignore[import-not-found]
-from fastapi.responses import (  # type: ignore[import-not-found]
-    HTMLResponse,
-    PlainTextResponse,
-    RedirectResponse,
-)
-from fastapi.staticfiles import StaticFiles  # type: ignore[import-not-found]
-from starlette.templating import Jinja2Templates  # type: ignore[import-not-found]
+from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
+from starlette.templating import Jinja2Templates
 
 from moralstack.observability import obs
 from moralstack.observability.config import get_db_path
@@ -117,20 +114,23 @@ _SESSION_TTL = 86400  # 24 hours
 _SESSION_COOKIE = "moralstack_session"
 
 
-def _parse_trace_json(trace_record: dict) -> dict:
+def _parse_trace_json(trace_record: dict[str, Any]) -> dict[str, Any]:
     """Parse trace_json from a decision_traces row into a dict."""
     tj = trace_record.get("trace_json")
     if tj is None:
         return {}
     if isinstance(tj, str):
         try:
-            return json.loads(tj)
+            parsed: Any = json.loads(tj)
+            return cast(dict[str, Any], parsed) if isinstance(parsed, dict) else {}
         except Exception:
             return {}
-    return tj if isinstance(tj, dict) else {}
+    if isinstance(tj, dict):
+        return cast(dict[str, Any], tj)
+    return {}
 
 
-def _relevant_principles_from_traces(traces: list) -> dict:
+def _relevant_principles_from_traces(traces: list[dict[str, Any]]) -> dict[str, Any]:
     """Extract relevant principles (at start: id, title, level), triggered
     (same shape), and policy context."""
     out: dict[str, Any] = {
@@ -144,7 +144,7 @@ def _relevant_principles_from_traces(traces: list) -> dict:
     if not traces:
         return out
     # Relevant principles identified at the start (stage RELEVANT_PRINCIPLES)
-    relevant_detail: list[dict] = []
+    relevant_detail: list[dict[str, Any]] = []
     for t in traces:
         stage = (t.get("stage") or "").strip().upper()
         if stage == "RELEVANT_PRINCIPLES":
@@ -188,7 +188,7 @@ def _relevant_principles_from_traces(traces: list) -> dict:
     return out
 
 
-def _build_final_decision_card(traces: list) -> dict | None:
+def _build_final_decision_card(traces: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Extract final decision details from the FINAL trace."""
     final_trace = None
     risk_trace = None
@@ -230,7 +230,7 @@ def _build_final_decision_card(traces: list) -> dict | None:
     }
 
 
-def _build_module_io_annotations(call: dict) -> dict:
+def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
     """Build input/output annotations for a module call."""
     module = (call.get("module") or "").lower()
     cycle = call.get("cycle") or 0
@@ -243,8 +243,8 @@ def _build_module_io_annotations(call: dict) -> dict:
     if not isinstance(summary, dict):
         summary = {}
 
-    inputs = []
-    outputs = []
+    inputs: list[dict[str, Any]] = []
+    outputs: list[dict[str, Any]] = []
 
     # Inputs logic
     if "risk" in module:
@@ -349,7 +349,7 @@ def _build_module_io_annotations(call: dict) -> dict:
                 vals = [v for v in avgs.values() if isinstance(v, (int, float))]
                 if vals:
                     avg = sum(vals) / len(vals)
-                    outputs.append({"label": "avg_approval", "value": round(avg, 2)})
+                    outputs.append({"label": "avg_approval", "value": str(round(avg, 2))})
         if "recommendation" in summary:
             outputs.append({"label": "rec", "value": summary["recommendation"]})
     elif "hindsight" in module:
@@ -362,7 +362,7 @@ def _build_module_io_annotations(call: dict) -> dict:
     return {"inputs": inputs, "outputs": outputs}
 
 
-def _group_calls_into_tiers_and_enrich(calls: list) -> list[list[dict]]:
+def _group_calls_into_tiers_and_enrich(calls: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     """Group calls into tiers reflecting the actual execution order.
 
     For calls WITH ``sequence_in_cycle`` (deliberation cycles): group by
@@ -414,19 +414,19 @@ def _group_calls_into_tiers_and_enrich(calls: list) -> list[list[dict]]:
         5: 4,  # hindsight
         6: 5,  # refusal/finalize
     }
-    by_vtier: dict[int, list] = defaultdict(list)
+    by_vtier: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for c in sequenced:
         seq = c["sequence_in_cycle"]
         vtier = _SEQ_TO_VISUAL_TIER.get(seq, seq)
         by_vtier[vtier].append(c)
-    merged_seq_tiers: list[list[dict]] = [
+    merged_seq_tiers: list[list[dict[str, Any]]] = [
         sorted(by_vtier[k], key=lambda c: c.get("started_at") or 0) for k in sorted(by_vtier.keys())
     ]
 
     # ── Unsequenced calls: time-overlap grouping ─────────────────────────
     unsorted = sorted(unsequenced, key=lambda c: c.get("started_at") or 0)
-    time_tiers: list[list[dict]] = []
-    current_tier: list[dict] = []
+    time_tiers: list[list[dict[str, Any]]] = []
+    current_tier: list[dict[str, Any]] = []
     current_max_end = 0
     for call in unsorted:
         s = call.get("started_at") or 0
@@ -454,7 +454,7 @@ def _group_calls_into_tiers_and_enrich(calls: list) -> list[list[dict]]:
     # actually run concurrently.  Merge them so the UI shows a single
     # parallel tier instead of misleading sequential steps.
     if len(all_tiers) > 1:
-        collapsed: list[list[dict]] = [all_tiers[0]]
+        collapsed: list[list[dict[str, Any]]] = [all_tiers[0]]
         for tier in all_tiers[1:]:
             prev = collapsed[-1]
             prev_max_end = max((c.get("started_at") or 0) + (c.get("duration_ms") or 0) for c in prev)
@@ -466,7 +466,7 @@ def _group_calls_into_tiers_and_enrich(calls: list) -> list[list[dict]]:
         all_tiers = collapsed
 
     # ── Enrich with timing info ──────────────────────────────────────────
-    processed: list[list[dict]] = []
+    processed: list[list[dict[str, Any]]] = []
     for tier in all_tiers:
         if len(tier) > 1:
             min_start = min((c.get("started_at") or 0) for c in tier)
@@ -487,7 +487,7 @@ def _group_calls_into_tiers_and_enrich(calls: list) -> list[list[dict]]:
     return processed
 
 
-def _compute_connector_labels(tiers: list[list[dict]]) -> list[str | None]:
+def _compute_connector_labels(tiers: list[list[dict[str, Any]]]) -> list[str | None]:
     """Return a human-readable label for the pipe AFTER each tier.
 
     len(result) == len(tiers) - 1.  ``None`` means no label for that pipe.
@@ -515,7 +515,7 @@ def _compute_connector_labels(tiers: list[list[dict]]) -> list[str | None]:
     return labels
 
 
-def _pick_final_trace_row(traces: list) -> dict:
+def _pick_final_trace_row(traces: list[dict[str, Any]]) -> dict[str, Any]:
     """Prefer the last row with stage FINAL (not necessarily the last row by insert order)."""
     finals = [t for t in traces if (t.get("stage") or "").strip().upper() == "FINAL"]
     if finals:
@@ -524,9 +524,9 @@ def _pick_final_trace_row(traces: list) -> dict:
 
 
 def _execution_summary_from_request(
-    traces: list,
-    llm_calls: list,
-) -> dict:
+    traces: list[dict[str, Any]],
+    llm_calls: list[dict[str, Any]],
+) -> dict[str, Any]:
     """Build execution summary (path, total_cycles, converged) from traces and llm_calls."""
     path_val = ""
     total_cycles = 0
@@ -578,9 +578,11 @@ def _execution_summary_from_request(
     }
 
 
-def _llm_calls_by_cycle(llm_calls: list) -> list[tuple[int | None, list]]:
+def _llm_calls_by_cycle(
+    llm_calls: list[dict[str, Any]],
+) -> list[tuple[int | None, list[dict[str, Any]]]]:
     """Group llm_calls by cycle; return list of (cycle_num, calls) sorted by cycle."""
-    by_cycle: dict[int | None, list] = defaultdict(list)
+    by_cycle: dict[int | None, list[dict[str, Any]]] = defaultdict(list)
     for c in llm_calls:
         cy = c.get("cycle")
         by_cycle[cy].append(c)
@@ -588,15 +590,15 @@ def _llm_calls_by_cycle(llm_calls: list) -> list[tuple[int | None, list]]:
 
 
 def _extract_mini_estimator_data(
-    llm_calls: list[dict],
-) -> tuple[dict, dict, dict, int]:
+    llm_calls: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], int]:
     """Extract raw_response data from the 3 mini-estimator calls.
 
     Returns (intent_data, signal_data, operational_data, last_risk_end_ms).
     """
-    intent_data: dict = {}
-    signal_data: dict = {}
-    operational_data: dict = {}
+    intent_data: dict[str, Any] = {}
+    signal_data: dict[str, Any] = {}
+    operational_data: dict[str, Any] = {}
     last_risk_end: int = 0
     for c in llm_calls:
         if (c.get("module") or "").lower() != "risk_estimator":
@@ -627,12 +629,12 @@ def _is_yes_ui(value: Any) -> bool:
 
 
 def _describe_calibration_path(
-    intent_data: dict,
-    signal_data: dict,
-    operational_data: dict,
+    intent_data: dict[str, Any],
+    signal_data: dict[str, Any],
+    operational_data: dict[str, Any],
     raw_score: float,
     final_score: float,
-) -> tuple[list[dict], list[dict], str]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
     """Analyze which calibration rules fired and build structured explanations.
 
     Returns (inputs, outputs, raw_response_json).
@@ -660,7 +662,7 @@ def _describe_calibration_path(
     harmful_count = len(positive_signals)
     q7 = _is_yes_ui(signal_data.get("q7_only_emotional", "no"))
 
-    inputs: list[dict] = [
+    inputs: list[dict[str, Any]] = [
         {"label": "request_type", "source": request_type or "unknown"},
         {"label": "op_risk", "source": op_risk or "NONE"},
         {"label": "harm_signals", "source": f"{harmful_count} positive"},
@@ -672,7 +674,7 @@ def _describe_calibration_path(
     if intent_operational:
         inputs.append({"label": "intent_operational", "source": "yes"})
 
-    outputs: list[dict] = []
+    outputs: list[dict[str, Any]] = []
     rules_applied: list[str] = []
     calibration_path = ""
 
@@ -747,7 +749,9 @@ def _describe_calibration_path(
     return inputs, outputs, raw_response
 
 
-def _build_synthetic_calibration_node(llm_calls: list[dict], final_decision_card: dict | None) -> dict | None:
+def _build_synthetic_calibration_node(
+    llm_calls: list[dict[str, Any]], final_decision_card: dict[str, Any] | None
+) -> dict[str, Any] | None:
     """Build a synthetic node showing how calibration adjusted the risk score.
 
     Extracts signals from the 3 mini-estimator raw responses, determines
@@ -818,19 +822,21 @@ def _build_synthetic_calibration_node(llm_calls: list[dict], final_decision_card
 
 
 def _build_synthetic_path_routing_node(
-    debug_events: list,
-    traces: list,
-    calibration_node: dict | None,
-    llm_calls: list[dict],
-) -> dict | None:
+    debug_events: list[dict[str, Any]],
+    traces: list[dict[str, Any]],
+    calibration_node: dict[str, Any] | None,
+    llm_calls: list[dict[str, Any]],
+) -> dict[str, Any] | None:
     """Synthetic flow node: path_router / controller branch, from persisted debug (no extra LLM)."""
     obs = build_orchestrator_observability(debug_events, traces)
     if not obs.get("has_routing_data"):
         return None
     io = orchestrator_observability_to_io_annotations(obs)
     if not io["inputs"] and not io["outputs"]:
-        for i, b in enumerate(obs.get("narrative_bullets") or [])[:12]:
-            io["outputs"].append({"label": f"detail_{i + 1}", "value": b[:800]})
+        bullets_raw = obs.get("narrative_bullets") or []
+        bullets = bullets_raw[:12] if isinstance(bullets_raw, list) else []
+        for i, b in enumerate(bullets):
+            io["outputs"].append({"label": f"detail_{i + 1}", "value": str(b)[:800]})
     _, _, _, last_risk_end = _extract_mini_estimator_data(llm_calls)
     anchor = int(calibration_node["started_at"]) if calibration_node else int(last_risk_end)
     started_at = anchor + 1
@@ -859,7 +865,7 @@ def _build_synthetic_path_routing_node(
     }
 
 
-def _synthetic_constitution_call_from_traces(traces: list) -> dict | None:
+def _synthetic_constitution_call_from_traces(traces: list[dict[str, Any]]) -> dict[str, Any] | None:
     """If RELEVANT_PRINCIPLES trace has started_at and duration_ms, return a
     synthetic 'call' for metro/journey."""
     for t in traces:
@@ -909,21 +915,21 @@ def _synthetic_constitution_call_from_traces(traces: list) -> dict | None:
     return None
 
 
-def _journey_sort_key(c: dict) -> tuple:
+def _journey_sort_key(c: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
     """Sort key for journey: cycle, then sequence_in_cycle (logical order), then started_at, phase."""
     cycle = c.get("cycle") if c.get("cycle") is not None else -1
     seq = c.get("sequence_in_cycle") if c.get("sequence_in_cycle") is not None else 999
     return (cycle, seq, c.get("started_at") or 0, c.get("phase") or "")
 
 
-def _journey_steps(llm_calls: list) -> list:
+def _journey_steps(llm_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return llm_calls sorted by logical order (cycle, sequence_in_cycle) then started_at for journey."""
     return sorted(llm_calls, key=_journey_sort_key)
 
 
 def _enrich_journey_with_timing_and_parallel(
-    journey_steps: list,
-) -> list[dict]:
+    journey_steps: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """
     Enrich each step with ended_at (ms), left_pct, width_pct for timeline,
     and is_parallel (True if this call overlaps in time with another in the same cycle).
@@ -935,7 +941,7 @@ def _enrich_journey_with_timing_and_parallel(
     t_max = max(ended_list) if ended_list else t_min
     span = max(t_max - t_min, 1)
 
-    out = []
+    out: list[dict[str, Any]] = []
     for i, c in enumerate(journey_steps):
         start_ms = c.get("started_at") or 0
         dur = c.get("duration_ms") or 0
@@ -956,7 +962,7 @@ def _enrich_journey_with_timing_and_parallel(
             if start_ms < o_end and o_start < end_ms:
                 is_parallel = True
                 break
-        entry = dict(c)
+        entry: dict[str, Any] = dict(c)
         entry["ended_at_ms"] = end_ms
         entry["left_pct"] = round(left_pct, 2)
         entry["width_pct"] = round(width_pct, 2)
@@ -978,7 +984,7 @@ _TIMELINE_MODULE_ORDER = (
 )
 
 
-def _build_execution_timeline(llm_calls: list) -> dict:
+def _build_execution_timeline(llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
     """
     Build Gantt-style timeline: t_min_ms, t_max_ms, total_duration_ms,
     and rows = list of { module, calls: [ { phase, cycle, left_pct, width_pct,
@@ -992,13 +998,13 @@ def _build_execution_timeline(llm_calls: list) -> dict:
     t_max = max(ended) if ended else t_min
     span = max(t_max - t_min, 1)
 
-    by_module: dict[str, list] = defaultdict(list)
+    by_module: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for c in llm_calls:
         mod = (c.get("module") or "unknown").strip() or "unknown"
         by_module[mod].append(c)
 
-    rows = []
-    seen = set()
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for mod in _TIMELINE_MODULE_ORDER:
         if mod not in by_module:
             continue
@@ -1007,7 +1013,7 @@ def _build_execution_timeline(llm_calls: list) -> dict:
             by_module[mod],
             key=lambda x: (x.get("started_at") or 0, x.get("phase") or ""),
         )
-        bar_list = []
+        bar_list: list[dict[str, Any]] = []
         for c in calls:
             start_ms = c.get("started_at") or 0
             dur = c.get("duration_ms") or 0
@@ -1031,13 +1037,13 @@ def _build_execution_timeline(llm_calls: list) -> dict:
             by_module[mod],
             key=lambda x: (x.get("started_at") or 0, x.get("phase") or ""),
         )
-        bar_list = []
+        bar_list_else: list[dict[str, Any]] = []
         for c in calls:
             start_ms = c.get("started_at") or 0
             dur = c.get("duration_ms") or 0
             left_pct = (start_ms - t_min) / span * 100.0
             width_pct = dur / span * 100.0
-            bar_list.append(
+            bar_list_else.append(
                 {
                     "phase": c.get("phase") or "",
                     "cycle": c.get("cycle"),
@@ -1047,7 +1053,7 @@ def _build_execution_timeline(llm_calls: list) -> dict:
                     "started_at": start_ms,
                 }
             )
-        rows.append({"module": mod, "calls": bar_list})
+        rows.append({"module": mod, "calls": bar_list_else})
 
     return {
         "t_min_ms": t_min,
@@ -1057,14 +1063,14 @@ def _build_execution_timeline(llm_calls: list) -> dict:
     }
 
 
-def _module_summaries(llm_calls: list) -> dict:
+def _module_summaries(llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
     """Build per-module summary: count, total_ms, and a short summary
     from last parsed_summary_json."""
-    by_module: dict[str, list] = defaultdict(list)
+    by_module: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for c in llm_calls:
         mod = (c.get("module") or "unknown").strip() or "unknown"
         by_module[mod].append(c)
-    summaries = {}
+    summaries: dict[str, Any] = {}
     for mod, calls in sorted(by_module.items()):
         total_ms = sum((x.get("duration_ms") or 0) for x in calls)
         last_parsed = None
@@ -1198,7 +1204,7 @@ def _validate_session(token: str | None) -> bool:
 
 def main() -> None:
     """Entry point for moralstack-ui command."""
-    import uvicorn  # type: ignore[import-not-found]
+    import uvicorn
 
     app = create_app()
     uvicorn.run(
@@ -1208,12 +1214,12 @@ def main() -> None:
     )
 
 
-def create_app():
+def create_app() -> FastAPI:
     """Creates the FastAPI app (for uvicorn factory)."""
     app = FastAPI(title="MoralStack Dashboard")
 
     @app.get("/")
-    def root_redirect(request: Request):
+    def root_redirect(request: Request) -> RedirectResponse:
         """Redirect / to /runs (or /login if not authenticated)."""
         token = request.cookies.get(_SESSION_COOKIE)
         if _validate_session(token):
@@ -1221,7 +1227,7 @@ def create_app():
         return RedirectResponse(url="/login", status_code=303)
 
     @app.get("/auth-status")
-    def auth_status():
+    def auth_status() -> dict[str, bool]:
         """Diagnostic: whether UI credentials are configured (no auth required)."""
         return {"credentials_configured": bool(_UI_USERNAME and _UI_PASSWORD)}
 
@@ -1260,7 +1266,7 @@ button:hover{opacity:0.9}
 </div></body></html>"""
 
     @app.get("/login", response_class=HTMLResponse)
-    def login_page(request: Request):
+    def login_page(request: Request) -> HTMLResponse | RedirectResponse:
         """Login form (redirect to /runs if already authenticated)."""
         token = request.cookies.get(_SESSION_COOKIE)
         if _validate_session(token):
@@ -1271,7 +1277,7 @@ button:hover{opacity:0.9}
     def login_post(
         username: str = Form(...),
         password: str = Form(...),
-    ):
+    ) -> HTMLResponse | RedirectResponse:
         """Process login form; set session cookie and redirect to /runs."""
         if not _check_credentials(username, password):
             return HTMLResponse(
@@ -1284,7 +1290,7 @@ button:hover{opacity:0.9}
         return resp
 
     @app.get("/logout")
-    def logout(request: Request):
+    def logout(request: Request) -> RedirectResponse:
         """Clear session and redirect to login."""
         token = request.cookies.get(_SESSION_COOKIE)
         if token and token in _SESSIONS:
@@ -1322,13 +1328,13 @@ button:hover{opacity:0.9}
 
         templates.env.filters["fmtdate"] = _format_ts
 
-        def _filter_module_result(parsed_summary_json, module):
+        def _filter_module_result(parsed_summary_json: Any, module: str) -> str:
             return _call_result_preview(parsed_summary_json, module)
 
         templates.env.filters["module_result"] = _filter_module_result
 
     @app.get("/runs", response_class=HTMLResponse)
-    def list_runs(request: Request):
+    def list_runs(request: Request) -> Response:
         _require_session(request)
         if not get_db_path():
             raise HTTPException(500, "No database configured (MORALSTACK_DB_PATH)")
@@ -1338,7 +1344,7 @@ button:hover{opacity:0.9}
         return HTMLResponse(f"<html><body><h1>Runs</h1><pre>{runs}</pre></body></html>")
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
-    def run_detail(run_id: str, request: Request):
+    def run_detail(run_id: str, request: Request) -> Response:
         _require_session(request)
         if not get_db_path():
             raise HTTPException(500, "No database configured")
@@ -1369,7 +1375,7 @@ button:hover{opacity:0.9}
         return HTMLResponse(f"<html><body><h1>Run {run_id}</h1></body></html>")
 
     @app.get("/runs/{run_id}/requests/{request_id}", response_class=HTMLResponse)
-    def request_detail(run_id: str, request_id: str, request: Request):
+    def request_detail(run_id: str, request_id: str, request: Request) -> Response:
         _require_session(request)
         if not get_db_path():
             raise HTTPException(500, "No database configured")
@@ -1418,12 +1424,12 @@ button:hover{opacity:0.9}
         orchestrator_observability = build_orchestrator_observability(debug_events, traces)
 
         # Group by cycle for flow graph
-        by_cycle_flow = defaultdict(list)
+        by_cycle_flow: defaultdict[int | None, list[dict[str, Any]]] = defaultdict(list)
         for c in all_flow_calls:
             cy = c.get("cycle")
             by_cycle_flow[cy].append(c)
 
-        flow_data_cycles = []
+        flow_data_cycles: list[dict[str, Any]] = []
         for cycle_num, cycle_calls in sorted(by_cycle_flow.items(), key=lambda x: x[0] if x[0] is not None else 0):
             tiers = _group_calls_into_tiers_and_enrich(cycle_calls)
             connector_labels = _compute_connector_labels(tiers)
@@ -1478,7 +1484,7 @@ button:hover{opacity:0.9}
         return HTMLResponse(f"<html><body><h1>Request {request_id}</h1></body></html>")
 
     @app.post("/runs/{run_id}/delete")
-    def do_delete_run(run_id: str, request: Request):
+    def do_delete_run(run_id: str, request: Request) -> dict[str, str]:
         _require_session(request)
         if not get_db_path():
             raise HTTPException(500, "No database configured")
@@ -1487,7 +1493,7 @@ button:hover{opacity:0.9}
         raise HTTPException(500, "Delete failed")
 
     @app.post("/runs/{run_id}/requests/{request_id}/delete")
-    def do_delete_request(run_id: str, request_id: str, request: Request):
+    def do_delete_request(run_id: str, request_id: str, request: Request) -> dict[str, str]:
         _require_session(request)
         if not get_db_path():
             raise HTTPException(500, "No database configured")
@@ -1496,7 +1502,7 @@ button:hover{opacity:0.9}
         raise HTTPException(500, "Delete failed")
 
     @app.get("/runs/{run_id}/requests/{request_id}/export.md", response_class=PlainTextResponse)
-    def export_request_md(run_id: str, request_id: str, request: Request):
+    def export_request_md(run_id: str, request_id: str, request: Request) -> PlainTextResponse:
         _require_session(request)
         if not get_db_path():
             raise HTTPException(500, "No database configured")
@@ -1504,7 +1510,7 @@ button:hover{opacity:0.9}
         return PlainTextResponse(content, media_type="text/markdown")
 
     @app.get("/runs/{run_id}/export_benchmark.md", response_class=PlainTextResponse)
-    def export_benchmark_md(run_id: str, request: Request):
+    def export_benchmark_md(run_id: str, request: Request) -> PlainTextResponse:
         _require_session(request)
         if not get_db_path():
             raise HTTPException(500, "No database configured")

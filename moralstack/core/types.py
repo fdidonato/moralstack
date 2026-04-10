@@ -58,7 +58,7 @@ class PolicyLLMProtocol(Protocol):
     """Protocollo per il Policy LLM."""
 
     def generate(self, prompt: str, system: str = "", config: Any = None) -> Any: ...
-    def rewrite(self, prompt: str, draft: str, guidance: str, config: Any = None) -> Any: ...
+    def rewrite(self, prompt: str, draft: str, guidance: str, system: str = "", config: Any = None) -> Any: ...
     def refuse(self, prompt: str, guidance: str, config: Any = None, language: str | None = None) -> Any: ...
 
 
@@ -72,24 +72,63 @@ class RiskEstimatorProtocol(Protocol):
 class CriticProtocol(Protocol):
     """Protocollo per il Constitutional Critic."""
 
-    def critique(self, request: str, response: str, constitution: Any, principles: Optional[List[Any]] = None) -> Any: ...
+    def critique(
+        self,
+        request: str,
+        response: str,
+        constitution: Any,
+        principles: Optional[List[Any]] = None,
+        request_id: str = "",
+        delib_context: Any = None,
+        context_mode: Literal["full", "thin"] = "full",
+        previous_violations: str = "",
+        previous_guidance: str = "",
+    ) -> Any: ...
     def quick_check(self, request: str, response: str, constitution: Any) -> Any: ...
+    def critique_with_relevant_principles(
+        self,
+        request: str,
+        response: str,
+        domain: str | None = None,
+        request_id: str = "",
+        delib_context: Any = None,
+        context_mode: Literal["full", "thin"] = "full",
+        previous_violations: str = "",
+        previous_guidance: str = "",
+    ) -> Any: ...
 
 
 class SimulatorProtocol(Protocol):
     """Protocollo per il Consequence Simulator."""
 
-    def simulate(self, request: str, response: str, num_scenarios: int = 3) -> Any: ...
+    def simulate(
+        self, request: str, response: str, num_scenarios: int = 3, delib_context: Any = None, context_mode: str = "full"
+    ) -> Any: ...
 
 
 class HindsightProtocol(Protocol):
     """Protocollo per l'Hindsight Evaluator."""
 
     def evaluate_response(self, request: str, response: str, consequences: Optional[List[Any]] = None) -> Any: ...
+    def evaluate(
+        self,
+        request: str,
+        response: str,
+        consequences: List[Any],
+        delib_context: Any = None,
+        context_mode: str = "full",
+    ) -> Any: ...
     def aggregate(self, evaluations: List[Any]) -> Any: ...
 
 
 class PerspectiveEnsembleProtocol(Protocol):
     """Protocollo per il Perspective Ensemble."""
 
-    def evaluate(self, request: str, response: str) -> Any: ...
+    def evaluate(
+        self,
+        request: str,
+        response: str,
+        perspectives: Optional[List[Any]] = None,
+        delib_context: Any = None,
+        context_mode: str = "full",
+    ) -> Any: ...

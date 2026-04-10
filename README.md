@@ -7,6 +7,8 @@
 ![Status](https://img.shields.io/badge/status-research--stage-yellow)
 ![Compliance](https://img.shields.io/badge/benchmark-98.8%25%20compliance-brightgreen)
 ![Model](https://img.shields.io/badge/model-GPT--4o-412991)
+[![CI](https://github.com/fdidonato/moralstack/actions/workflows/ci.yml/badge.svg)](https://github.com/fdidonato/moralstack/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/fdidonato/moralstack/graph/badge.svg)](https://codecov.io/gh/fdidonato/moralstack)
 
 MoralStack is a governance layer that decides **whether**, **how**, and **under what constraints** a response should be
 generated before text generation starts.

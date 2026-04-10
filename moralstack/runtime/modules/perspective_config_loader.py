@@ -7,7 +7,12 @@ to hardcoded defaults. Used when no explicit EnsembleConfig is passed.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from moralstack.utils.env_helpers import get_env_bool, get_env_float, get_env_int, get_env_str
+
+if TYPE_CHECKING:
+    from moralstack.runtime.modules.perspective_module import EnsembleConfig
 
 # Backward-compatible aliases for external consumers
 get_perspective_env_float = get_env_float
@@ -29,7 +34,7 @@ ENV_CONSERVATIVE_ON_FAILURE = "MORALSTACK_PERSPECTIVES_CONSERVATIVE_ON_FAILURE"
 ENV_ENABLE_CACHING = "MORALSTACK_PERSPECTIVES_ENABLE_CACHING"
 
 
-def load_perspective_config_from_env():  # -> EnsembleConfig (imported inside)
+def load_perspective_config_from_env() -> EnsembleConfig:
     """
     Build EnsembleConfig from environment variables.
 

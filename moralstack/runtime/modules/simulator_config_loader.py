@@ -7,7 +7,12 @@ to hardcoded defaults. Used when no explicit SimulatorConfig is passed.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from moralstack.utils.env_helpers import get_env_bool, get_env_float, get_env_int, get_env_str
+
+if TYPE_CHECKING:
+    from moralstack.runtime.modules.simulator_module import SimulatorConfig
 
 # Backward-compatible aliases for external consumers
 get_simulator_env_float = get_env_float
@@ -26,7 +31,7 @@ ENV_USE_SEEDED_GENERATION = "MORALSTACK_SIMULATOR_USE_SEEDED_GENERATION"
 ENV_ENABLE_CACHING = "MORALSTACK_SIMULATOR_ENABLE_CACHING"
 
 
-def load_simulator_config_from_env():  # -> SimulatorConfig (imported inside)
+def load_simulator_config_from_env() -> SimulatorConfig:
     """
     Build SimulatorConfig from environment variables.
 

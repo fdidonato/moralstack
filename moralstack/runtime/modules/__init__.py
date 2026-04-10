@@ -1,3 +1,5 @@
+from typing import Any
+
 """
 MoralStack Runtime Modules.
 
@@ -85,7 +87,7 @@ _LAZY_ATTRS: dict[str, str] = {
 }
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Import lazy per evitare side effects a import-time."""
     if name in _LAZY_ATTRS:
         import importlib

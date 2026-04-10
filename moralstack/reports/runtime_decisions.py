@@ -53,14 +53,20 @@ def _parse_json_field(raw: Any) -> Any:
     return None
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
 def _trace_payload(row: dict[str, Any]) -> dict[str, Any]:
     tj = row.get("trace_json")
     if isinstance(tj, str):
         try:
-            return json.loads(tj)
+            return _as_dict(json.loads(tj))
         except Exception:
             return {}
-    return tj if isinstance(tj, dict) else {}
+    return _as_dict(tj)
 
 
 def _risk_assessment_from_traces(traces: list[dict[str, Any]]) -> dict[str, Any]:
@@ -74,7 +80,7 @@ def _risk_assessment_from_traces(traces: list[dict[str, Any]]) -> dict[str, Any]
     for t in traces:
         if (t.get("stage") or "").strip().upper() == "RISK_ASSESSMENT":
             td = _trace_payload(t)
-            sp = td.get("stage_payload") if isinstance(td.get("stage_payload"), dict) else {}
+            sp = _as_dict(td.get("stage_payload"))
             raw_signals = sp.get("activated_signals")
             activated_signals = [str(x) for x in raw_signals] if isinstance(raw_signals, list) else []
             # Keep signal source coherent across traces for the same request.
@@ -104,7 +110,7 @@ def _request_context_from_traces(traces: list[dict[str, Any]]) -> dict[str, Any]
     for t in traces:
         if (t.get("stage") or "").strip().upper() == "REQUEST_ANALYSIS_CONTEXT":
             td = _trace_payload(t)
-            sp = td.get("stage_payload") if isinstance(td.get("stage_payload"), dict) else {}
+            sp = _as_dict(td.get("stage_payload"))
             if sp:
                 last_sp = dict(sp)
     if last_sp:
@@ -193,7 +199,7 @@ def _cycle_summaries_from_traces(traces: list[dict[str, Any]]) -> list[dict[str,
         if (t.get("stage") or "").strip().upper() != "CYCLE_SUMMARY":
             continue
         td = _trace_payload(t)
-        sp = td.get("stage_payload") if isinstance(td.get("stage_payload"), dict) else {}
+        sp = _as_dict(td.get("stage_payload"))
         if sp:
             out.append(dict(sp))
     out.sort(key=lambda x: int(x.get("cycle") or 0))
@@ -321,7 +327,7 @@ def _trace_activated_signals(traces: list[dict[str, Any]]) -> dict[str, list[str
             if (t.get("stage") or "").strip().upper() != stage:
                 continue
             td = _trace_payload(t)
-            source = td.get("stage_payload") if stage == "RISK_ASSESSMENT" else td
+            source = _as_dict(td.get("stage_payload")) if stage == "RISK_ASSESSMENT" else td
             sigs = source.get("activated_signals")
             if isinstance(sigs, list):
                 out[stage] = [str(x) for x in sigs if str(x).strip()]

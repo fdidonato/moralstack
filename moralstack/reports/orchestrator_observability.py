@@ -18,13 +18,14 @@ def _parse_event_payload(ev: dict[str, Any]) -> dict[str, Any]:
         pj = ev.get("payload")
     if isinstance(pj, str):
         try:
-            return json.loads(pj)
+            parsed = json.loads(pj)
+            return parsed if isinstance(parsed, dict) else {}
         except Exception:
             return {}
     return pj if isinstance(pj, dict) else {}
 
 
-def _final_trace_dict(traces: list | None) -> dict[str, Any]:
+def _final_trace_dict(traces: list[dict[str, Any]] | None) -> dict[str, Any]:
     if not traces:
         return {}
     final_trace = None
@@ -37,7 +38,8 @@ def _final_trace_dict(traces: list | None) -> dict[str, Any]:
     tj = final_trace.get("trace_json", "{}")
     if isinstance(tj, str):
         try:
-            return json.loads(tj)
+            parsed = json.loads(tj)
+            return parsed if isinstance(parsed, dict) else {}
         except Exception:
             return {}
     return tj if isinstance(tj, dict) else {}

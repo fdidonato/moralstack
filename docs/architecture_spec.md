@@ -783,6 +783,7 @@ class ResponseMetadata:
     intent_clarity: str = ""
     misuse_plausibility: str = ""
     actionability_risk: str = ""
+    decision_correctness: dict[str, Any] | None = None  # optional DCF payload (diagnostics.attach_decision_correctness)
 ```
 
 **Construction**: ResponseMetadata must be built via factory methods so all paths produce consistent metadata. Do not construct `ResponseMetadata` manually for request flows. Use:

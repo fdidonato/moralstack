@@ -8,13 +8,26 @@ from typing import Any
 from .loader import print_colored
 from .models import DeliberationTrace, PhaseResult, PhaseType
 
+CallEntry = dict[str, Any]
+CallsMap = dict[str, list[CallEntry]]
+ModuleStats = dict[str, int | float]
+
+
+def _any_to_text(value: Any) -> str:
+    """Converts arbitrary values to text for report rendering."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return str(value)
+
 
 class CallLogger:
     """Logger to track all LLM calls."""
 
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
-        self.calls: list[dict] = []
+        self.calls: list[CallEntry] = []
         self.call_counter = 0
 
     def log_call(
@@ -26,7 +39,7 @@ class CallLogger:
         duration_ms: float = 0.0,
         *,
         model: str | None = None,
-    ):
+    ) -> None:
         """Logs an LLM call."""
         self.call_counter += 1
 
@@ -52,7 +65,7 @@ class CallLogger:
         if self.verbose:
             self._print_call(call_info)
 
-    def _print_call(self, call: dict):
+    def _print_call(self, call: CallEntry) -> None:
         """Prints a formatted call."""
         # Different color for errors
         border_color = "red" if "(ERROR)" in call["action"] else "cyan"
@@ -512,14 +525,14 @@ class MarkdownReportGenerator:
 
         return "\n".join(lines)
 
-    def _build_calls_map(self, call_logger: CallLogger) -> dict:
+    def _build_calls_map(self, call_logger: CallLogger) -> CallsMap:
         """
         Builds a mapping of calls organized by module.
 
         Returns:
             Dict with key = module name, value = list of calls
         """
-        calls_map: dict[str, list[dict[str, Any]]] = {}
+        calls_map: CallsMap = {}
 
         for call in call_logger.calls:
             module = call.get("module", "unknown")
@@ -529,7 +542,7 @@ class MarkdownReportGenerator:
 
         return calls_map
 
-    def _get_policy_call_dict_for_phase(self, phase: PhaseResult, cycle: int, calls_map: dict) -> dict[str, Any] | None:
+    def _get_policy_call_dict_for_phase(self, phase: PhaseResult, cycle: int, calls_map: CallsMap) -> CallEntry | None:
         """Returns the CallLogger entry for policy generation or revision, if any."""
         if phase.phase not in (PhaseType.GENERATION, PhaseType.REVISION):
             return None
@@ -550,7 +563,7 @@ class MarkdownReportGenerator:
             return None
         return None
 
-    def _get_full_data_for_phase(self, phase: PhaseResult, cycle: int, calls_map: dict) -> tuple:
+    def _get_full_data_for_phase(self, phase: PhaseResult, cycle: int, calls_map: CallsMap) -> tuple[str | None, str | None]:
         """
         Retrieves COMPLETE (non-truncated) data for a phase from CallLogger.
 
@@ -601,12 +614,11 @@ class MarkdownReportGenerator:
             rewrite_calls = [c for c in module_calls if "rewrite" in c.get("action", "").lower()]
             if cycle >= 2 and len(rewrite_calls) >= cycle - 1:
                 # Cycle 2 -> rewrite_calls[0], Cycle 3 -> rewrite_calls[1]
-                call = rewrite_calls[cycle - 2] if cycle - 2 < len(rewrite_calls) else None
-                if call:
-                    return (
-                        call.get("full_prompt", call.get("prompt", "")),
-                        call.get("full_response", call.get("response", "")),
-                    )
+                call = rewrite_calls[cycle - 2]
+                return (
+                    _any_to_text(call.get("full_prompt", call.get("prompt", ""))),
+                    _any_to_text(call.get("full_response", call.get("response", ""))),
+                )
             return (None, None)
         else:
             # For critic, simulator, hindsight, perspectives: one call per cycle
@@ -616,8 +628,8 @@ class MarkdownReportGenerator:
         # Retrieve the call
         if call_index < len(module_calls):
             call = module_calls[call_index]
-            full_input = call.get("full_prompt", call.get("prompt", ""))
-            full_output = call.get("full_response", call.get("response", ""))
+            full_input = _any_to_text(call.get("full_prompt", call.get("prompt", "")))
+            full_output = _any_to_text(call.get("full_response", call.get("response", "")))
             return (full_input, full_output)
 
         return (None, None)
@@ -702,7 +714,7 @@ class MarkdownReportGenerator:
             return "No phases recorded"
 
         # Calculate durations per phase type
-        phase_durations = {}
+        phase_durations: dict[str, float] = {}
         for phase in trace.phases:
             name = phase.phase.value
             if name not in phase_durations:
@@ -728,7 +740,7 @@ class MarkdownReportGenerator:
 
         return "\n".join(lines)
 
-    def _calculate_module_stats(self, trace: DeliberationTrace) -> dict:
+    def _calculate_module_stats(self, trace: DeliberationTrace) -> dict[str, ModuleStats]:
         """Calculates statistics per module."""
         stats = {}
 
@@ -837,8 +849,8 @@ class MarkdownReportGenerator:
             duration = call.get("duration_ms", 0)
 
             # Use COMPLETE data
-            full_prompt = call.get("full_prompt", call.get("prompt", ""))
-            full_response = call.get("full_response", call.get("response", ""))
+            full_prompt = _any_to_text(call.get("full_prompt", call.get("prompt", "")))
+            full_response = _any_to_text(call.get("full_response", call.get("response", "")))
 
             lines.append(f"### 📞 Call #{call_id}: {module} → {action}")
             lines.append("")

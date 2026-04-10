@@ -8,9 +8,13 @@ Fail-fast: YAML empty or invalid raises ConstitutionLoadError.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ruamel.yaml import YAML
 
 
-def _get_yaml():
+def _get_yaml() -> "YAML":
     """YAML parser lazy-initialized at first call (avoids side effects at import-time)."""
     from ruamel.yaml import YAML
 
@@ -46,7 +50,7 @@ class ConstitutionLoadError(Exception):
         super().__init__(" | ".join(parts))
 
 
-def load_yaml_file(path: Path) -> dict:
+def load_yaml_file(path: Path) -> dict[str, object]:
     """
     Loads YAML file into a dictionary.
 

@@ -11,7 +11,7 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
@@ -76,7 +76,7 @@ def _extract_keywords_from_description(description: str) -> list[str]:
     return result
 
 
-def _detect_domain(
+def detect_domain(
     query: str,
     policy_llm: Any | None = None,
     domain_descriptions: dict[str, str] | None = None,
@@ -199,7 +199,7 @@ Output ONLY valid JSON, nothing else:"""
 
             # Ritorna dominio se confidence > 0.5 (soglia più bassa per maggiore sensibilità)
             # Log per debug se confidence è bassa ma dominio rilevato
-            if domain:
+            if isinstance(domain, str) and domain:
                 if confidence > 0.5:
                     return domain
                 else:
@@ -576,6 +576,13 @@ class ConstitutionStore:
             cost_tracker=self._cost_tracker,
         )
 
+    def _get_available_domains(self) -> list[str]:
+        """
+        Internal provider hook for ConstitutionRetriever protocol compatibility.
+        Mirrors public get_available_domains().
+        """
+        return self.get_available_domains()
+
     def set_cost_tracker(self, tracker: Any | None) -> None:
         """Imposta il TokenCostTracker per tracciare i costi (domain agents e prefilter)."""
         self._cost_tracker = tracker
@@ -586,7 +593,7 @@ class ConstitutionStore:
         """Directory di configurazione."""
         return self._config_dir
 
-    def _get_available_domains(self) -> list[str]:
+    def get_available_domains(self) -> list[str]:
         """
         Ottiene lista di domini disponibili (overlay esistenti).
 
@@ -628,7 +635,7 @@ class ConstitutionStore:
         )
 
         # Carica descrizioni dagli overlay
-        for domain_name in self._get_available_domains():
+        for domain_name in self.get_available_domains():
             try:
                 overlay = self.load_overlay(domain_name)
                 if overlay.description:
@@ -668,7 +675,7 @@ class ConstitutionStore:
         ]
 
         # Carica keywords dagli overlay
-        for domain_name in self._get_available_domains():
+        for domain_name in self.get_available_domains():
             try:
                 overlay = self.load_overlay(domain_name)
                 if overlay.keywords:
@@ -726,10 +733,10 @@ class ConstitutionStore:
         try:
             core = CoreYAML.model_validate(data)
         except ValidationError as e:
-            err = cast(dict[str, Any], e.errors()[0] if e.errors() else {})  # type: ignore[typeddict-item]
-            loc = ".".join(str(x) for x in err.get("loc", []))
+            first_error: Any = e.errors()[0] if e.errors() else None
+            loc = ".".join(str(x) for x in (first_error.get("loc", []) if first_error else []))
             raise ConstitutionLoadError(
-                err.get("msg", str(e)),
+                str(first_error.get("msg")) if first_error else str(e),
                 path=core_path,
                 field=loc or "principles",
                 reason="Validazione Pydantic fallita",
@@ -786,10 +793,10 @@ class ConstitutionStore:
         try:
             oy = OverlayYAML.model_validate(data)
         except ValidationError as e:
-            err = cast(dict[str, Any], e.errors()[0] if e.errors() else {})  # type: ignore[typeddict-item]
-            loc = ".".join(str(x) for x in err.get("loc", []))
+            first_error: Any = e.errors()[0] if e.errors() else None
+            loc = ".".join(str(x) for x in (first_error.get("loc", []) if first_error else []))
             raise ConstitutionLoadError(
-                err.get("msg", str(e)),
+                str(first_error.get("msg")) if first_error else str(e),
                 path=overlay_path,
                 field=loc or "additional_principles",
                 reason="Validazione Pydantic fallita",
@@ -881,7 +888,7 @@ class ConstitutionStore:
 
     def has_excluded_domains(self) -> bool:
         """True if at least one overlay has excluded=true. [NO LLM] Pure Python gate."""
-        for d in self._get_available_domains():
+        for d in self.get_available_domains():
             ov = self.load_overlay(d)
             if getattr(ov, "excluded", False):
                 return True
@@ -889,7 +896,7 @@ class ConstitutionStore:
 
     def get_excluded_domains(self) -> list[str]:
         """List of domain names with excluded=true. [NO LLM] For CLI startup display."""
-        return [d for d in self._get_available_domains() if getattr(self.load_overlay(d), "excluded", False)]
+        return [d for d in self.get_available_domains() if getattr(self.load_overlay(d), "excluded", False)]
 
     def get_debug_info(self) -> dict[str, Any]:
         """

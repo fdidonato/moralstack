@@ -28,7 +28,7 @@ class ObservabilityWriteQueue:
     """
 
     def __init__(self, maxsize: int = 100_000) -> None:
-        self._queue: queue.Queue = queue.Queue(maxsize=maxsize)
+        self._queue: queue.Queue[Any] = queue.Queue(maxsize=maxsize)
         self._thread = threading.Thread(
             target=self._worker,
             daemon=True,

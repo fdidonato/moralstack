@@ -12,7 +12,7 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Union, cast
 
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.delib_context import DelibContext
@@ -71,6 +71,9 @@ from moralstack.orchestration.types import (
 from moralstack.persistence.sink import persist_orchestration_event
 from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace, normalize_trace_fields
 from moralstack.runtime.trace.trace_stages import CYCLE_SUMMARY, REQUEST_ANALYSIS_CONTEXT
+
+# Matches CriticProtocol / module context_mode for thin vs full prompts.
+DelibContextMode = Literal["full", "thin"]
 
 _LOG = logging.getLogger(__name__)
 
@@ -283,11 +286,11 @@ class DeliberationRunner:
     def _effective_max_cycles(self, risk_estimation: RiskEstimationProtocol) -> int:
         risk_score = risk_estimation.score if hasattr(risk_estimation, "score") else 0.5
         if risk_score >= self.config.risk_thresholds.low:
-            return self.config.max_deliberation_cycles
+            return int(self.config.max_deliberation_cycles)
         rc = getattr(risk_estimation, "risk_category", None)
         rc_val = getattr(rc, "value", str(rc or "")).strip().lower()
         if rc_val in ("sensitive", "morally_nuanced"):
-            return self.config.max_deliberation_cycles
+            return int(self.config.max_deliberation_cycles)
         return 1
 
     def _get_executor(self) -> ThreadPoolExecutor:
@@ -1420,10 +1423,10 @@ class DeliberationRunner:
         request: ProcessedRequest,
         risk_estimation: RiskEstimationProtocol | None,
         request_analysis: RequestAnalysisContext | None = None,
-    ) -> tuple[DelibContext | None, str, int]:
+    ) -> tuple[DelibContext | None, DelibContextMode, int]:
         """Build DelibContext for thin prompts in cycle 2+ and compute effective max_cycles."""
         delib_context = None
-        context_mode: str = "full"
+        context_mode: DelibContextMode = "full"
         if self.config.enable_thin_mode and state.cycle > 1:
             context_mode = "thin"
         if risk_estimation is not None:
@@ -1460,7 +1463,7 @@ class DeliberationRunner:
         request: ProcessedRequest,
         delib_context: DelibContext | None,
         *,
-        context_mode: str = "full",
+        context_mode: DelibContextMode = "full",
         max_cycles: int = 1,
     ) -> DeliberationState:
         """Run hindsight evaluation when enabled, available, and not gated."""
@@ -1833,7 +1836,7 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None,
-        context_mode: str,
+        context_mode: DelibContextMode,
         gate: SimulatorGateDecision,
         emit_gate_decision: bool = True,
     ) -> DeliberationState:
@@ -1884,7 +1887,7 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: str = "full",
+        context_mode: DelibContextMode = "full",
         risk_estimation: RiskEstimationProtocol | None = None,
         max_cycles: int = 2,
         constitution: Any | None = None,
@@ -2075,7 +2078,7 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: str = "full",
+        context_mode: DelibContextMode = "full",
         risk_estimation: RiskEstimationProtocol | None = None,
         max_cycles: int = 2,
         constitution: Any | None = None,
@@ -2092,7 +2095,9 @@ class DeliberationRunner:
         if self.config.enable_dynamic_parallel_scheduler:
             selection = self._select_parallel_strategy(risk_estimation=risk_estimation, state=state)
         else:
-            legacy = "full_parallel" if self.config.parallel_critic_with_modules else "critic_gated"
+            legacy: Literal["full_parallel", "critic_gated"] = (
+                "full_parallel" if self.config.parallel_critic_with_modules else "critic_gated"
+            )
             selection = ParallelStrategySelection(
                 strategy=legacy,
                 reason_codes=("LEGACY_STATIC_PARALLEL_CRITIC_CONFIG",),
@@ -2132,7 +2137,7 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: str = "full",
+        context_mode: DelibContextMode = "full",
         risk_estimation: RiskEstimationProtocol | None = None,
         max_cycles: int = 2,
         constitution: Any | None = None,
@@ -2241,7 +2246,7 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: str = "full",
+        context_mode: DelibContextMode = "full",
         risk_estimation: RiskEstimationProtocol | None = None,
         max_cycles: int = 2,
         constitution: Any | None = None,
@@ -2357,12 +2362,20 @@ class DeliberationRunner:
     def _apply_constitutional_perspective_override(self, state: DeliberationState) -> None:
         """Applica override costituzionale sulle prospettive quando il Critic
         rileva violazioni HARD."""
-        from moralstack.runtime.modules.perspective_module import apply_constitutional_override
+        from moralstack.orchestration.types import EnsembleResultProtocol
+        from moralstack.runtime.modules.perspective_module import (
+            EnsembleResult,
+            PerspectiveAggregation,
+            apply_constitutional_override,
+        )
 
         aggregation = state._perspectives_aggregation
         critic_result = state.last_critique
         if aggregation is not None and critic_result is not None:
-            state._perspectives_aggregation = apply_constitutional_override(aggregation, critic_result)
+            concrete = cast(Union[PerspectiveAggregation, EnsembleResult], aggregation)
+            state._perspectives_aggregation = cast(
+                EnsembleResultProtocol, apply_constitutional_override(concrete, critic_result)
+            )
 
     def _soft_revision_pass(
         self,
@@ -2601,7 +2614,7 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: str = "full",
+        context_mode: DelibContextMode = "full",
         constitution: Any | None = None,
         request_analysis: RequestAnalysisContext | None = None,
     ) -> DeliberationState:
@@ -2632,21 +2645,22 @@ class DeliberationRunner:
                 and len(request_analysis.relevant_principles) > 0
                 and getattr(self.critic, "critique", None) is not None
             )
+            precomputed_analysis = request_analysis if request_analysis is not None else None
             const_for_precomputed: Any | None = None
-            if use_precomputed:
-                const_for_precomputed = request_analysis.constitution
+            if use_precomputed and precomputed_analysis is not None:
+                const_for_precomputed = precomputed_analysis.constitution
                 if const_for_precomputed is None:
                     const_for_precomputed = constitution
                 if const_for_precomputed is None and self.constitution_store is not None:
                     const_for_precomputed = get_constitution_safe(self.constitution_store, request.get_domain())
                 if const_for_precomputed is None:
                     use_precomputed = False
-            if use_precomputed and const_for_precomputed is not None:
+            if use_precomputed and const_for_precomputed is not None and precomputed_analysis is not None:
                 critique = self.critic.critique(
                     request.prompt,
                     state.draft_response,
                     const_for_precomputed,
-                    principles=list(request_analysis.relevant_principles),
+                    principles=list(precomputed_analysis.relevant_principles),
                     request_id=request.request_id or "",
                     delib_context=delib_context,
                     context_mode=context_mode,
@@ -2661,11 +2675,11 @@ class DeliberationRunner:
                         stage="deliberation",
                         component="critic",
                         event_type=RELEVANT_PRINCIPLES_REUSED,
-                        decision=str(len(request_analysis.relevant_principles)),
+                        decision=str(len(precomputed_analysis.relevant_principles)),
                         status="ok",
                         payload={
                             "reuse_target": "critic",
-                            "principles_count": len(request_analysis.relevant_principles),
+                            "principles_count": len(precomputed_analysis.relevant_principles),
                             "cycle": state.cycle,
                             "request_scoped": True,
                         },
@@ -2756,7 +2770,7 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: str = "full",
+        context_mode: DelibContextMode = "full",
     ) -> DeliberationState:
         if self.simulator is None:
             return state
@@ -2871,7 +2885,7 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: str = "full",
+        context_mode: DelibContextMode = "full",
     ) -> DeliberationState:
         if self.hindsight is None:
             return state
@@ -2982,7 +2996,7 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: str = "full",
+        context_mode: DelibContextMode = "full",
     ) -> DeliberationState:
         if self.perspectives is None:
             return state

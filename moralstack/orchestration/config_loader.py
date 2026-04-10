@@ -7,7 +7,12 @@ to hardcoded defaults. Used when no explicit OrchestratorConfig is passed.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from moralstack.utils.env_helpers import get_env_bool, get_env_float, get_env_int, get_env_str
+
+if TYPE_CHECKING:
+    from moralstack.orchestration.types import OrchestratorConfig
 
 # Backward-compatible aliases for external consumers
 get_orchestrator_env_float = get_env_float
@@ -48,7 +53,7 @@ ENV_CYCLE1_EARLY_CONVERGENCE_MIN_PER_PERSPECTIVE_APPROVAL = (
 )
 
 
-def load_orchestrator_config_from_env():  # -> OrchestratorConfig (imported inside)
+def load_orchestrator_config_from_env() -> OrchestratorConfig:
     """
     Build OrchestratorConfig from environment variables.
 

@@ -1,3 +1,5 @@
+from typing import Any
+
 """
 MoralStack Runtime.
 
@@ -16,7 +18,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Import lazy per evitare side effects a import-time."""
     if name in __all__:
         import importlib

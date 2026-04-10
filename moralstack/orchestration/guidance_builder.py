@@ -52,13 +52,18 @@ def _append_hindsight_guidance(guidance_parts: list[str], state: DeliberationSta
     """Append hindsight lines (legacy behavior when signal filter is off or bypassed)."""
     if state.hindsight:
         hindsight_feedback = None
-        if getattr(state.hindsight, "feedback", None):
-            hindsight_feedback = state.hindsight.feedback
-        elif getattr(state.hindsight, "suggestions", None):
-            hindsight_feedback = "; ".join(state.hindsight.suggestions[:3])
-        elif getattr(state.hindsight, "reasoning", None):
-            if getattr(state.hindsight, "score", 1.0) < 0.7:
-                hindsight_feedback = state.hindsight.reasoning
+        h = state.hindsight
+        fb = getattr(h, "feedback", None)
+        if fb:
+            hindsight_feedback = fb
+        else:
+            suggestions = getattr(h, "suggestions", None)
+            if suggestions:
+                hindsight_feedback = "; ".join(suggestions[:3])
+            else:
+                reasoning = getattr(h, "reasoning", None)
+                if reasoning and float(getattr(h, "score", 1.0)) < 0.7:
+                    hindsight_feedback = reasoning
         if hindsight_feedback:
             guidance_parts.append(f"[HINDSIGHT] {hindsight_feedback}")
     if state.hindsight_score < 0.7:

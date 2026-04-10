@@ -7,7 +7,12 @@ to hardcoded defaults. Used when no explicit HindsightConfig is passed.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from moralstack.utils.env_helpers import get_env_bool, get_env_float, get_env_int, get_env_str
+
+if TYPE_CHECKING:
+    from moralstack.runtime.modules.hindsight_module import HindsightConfig
 
 # Backward-compatible aliases for external consumers
 get_hindsight_env_float = get_env_float
@@ -30,7 +35,7 @@ ENV_USE_BATCH_EVALUATION = "MORALSTACK_HINDSIGHT_USE_BATCH_EVALUATION"
 ENV_ENABLE_CACHING = "MORALSTACK_HINDSIGHT_ENABLE_CACHING"
 
 
-def load_hindsight_config_from_env():  # -> HindsightConfig (imported inside)
+def load_hindsight_config_from_env() -> HindsightConfig:
     """
     Build HindsightConfig from environment variables.
 

@@ -14,7 +14,8 @@ from typing import Any, Literal
 from pydantic import ValidationError as PydanticValidationError
 
 from moralstack.constitution.prompt_formatter import format_principles_compact
-from moralstack.constitution.store import Constitution, ConstitutionStore, Principle
+from moralstack.constitution.schema import Constitution, Principle
+from moralstack.constitution.store import ConstitutionStore
 from moralstack.core.types import PolicyLLMProtocol, Violation
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
@@ -574,6 +575,14 @@ class LLMConstitutionalCritic:
 
         Returns:
             CriticReport
+            :param response:
+            :param request:
+            :param domain:
+            :param previous_guidance:
+            :param previous_violations:
+            :param context_mode:
+            :param delib_context:
+            :param request_id:
         """
         if self.store is None:
             raise ValueError("ConstitutionStore required for this method")
