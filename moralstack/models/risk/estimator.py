@@ -753,6 +753,8 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                             "risk_score_max": 0.45,
                             "operational_risk_max": "LOW",
                             "risk_policy_action_max": "DELIBERATE",
+                            "misuse_plausibility_max": "MEDIUM",
+                            "actionability_risk_max": "MEDIUM",
                         },
                     }
                 ),

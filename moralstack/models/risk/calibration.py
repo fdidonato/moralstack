@@ -631,6 +631,22 @@ def _apply_calibration_guard(merged: dict[str, Any]) -> dict[str, Any]:
         merged["risk_policy_action"] = "DELIBERATE"
         guard_notes.append("risk_policy_action DENY→DELIBERATE")
 
+    # Cap misuse_plausibility: HIGH → MEDIUM
+    # Without this cap, normative_refuse_guards in decision_service.py can
+    # trigger a terminal REFUSE on FAST_PATH when both misuse_plausibility
+    # and actionability_risk are HIGH, even though the intent estimator
+    # confirmed a benign request type (e.g. support_request).
+    mp_raw = str(merged.get("misuse_plausibility", "")).upper().strip()
+    if mp_raw == "HIGH":
+        merged["misuse_plausibility"] = "MEDIUM"
+        guard_notes.append("misuse_plausibility HIGH→MEDIUM")
+
+    # Cap actionability_risk: HIGH → MEDIUM
+    ar_raw = str(merged.get("actionability_risk", "")).upper().strip()
+    if ar_raw == "HIGH":
+        merged["actionability_risk"] = "MEDIUM"
+        guard_notes.append("actionability_risk HIGH→MEDIUM")
+
     if not guard_notes:
         # No actual capping needed — metrics were already within bounds
         return merged

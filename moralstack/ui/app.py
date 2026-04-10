@@ -1265,19 +1265,19 @@ button:hover{opacity:0.9}
 </form>
 </div></body></html>"""
 
-    @app.get("/login", response_class=HTMLResponse)
-    def login_page(request: Request) -> HTMLResponse | RedirectResponse:
+    @app.get("/login", response_class=HTMLResponse, response_model=None)
+    def login_page(request: Request) -> Response:
         """Login form (redirect to /runs if already authenticated)."""
         token = request.cookies.get(_SESSION_COOKIE)
         if _validate_session(token):
             return RedirectResponse(url="/runs", status_code=303)
         return HTMLResponse(_LOGIN_HTML)
 
-    @app.post("/login")
+    @app.post("/login", response_model=None)
     def login_post(
         username: str = Form(...),
         password: str = Form(...),
-    ) -> HTMLResponse | RedirectResponse:
+    ) -> Response:
         """Process login form; set session cookie and redirect to /runs."""
         if not _check_credentials(username, password):
             return HTMLResponse(
