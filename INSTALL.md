@@ -50,6 +50,73 @@ pip install -r requirements.txt
 Note: `requirements.txt` installs dependencies only; it does not register the `moralstack` CLI. Use `pip install -e .`
 or `install.py` for that.
 
+## SDK Installation
+
+The Python SDK (`govern()`) is included in the base package — no extra install step needed. All required dependencies (`openai`, `pydantic`, `ruamel.yaml`, etc.) are already in `[project.dependencies]`.
+
+```bash
+pip install -e .
+```
+
+The `[ui]` extra is only needed for the web dashboard (`moralstack-ui`). The `[dev]` extra is only needed for running tests and linting.
+
+### SDK Quickstart
+
+```python
+from moralstack import govern
+from openai import OpenAI
+
+# Minimum: OPENAI_API_KEY must be set in the environment
+client = govern(OpenAI())
+
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Explain recursion in programming."}],
+)
+
+print(response.content)                               # generated text (or refusal)
+print(response.governance_metadata.final_action)     # NORMAL_COMPLETE | SAFE_COMPLETE | REFUSE
+print(response.governance_metadata.risk_score)       # 0.0–1.0
+```
+
+### SDK Configuration via GovernanceConfig
+
+All SDK parameters are optional and can be overridden programmatically:
+
+```python
+from moralstack import govern, GovernanceConfig
+from openai import OpenAI
+
+client = govern(
+    OpenAI(),
+    config=GovernanceConfig(
+        # Pipeline credentials (default: from env)
+        api_key="sk-...",            # OPENAI_API_KEY
+        model="gpt-4o",             # OPENAI_MODEL
+        base_url=None,              # OPENAI_BASE_URL
+
+        # Domain-specific governance
+        domain_overlay="healthcare",  # enforce a named domain overlay
+
+        # Pipeline tuning
+        max_deliberation_cycles=2,
+        timeout_ms=600_000,
+
+        # Failure handling
+        failure_policy="refuse",     # "refuse" (default) | "passthrough"
+
+        # Observability
+        observability_mode="file_only",  # "off" | "file_only" | "db_only" | "dual"
+        jsonl_dir="logs/audit",
+
+        # Session tracking (multi-turn)
+        enable_session_tracking=True,
+    ),
+)
+```
+
+The pipeline uses its **own** internal LLM client for deliberation (configured via `GovernanceConfig`). The `OpenAI()` client you pass to `govern()` is used only for final text generation.
+
 ## Configuration
 
 All configuration can be managed via a `.env` file in the project root.

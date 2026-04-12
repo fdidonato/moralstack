@@ -20,6 +20,7 @@ generated before text generation starts.
 - [Architecture](#architecture)
 - [Benchmark Results](#benchmark-results)
 - [Quickstart](#quickstart)
+- [SDK Usage](#sdk-usage)
 - [Configuration](#configuration)
 - [Running the Benchmark](#running-the-benchmark)
 - [Web UI](#web-ui)
@@ -64,6 +65,7 @@ High-level flow:
 
 Main packages:
 
+- `moralstack/sdk/` — Python SDK (`govern()`, `GovernedClient`, `GovernanceConfig`)
 - `moralstack/runtime/` — orchestration runtime
 - `moralstack/orchestration/` — controller, routing, deliberation services
 - `moralstack/models/risk/` — risk estimation and calibration
@@ -176,6 +178,93 @@ Useful commands:
 - `moralstack --mock`
 
 Legacy wrapper (same runtime entrypoint): `python scripts/mstack_run.py`
+
+## SDK Usage
+
+Use MoralStack as a governance wrapper around your existing OpenAI client — no server, no HTTP, no separate process.
+
+```python
+from moralstack import govern
+from openai import OpenAI
+
+client = govern(OpenAI())
+
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "How do I pick a lock?"}],
+)
+
+print(response.content)
+# I'm unable to assist with that request.
+
+print(response.governance_metadata.final_action)
+# REFUSE
+
+print(response.governance_metadata.risk_score)
+# 0.87
+```
+
+`govern()` wraps any OpenAI-compatible client. All non-`chat.completions.create()` calls pass through transparently (`client.models.list()`, `client.files.*`, etc.).
+
+### Decision routing
+
+| `final_action` | What happens |
+|---|---|
+| `NORMAL_COMPLETE` | Request passes unchanged to your OpenAI client |
+| `SAFE_COMPLETE` | Governance constraints injected into system prompt, then calls your client |
+| `REFUSE` | OpenAI is **not called** — refusal text returned directly |
+
+### Governance metadata
+
+Every response carries `response.governance_metadata`:
+
+```python
+meta = response.governance_metadata
+
+meta.final_action        # NORMAL_COMPLETE | SAFE_COMPLETE | REFUSE
+meta.risk_score          # 0.0 (benign) — 1.0 (harmful)
+meta.risk_category       # CLEARLY_BENIGN | SENSITIVE | CLEARLY_HARMFUL
+meta.path                # FAST_PATH | DELIBERATIVE_PATH
+meta.reason_codes        # ["DUAL_USE", "SENSITIVE_DOMAIN", ...]
+meta.triggered_principles  # constitution principles activated
+meta.decision_reason     # human-readable explanation
+meta.conversation_id     # session tracking (multi-turn)
+meta.turn_index          # turn counter within session
+```
+
+### Configuration
+
+```python
+from moralstack import govern, GovernanceConfig
+from openai import OpenAI
+
+client = govern(
+    OpenAI(),
+    config=GovernanceConfig(
+        domain_overlay="healthcare",     # enforce a specific domain overlay
+        failure_policy="passthrough",    # on pipeline error: call OpenAI directly (unsafe)
+        observability_mode="file_only",  # write JSONL audit trail
+        jsonl_dir="logs/audit",
+    ),
+)
+```
+
+All parameters default to sensible values. Minimum required: `OPENAI_API_KEY` in environment.
+
+### Streaming
+
+```python
+for chunk in client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "..."}],
+    stream=True,
+):
+    print(chunk.choices[0].delta.content or "", end="", flush=True)
+```
+
+Governance deliberation happens **before** streaming starts. If `REFUSE`, a single synthetic chunk is yielded with the refusal text.
+
+---
 
 ## Configuration
 
