@@ -94,7 +94,7 @@ def test_refuse_route_returns_before_speculative_worker_finishes(
     with (
         patch("moralstack.orchestration.controller.decide_action", return_value=(refuse_decision, explanation)),
         patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
-        patch("moralstack.orchestration.controller.generate_llm_safe_refusal", return_value="[REFUSE]"),
+        patch("moralstack.orchestration.refusal_handler.generate_llm_safe_refusal", return_value="[REFUSE]"),
     ):
         req = ProcessedRequest(prompt="blocked speculative draft", request_id="req-lazy-spec")
         result = ctrl.process(req)

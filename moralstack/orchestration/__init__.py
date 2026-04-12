@@ -17,28 +17,38 @@ Lazy imports: i moduli concreti vengono caricati solo al primo accesso.
 
 __all__ = [
     "Decision",
+    "DefaultEventEmitter",
     "DeliberationState",
+    "EventEmitter",
     "FinalResponse",
+    "NullEventEmitter",
     "OrchestrationController",
     "OrchestratorConfig",
     "OrchestratorResult",
     "ProcessedRequest",
+    "RefusalHandler",
     "ResponseMetadata",
     "RiskThresholds",
     "Trace",
+    "evaluate_deliberation_override",
 ]
 
 _LAZY_ATTRS: dict[str, str] = {
     "Decision": "moralstack.orchestration.types",
+    "DefaultEventEmitter": "moralstack.orchestration.default_event_emitter",
     "DeliberationState": "moralstack.orchestration.types",
+    "EventEmitter": "moralstack.orchestration.event_emitter",
     "FinalResponse": "moralstack.orchestration.types",
+    "NullEventEmitter": "moralstack.orchestration.null_event_emitter",
     "OrchestratorConfig": "moralstack.orchestration.types",
     "OrchestratorResult": "moralstack.orchestration.types",
     "ProcessedRequest": "moralstack.orchestration.types",
+    "RefusalHandler": "moralstack.orchestration.refusal_handler",
     "ResponseMetadata": "moralstack.orchestration.types",
     "RiskThresholds": "moralstack.orchestration.types",
     "Trace": "moralstack.orchestration.trace",
     "OrchestrationController": "moralstack.orchestration.controller",
+    "evaluate_deliberation_override": "moralstack.orchestration.deliberation_override",
 }
 
 

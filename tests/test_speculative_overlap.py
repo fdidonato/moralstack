@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any
 
 import pytest
 
@@ -15,6 +16,23 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
 from moralstack.orchestration.speculative_overlap import SpeculativeOverlapHandle
 
 
+class _RecordingEmitter:
+    """Captures orchestration events and LLM call payloads for assertions."""
+
+    def __init__(self) -> None:
+        self.orchestration_events: list[dict[str, Any]] = []
+        self.llm_calls: list[dict[str, Any]] = []
+
+    def emit_orchestration_event(self, **kwargs: Any) -> None:
+        self.orchestration_events.append(dict(kwargs))
+
+    def emit_llm_call(self, **kwargs: Any) -> None:
+        self.llm_calls.append(dict(kwargs))
+
+    def emit_decision_trace(self, **kwargs: Any) -> None:
+        return None
+
+
 @pytest.fixture
 def executor() -> ThreadPoolExecutor:
     ex = ThreadPoolExecutor(max_workers=1)
@@ -23,20 +41,9 @@ def executor() -> ThreadPoolExecutor:
 
 
 def test_join_for_consumer_emits_events_and_persists_used(
-    monkeypatch: pytest.MonkeyPatch,
     executor: ThreadPoolExecutor,
 ) -> None:
-    events: list[dict] = []
-    llm_calls: list[dict] = []
-
-    monkeypatch.setattr(
-        "moralstack.orchestration.speculative_overlap.persist_orchestration_event",
-        lambda **kw: events.append(kw),
-    )
-    monkeypatch.setattr(
-        "moralstack.orchestration.speculative_overlap.async_persist_llm_call",
-        lambda **kw: llm_calls.append(kw),
-    )
+    emitter = _RecordingEmitter()
 
     fut: Future[tuple[str | None, dict | None]] = Future()
     fut.set_result(
@@ -55,26 +62,19 @@ def test_join_for_consumer_emits_events_and_persists_used(
         spec_future=fut,
         executor=executor,
         spec_started_at_ms=0,
+        event_emitter=emitter,
     )
     assert h.join_for_consumer("benign", "benign_fast_path") == "draft"
+    events = emitter.orchestration_events
     assert any(e.get("event_type") == SPECULATIVE_JOIN_REQUIRED for e in events)
     assert any(e.get("event_type") == SPECULATIVE_RESULT_USED for e in events)
     assert not any(e.get("event_type") == SPECULATIVE_RESULT_DISCARDED for e in events)
-    assert llm_calls and llm_calls[0].get("call_outcome") == "used"
+    assert emitter.llm_calls and emitter.llm_calls[0].get("call_outcome") == "used"
     h.shutdown_executor()
 
 
-def test_join_for_consumer_exception_emits_discarded(monkeypatch: pytest.MonkeyPatch, executor: ThreadPoolExecutor) -> None:
-    events: list[dict] = []
-
-    monkeypatch.setattr(
-        "moralstack.orchestration.speculative_overlap.persist_orchestration_event",
-        lambda **kw: events.append(kw),
-    )
-    monkeypatch.setattr(
-        "moralstack.orchestration.speculative_overlap.async_persist_llm_call",
-        lambda **kw: None,
-    )
+def test_join_for_consumer_exception_emits_discarded(executor: ThreadPoolExecutor) -> None:
+    emitter = _RecordingEmitter()
 
     fut: Future[tuple[str | None, dict | None]] = Future()
     fut.set_exception(RuntimeError("boom"))
@@ -84,8 +84,10 @@ def test_join_for_consumer_exception_emits_discarded(monkeypatch: pytest.MonkeyP
         spec_future=fut,
         executor=executor,
         spec_started_at_ms=0,
+        event_emitter=emitter,
     )
     assert h.join_for_consumer("fast_path", "run_fast_path") is None
+    events = emitter.orchestration_events
     assert any(e.get("event_type") == SPECULATIVE_RESULT_DISCARDED for e in events)
     assert any(
         (e.get("payload") or {}).get("reason") == "speculative_failed"
@@ -95,17 +97,8 @@ def test_join_for_consumer_exception_emits_discarded(monkeypatch: pytest.MonkeyP
     h.shutdown_executor()
 
 
-def test_abandon_skips_join_and_emits_events(monkeypatch: pytest.MonkeyPatch, executor: ThreadPoolExecutor) -> None:
-    events: list[dict] = []
-
-    monkeypatch.setattr(
-        "moralstack.orchestration.speculative_overlap.persist_orchestration_event",
-        lambda **kw: events.append(kw),
-    )
-    monkeypatch.setattr(
-        "moralstack.orchestration.speculative_overlap.async_persist_llm_call",
-        lambda **kw: None,
-    )
+def test_abandon_skips_join_and_emits_events(executor: ThreadPoolExecutor) -> None:
+    emitter = _RecordingEmitter()
 
     fut: Future[tuple[str | None, dict | None]] = Future()
     fut.set_result(
@@ -120,25 +113,19 @@ def test_abandon_skips_join_and_emits_events(monkeypatch: pytest.MonkeyPatch, ex
         spec_future=fut,
         executor=executor,
         spec_started_at_ms=0,
+        event_emitter=emitter,
     )
     h.abandon("refuse_path", "refuse")
+    events = emitter.orchestration_events
     assert any(e.get("event_type") == SPECULATIVE_JOIN_SKIPPED for e in events)
     assert any(e.get("event_type") == SPECULATIVE_RESULT_DISCARDED for e in events)
     h.shutdown_executor()
 
 
 def test_join_for_consumer_idempotent_second_call_returns_none(
-    monkeypatch: pytest.MonkeyPatch,
     executor: ThreadPoolExecutor,
 ) -> None:
-    monkeypatch.setattr(
-        "moralstack.orchestration.speculative_overlap.persist_orchestration_event",
-        lambda **kw: None,
-    )
-    monkeypatch.setattr(
-        "moralstack.orchestration.speculative_overlap.async_persist_llm_call",
-        lambda **kw: None,
-    )
+    emitter = _RecordingEmitter()
 
     fut: Future[tuple[str | None, dict | None]] = Future()
     fut.set_result(("once", None))
@@ -148,6 +135,7 @@ def test_join_for_consumer_idempotent_second_call_returns_none(
         spec_future=fut,
         executor=executor,
         spec_started_at_ms=0,
+        event_emitter=emitter,
     )
     assert h.join_for_consumer("benign", "x") == "once"
     assert h.join_for_consumer("benign", "x") is None

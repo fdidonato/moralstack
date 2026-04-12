@@ -12,14 +12,14 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
+from moralstack.orchestration.default_event_emitter import DefaultEventEmitter
+from moralstack.orchestration.event_emitter import EventEmitter
 from moralstack.orchestration.orchestration_event_taxonomy import (
     SPECULATIVE_JOIN_REQUIRED,
     SPECULATIVE_JOIN_SKIPPED,
     SPECULATIVE_RESULT_DISCARDED,
     SPECULATIVE_RESULT_USED,
 )
-from moralstack.persistence.sink import persist_orchestration_event
-from moralstack.persistence.write_queue import async_persist_llm_call
 
 _LOG = logging.getLogger(__name__)
 
@@ -38,11 +38,13 @@ class SpeculativeOverlapHandle:
         spec_future: Future[tuple[str | None, dict[str, Any] | None]],
         executor: ThreadPoolExecutor,
         spec_started_at_ms: int,
+        event_emitter: EventEmitter | None = None,
     ) -> None:
         self.risk_estimation = risk_estimation
         self._spec_future = spec_future
         self._executor = executor
         self._spec_started_at_ms = spec_started_at_ms
+        self._events: EventEmitter = event_emitter if event_emitter is not None else DefaultEventEmitter()
         self._joined = False
         self._abandoned = False
 
@@ -57,7 +59,7 @@ class SpeculativeOverlapHandle:
 
     def _emit(self, event_type: str, payload: dict[str, Any]) -> None:
         try:
-            persist_orchestration_event(
+            self._events.emit_orchestration_event(
                 stage="orchestration",
                 component="speculative",
                 event_type=event_type,
@@ -102,7 +104,7 @@ class SpeculativeOverlapHandle:
             try:
                 merged = dict(meta)
                 merged["call_outcome"] = "used"
-                async_persist_llm_call(**merged)
+                self._events.emit_llm_call(**merged)
             except Exception:
                 _LOG.debug("persist speculative used failed", exc_info=True)
         if draft:
@@ -158,7 +160,7 @@ class SpeculativeOverlapHandle:
                     try:
                         merged = dict(meta)
                         merged["call_outcome"] = "discarded"
-                        async_persist_llm_call(**merged)
+                        self._events.emit_llm_call(**merged)
                     except Exception:
                         _LOG.debug("persist speculative discarded failed", exc_info=True)
                 _ = draft

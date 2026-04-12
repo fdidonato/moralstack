@@ -1745,13 +1745,13 @@ class TestObservabilityFixes:
 
 
 class TestDeliberationOverride:
-    """Unit tests for _evaluate_deliberation_override (REFUSE -> SAFE_COMPLETE when modules unanimous)."""
+    """Unit tests for evaluate_deliberation_override (REFUSE -> SAFE_COMPLETE when modules unanimous)."""
 
     def test_override_returns_none_when_post_decision_not_refuse(self):
         """Override does not apply when post_decision is not REFUSE."""
+        from moralstack.orchestration.deliberation_override import evaluate_deliberation_override
         from moralstack.orchestration.types import ConvergenceOutcome
 
-        orch = create_minimal_orchestrator()
         state = DeliberationState(cycle=1, draft_response="x" * 40)
         state.critiques.append(type("C", (), {"violations": [], "decision": "PROCEED", "violated_hard": False})())
         state.perspectives.append(type("P", (), {"approval_score": 0.9})())
@@ -1766,16 +1766,16 @@ class TestDeliberationOverride:
             risk_signals=[],
         )
         outcome = ConvergenceOutcome(should_continue=False, converged=True, stop_reason="CONVERGED", cycle=1, max_cycles=2)
-        override = orch._controller._evaluate_deliberation_override(
+        override = evaluate_deliberation_override(
             pre_decision=None, post_decision=post, state=state, risk_estimation=MockRiskEstimation(), outcome=outcome
         )
         assert override is None
 
     def test_override_returns_none_when_requested_instructions_true(self):
         """Requested instructions makes the REFUSE non-overridable."""
+        from moralstack.orchestration.deliberation_override import evaluate_deliberation_override
         from moralstack.orchestration.types import ConvergenceOutcome
 
-        orch = create_minimal_orchestrator()
         critique = type(
             "C",
             (),
@@ -1805,7 +1805,7 @@ class TestDeliberationOverride:
 
         outcome = ConvergenceOutcome(should_continue=False, converged=True, stop_reason="CONVERGED", cycle=1, max_cycles=2)
 
-        override = orch._controller._evaluate_deliberation_override(
+        override = evaluate_deliberation_override(
             pre_decision=None,
             post_decision=post,
             state=state,
@@ -1817,9 +1817,9 @@ class TestDeliberationOverride:
 
     def test_override_returns_none_when_unanimous_but_operational_risk_high(self):
         """Even unanimous deliberation cannot override a hard harmful REFUSE."""
+        from moralstack.orchestration.deliberation_override import evaluate_deliberation_override
         from moralstack.orchestration.types import ConvergenceOutcome
 
-        orch = create_minimal_orchestrator()
         critique = type(
             "C",
             (),
@@ -1849,7 +1849,7 @@ class TestDeliberationOverride:
 
         outcome = ConvergenceOutcome(should_continue=False, converged=True, stop_reason="CONVERGED", cycle=1, max_cycles=2)
 
-        override = orch._controller._evaluate_deliberation_override(
+        override = evaluate_deliberation_override(
             pre_decision=None,
             post_decision=post,
             state=state,
@@ -1861,9 +1861,9 @@ class TestDeliberationOverride:
 
     def test_override_returns_none_when_critic_has_violations(self):
         """Override does not apply when critic has violations."""
+        from moralstack.orchestration.deliberation_override import evaluate_deliberation_override
         from moralstack.orchestration.types import ConvergenceOutcome
 
-        orch = create_minimal_orchestrator()
         v = type("V", (), {"principle_id": "P1"})()
         critique = type(
             "C",
@@ -1883,7 +1883,7 @@ class TestDeliberationOverride:
             risk_signals=[],
         )
         outcome = ConvergenceOutcome(should_continue=False, converged=True, stop_reason="CONVERGED", cycle=1, max_cycles=2)
-        override = orch._controller._evaluate_deliberation_override(
+        override = evaluate_deliberation_override(
             pre_decision=None, post_decision=post, state=state, risk_estimation=MockRiskEstimation(), outcome=outcome
         )
         assert override is None

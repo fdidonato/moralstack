@@ -21,15 +21,12 @@ from moralstack.core.types import (
 )
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.reason_codes import policy_reason_codes_to_reason_codes
-from moralstack.models.risk import (
-    OperationalRisk,
-    RiskCategory,
-    RiskEstimation,
-    RiskPolicyAction,
-)
+from moralstack.models.risk import OperationalRisk, RiskCategory, RiskEstimation
 from moralstack.orchestration.conversation_state import ConversationGovernanceState
 from moralstack.orchestration.decision_logger import log_decision_explanation
 from moralstack.orchestration.decision_service import decide_action
+from moralstack.orchestration.default_event_emitter import DefaultEventEmitter
+from moralstack.orchestration.deliberation_override import evaluate_deliberation_override
 from moralstack.orchestration.deliberation_runner import DeliberationRunner
 from moralstack.orchestration.diagnostics import (
     DiagnosticsLayer,
@@ -37,6 +34,7 @@ from moralstack.orchestration.diagnostics import (
     orch_debug_log,
 )
 from moralstack.orchestration.domain_exclusion import generate_domain_exclusion_response
+from moralstack.orchestration.event_emitter import EventEmitter
 from moralstack.orchestration.language_resolver import resolve_prompt_with_language
 from moralstack.orchestration.orchestration_event_taxonomy import (
     CONVERSATION_CONTEXT_ATTACHED,
@@ -51,15 +49,9 @@ from moralstack.orchestration.overlay_policy import (
     is_overlay_sensitive,
 )
 from moralstack.orchestration.path_router import get_route, is_hard_signal_refuse
-from moralstack.orchestration.persistence_helpers import record_decision_trace, record_llm_call
+from moralstack.orchestration.refusal_handler import RefusalHandler
 from moralstack.orchestration.response_assembler import ResponseAssembler
 from moralstack.orchestration.safe_complete_gating import apply_safe_complete_gating
-from moralstack.orchestration.safe_refusal_generator import (
-    _detect_language_fallback,
-    _iso_to_language_name,
-    generate_llm_safe_refusal,
-    resolve_refusal_domain_and_redirection,
-)
 from moralstack.orchestration.speculative_overlap import SpeculativeOverlapHandle
 from moralstack.orchestration.trace import Trace
 from moralstack.orchestration.trace_lifecycle import (
@@ -72,7 +64,6 @@ from moralstack.orchestration.types import (
     ConvergenceOutcome,
     Decision,
     DeliberationDependencies,
-    DeliberationState,
     FailSafeException,
     FinalResponse,
     LoggerProtocol,
@@ -81,7 +72,6 @@ from moralstack.orchestration.types import (
     OrchestratorResult,
     OrchestratorTimeoutError,
     OutputProtectorProtocol,
-    PathTakenType,
     ProcessedRequest,
     ResponseMetadata,
     ResponseType,
@@ -91,7 +81,6 @@ from moralstack.orchestration.types import (
 )
 from moralstack.persistence.null import NullPersistence
 from moralstack.persistence.port import PersistencePort
-from moralstack.persistence.sink import persist_orchestration_event
 from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace, normalize_trace_fields
 
 _LOG = logging.getLogger(__name__)
@@ -122,9 +111,11 @@ class OrchestrationController:
         protected_system_prompt: str,
         logger: LoggerProtocol | None = None,
         persistence: PersistencePort | None = None,
+        event_emitter: EventEmitter | None = None,
     ) -> None:
         self.config = config
         self._persistence = persistence if persistence is not None else NullPersistence()
+        self._events: EventEmitter = event_emitter if event_emitter is not None else DefaultEventEmitter()
         self.policy = policy
         self.risk_estimator = risk_estimator
         self.critic = critic
@@ -163,6 +154,11 @@ class OrchestrationController:
             self._parser_diagnostic_handlers,
         )
         self._conversation_process_ctx: dict[str, Any] | None = None
+        self._refusal_handler = RefusalHandler(
+            policy=policy,
+            constitution_store=constitution_store,
+            event_emitter=self._events,
+        )
 
     def set_logger(self, logger: LoggerProtocol | None) -> None:
         """Set the logger for tracking LLM calls (propagated to runner)."""
@@ -207,7 +203,7 @@ class OrchestrationController:
         ctx["_conversation_events_emitted"] = True
         has_link = cid is not None or tid is not None or pid is not None or state_in is not None
         if has_link:
-            persist_orchestration_event(
+            self._events.emit_orchestration_event(
                 cycle=0,
                 stage="orchestration",
                 component="conversation",
@@ -223,7 +219,7 @@ class OrchestrationController:
                 },
             )
         if result.conversation_state_updated and result.conversation_governance_state_out is not None:
-            persist_orchestration_event(
+            self._events.emit_orchestration_event(
                 cycle=0,
                 stage="orchestration",
                 component="conversation",
@@ -394,7 +390,7 @@ class OrchestrationController:
             request,
         )
         try:
-            persist_orchestration_event(
+            self._events.emit_orchestration_event(
                 stage="orchestration",
                 component="speculative",
                 event_type=SPECULATIVE_STARTED,
@@ -421,6 +417,7 @@ class OrchestrationController:
             spec_future=spec_fut,
             executor=executor,
             spec_started_at_ms=spec_started_at_ms,
+            event_emitter=self._events,
         )
 
     def _handle_timeout(self, request: ProcessedRequest, error_msg: str, start_time: float) -> OrchestratorResult:
@@ -473,111 +470,15 @@ class OrchestrationController:
         start_time: float,
         trace: Trace,
     ) -> OrchestratorResult:
-        request_id = request.request_id
-        orch_debug_log(
-            "orchestrator.py:process",
-            "early return REFUSE (FAST_PATH)",
-            {"decision.path": decision.path, "deliberation_cycles": 0},
-            "H-early-refuse",
-            request_id=request_id,
+        result = self._refusal_handler.handle(
+            request,
+            decision,
+            explanation,
+            risk_estimation,
+            risk_score,
+            start_time,
+            trace,
         )
-        constitution = get_constitution_safe(self.constitution_store, request.get_domain())
-        processing_time_ms = int((time.time() - start_time) * 1000)
-        path_taken_refuse: PathTakenType = "fast" if decision.path == "FAST_PATH" else "deliberative"
-        risk_cat_str = risk_category_str(risk_estimation)
-        detected_iso = getattr(risk_estimation, "detected_language", None) or ""
-        language = _iso_to_language_name(detected_iso) if detected_iso else _detect_language_fallback(request.prompt)
-        domain, refusal_redirection = resolve_refusal_domain_and_redirection(
-            request_prompt=request.prompt,
-            request_domain=request.get_domain(),
-            detected_domain=getattr(risk_estimation, "detected_domain", None),
-            risk_signals=list(getattr(decision, "risk_signals", None) or []),
-            constitution_store=self.constitution_store,
-        )
-        rationale = getattr(risk_estimation, "rationale", None) or ""
-
-        refusal_content = generate_llm_safe_refusal(
-            user_prompt=request.prompt,
-            risk_category=risk_cat_str,
-            policy_reason_codes=list(decision.reason_codes),
-            language=language,
-            domain=domain,
-            llm_client=self.policy,
-            rationale=rationale if rationale else None,
-            refusal_redirection=refusal_redirection,
-        )
-
-        metadata = ResponseMetadata.from_decision(
-            decision=decision,
-            request_id=request.request_id,
-            risk_score=risk_score,
-            processing_time_ms=processing_time_ms,
-            risk_category=risk_cat_str,
-            decision_explanation=explanation,
-            constitution_loaded_ok=(getattr(constitution, "constitution_loaded_ok", None) if constitution else None),
-            predicted_action=RiskPolicyAction.DENY.value,
-            early_stop_reason="REFUSE",
-            must_refuse=True,
-            refusal_reason="[REFUSAL_HIGH_RISK]",
-            operational_risk=(
-                getattr(
-                    getattr(risk_estimation, "operational_risk", None),
-                    "value",
-                    getattr(risk_estimation, "operational_risk", ""),
-                )
-                or ""
-            ),
-            requested_instructions=bool(getattr(risk_estimation, "requested_instructions", False)),
-            intent_to_harm=bool(getattr(risk_estimation, "intent_to_harm", False)),
-            intent_operational=bool(getattr(risk_estimation, "intent_operational", False)),
-        )
-        result = OrchestratorResult(
-            response=FinalResponse(content=refusal_content, response_type=ResponseType.FULL_REFUSAL, metadata=metadata),
-            request_id=request.request_id,
-            path_taken=path_taken_refuse,
-            path=decision.path,
-            total_cycles=0,
-            converged=False,
-        )
-        record_llm_call(
-            self.logger,
-            None,
-            {
-                "cycle": 0,
-                "phase": "refusal",
-                "module": "orchestration",
-                "action": "refuse (fast_path)",
-                "duration_ms": 0.0,
-                "prompt": request.prompt or "",
-                "raw_response": refusal_content,
-                "sequence_in_cycle": 6,  # SEQ_REFUSAL_OR_FINALIZE (logical order for journey)
-            },
-        )
-        # Persist the served response in decision_traces so reports can recover it even if llm_calls are missing.
-        try:
-            import json
-
-            record_decision_trace(
-                request_id=request.request_id,
-                stage="RESPONSE",
-                sequence=3,
-                trace_json=json.dumps(
-                    {
-                        "path": decision.path,
-                        "final_action": "REFUSE",
-                        "total_cycles": 0,
-                        "response_content": refusal_content,
-                    },
-                    ensure_ascii=False,
-                ),
-            )
-        except Exception:
-            pass
-        trace.response_type = getattr(ResponseType.FULL_REFUSAL, "value", "full_refusal")
-        trace.deliberation_cycles_actual = 0
-        trace.modules_called = set()
-        trace.converged = False
-        result.trace = trace
         return self._diagnostics.ensure_final_action_and_return(
             result,
             request,
@@ -749,127 +650,6 @@ class OrchestrationController:
             lambda r, req: self._attach_trace_and_return(r, req),
         )
 
-    def _evaluate_deliberation_override(
-        self,
-        pre_decision: Decision | None,
-        post_decision: Decision,
-        state: DeliberationState,
-        risk_estimation: RiskEstimationProtocol,
-        outcome: ConvergenceOutcome | None,
-    ) -> Decision | None:
-        """
-        Evaluate whether deliberative modules unanimously contradict a REFUSE decision.
-
-        IMPORTANT:
-        REFUSE -> SAFE_COMPLETE override is allowed ONLY for borderline cases.
-        It is NEVER allowed when the refusal is backed by hard harmfulness signals.
-
-        Non-overridable conditions:
-        - operational_risk == HIGH
-        - risk_category == clearly_harmful
-        - requested_instructions == True
-        - intent_to_harm == True
-        - hard_violations present on the decision
-        - reason_codes indicate a normative/non-overridable refuse
-        """
-        if post_decision.final_action != "REFUSE":
-            return None
-
-        op_risk = getattr(risk_estimation, "operational_risk", None)
-        op_risk_val = getattr(op_risk, "value", op_risk)
-        op_risk_val = str(op_risk_val).strip().upper() if op_risk_val is not None else ""
-
-        risk_category = getattr(risk_estimation, "risk_category", None)
-        risk_category_val = getattr(risk_category, "value", risk_category)
-        risk_category_val = str(risk_category_val).strip().lower() if risk_category_val is not None else ""
-
-        requested_instructions = bool(getattr(risk_estimation, "requested_instructions", False))
-        intent_to_harm = bool(getattr(risk_estimation, "intent_to_harm", False))
-        intent_operational = bool(getattr(risk_estimation, "intent_operational", False))
-
-        post_reason_codes = list(getattr(post_decision, "reason_codes", None) or [])
-        post_hard_violations = list(getattr(post_decision, "hard_violations", None) or [])
-
-        non_overridable_reason_codes = {
-            "normative_refuse_non_overridable",
-            "operational_risk_high_refuse",
-            "requested_instructions_refuse",
-            "intent_to_harm_refuse",
-            "risk_clearly_harmful",
-            "hard_violations",
-        }
-
-        if op_risk_val == "HIGH":
-            return None
-        if risk_category_val == "clearly_harmful":
-            return None
-        if requested_instructions:
-            return None
-        if intent_to_harm:
-            return None
-        if intent_operational and risk_category_val in ("clearly_harmful", "potentially_harmful"):
-            return None
-        if post_hard_violations:
-            return None
-        if any(code in non_overridable_reason_codes for code in post_reason_codes):
-            return None
-
-        if state.last_critique is None:
-            return None
-        if getattr(state.last_critique, "violated_hard", False):
-            return None
-
-        violations = getattr(state.last_critique, "violations", None) or []
-        if len(violations) > 0:
-            return None
-
-        critic_decision = (getattr(state.last_critique, "decision", "") or "").strip().upper()
-        if critic_decision not in ("PROCEED", ""):
-            return None
-
-        if not state.perspectives:
-            return None
-
-        approvals = [getattr(p, "approval_score", 0.0) for p in state.perspectives if hasattr(p, "approval_score")]
-        if not approvals or (sum(approvals) / len(approvals)) < 0.7:
-            return None
-
-        if state.simulations:
-            last_sim = state.simulations[-1]
-            exp_val = getattr(last_sim, "expected_valence", -1.0)
-            sem_harm = getattr(last_sim, "semantic_expected_harm", 1.0)
-
-            request_type = getattr(risk_estimation, "request_type", "") or ""
-            is_educational = request_type in ("factual_query", "sensitive_topic", "ethical_dilemma")
-            sem_harm_threshold = 0.5 if is_educational else 0.3
-
-            if exp_val < 0 or sem_harm >= sem_harm_threshold:
-                return None
-
-        if state.hindsight is not None:
-            agg = getattr(state.hindsight, "aggregated", None)
-            rec = getattr(agg, "recommendation", None) if agg else None
-            rec = rec or getattr(state.hindsight, "recommendation", None)
-            if rec is not None:
-                rec_val = str(getattr(rec, "value", rec)).strip().lower()
-                if rec_val == "refuse":
-                    return None
-
-        if state.has_critical_violations:
-            return None
-
-        return Decision(
-            final_action="SAFE_COMPLETE",
-            path="DELIBERATIVE_PATH",
-            intent_clarity=post_decision.intent_clarity,
-            misuse_plausibility=post_decision.misuse_plausibility,
-            actionability_risk=post_decision.actionability_risk,
-            triggered_principles=post_decision.triggered_principles,
-            hard_violations=post_decision.hard_violations,
-            risk_signals=post_decision.risk_signals,
-            reason_codes=list(post_decision.reason_codes) + ["deliberation_override_refuse_to_safe_complete"],
-        )
-
     def _route_deliberative(
         self,
         request: ProcessedRequest,
@@ -959,7 +739,7 @@ class OrchestrationController:
                 reason_codes=list(decision1.reason_codes),
             )
         # --- DELIBERATION OVERRIDE: unanimous modules can downgrade REFUSE to SAFE_COMPLETE ---
-        override = self._evaluate_deliberation_override(
+        override = evaluate_deliberation_override(
             pre_decision=pre_decision,
             post_decision=decision1,
             state=state,

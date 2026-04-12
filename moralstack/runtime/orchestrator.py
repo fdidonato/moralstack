@@ -23,6 +23,7 @@ from moralstack.models.risk.categories import OperationalRisk, RiskCategory
 from moralstack.orchestration._policy_helpers import POLICY_SYSTEM_PROMPT
 from moralstack.orchestration.controller import OrchestrationController
 from moralstack.orchestration.conversation_state import ConversationGovernanceState
+from moralstack.orchestration.default_event_emitter import DefaultEventEmitter
 from moralstack.orchestration.response_assembler import ResponseAssembler
 
 # Re-export tipi ed eccezioni per compatibilità (API pubblica)
@@ -170,6 +171,7 @@ class Orchestrator:
             protected_system_prompt=protected_system_prompt,
             logger=self.logger,
             persistence=DefaultPersistence(),
+            event_emitter=DefaultEventEmitter(),
         )
         self.assembler = self._controller.assembler
         self.execution_trace = self._controller.execution_trace
