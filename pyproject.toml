@@ -38,6 +38,7 @@ ui = [
 [project.scripts]
 moralstack = "moralstack.cli.run:main"
 moralstack-ui = "moralstack.ui.app:main"
+moralstack-validate-overlay = "moralstack.cli.validate_overlay:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -329,15 +329,36 @@ principles:
 
 ### 7.2 Creating a new overlay
 
+> **Full guide:** see [Creating Domain Overlays](./creating_overlays.md) for the complete step-by-step workflow, schema reference, and best practices.
+
 Create `config/constitution/overlays/new_domain.yaml`:
 
 ```yaml
+description: "Brief description of your domain."
+keywords:
+  - keyword1
+  - keyword2
+sensitive: false
+
 priority_overrides:
   EXISTING.PRINCIPLE.1: 90
 
 additional_principles:
   - id: "NEWDOM.SPECIFIC.1"
-    # ...
+    level: soft
+    priority: 80
+    title: "Domain-Specific Rule"
+    rule: "Description of the rule..."
+    examples_allow:
+      - "Good example"
+    examples_deny:
+      - "Bad example"
+```
+
+Validate before deploying:
+
+```bash
+moralstack-validate-overlay config/constitution/overlays/new_domain.yaml
 ```
 
 ---
@@ -362,6 +383,7 @@ additional_principles:
 
 ## 9. References
 
+- [Creating Domain Overlays](./creating_overlays.md) — Step-by-step guide for writing custom overlays
 - [architecture_spec.md](./architecture_spec.md) — Full technical spec (API, flows, tests, architecture)
 - [modules/](modules/README.md) — Module documentation (Constitution Store, Critic, Orchestrator, etc.)
 
