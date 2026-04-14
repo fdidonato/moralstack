@@ -45,7 +45,7 @@ SAFE_COMPLETE is an intentional governance choice, **not an error**.
 | `moralstack/reports/`          | RequestReport, renderer_markdown, benchmark_report_loader, orchestrator_observability (path-routing explainability from debug events), runtime_decisions (execution strategy / cycle cards / orchestration table view-models) |
 | `moralstack/ui/`               | FastAPI dashboard (moralstack-ui)              |
 | `scripts/`                     | CLI entrypoints                               |
-| `config/constitution/`         | YAML constitution files (core + overlays)     |
+| `moralstack/constitution/data/`         | YAML constitution files (core + overlays)     |
 
 ## Canonical Documentation
 

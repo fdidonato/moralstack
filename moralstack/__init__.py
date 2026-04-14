@@ -19,7 +19,18 @@ SDK pubblico::
     print(response.governance_metadata.final_action)
 """
 
-__version__ = "0.2.0"
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+import tomllib
+
+try:
+    __version__ = version("moralstack")
+except PackageNotFoundError:
+    # Fallback for local source execution before package metadata is available.
+    pyproject_path = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    with pyproject_path.open("rb") as f:
+        _pyproject = tomllib.load(f)
+    __version__ = _pyproject["project"]["version"]
 
 # SDK public API — lazy imports per evitare overhead a import time.
 # Il costo della pipeline viene pagato solo alla prima chiamata govern().

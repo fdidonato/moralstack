@@ -4,17 +4,17 @@
 
 Overlays let you tailor MoralStack's ethical governance to a specific domain — healthcare, legal, finance, or anything unique to your organization. This guide covers the full overlay schema, how each field affects the deliberation pipeline, and how to validate and test your overlay before deploying it.
 
-For the architecture behind overlays, see [constitution.md](./constitution.md). For the full list of existing overlays, see `config/constitution/overlays/`.
+For the architecture behind overlays, see [constitution.md](./constitution.md). For the full list of existing overlays, see `moralstack/constitution/data/overlays/`.
 
 ---
 
 ## Quick Start
 
-Create a YAML file in `config/constitution/overlays/`, validate it, and restart MoralStack:
+Create a YAML file in `moralstack/constitution/data/overlays/`, validate it, and restart MoralStack:
 
 ```bash
 # 1. Create your overlay
-cat > config/constitution/overlays/my_domain.yaml << 'EOF'
+cat > moralstack/constitution/data/overlays/my_domain.yaml << 'EOF'
 description: "Brief semantic description of your domain."
 keywords:
   - keyword1
@@ -24,7 +24,7 @@ additional_principles: []
 EOF
 
 # 2. Validate it
-moralstack-validate-overlay config/constitution/overlays/my_domain.yaml
+moralstack-validate-overlay moralstack/constitution/data/overlays/my_domain.yaml
 
 # 3. Run MoralStack — your overlay is now active for matching
 moralstack
@@ -113,7 +113,7 @@ When `excluded` is `true`, requests detected as this domain skip the entire pipe
 
 ### `priority_overrides` → Tuning Core Principles
 
-Priority overrides let you adjust how important a core principle is within your domain, without modifying the core constitution. The key is a principle ID from `config/constitution/core.yaml`, and the value is the new priority (1–100).
+Priority overrides let you adjust how important a core principle is within your domain, without modifying the core constitution. The key is a principle ID from `moralstack/constitution/data/core.yaml`, and the value is the new priority (1–100).
 
 **Example:** in a healthcare overlay, honesty and accuracy matter more than in general conversation:
 
@@ -175,10 +175,10 @@ simulator_domain_guidance: |
 
 ### 1. Create the YAML file
 
-Create a new file in `config/constitution/overlays/`. The filename (without `.yaml`) becomes the domain name:
+Create a new file in `moralstack/constitution/data/overlays/`. The filename (without `.yaml`) becomes the domain name:
 
 ```bash
-touch config/constitution/overlays/real_estate.yaml
+touch moralstack/constitution/data/overlays/real_estate.yaml
 ```
 
 ### 2. Write the overlay
@@ -255,7 +255,7 @@ additional_principles:
 Use the CLI validator to check your overlay before deploying:
 
 ```bash
-moralstack-validate-overlay config/constitution/overlays/real_estate.yaml
+moralstack-validate-overlay moralstack/constitution/data/overlays/real_estate.yaml
 ```
 
 On success:
@@ -285,7 +285,7 @@ On error:
 You can also validate all overlays at once:
 
 ```bash
-moralstack-validate-overlay config/constitution/overlays/
+moralstack-validate-overlay moralstack/constitution/data/overlays/
 ```
 
 ### 4. Test the overlay
@@ -433,7 +433,7 @@ When `excluded: true`, the `additional_principles`, `priority_overrides`, and ot
 
 ## Existing Overlays as Examples
 
-Browse the `config/constitution/overlays/` directory for 19 production overlays. Good starting points:
+Browse the `moralstack/constitution/data/overlays/` directory for 19 production overlays. Good starting points:
 
 | Overlay | Why it's useful as a reference |
 |---|---|

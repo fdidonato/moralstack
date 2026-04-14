@@ -18,9 +18,9 @@ from moralstack.constitution import (
 
 def test_core_balance_1_loaded():
     """YAML valido → caricamento corretto, CORE.BALANCE.1 presente."""
-    config_dir = Path(__file__).parent.parent / "config" / "constitution"
+    config_dir = Path(__file__).parent.parent / "moralstack" / "constitution" / "data"
     if not (config_dir / "core.yaml").exists():
-        pytest.skip("config/constitution/core.yaml non presente")
+        pytest.skip("moralstack/constitution/data/core.yaml not present")
     store = ConstitutionStore(config_dir=config_dir)
     core = store.load_core()
     ids = [p.id for p in core]
@@ -36,9 +36,9 @@ def test_core_balance_1_loaded():
 def test_get_constitution_exposes_loaded_ok():
     """get_constitution() espone constitution_loaded_ok e constitution_corrupted
     (sempre True/False con fail-fast)."""
-    config_dir = Path(__file__).parent.parent / "config" / "constitution"
+    config_dir = Path(__file__).parent.parent / "moralstack" / "constitution" / "data"
     if not (config_dir / "core.yaml").exists():
-        pytest.skip("config/constitution/core.yaml non presente")
+        pytest.skip("moralstack/constitution/data/core.yaml not present")
     store = ConstitutionStore(config_dir=config_dir)
     constitution = store.get_constitution(domain=None)
     assert hasattr(constitution, "constitution_loaded_ok")

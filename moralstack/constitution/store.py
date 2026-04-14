@@ -466,7 +466,7 @@ class ConstitutionStore:
     - Retrieval principi rilevanti
 
     Uso:
-        store = ConstitutionStore(config_dir=Path("config/constitution"))
+        store = ConstitutionStore()  # uses bundled data by default
         constitution = store.get_constitution(domain="medical")
         relevant = store.get_relevant_principles(prompt, top_k=10)
     """
@@ -528,7 +528,7 @@ class ConstitutionStore:
             )
 
         if cfg.config_dir is None:
-            self._config_dir = Path(__file__).parent.parent.parent / "config" / "constitution"
+            self._config_dir = Path(__file__).parent / "data"
         else:
             self._config_dir = Path(cfg.config_dir)
 

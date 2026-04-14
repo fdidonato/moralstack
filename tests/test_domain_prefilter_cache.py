@@ -25,7 +25,7 @@ from moralstack.reports.runtime_decisions import (
     build_runtime_decision_observability,
 )
 
-_CONFIG_CORE = Path(__file__).resolve().parent.parent / "config" / "constitution" / "core.yaml"
+_CONFIG_CORE = Path(__file__).resolve().parent.parent / "moralstack" / "constitution" / "data" / "core.yaml"
 
 
 def test_normalize_keywords_order_invariant():
@@ -148,7 +148,7 @@ def test_request_analysis_trace_prefilter_fields():
     assert summ.get("prefilter_cache_status") == "hit"
 
 
-@pytest.mark.skipif(not _CONFIG_CORE.exists(), reason="config/constitution/core.yaml not present")
+@pytest.mark.skipif(not _CONFIG_CORE.exists(), reason="moralstack/constitution/data/core.yaml not present")
 def test_domain_selection_stable_pre_post_idempotence():
     """Regression: identical inputs yield identical prefilter domain lists with mocked LLM."""
     from moralstack.constitution.store import ConstitutionStore

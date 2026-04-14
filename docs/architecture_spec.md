@@ -1054,7 +1054,7 @@ def compute_total_reward(
 
 ### 6.1 Main Configuration File
 
-*[impl]* The following is an exemplificative/aspirational structure. The actual configuration is loaded via environment variables (`.env`, `MORALSTACK_*`) and constitution YAML in `config/constitution/`. No `config/moralstack.yaml` file exists in the current implementation.
+*[impl]* The following is an exemplificative/aspirational structure. The actual configuration is loaded via environment variables (`.env`, `MORALSTACK_*`) and constitution YAML in `moralstack/constitution/data/`. No `config/moralstack.yaml` file exists in the current implementation.
 
 ```yaml
 # config/moralstack.yaml (exemplificative)
@@ -1115,7 +1115,7 @@ convergence:
 ### 6.2 Constitution Schema
 
 ```yaml
-# config/constitution/core.yaml
+# moralstack/constitution/data/core.yaml
 
 principles:
   - id: "CORE.NM.1"

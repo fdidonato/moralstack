@@ -294,7 +294,7 @@ class TestDirectoryValidation:
 
     def test_validate_all_existing_overlays(self) -> None:
         """All 19 existing overlays in the repo should validate."""
-        overlays_dir = Path("config/constitution/overlays")
+        overlays_dir = Path("moralstack/constitution/data/overlays")
         if not overlays_dir.exists():
             pytest.skip("Overlay directory not found (not running from repo root)")
         results = validate_directory(overlays_dir)

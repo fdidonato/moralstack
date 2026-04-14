@@ -138,9 +138,9 @@ def test_compute_relevance_no_match():
 
 def test_retrieval_returns_non_empty_when_config_exists():
     """With real config, get_relevant_principles returns non-empty for relevant query."""
-    config_dir = Path(__file__).parent.parent / "config" / "constitution"
+    config_dir = Path(__file__).parent.parent / "moralstack" / "constitution" / "data"
     if not (config_dir / "core.yaml").exists():
-        pytest.skip("config/constitution/core.yaml not present")
+        pytest.skip("moralstack/constitution/data/core.yaml not present")
 
     # Mock DomainAgent._call_openai to avoid real OpenAI calls; return core principle IDs
     def _mock_call_openai(prompt: str) -> list[str]:
