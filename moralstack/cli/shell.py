@@ -28,6 +28,7 @@ from typing import Any, Optional
 
 from moralstack.constitution.schema import Constitution, Principle
 from moralstack.orchestration.types import OrchestratorResult
+from moralstack.pipeline.deliberation_stack import resolve_constitution_max_parallel_agents
 from moralstack.utils.clean_start import clean_start_artifacts
 from moralstack.utils.env_loader import load_env
 
@@ -1118,8 +1119,8 @@ Examples:
     parser.add_argument(
         "--max-parallel-agents",
         type=int,
-        default=2,
-        help="Maximum number of parallel agents (default: 2)",
+        default=None,
+        help="Maximum number of parallel agents (default: MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS or 2)",
     )
 
     parser.add_argument(
@@ -1154,6 +1155,7 @@ Examples:
 
     args = parser.parse_args()
     openai_model = args.openai_model or os.getenv("OPENAI_MODEL", "gpt-4o")
+    max_parallel_agents = resolve_constitution_max_parallel_agents(args.max_parallel_agents)
     return CLIConfig(
         use_mock=args.mock,
         minimal=args.minimal,
@@ -1162,7 +1164,7 @@ Examples:
         verbose=args.verbose,
         openai_api_key=args.openai_key,
         openai_model=openai_model,
-        max_parallel_agents=args.max_parallel_agents,
+        max_parallel_agents=max_parallel_agents,
         enable_perspectives=not getattr(args, "no_perspectives", False),
         enable_simulation=not getattr(args, "no_simulation", False),
         enable_hindsight=not getattr(args, "no_hindsight", False),

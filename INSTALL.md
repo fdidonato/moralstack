@@ -115,7 +115,7 @@ client = govern(
 )
 ```
 
-The pipeline uses its **own** internal LLM client for deliberation (configured via `GovernanceConfig`). The `OpenAI()` client you pass to `govern()` is used only for final text generation.
+The pipeline uses its **own** internal LLM client for deliberation (configured via `GovernanceConfig`). The `OpenAI()` client you pass to `govern()` is used only for final text generation. SDK bootstrap calls `load_env()` before building modules, so `MORALSTACK_*` and `OPENAI_*` values are loaded from `.env` first.
 
 ## Configuration
 
@@ -161,6 +161,7 @@ See [docs/modules/openai_params.md](docs/modules/openai_params.md) for details a
 | MORALSTACK_UI_PORT             | 8765                      | Web UI port                                                    |
 | MORALSTACK_UI_USERNAME         | -                         | Basic Auth for UI (required when running moralstack-ui)        |
 | MORALSTACK_UI_PASSWORD         | -                         | Basic Auth for UI                                              |
+| MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS | 2          | Parallel domain agents for constitution retrieval              |
 | MORALSTACK_VERBOSE             | -                         | Set to 1 for verbose output                                    |
 
 **Risk Estimator**: Optional overrides (e.g. `MORALSTACK_RISK_MODEL`, `MORALSTACK_RISK_LOW_THRESHOLD`,

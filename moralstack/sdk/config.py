@@ -55,14 +55,14 @@ class GovernanceConfig:
     """Force a specific domain overlay (e.g. 'healthcare', 'legal', 'finance')."""
 
     # --- Pipeline tuning ---
-    max_deliberation_cycles: int = 2
-    """Maximum number of deliberation cycles. Increase for complex borderline cases."""
+    max_deliberation_cycles: int | None = None
+    """Override deliberation cycles. If None, use MORALSTACK_ORCHESTRATOR_MAX_DELIBERATION_CYCLES."""
 
-    timeout_ms: int = 600_000
-    """Total pipeline timeout in milliseconds."""
+    timeout_ms: int | None = None
+    """Override orchestrator timeout. If None, use MORALSTACK_ORCHESTRATOR_TIMEOUT_MS."""
 
-    enable_speculative_generation: bool = True
-    """Enable speculative generation to reduce perceived latency."""
+    enable_speculative_generation: bool | None = None
+    """Override speculative overlap. If None, use MORALSTACK_ORCHESTRATOR_ENABLE_SPECULATIVE_GENERATION."""
 
     # --- Observability ---
     observability_mode: str = "off"

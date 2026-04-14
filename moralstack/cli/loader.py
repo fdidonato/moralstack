@@ -3,7 +3,7 @@ Module loader and CLI UI utilities for MoralStack.
 """
 
 import os
-from typing import Any, Callable, cast
+from typing import Any, Callable
 
 from .mocks import (
     MockConstitutionStore,
@@ -149,192 +149,67 @@ class ModuleLoader:
         api_key = self.config.openai_api_key or os.getenv("OPENAI_API_KEY")
         if not (api_key or "").strip():
             print_colored("⚠️  ERROR: OPENAI_API_KEY not set.", "red")
-            print_colored(
-                "   Set the environment variable: export OPENAI_API_KEY=sk-...",
-                "yellow",
-            )
+            print_colored("   Set the environment variable: export OPENAI_API_KEY=sk-...", "yellow")
             print_colored("   Or pass --openai-key from the command line.", "yellow")
             raise ValueError("OPENAI_API_KEY is required. Set OPENAI_API_KEY or use --openai-key.")
 
-        from moralstack.models.policy import OpenAIPolicy
+        from moralstack.pipeline.deliberation_stack import build_deliberation_modules
 
-        openai_policy = OpenAIPolicy(
+        built_modules, meta = build_deliberation_modules(
             api_key=api_key,
-            model=self.config.openai_model,
+            primary_model=self.config.openai_model,
+            max_parallel_agents=self.config.max_parallel_agents,
+            minimal=self.config.minimal,
         )
-        modules["policy"] = openai_policy
-        policy_display = self.config.openai_model
-        if openai_policy.rewrite_model != openai_policy.model:
-            policy_display = f"{self.config.openai_model} (rewrite: {openai_policy.rewrite_model})"
-        self.load_status["policy"] = f"✓ OpenAI ({policy_display})"
-        print_colored(f"  ✓ policy: OpenAI ({policy_display})", "green")
 
-        # Constitution Store (requires openai_api_key)
-        from moralstack.constitution.openai_config import OpenAIClientConfig
-        from moralstack.constitution.store import ConstitutionStore, ConstitutionStoreConfig
+        modules["policy"] = built_modules.policy
+        self.load_status["policy"] = f"✓ OpenAI ({meta.policy_model})"
+        print_colored(f"  ✓ policy: OpenAI ({meta.policy_model})", "green")
 
-        constitution_store = ConstitutionStore(
-            config=ConstitutionStoreConfig(
-                policy_llm=openai_policy,
-                use_llm_matching=True,
-                openai_config=OpenAIClientConfig.with_env_fallback(
-                    api_key=api_key,
-                    model=self.config.openai_model,
-                ),
-                max_parallel_agents=self.config.max_parallel_agents,
-            )
-        )
-        modules["_constitution_store"] = constitution_store
-        excluded_domains = constitution_store.get_excluded_domains()
+        modules["_constitution_store"] = built_modules.constitution_store
+        excluded_domains = built_modules.constitution_store.get_excluded_domains()
         if excluded_domains:
-            print_colored(
-                f"  ⚠  Excluded domains: {', '.join(sorted(excluded_domains))}",
-                "yellow",
-            )
+            print_colored(f"  ⚠  Excluded domains: {', '.join(sorted(excluded_domains))}", "yellow")
         else:
             print_colored("  ○  Excluded domains: none", "blue")
 
-        def build_risk_estimator() -> tuple[Any, str]:
-            from moralstack.models.risk import LLMBasedRiskEstimator
-            from moralstack.models.risk.config_loader import ENV_MODEL, get_risk_env_str
-
-            risk_model = get_risk_env_str(ENV_MODEL, "")
-            policy_for_risk = OpenAIPolicy(api_key=api_key, model=risk_model) if risk_model else openai_policy
-            inst = LLMBasedRiskEstimator(
-                policy=cast(Any, policy_for_risk),
-                constitution_store=constitution_store,
+        modules["risk_estimator"] = built_modules.risk_estimator
+        risk_cfg = getattr(built_modules.risk_estimator, "config", None)
+        if risk_cfg is not None and getattr(risk_cfg, "use_parallel_estimators", False):
+            display_info = (
+                f"Parallel Mode ON | main: {meta.risk_model} | "
+                f"intent: {risk_cfg.intent_model}, signals: {risk_cfg.signals_model}, "
+                f"op: {risk_cfg.operational_model}"
             )
-
-            # Formatta la stringa di visualizzazione
-            display_model = risk_model or self.config.openai_model
-            if inst.config.use_parallel_estimators:
-                display_info = (
-                    f"Parallel Mode ON | main: {display_model} | "
-                    f"intent: {inst.config.intent_model}, signals: {inst.config.signals_model}, "
-                    f"op: {inst.config.operational_model}"
-                )
-            else:
-                display_info = f"Monolithic Mode | {display_model}"
-
-            return inst, display_info
-
-        modules["risk_estimator"] = self._load_optional_module(
-            name="risk_estimator",
-            build_fn=build_risk_estimator,
-            mock_class=MockRiskEstimator,
-            success_status_template="✓ {display}",
-            success_print_template="  ✓ risk_estimator: {display}",
-            error_prefix="✗",
-            error_color="red",
-        )
+        else:
+            display_info = f"Monolithic Mode | {meta.risk_model}"
+        self.load_status["risk_estimator"] = f"✓ {display_info}"
+        print_colored(f"  ✓ risk_estimator: {display_info}", "green")
 
         if self.config.minimal:
-            # Minimal mode: policy and risk only
             for name in ["critic", "simulator", "hindsight", "perspectives"]:
                 modules[name] = None
                 self.load_status[name] = "○ disabled"
                 print_colored(f"  ○ {name}: disabled (minimal mode)", "blue")
         else:
-            # Full mode: load all modules
-            def build_critic() -> tuple[Any, str]:
-                from moralstack.runtime.modules.critic_config_loader import (
-                    ENV_MODEL as CRITIC_ENV_MODEL,
-                )
-                from moralstack.runtime.modules.critic_config_loader import (
-                    get_critic_env_str,
-                )
-                from moralstack.runtime.modules.critic_module import LLMConstitutionalCritic
+            modules["critic"] = built_modules.critic
+            self.load_status["critic"] = f"✓ loaded ({meta.critic_model})"
+            print_colored(f"  ✓ critic: LLMConstitutionalCritic ({meta.critic_model})", "green")
 
-                critic_model = get_critic_env_str(CRITIC_ENV_MODEL, "")
-                policy_for_critic = OpenAIPolicy(api_key=api_key, model=critic_model) if critic_model else openai_policy
-                inst = LLMConstitutionalCritic(
-                    policy=cast(Any, policy_for_critic),
-                    store=constitution_store,
-                )
-                return inst, (critic_model or self.config.openai_model)
+            modules["simulator"] = built_modules.simulator
+            self.load_status["simulator"] = f"✓ loaded ({meta.simulator_model})"
+            print_colored(f"  ✓ simulator: LLMConsequenceSimulator ({meta.simulator_model})", "green")
 
-            modules["critic"] = self._load_optional_module(
-                name="critic",
-                build_fn=build_critic,
-                mock_class=MockCritic,
-                success_status_template="✓ loaded ({display})",
-                success_print_template="  ✓ critic: LLMConstitutionalCritic ({display})",
+            modules["hindsight"] = built_modules.hindsight
+            self.load_status["hindsight"] = f"✓ loaded ({meta.hindsight_model})"
+            print_colored(f"  ✓ hindsight: LLMHindsightEvaluator ({meta.hindsight_model})", "green")
+
+            modules["perspectives"] = built_modules.perspectives
+            self.load_status["perspectives"] = f"✓ loaded ({meta.perspectives_model})"
+            print_colored(
+                f"  ✓ perspectives: create_minimal_ensemble (2 perspectives, {meta.perspectives_model})",
+                "green",
             )
-
-            def build_simulator() -> tuple[Any, str]:
-                from moralstack.runtime.modules.simulator_config_loader import (
-                    ENV_MODEL as SIMULATOR_ENV_MODEL,
-                )
-                from moralstack.runtime.modules.simulator_config_loader import (
-                    get_simulator_env_str,
-                )
-                from moralstack.runtime.modules.simulator_module import LLMConsequenceSimulator
-
-                simulator_model = get_simulator_env_str(SIMULATOR_ENV_MODEL, "")
-                policy_for_simulator = (
-                    OpenAIPolicy(api_key=api_key, model=simulator_model) if simulator_model else openai_policy
-                )
-                inst = LLMConsequenceSimulator(policy=cast(Any, policy_for_simulator))
-                return inst, (simulator_model or self.config.openai_model)
-
-            modules["simulator"] = self._load_optional_module(
-                name="simulator",
-                build_fn=build_simulator,
-                mock_class=MockSimulator,
-                success_status_template="✓ loaded ({display})",
-                success_print_template="  ✓ simulator: LLMConsequenceSimulator ({display})",
-            )
-
-            def build_hindsight() -> tuple[Any, str]:
-                from moralstack.runtime.modules.hindsight_config_loader import (
-                    ENV_MODEL as HINDSIGHT_ENV_MODEL,
-                )
-                from moralstack.runtime.modules.hindsight_config_loader import (
-                    get_hindsight_env_str,
-                )
-                from moralstack.runtime.modules.hindsight_module import LLMHindsightEvaluator
-
-                hindsight_model = get_hindsight_env_str(HINDSIGHT_ENV_MODEL, "")
-                policy_for_hindsight = (
-                    OpenAIPolicy(api_key=api_key, model=hindsight_model) if hindsight_model else openai_policy
-                )
-                inst = LLMHindsightEvaluator(policy=cast(Any, policy_for_hindsight))
-                return inst, (hindsight_model or self.config.openai_model)
-
-            modules["hindsight"] = self._load_optional_module(
-                name="hindsight",
-                build_fn=build_hindsight,
-                mock_class=MockHindsight,
-                success_status_template="✓ loaded ({display})",
-                success_print_template="  ✓ hindsight: LLMHindsightEvaluator ({display})",
-            )
-
-            def build_perspectives() -> tuple[Any, str]:
-                from moralstack.runtime.modules.perspective_config_loader import (
-                    ENV_MODEL as PERSPECTIVES_ENV_MODEL,
-                )
-                from moralstack.runtime.modules.perspective_config_loader import (
-                    get_perspective_env_str,
-                )
-                from moralstack.runtime.modules.perspective_module import create_minimal_ensemble
-
-                perspectives_model = get_perspective_env_str(PERSPECTIVES_ENV_MODEL, "")
-                policy_for_perspectives = (
-                    OpenAIPolicy(api_key=api_key, model=perspectives_model) if perspectives_model else openai_policy
-                )
-                inst = create_minimal_ensemble(policy=cast(Any, policy_for_perspectives))
-                return inst, (perspectives_model or self.config.openai_model)
-
-            modules["perspectives"] = self._load_optional_module(
-                name="perspectives",
-                build_fn=build_perspectives,
-                mock_class=MockPerspectives,
-                success_status_template="✓ loaded ({display})",
-                success_print_template="  ✓ perspectives: create_minimal_ensemble (2 perspectives, {display})",
-            )
-
-        # Save constitution_store for later access
-        modules["_constitution_store"] = constitution_store
 
         self.modules = modules
         return modules

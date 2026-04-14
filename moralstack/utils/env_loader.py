@@ -24,6 +24,7 @@ _OPTIONAL_ENV_VARS = frozenset(
         "OPENAI_TOP_P",
         "MORALSTACK_DECISION_TRACE_PATH",
         "MORALSTACK_VERBOSE",
+        "MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS",
         # Risk Estimator (optional overrides)
         "MORALSTACK_RISK_MODEL",
         "MORALSTACK_RISK_INTENT_MODEL",

@@ -142,6 +142,9 @@ All fields have defaults; only override what you need. See `ConstitutionStoreCon
 `config_dir`, `core_file`, `overlays_dir`, `policy_llm`, `use_llm_matching`, `openai_config`, `max_parallel_agents`,
 `use_enhanced_retrieval`, `confidence_threshold`, `use_domain_prefilter`, `max_prefilter_domains`).
 
+When `max_parallel_agents` is not set explicitly, SDK/CLI runtime wiring resolves it from
+`MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS` (fallback default: `2`).
+
 ### Initialization (keyword args, backward compatible)
 
 You can still pass options as keyword arguments (same behavior as before):

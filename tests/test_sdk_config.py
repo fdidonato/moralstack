@@ -11,9 +11,9 @@ class TestGovernanceConfigDefaults:
         assert cfg.base_url is None
         assert cfg.constitution_dir is None
         assert cfg.domain_overlay is None
-        assert cfg.max_deliberation_cycles == 2
-        assert cfg.timeout_ms == 600_000
-        assert cfg.enable_speculative_generation is True
+        assert cfg.max_deliberation_cycles is None
+        assert cfg.timeout_ms is None
+        assert cfg.enable_speculative_generation is None
         assert cfg.observability_mode == "off"
         assert cfg.jsonl_dir is None
         assert cfg.db_path is None

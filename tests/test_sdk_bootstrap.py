@@ -1,11 +1,18 @@
-"""Tests for moralstack.sdk.bootstrap — _bootstrap_pipeline(), _build_orchestrator_config()."""
+"""Tests for moralstack.sdk.bootstrap."""
 
 import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from moralstack.sdk.bootstrap import _bootstrap_pipeline, _build_orchestrator_config, _resolve_api_key, _resolve_model
+from moralstack.orchestration.types import OrchestratorConfig
+from moralstack.pipeline.deliberation_stack import DeliberationBuildMeta, DeliberationModules
+from moralstack.sdk.bootstrap import (
+    _bootstrap_pipeline,
+    _load_orchestrator_config,
+    _resolve_api_key,
+    _resolve_model,
+)
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.errors import GovernanceConfigError, GovernancePipelineError
 
@@ -51,70 +58,60 @@ class TestResolveModel:
         assert model == "gpt-4o"
 
 
-class TestBuildOrchestratorConfig:
-    def test_maps_max_cycles(self):
-        cfg = GovernanceConfig(max_deliberation_cycles=3)
-        orch_cfg = _build_orchestrator_config(cfg)
-        assert orch_cfg.max_deliberation_cycles == 3
-
-    def test_maps_timeout(self):
-        cfg = GovernanceConfig(timeout_ms=30_000)
-        orch_cfg = _build_orchestrator_config(cfg)
-        assert orch_cfg.timeout_ms == 30_000
-
-    def test_maps_speculative_generation(self):
-        cfg = GovernanceConfig(enable_speculative_generation=False)
-        orch_cfg = _build_orchestrator_config(cfg)
+class TestLoadOrchestratorConfig:
+    def test_uses_env_loader_config_as_base(self):
+        base = OrchestratorConfig(max_deliberation_cycles=7, timeout_ms=12345, enable_speculative_generation=False)
+        cfg = GovernanceConfig()
+        with patch("moralstack.orchestration.config_loader.load_orchestrator_config_from_env", return_value=base):
+            orch_cfg = _load_orchestrator_config(cfg)
+        assert orch_cfg.max_deliberation_cycles == 7
+        assert orch_cfg.timeout_ms == 12345
         assert orch_cfg.enable_speculative_generation is False
 
-    def test_deliberative_modules_always_enabled(self):
-        cfg = GovernanceConfig()
-        orch_cfg = _build_orchestrator_config(cfg)
-        assert orch_cfg.enable_perspectives is True
-        assert orch_cfg.enable_simulation is True
-        assert orch_cfg.enable_hindsight is True
+    def test_applies_explicit_overrides_only(self):
+        base = OrchestratorConfig(max_deliberation_cycles=2, timeout_ms=600000, enable_speculative_generation=True)
+        cfg = GovernanceConfig(max_deliberation_cycles=3, timeout_ms=30_000, enable_speculative_generation=False)
+        with patch("moralstack.orchestration.config_loader.load_orchestrator_config_from_env", return_value=base):
+            orch_cfg = _load_orchestrator_config(cfg)
+        assert orch_cfg.max_deliberation_cycles == 3
+        assert orch_cfg.timeout_ms == 30_000
+        assert orch_cfg.enable_speculative_generation is False
 
 
 class TestBootstrapPipeline:
-    def _mock_all_modules(self) -> dict:
-        """Return a patch context for all pipeline modules."""
-        return {
-            "moralstack.models.policy.OpenAIPolicy": MagicMock,
-            "moralstack.constitution.store.ConstitutionStore": MagicMock,
-            "moralstack.constitution.store.ConstitutionStoreConfig": MagicMock,
-            "moralstack.constitution.openai_config.OpenAIClientConfig": MagicMock,
-            "moralstack.models.risk.LLMBasedRiskEstimator": MagicMock,
-            "moralstack.runtime.modules.critic_module.LLMConstitutionalCritic": MagicMock,
-            "moralstack.runtime.modules.simulator_module.LLMConsequenceSimulator": MagicMock,
-            "moralstack.runtime.modules.hindsight_module.LLMHindsightEvaluator": MagicMock,
-            "moralstack.runtime.modules.perspective_module.create_minimal_ensemble": MagicMock(return_value=MagicMock()),
-            "moralstack.runtime.orchestrator.Orchestrator": MagicMock,
-        }
-
     def test_raises_config_error_without_api_key(self):
         cfg = GovernanceConfig()
         env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
         with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(GovernanceConfigError):
-                _bootstrap_pipeline(cfg)
+            with patch("moralstack.sdk.bootstrap.load_env", return_value=False):
+                with pytest.raises(GovernanceConfigError):
+                    _bootstrap_pipeline(cfg)
 
     def test_raises_pipeline_error_on_module_failure(self):
-        """Bootstrap raises GovernancePipelineError when OpenAIPolicy fails."""
         cfg = GovernanceConfig(api_key="sk-test")
-        # Inline imports in bootstrap.py happen inside the function, so we must
-        # patch the original source module.
-        with patch("moralstack.models.policy.OpenAIPolicy", side_effect=RuntimeError("OpenAI down")):
-            with pytest.raises(GovernancePipelineError, match="OpenAI"):
+        with patch("moralstack.sdk.bootstrap.build_deliberation_modules", side_effect=RuntimeError("OpenAI down")):
+            with pytest.raises(GovernancePipelineError, match="deliberation modules"):
                 _bootstrap_pipeline(cfg)
 
     def test_api_key_present_does_not_raise_config_error(self):
-        """With a valid api_key, bootstrap must not raise GovernanceConfigError."""
         cfg = GovernanceConfig(api_key="sk-test")
-        # Bootstrap may fail for other reasons (missing modules in test env),
-        # but it must not be GovernanceConfigError.
-        try:
-            _bootstrap_pipeline(cfg)
-        except GovernanceConfigError:
-            pytest.fail("GovernanceConfigError raised even with valid api_key")
-        except Exception:
-            pass  # Other errors are acceptable in test env
+        fake_modules = DeliberationModules(
+            policy=MagicMock(),
+            constitution_store=MagicMock(),
+            risk_estimator=MagicMock(),
+            critic=MagicMock(),
+            simulator=MagicMock(),
+            hindsight=MagicMock(),
+            perspectives=MagicMock(),
+        )
+        fake_meta = DeliberationBuildMeta(
+            policy_model="gpt-4o",
+            risk_model="gpt-4o",
+            critic_model="gpt-4o",
+            simulator_model="gpt-4o",
+            hindsight_model="gpt-4o",
+            perspectives_model="gpt-4o",
+        )
+        with patch("moralstack.sdk.bootstrap.build_deliberation_modules", return_value=(fake_modules, fake_meta)):
+            with patch("moralstack.runtime.orchestrator.Orchestrator", return_value=MagicMock()):
+                _bootstrap_pipeline(cfg)
