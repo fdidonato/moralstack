@@ -19,9 +19,9 @@ SDK pubblico::
     print(response.governance_metadata.final_action)
 """
 
+import tomllib
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-import tomllib
 
 try:
     __version__ = version("moralstack")

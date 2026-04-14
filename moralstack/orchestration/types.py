@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Any, Literal, Protocol
@@ -711,14 +712,6 @@ class RiskEstimationProtocol(Protocol):
     def harm_type(self) -> str: ...
 
 
-class PrincipleLikeProtocol(Protocol):
-    """Protocol for principle-like objects (e.g. from constitution store get_relevant_principles)."""
-
-    id: str
-    title: str
-    level: str
-
-
 # =============================================================================
 # Deliberation state
 # =============================================================================
@@ -831,7 +824,7 @@ class ConstitutionStoreProtocol(Protocol):
         """Returns the constitution for the given domain."""
         ...
 
-    def get_relevant_principles(self, query: str, top_k: int = 10, domain: str | None = None) -> list[PrincipleLikeProtocol]:
+    def get_relevant_principles(self, query: str, top_k: int = 10, domain: str | None = None) -> Sequence[Any]:
         """Returns relevant principles for the query."""
         ...
 

@@ -146,8 +146,8 @@ class ModuleLoader:
         """Loads real modules (OpenAI-only)."""
         modules: dict[str, Any] = {}
 
-        api_key = self.config.openai_api_key or os.getenv("OPENAI_API_KEY")
-        if not (api_key or "").strip():
+        api_key = (self.config.openai_api_key or os.getenv("OPENAI_API_KEY") or "").strip()
+        if not api_key:
             print_colored("⚠️  ERROR: OPENAI_API_KEY not set.", "red")
             print_colored("   Set the environment variable: export OPENAI_API_KEY=sk-...", "yellow")
             print_colored("   Or pass --openai-key from the command line.", "yellow")
