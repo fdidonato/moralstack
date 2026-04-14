@@ -5,11 +5,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from moralstack.orchestration.types import OrchestratorConfig
 from moralstack.pipeline.deliberation_stack import DeliberationBuildMeta, DeliberationModules
 from moralstack.sdk.bootstrap import (
     _bootstrap_pipeline,
-    _load_orchestrator_config,
     _resolve_api_key,
     _resolve_model,
 )
@@ -56,26 +54,6 @@ class TestResolveModel:
         with patch.dict(os.environ, env, clear=True):
             model = _resolve_model(cfg)
         assert model == "gpt-4o"
-
-
-class TestLoadOrchestratorConfig:
-    def test_uses_env_loader_config_as_base(self):
-        base = OrchestratorConfig(max_deliberation_cycles=7, timeout_ms=12345, enable_speculative_generation=False)
-        cfg = GovernanceConfig()
-        with patch("moralstack.orchestration.config_loader.load_orchestrator_config_from_env", return_value=base):
-            orch_cfg = _load_orchestrator_config(cfg)
-        assert orch_cfg.max_deliberation_cycles == 7
-        assert orch_cfg.timeout_ms == 12345
-        assert orch_cfg.enable_speculative_generation is False
-
-    def test_applies_explicit_overrides_only(self):
-        base = OrchestratorConfig(max_deliberation_cycles=2, timeout_ms=600000, enable_speculative_generation=True)
-        cfg = GovernanceConfig(max_deliberation_cycles=3, timeout_ms=30_000, enable_speculative_generation=False)
-        with patch("moralstack.orchestration.config_loader.load_orchestrator_config_from_env", return_value=base):
-            orch_cfg = _load_orchestrator_config(cfg)
-        assert orch_cfg.max_deliberation_cycles == 3
-        assert orch_cfg.timeout_ms == 30_000
-        assert orch_cfg.enable_speculative_generation is False
 
 
 class TestBootstrapPipeline:

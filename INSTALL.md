@@ -98,10 +98,6 @@ client = govern(
         # Domain-specific governance
         domain_overlay="healthcare",  # enforce a named domain overlay
 
-        # Pipeline tuning
-        max_deliberation_cycles=2,
-        timeout_ms=600_000,
-
         # Failure handling
         failure_policy="refuse",     # "refuse" (default) | "passthrough"
 
@@ -115,7 +111,7 @@ client = govern(
 )
 ```
 
-The pipeline uses its **own** internal LLM client for deliberation (configured via `GovernanceConfig`). The `OpenAI()` client you pass to `govern()` is used only for final text generation. SDK bootstrap calls `load_env()` before building modules, so `MORALSTACK_*` and `OPENAI_*` values are loaded from `.env` first.
+The pipeline uses its **own** internal LLM client for deliberation (configured via `GovernanceConfig`). The `OpenAI()` client you pass to `govern()` is used only for final text generation. SDK bootstrap calls `load_env()` before building modules, so `MORALSTACK_*` and `OPENAI_*` values are loaded from `.env` first. Runtime tuning (deliberation cycles, risk thresholds, module temperatures, etc.) is controlled exclusively via `MORALSTACK_*` environment variables — see `.env.template` for the full list.
 
 ## Configuration
 

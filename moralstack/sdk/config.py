@@ -2,8 +2,8 @@
 Public configuration for the MoralStack SDK.
 
 GovernanceConfig is the only configuration surface users need to know about.
-It does not expose OrchestratorConfig, RiskThresholds, or other internal parameters.
-Mapping to internal types happens in bootstrap.py.
+Runtime tuning (orchestrator cycles, risk thresholds, module temperatures, etc.)
+is controlled exclusively via MORALSTACK_* environment variables loaded from .env.
 """
 
 from __future__ import annotations
@@ -53,16 +53,6 @@ class GovernanceConfig:
 
     domain_overlay: str | None = None
     """Force a specific domain overlay (e.g. 'healthcare', 'legal', 'finance')."""
-
-    # --- Pipeline tuning ---
-    max_deliberation_cycles: int | None = None
-    """Override deliberation cycles. If None, use MORALSTACK_ORCHESTRATOR_MAX_DELIBERATION_CYCLES."""
-
-    timeout_ms: int | None = None
-    """Override orchestrator timeout. If None, use MORALSTACK_ORCHESTRATOR_TIMEOUT_MS."""
-
-    enable_speculative_generation: bool | None = None
-    """Override speculative overlap. If None, use MORALSTACK_ORCHESTRATOR_ENABLE_SPECULATIVE_GENERATION."""
 
     # --- Observability ---
     observability_mode: str = "off"

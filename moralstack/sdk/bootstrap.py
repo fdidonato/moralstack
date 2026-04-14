@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from moralstack.pipeline.deliberation_stack import build_deliberation_modules
@@ -11,7 +10,6 @@ from moralstack.sdk.errors import GovernanceConfigError, GovernancePipelineError
 from moralstack.utils.env_loader import load_env
 
 if TYPE_CHECKING:
-    from moralstack.orchestration.types import OrchestratorConfig
     from moralstack.runtime.orchestrator import Orchestrator
     from moralstack.sdk.config import GovernanceConfig
 
@@ -31,24 +29,14 @@ def _resolve_model(config: GovernanceConfig) -> str:
     return (config.model or os.getenv("OPENAI_MODEL") or "gpt-4o").strip()
 
 
-def _load_orchestrator_config(config: GovernanceConfig) -> OrchestratorConfig:
-    """Load orchestrator config from env and apply explicit SDK overrides."""
-    from moralstack.orchestration.config_loader import load_orchestrator_config_from_env
-
-    orch_config = load_orchestrator_config_from_env()
-
-    if config.max_deliberation_cycles is not None:
-        orch_config = replace(orch_config, max_deliberation_cycles=config.max_deliberation_cycles)
-    if config.timeout_ms is not None:
-        orch_config = replace(orch_config, timeout_ms=config.timeout_ms)
-    if config.enable_speculative_generation is not None:
-        orch_config = replace(orch_config, enable_speculative_generation=config.enable_speculative_generation)
-
-    return orch_config
-
-
 def _bootstrap_pipeline(config: GovernanceConfig) -> Orchestrator:
-    """Instantiate the full deliberative pipeline for SDK use."""
+    """Instantiate the full deliberative pipeline for SDK use.
+
+    All runtime tuning (orchestrator cycles, risk thresholds, module
+    temperatures, etc.) is driven by MORALSTACK_* environment variables
+    loaded from .env.  GovernanceConfig only controls provider credentials,
+    constitution path, observability, and failure policy.
+    """
     load_env()
 
     api_key = _resolve_api_key(config)
@@ -67,10 +55,11 @@ def _bootstrap_pipeline(config: GovernanceConfig) -> Orchestrator:
         raise GovernancePipelineError("Failed to initialize deliberation modules", cause=e) from e
 
     try:
+        from moralstack.orchestration.config_loader import load_orchestrator_config_from_env
         from moralstack.runtime.orchestrator import Orchestrator
 
         orchestrator = Orchestrator(
-            config=_load_orchestrator_config(config),
+            config=load_orchestrator_config_from_env(),
             policy=modules.policy,
             risk_estimator=modules.risk_estimator,
             critic=modules.critic,
