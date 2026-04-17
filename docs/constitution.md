@@ -117,7 +117,7 @@ Overlays allow customizing the constitution for specific domains.
 
 ### 4.1 Available overlays
 
-Overlays are in `config/constitution/overlays/`. Supported domains:
+Overlays are in `moralstack/constitution/data/overlays/`. Supported domains:
 
 | Domain           | File                             | Description (summary)                  |
 |------------------|----------------------------------|----------------------------------------|
@@ -218,7 +218,7 @@ Overlays can declare `excluded: true` to **disable** the domain for this deploym
 
 **How to exclude a domain:**
 
-1. Edit the overlay YAML for that domain, e.g. `config/constitution/overlays/political.yaml`.
+1. Edit the overlay YAML for that domain, e.g. `moralstack/constitution/data/overlays/political.yaml`.
 2. Add (or set) `excluded: true` at the top level, e.g.:
 
    ```yaml
@@ -315,7 +315,7 @@ relevant = store.get_relevant_principles(query="...", top_k=10, domain=None)
 
 ### 7.1 Adding core principles
 
-Edit `config/constitution/core.yaml`:
+Edit `moralstack/constitution/data/core.yaml`:
 
 ```yaml
 principles:
@@ -331,7 +331,7 @@ principles:
 
 > **Full guide:** see [Creating Domain Overlays](./creating_overlays.md) for the complete step-by-step workflow, schema reference, and best practices.
 
-Create `config/constitution/overlays/new_domain.yaml`:
+Create `moralstack/constitution/data/overlays/new_domain.yaml`:
 
 ```yaml
 description: "Brief description of your domain."
@@ -358,7 +358,7 @@ additional_principles:
 Validate before deploying:
 
 ```bash
-moralstack-validate-overlay config/constitution/overlays/new_domain.yaml
+moralstack-validate-overlay moralstack/constitution/data/overlays/new_domain.yaml
 ```
 
 ---

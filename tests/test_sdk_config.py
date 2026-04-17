@@ -11,9 +11,6 @@ class TestGovernanceConfigDefaults:
         assert cfg.base_url is None
         assert cfg.constitution_dir is None
         assert cfg.domain_overlay is None
-        assert cfg.max_deliberation_cycles == 2
-        assert cfg.timeout_ms == 600_000
-        assert cfg.enable_speculative_generation is True
         assert cfg.observability_mode == "off"
         assert cfg.jsonl_dir is None
         assert cfg.db_path is None
@@ -26,14 +23,12 @@ class TestGovernanceConfigDefaults:
             api_key="sk-test",
             model="gpt-4o-mini",
             domain_overlay="healthcare",
-            max_deliberation_cycles=3,
             failure_policy="passthrough",
             enable_session_tracking=False,
         )
         assert cfg.api_key == "sk-test"
         assert cfg.model == "gpt-4o-mini"
         assert cfg.domain_overlay == "healthcare"
-        assert cfg.max_deliberation_cycles == 3
         assert cfg.failure_policy == "passthrough"
         assert cfg.enable_session_tracking is False
 

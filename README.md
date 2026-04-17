@@ -2,6 +2,12 @@
   <img src="assets/banner.png" alt="MoralStack" width="512"/>
 </p>
 
+# MoralStack
+
+### Your LLM thinks. MoralStack judges.
+
+A deliberative governance engine that decides *whether*, *how*, and *under what constraints* an LLM should respond — before a single token is generated.
+
 ![License](https://img.shields.io/badge/license-Apache%202.0-orange)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![Status](https://img.shields.io/badge/status-research--stage-yellow)
@@ -10,12 +16,18 @@
 [![CI](https://github.com/fdidonato/moralstack/actions/workflows/ci.yml/badge.svg)](https://github.com/fdidonato/moralstack/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/fdidonato/moralstack/graph/badge.svg)](https://codecov.io/gh/fdidonato/moralstack)
 
-MoralStack is a governance layer that decides **whether**, **how**, and **under what constraints** a response should be
-generated before text generation starts.
+---
+
+> **Most AI safety tools are filters. MoralStack is a judge.**
+>
+> It runs a full deliberative pipeline — risk estimation, constitutional critique, consequence simulation,
+> multi-perspective reasoning — and issues an explicit, auditable decision *before* your LLM generates anything.
+
+---
 
 ## Table of Contents
 
-- [Core Idea](#core-idea)
+- [What it does](#what-it-does)
 - [Decision Model](#decision-model)
 - [Architecture](#architecture)
 - [Benchmark Results](#benchmark-results)
@@ -24,10 +36,19 @@ generated before text generation starts.
 - [Configuration](#configuration)
 - [Running the Benchmark](#running-the-benchmark)
 - [Web UI](#web-ui)
+- [Why not just use a filter?](#why-not-just-use-a-filter)
 - [Documentation](#documentation)
 - [Limitations & Trade-offs](#limitations--trade-offs)
 
-## Core Idea
+---
+
+## What it does
+
+```
+Traditional pipeline:   prompt ──► generate ──► (maybe filter)
+
+MoralStack:             prompt ──► deliberate ──► decide ──► generate within bounds
+```
 
 Traditional LLM pipelines optimize for helpfulness first. MoralStack adds an explicit policy layer that separates:
 
@@ -35,6 +56,8 @@ Traditional LLM pipelines optimize for helpfulness first. MoralStack adds an exp
 - **Generation**: produce text consistent with the selected decision
 
 This keeps decision logic auditable and minimizes unsafe false negatives in sensitive contexts.
+
+---
 
 ## Decision Model
 
@@ -53,15 +76,37 @@ Single source of truth for bounds and action selection:
 
 `SAFE_COMPLETE` is a first-class policy action and is not inferred from text disclaimers.
 
+---
+
 ## Architecture
 
 High-level flow:
 
-1. Risk and context analysis (parallel mini-estimators: intent, operational risk, signal detection)
-2. Policy bounds computation + domain overlay application
-3. Routing (`FAST_PATH` or `DELIBERATIVE_PATH`)
-4. Deliberation (critic → simulator → perspectives → hindsight) when needed
-5. Response assembly aligned with `final_action`
+```
+Request
+  │
+  ▼
+[Risk Estimator] ─────────── parallel mini-estimators:
+  │                          intent · operational risk · signal detection
+  ▼
+[Policy Router] ──────────── applies domain overlay, computes action bounds
+  │
+  ├── FAST_PATH ──────────────────────────────────────────────────────────┐
+  │   (clearly benign or clearly harmful — deliberation skipped)          │
+  │                                                                       │
+  └── DELIBERATIVE_PATH                                                   │
+        │                                                                 │
+        ├── [Constitutional Critic]    checks principle violations        │
+        ├── [Consequence Simulator]    projects downstream harm           │
+        ├── [Perspectives Ensemble]    multi-stakeholder reasoning        │
+        └── [Hindsight Evaluator]      retrospective quality check        │
+                    │                                                     │
+                    ▼                                                     │
+             [Convergence Engine] ──── issues final_action ◄─────────────┘
+                    │
+                    ▼
+             [Response Assembler] ─── generates within the decided bounds
+```
 
 Main packages:
 
@@ -72,6 +117,8 @@ Main packages:
 - `moralstack/constitution/` — constitution schema, loader, store (YAML-driven)
 - `moralstack/persistence/` — DB and file persistence modes
 - `moralstack/ui/` — FastAPI dashboard (`moralstack-ui`)
+
+---
 
 ## Benchmark Results
 
@@ -98,6 +145,8 @@ Evaluated on 84 questions spanning adversarial prompts, dual-use domains, regula
 
 ### Decision Accuracy
 
+**98.8% compliance rate. Zero system errors.**
+
 ```
              Predicted
 Expected      NC    SC    REFUSE
@@ -107,7 +156,7 @@ SC             0    52     0
 REFUSE         0     0    22
 ```
 
-98.8% compliance rate. Zero system errors. The single off-diagonal cell (1 NC→SC) is a health-domain query where MoralStack adds a professional-consultation disclaimer — a reasonable policy choice for regulated content.
+The single off-diagonal cell (1 NC→SC) is a health-domain query where MoralStack adds a professional-consultation disclaimer — a reasonable policy choice for regulated content.
 
 > **Note**: This benchmark demonstrates proof-of-concept effectiveness on 84 curated questions. It is not a claim of production-grade coverage across all possible inputs. We encourage independent evaluation.
 
@@ -120,7 +169,9 @@ REFUSE         0     0    22
 
 *(Benchmark 12, 84 questions; mean ~51% lower than the original benchmark configuration ~73s mean. Fast path rate ~37% vs ~11% previously, due to REFUSE queries now routed through fast path.)*
 
-Deliberative paths add latency by design. Latency-reducing optimizations include dynamic scheduling, speculative overlap, parallel risk estimation, early convergence on cycle 1, lighter models for simulator and policy rewrite (see [Limitations](#limitations--trade-offs) and [Configuration](#configuration)).
+Deliberative paths add latency by design. See [Limitations & Trade-offs](#limitations--trade-offs).
+
+---
 
 ## Quickstart
 
@@ -129,13 +180,13 @@ Deliberative paths add latency by design. Latency-reducing optimizations include
 - Python 3.11+
 - OpenAI API key
 
-## Installation
+### Install
 
-Before installing, please create a virtual environment and activate it.
+Create and activate a virtual environment first:
 
 ```bash
 python -m venv venv
-source venv/bin/activate
+source venv/bin/activate  # Windows: venv\Scripts\activate
 ```
 
 **One-command (recommended):**
@@ -144,8 +195,7 @@ source venv/bin/activate
 python scripts/install.py
 ```
 
-Installs the package in editable mode with all extras (dev, ui). Registers `moralstack` and `moralstack-ui` CLI entry
-points.
+Installs the package in editable mode with all extras (`dev`, `ui`). Registers `moralstack` and `moralstack-ui` CLI entrypoints.
 
 **Manual (equivalent to install.py):**
 
@@ -178,6 +228,8 @@ Useful commands:
 - `moralstack --mock`
 
 Legacy wrapper (same runtime entrypoint): `python scripts/mstack_run.py`
+
+---
 
 ## SDK Usage
 
@@ -221,18 +273,18 @@ Every response carries `response.governance_metadata`:
 ```python
 meta = response.governance_metadata
 
-meta.final_action        # NORMAL_COMPLETE | SAFE_COMPLETE | REFUSE
-meta.risk_score          # 0.0 (benign) — 1.0 (harmful)
-meta.risk_category       # CLEARLY_BENIGN | SENSITIVE | CLEARLY_HARMFUL
-meta.path                # FAST_PATH | DELIBERATIVE_PATH
-meta.reason_codes        # ["DUAL_USE", "SENSITIVE_DOMAIN", ...]
-meta.triggered_principles  # constitution principles activated
-meta.decision_reason     # human-readable explanation
-meta.conversation_id     # session tracking (multi-turn)
-meta.turn_index          # turn counter within session
+meta.final_action           # NORMAL_COMPLETE | SAFE_COMPLETE | REFUSE
+meta.risk_score             # 0.0 (benign) — 1.0 (harmful)
+meta.risk_category          # CLEARLY_BENIGN | SENSITIVE | CLEARLY_HARMFUL
+meta.path                   # FAST_PATH | DELIBERATIVE_PATH
+meta.reason_codes           # ["DUAL_USE", "SENSITIVE_DOMAIN", ...]
+meta.triggered_principles   # constitution principles activated
+meta.decision_reason        # human-readable explanation
+meta.conversation_id        # session tracking (multi-turn)
+meta.turn_index             # turn counter within session
 ```
 
-### Configuration
+### GovernanceConfig
 
 ```python
 from moralstack import govern, GovernanceConfig
@@ -250,6 +302,26 @@ client = govern(
 ```
 
 All parameters default to sensible values. Minimum required: `OPENAI_API_KEY` in environment.
+
+### SDK model resolution
+
+When you use `govern()`, MoralStack runs two separate model planes:
+
+1. **Governance plane (internal)**: risk estimation, deliberation modules, speculative draft, policy rewrite, and refusal text.
+2. **Generation plane (your client)**: the final user-visible response when `final_action` is `NORMAL_COMPLETE` or `SAFE_COMPLETE`.
+
+The model passed in `client.chat.completions.create(model="...")` controls only the final response. `OPENAI_MODEL` and `MORALSTACK_*_MODEL` variables control only the internal governance pipeline. Neither side overrides the other.
+
+| Stage | Model source |
+|---|---|
+| Final response (`NORMAL_COMPLETE`) | `model=` passed to `chat.completions.create(...)` |
+| Final response (`SAFE_COMPLETE`) | same `model=`, with governance constraints injected into system message |
+| `REFUSE` response text | internal policy model (`OPENAI_MODEL`) |
+| Speculative overlap draft | internal policy model (`OPENAI_MODEL`) |
+| Policy `rewrite()` (cycle 2+) | `MORALSTACK_POLICY_REWRITE_MODEL` (fallback: `OPENAI_MODEL`) |
+| Risk / Critic / Simulator / Perspectives / Hindsight | `MORALSTACK_*_MODEL` per module, fallback to `OPENAI_MODEL` |
+
+When `final_action` is `REFUSE`, your wrapped client is not called for generation.
 
 ### Streaming
 
@@ -271,35 +343,40 @@ Governance deliberation happens **before** streaming starts. If `REFUSE`, a sing
 Environment is loaded via `moralstack/utils/env_loader.py`.
 
 - `.env` values are loaded with `override=True` (non-empty `.env` values override existing env vars)
-- optional empty values are purged after load to avoid invalid client configuration
+- Optional empty values are purged after load to avoid invalid client configuration
 
-Key variables:
+### Key variables
 
-- `OPENAI_MODEL` (default `gpt-4o`)
-- `MORALSTACK_POLICY_REWRITE_MODEL` (optional; model for deliberative `rewrite()` at cycle 2+; if unset, same as `OPENAI_MODEL`. `.env.template` sets `gpt-4.1-nano` for lower rewrite latency.)
-- `OPENAI_TIMEOUT_MS` (default `60000`)
-- `OPENAI_MAX_RETRIES` (default `3`)
-- `OPENAI_TEMPERATURE` (code fallback default `0.7`; `.env.template` starter value `0.1`)
-- `OPENAI_TOP_P` (code fallback default `0.9`; `.env.template` starter value `0.8`)
-- `MORALSTACK_OBSERVABILITY_DB_PATH` (enable SQLite persistence)
-- `MORALSTACK_OBSERVABILITY_MODE` (`db_only`, `dual`, `file_only`)
-- `MORALSTACK_OBSERVABILITY_JSONL_DIR` (JSONL output dir; default `logs/observability`)
-- `MORALSTACK_DB_PATH` / `MORALSTACK_PERSIST_MODE` (deprecated aliases; still work)
-- `MORALSTACK_ORCHESTRATOR_BORDERLINE_REFUSE_UPPER` (default `0.95`)
+| Variable | Default | Description |
+|---|---|---|
+| `OPENAI_API_KEY` | *(required)* | Your OpenAI API key |
+| `OPENAI_MODEL` | `gpt-4o` | Model used by all pipeline modules |
+| `MORALSTACK_POLICY_REWRITE_MODEL` | same as `OPENAI_MODEL` | Model for deliberative `rewrite()` at cycle 2+. `.env.template` sets `gpt-4.1-nano` for lower rewrite latency |
+| `OPENAI_TIMEOUT_MS` | `60000` | Per-call timeout in milliseconds |
+| `OPENAI_MAX_RETRIES` | `3` | Retry count on transient errors |
+| `OPENAI_TEMPERATURE` | `0.1` | Temperature for all modules |
+| `OPENAI_TOP_P` | `0.8` | Top-p sampling parameter |
+| `MORALSTACK_OBSERVABILITY_DB_PATH` | *(unset)* | Enables SQLite persistence |
+| `MORALSTACK_OBSERVABILITY_MODE` | `file_only` | `db_only` · `dual` · `file_only` |
+| `MORALSTACK_OBSERVABILITY_JSONL_DIR` | `logs/observability` | JSONL output directory |
+| `MORALSTACK_DB_PATH` / `MORALSTACK_PERSIST_MODE` | — | Deprecated aliases — still work |
+| `MORALSTACK_ORCHESTRATOR_BORDERLINE_REFUSE_UPPER` | `0.95` | Upper boundary for the borderline-refuse zone |
 
-For full variable reference see [INSTALL.md](INSTALL.md) and `docs/modules/*.md`.
+### Default models by component
 
-Default models by component (each can be overridden via its env var; see `INSTALL.md` and module docs):
-
-| Component | Default model | Env variable |
-|-----------|---------------|--------------|
-| Policy (generation) | gpt-4o | `OPENAI_MODEL` |
+| Component | Default model | Override variable |
+|---|---|---|
+| Policy (generation) | `gpt-4o` | `OPENAI_MODEL` |
 | Policy (rewrite) | same as primary, or `gpt-4.1-nano` in `.env.template` | `MORALSTACK_POLICY_REWRITE_MODEL` |
-| Risk estimator | follows `OPENAI_MODEL` unless set | `MORALSTACK_RISK_MODEL` |
-| Critic | follows `OPENAI_MODEL` unless set | `MORALSTACK_CRITIC_MODEL` |
-| Simulator | follows `OPENAI_MODEL` unless set | `MORALSTACK_SIMULATOR_MODEL` |
-| Perspectives | follows `OPENAI_MODEL` unless set | `MORALSTACK_PERSPECTIVES_MODEL` |
-| Hindsight | follows `OPENAI_MODEL` unless set | `MORALSTACK_HINDSIGHT_MODEL` |
+| Risk estimator | follows `OPENAI_MODEL` | `MORALSTACK_RISK_MODEL` |
+| Critic | follows `OPENAI_MODEL` | `MORALSTACK_CRITIC_MODEL` |
+| Simulator | follows `OPENAI_MODEL` | `MORALSTACK_SIMULATOR_MODEL` |
+| Perspectives | follows `OPENAI_MODEL` | `MORALSTACK_PERSPECTIVES_MODEL` |
+| Hindsight | follows `OPENAI_MODEL` | `MORALSTACK_HINDSIGHT_MODEL` |
+
+For the full variable reference see [INSTALL.md](INSTALL.md) and `docs/modules/*.md`.
+
+---
 
 ## Running the Benchmark
 
@@ -307,34 +384,66 @@ Default models by component (each can be overridden via its env var; see `INSTAL
 python scripts/benchmark_moralstack.py
 ```
 
-Benchmark supports separate baseline and judge models via:
+Override baseline and judge models independently:
 
-- `MORALSTACK_BENCHMARK_BASELINE_MODEL`
-- `MORALSTACK_BENCHMARK_JUDGE_MODEL`
+```bash
+MORALSTACK_BENCHMARK_BASELINE_MODEL=gpt-4o \
+MORALSTACK_BENCHMARK_JUDGE_MODEL=gpt-5.2 \
+python scripts/benchmark_moralstack.py
+```
 
-When judge model differs from generation model, the judge is treated as independent.
+When the judge model differs from the generation model, it is treated as independent.
+
+---
 
 ## Web UI
 
-Install UI extras and configure DB path:
+Install UI extras:
 
 ```bash
-pip install -e .[ui]
+pip install -e ".[ui]"
 ```
 
-Set:
+Configure persistence and credentials:
 
-- `MORALSTACK_DB_PATH`
-- `MORALSTACK_UI_USERNAME`
-- `MORALSTACK_UI_PASSWORD`
+```bash
+# .env
+MORALSTACK_DB_PATH=moralstack.db
+MORALSTACK_UI_USERNAME=admin
+MORALSTACK_UI_PASSWORD=your_password
+```
 
 Start:
 
 ```bash
 moralstack-ui
+# → http://localhost:8765  (override with MORALSTACK_UI_PORT)
 ```
 
-Open [http://localhost:8765/](http://localhost:8765/) (or `MORALSTACK_UI_PORT`).
+Inspect every decision: LLM calls, critic scores, risk traces, decision explanation, convergence steps, and benchmark comparisons.
+
+---
+
+## Why not just use a filter?
+
+| | Regex / keywords | Moderation APIs | **MoralStack** |
+|---|:---:|:---:|:---:|
+| Understands context | ✗ | Partial | ✓ |
+| Auditable decisions | ✗ | ✗ | ✓ |
+| Domain-configurable | ✗ | ✗ | ✓ |
+| Handles dual-use | ✗ | Partial | ✓ |
+| Safe redirection | ✗ | ✗ | ✓ |
+| Counterfactual reasoning | ✗ | ✗ | ✓ |
+| Zero false negatives* | ✗ | ✗ | ✓ |
+
+*On our benchmark set — see full methodology above.*
+
+- **Deliberative, not reactive** — runs a multi-module reasoning pipeline, not a classifier
+- **First-class `SAFE_COMPLETE`** — "respond with safeguards" is an explicit policy action, not a post-hoc disclaimer
+- **Full audit trail** — every decision is explainable, logged, and queryable
+- **Domain overlay system** — YAML-configurable per sector, no code changes required
+
+---
 
 ## Documentation
 
@@ -346,15 +455,22 @@ Open [http://localhost:8765/](http://localhost:8765/) (or `MORALSTACK_UI_PORT`).
 - [Development guide](docs/DEVELOPMENT.md)
 - [Limitations and trade-offs](docs/limitations_and_tradeoffs.md)
 
+---
+
 ## Limitations & Trade-offs
 
 MoralStack makes deliberate trade-offs:
 
-- **Latency over speed**: deliberative paths run multiple LLM calls (risk → critic → simulator → perspectives → hindsight). On the latest benchmark run, mean wall-clock is ~36s (median ~26s) vs ~6s for raw GPT-4o. This is a design choice — governance takes time.
-- **Multi-model cost**: a single deliberative request makes 7-9 LLM calls. Example profiles: `.env.minimal` uses `gpt-4.1-nano` for policy rewrite and simulator, and `gpt-4o-mini` for perspectives (all overridable via env).
-- **Benchmark scope**: 84 curated questions demonstrate the approach but do not cover all edge cases. We recommend running your own evaluations on domain-specific inputs.
-- **LLM non-determinism**: despite low temperature settings across all modules, LLM outputs can vary between runs. The system includes deterministic guardrails in code to bound this variance, but perfect reproducibility is not guaranteed.
+**Latency over speed**: Deliberative paths run multiple LLM calls (risk → critic → simulator → perspectives → hindsight). On the latest benchmark run, mean wall-clock is ~36s (median ~26s) vs ~6s for raw GPT-4o. This is a design choice — governance takes time. Latency has been reduced through speculative decoding, parallel risk estimation, lighter models for simulator and rewrite (`gpt-4.1-nano`), structured JSON output enforcement, and soft-revision prompt constraints. Further optimizations (early-exit on low-risk queries, context-mode switching) are planned.
 
-Latency has been reduced through speculative decoding (predicted outputs for draft revisions), parallel risk estimation, lighter models for simulator and rewrite (`gpt-4.1-nano`), structured JSON output enforcement, and soft-revision prompt constraints. Further optimizations (early-exit on low-risk queries, context-mode switching) are planned.
+**Multi-model cost**: A single deliberative request makes 7–9 LLM calls. Example profiles: `.env.minimal` uses `gpt-4.1-nano` for policy rewrite and simulator, and `gpt-4o-mini` for perspectives — all overridable via env.
+
+**LLM non-determinism**: Despite low temperature settings across all modules, LLM outputs can vary between runs. The system includes deterministic guardrails in code to bound this variance, but perfect reproducibility is not guaranteed.
+
+**Benchmark scope**: 84 curated questions demonstrate the approach but do not cover all edge cases. We recommend running your own evaluations on domain-specific inputs.
 
 See full discussion in [docs/limitations_and_tradeoffs.md](docs/limitations_and_tradeoffs.md).
+
+---
+
+<p align="center">Apache 2.0 · Built with deliberation, not just parameters.</p>

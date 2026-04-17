@@ -98,10 +98,6 @@ client = govern(
         # Domain-specific governance
         domain_overlay="healthcare",  # enforce a named domain overlay
 
-        # Pipeline tuning
-        max_deliberation_cycles=2,
-        timeout_ms=600_000,
-
         # Failure handling
         failure_policy="refuse",     # "refuse" (default) | "passthrough"
 
@@ -115,7 +111,7 @@ client = govern(
 )
 ```
 
-The pipeline uses its **own** internal LLM client for deliberation (configured via `GovernanceConfig`). The `OpenAI()` client you pass to `govern()` is used only for final text generation.
+The pipeline uses its **own** internal LLM client for deliberation (configured via `GovernanceConfig`). The `OpenAI()` client you pass to `govern()` is used only for final text generation. SDK bootstrap calls `load_env()` before building modules, so `MORALSTACK_*` and `OPENAI_*` values are loaded from `.env` first. Runtime tuning (deliberation cycles, risk thresholds, module temperatures, etc.) is controlled exclusively via `MORALSTACK_*` environment variables — see `.env.template` for the full list.
 
 ## Configuration
 
@@ -146,8 +142,8 @@ See [docs/modules/openai_params.md](docs/modules/openai_params.md) for details a
 | Variable                       | Default                   | Description                                                    |
 |--------------------------------|---------------------------|----------------------------------------------------------------|
 | OPENAI_API_KEY                 | -                         | OpenAI API key (required)                                      |
-| OPENAI_MODEL                   | gpt-4o                    | OpenAI model (see [Model compatibility](#model-compatibility)) |
-| MORALSTACK_POLICY_REWRITE_MODEL | - (same as OPENAI_MODEL) | Policy `rewrite()` at cycle 2+; `.env.template` uses `gpt-4.1-nano`; set any lighter model to reduce latency (see [policy.md](docs/modules/policy.md)) |
+| OPENAI_MODEL                   | gpt-4o                    | Primary internal governance model. In SDK mode, this does **not** override the `model=` passed to `chat.completions.create(...)` for final response generation (see README SDK model resolution section). |
+| MORALSTACK_POLICY_REWRITE_MODEL | - (same as OPENAI_MODEL) | Internal policy `rewrite()` model at cycle 2+; SDK final response model is still controlled by `chat.completions.create(model=...)`. `.env.template` uses `gpt-4.1-nano`; set any lighter model to reduce latency (see [policy.md](docs/modules/policy.md)) |
 | OPENAI_BASE_URL                | -                         | Base URL (proxy/enterprise)                                    |
 | OPENAI_TIMEOUT_MS              | 60000                     | Timeout in milliseconds                                        |
 | OPENAI_MAX_RETRIES             | 3                         | Retries on 429/503                                             |
@@ -161,6 +157,7 @@ See [docs/modules/openai_params.md](docs/modules/openai_params.md) for details a
 | MORALSTACK_UI_PORT             | 8765                      | Web UI port                                                    |
 | MORALSTACK_UI_USERNAME         | -                         | Basic Auth for UI (required when running moralstack-ui)        |
 | MORALSTACK_UI_PASSWORD         | -                         | Basic Auth for UI                                              |
+| MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS | 2          | Parallel domain agents for constitution retrieval              |
 | MORALSTACK_VERBOSE             | -                         | Set to 1 for verbose output                                    |
 
 **Risk Estimator**: Optional overrides (e.g. `MORALSTACK_RISK_MODEL`, `MORALSTACK_RISK_LOW_THRESHOLD`,

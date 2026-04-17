@@ -20,6 +20,7 @@ from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.errors import GovernancePipelineError
 from moralstack.sdk.response import GovernedResponse
 from moralstack.sdk.session import SessionState
+from moralstack.utils.env_loader import load_env
 
 if TYPE_CHECKING:
     from moralstack.runtime.orchestrator import Orchestrator
@@ -369,6 +370,8 @@ def govern(
     # Duck-type check: client must expose the expected interface
     if not (hasattr(client, "chat") or callable(getattr(client, "__getattr__", None))):
         raise GovernancePipelineError("client must expose a .chat.completions.create() interface " "(e.g. openai.OpenAI())")
+
+    load_env()
 
     if config is None:
         config = GovernanceConfig()

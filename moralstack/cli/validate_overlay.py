@@ -6,13 +6,13 @@ Entry point registered as ``moralstack-validate-overlay`` in pyproject.toml.
 Usage::
 
     # Validate a single overlay
-    moralstack-validate-overlay config/constitution/overlays/my_domain.yaml
+    moralstack-validate-overlay moralstack/constitution/data/overlays/my_domain.yaml
 
     # Validate all overlays in a directory
-    moralstack-validate-overlay config/constitution/overlays/
+    moralstack-validate-overlay moralstack/constitution/data/overlays/
 
     # JSON output (for CI integration)
-    moralstack-validate-overlay --json config/constitution/overlays/my_domain.yaml
+    moralstack-validate-overlay --json moralstack/constitution/data/overlays/my_domain.yaml
 
 Exit codes:
     0 — all overlays valid
@@ -328,9 +328,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  moralstack-validate-overlay config/constitution/overlays/healthcare.yaml
-  moralstack-validate-overlay config/constitution/overlays/
-  moralstack-validate-overlay --json config/constitution/overlays/my_domain.yaml
+  moralstack-validate-overlay moralstack/constitution/data/overlays/healthcare.yaml
+  moralstack-validate-overlay moralstack/constitution/data/overlays/
+  moralstack-validate-overlay --json moralstack/constitution/data/overlays/my_domain.yaml
         """,
     )
     parser.add_argument(

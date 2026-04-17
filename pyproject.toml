@@ -44,6 +44,9 @@ moralstack-validate-overlay = "moralstack.cli.validate_overlay:main"
 where = ["."]
 include = ["moralstack*"]
 
+[tool.setuptools.package-data]
+"moralstack.constitution" = ["data/**/*.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"

@@ -18,7 +18,7 @@ Open an issue describing the problem you want to solve before writing code. This
 
 ## Areas where contributions are most useful
 
-- **New domain overlays** — see [Creating Domain Overlays](docs/creating_overlays.md) for a step-by-step guide. Validate your overlay before submitting: `moralstack-validate-overlay config/constitution/overlays/your_domain.yaml`
+- **New domain overlays** — see [Creating Domain Overlays](docs/creating_overlays.md) for a step-by-step guide. Validate your overlay before submitting: `moralstack-validate-overlay moralstack/constitution/data/overlays/your_domain.yaml`
 - Benchmark coverage (additional edge cases or adversarial prompts)
 - Latency optimizations
 - Documentation improvements

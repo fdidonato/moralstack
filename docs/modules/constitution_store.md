@@ -11,7 +11,7 @@ typed Pydantic objects** (Principle, Overlay, Constitution), never raw dicts.
 
 **For stakeholders and testers**: Principles and overlays determine *when* a response is considered in violation and
 *which* principles apply per domain. For testing, reduced constitutions or custom overlays can be loaded; in production
-the files in `config/constitution/` define the verifiable ethical behavior.
+the files in `moralstack/constitution/data/` define the verifiable ethical behavior.
 
 ---
 
@@ -108,7 +108,7 @@ class Overlay(BaseModel):
 
 ### Available Domains
 
-Overlays in `config/constitution/overlays/` include: `medical`, `legal`, `financial`, `education`, `mental_health`,
+Overlays in `moralstack/constitution/data/overlays/` include: `medical`, `legal`, `financial`, `education`, `mental_health`,
 `healthcare`, `children`, `research`, `creative`, `cybersecurity`, `emergency`, `enterprise`, `journalism`, `science`,
 `political`, `relationships`, `gaming`, `coding`, `customer_service`.
 
@@ -125,7 +125,7 @@ To avoid long parameter lists, use the `ConstitutionStoreConfig` dataclass and p
 from moralstack.constitution import ConstitutionStore, ConstitutionStoreConfig, OpenAIClientConfig
 
 cfg = ConstitutionStoreConfig(
-    config_dir=Path("config/constitution"),
+    config_dir=Path("moralstack/constitution/data"),
     policy_llm=policy,
     use_llm_matching=True,
     openai_config=OpenAIClientConfig.with_env_fallback(
@@ -141,6 +141,9 @@ store = ConstitutionStore(config=cfg)
 All fields have defaults; only override what you need. See `ConstitutionStoreConfig` in `store.py` for the full list (
 `config_dir`, `core_file`, `overlays_dir`, `policy_llm`, `use_llm_matching`, `openai_config`, `max_parallel_agents`,
 `use_enhanced_retrieval`, `confidence_threshold`, `use_domain_prefilter`, `max_prefilter_domains`).
+
+When `max_parallel_agents` is not set explicitly, SDK/CLI runtime wiring resolves it from
+`MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS` (fallback default: `2`).
 
 ### Initialization (keyword args, backward compatible)
 
@@ -301,7 +304,7 @@ Precedence order for conflicting principles:
 ## Medical Overlay Example
 
 ```yaml
-# config/constitution/overlays/medical.yaml
+# moralstack/constitution/data/overlays/medical.yaml
 
 priority_overrides:
   SOFT.HONEST.1: 85     # High accuracy in medical context
@@ -326,7 +329,7 @@ additional_principles:
 ## Configuration Files
 
 ```
-config/constitution/
+moralstack/constitution/data/
 ├── core.yaml                    # Core principles
 └── overlays/
     ├── medical.yaml
