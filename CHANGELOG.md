@@ -1,7 +1,7 @@
 # CHANGELOG
 
 ## 0.2.0
-12/04/2026
+17/04/2026
 
 - Python SDK: `govern(client)` wraps any OpenAI-compatible client with MoralStack governance
 - New public API: `govern`, `GovernedClient`, `GovernanceConfig`, `GovernedResponse`, `GovernanceMetadata`
