@@ -91,6 +91,10 @@ information leakage; overall stack judge score ~9.27/10 on benchmark run 12).
 
 See also `.env.template` and `INSTALL.md`.
 
+When using the SDK wrapper (`govern(OpenAI())`), these variables configure the internal governance pipeline. The final
+user-visible response model is still the one passed by the caller in `chat.completions.create(model=...)` for
+`NORMAL_COMPLETE` and `SAFE_COMPLETE`. See `README.md` section "SDK model resolution (important)" for the full mapping.
+
 ```python
 result = policy.rewrite(
     prompt="Original user request",
