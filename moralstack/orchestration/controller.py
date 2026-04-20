@@ -22,6 +22,10 @@ from moralstack.core.types import (
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.reason_codes import policy_reason_codes_to_reason_codes
 from moralstack.models.risk import OperationalRisk, RiskCategory, RiskEstimation
+from moralstack.observability.context import (
+    set_current_session_id,
+    set_current_turn_number,
+)
 from moralstack.orchestration.conversation_state import ConversationGovernanceState
 from moralstack.orchestration.decision_logger import log_decision_explanation
 from moralstack.orchestration.decision_service import decide_action
@@ -278,6 +282,73 @@ class OrchestrationController:
             append_decision_trace(dt)
         except Exception:
             _LOG.debug("emit RISK_ASSESSMENT trace failed", exc_info=True)
+
+    def _emit_deliberation_aggregate_trace(
+        self,
+        *,
+        request_id: str,
+        state: Any,
+        outcome: Any,
+        risk_score: float,
+    ) -> None:
+        """Emit a DELIBERATION_AGGREGATE decision trace with full
+        deliberation summary data (perspectives, convergence, sim metrics).
+        Complements the FINAL trace for file_only audit completeness."""
+        try:
+            perspectives = getattr(state, "perspectives", None) or []
+            pw_approval: float | None = None
+            if perspectives:
+                ap = [float(getattr(p, "approval_score", 0.0) or 0.0) for p in perspectives]
+                pw_approval = sum(ap) / max(len(ap), 1)
+
+            sem_harm: float | None = None
+            sims = getattr(state, "simulations", None) or []
+            if sims:
+                last_sim = sims[-1]
+                sem_harm = float(getattr(last_sim, "semantic_expected_harm", 0.0) or 0.0)
+
+            lc = getattr(state, "last_critique", None)
+            violations_count = 0
+            critic_decision = ""
+            if lc is not None:
+                viol = getattr(lc, "violations", None) or []
+                violations_count = len(viol)
+                critic_decision = (getattr(lc, "decision", "") or "").strip().upper()
+
+            hindsight_score: float | None = None
+            hs = getattr(state, "hindsight", None)
+            if hs is not None:
+                hindsight_score = float(getattr(hs, "score", 0.0) or 0.0)
+
+            conv_snap = getattr(state, "_convergence_evaluation_snapshot", None)
+            if not isinstance(conv_snap, dict):
+                conv_snap = {}
+
+            payload = {
+                "total_cycles": getattr(state, "cycle", 0),
+                "converged": getattr(outcome, "converged", False) if outcome else False,
+                "convergence_reason": getattr(outcome, "stop_reason", "") if outcome else "",
+                "convergence_reason_codes": list(conv_snap.get("convergence_reason_codes") or []),
+                "perspectives_count": len(perspectives),
+                "perspectives_weighted_approval": pw_approval,
+                "semantic_expected_harm": sem_harm,
+                "critic_decision": critic_decision,
+                "critic_violations_count": violations_count,
+                "hindsight_score": hindsight_score,
+                "early_convergence_considered": conv_snap.get("early_convergence_considered"),
+                "early_convergence_accepted": conv_snap.get("early_convergence_accepted"),
+            }
+            dt = DecisionTrace(
+                request_id=request_id,
+                stage="DELIBERATION_AGGREGATE",
+                sequence=3,
+                risk_score=risk_score,
+            )
+            dt.stage_payload = payload
+            normalize_trace_fields(dt)
+            append_decision_trace(dt)
+        except Exception:
+            _LOG.debug("emit DELIBERATION_AGGREGATE trace failed", exc_info=True)
 
     def _estimate_risk(self, request: ProcessedRequest) -> RiskEstimation:
         if self.risk_estimator is None:
@@ -888,6 +959,12 @@ class OrchestrationController:
             decision_explanation=expl_for_assembler,
             constitution_store=self.constitution_store,
         )
+        self._emit_deliberation_aggregate_trace(
+            request_id=request_id,
+            state=state,
+            outcome=outcome,
+            risk_score=risk_score,
+        )
         result = OrchestratorResult(
             response=response,
             request_id=request.request_id,
@@ -935,6 +1012,9 @@ class OrchestrationController:
             "conversation_state": conversation_state,
             "_conversation_events_emitted": False,
         }
+
+        set_current_session_id(conversation_id)
+        set_current_turn_number(turn_index)
 
         self._persistence.set_request_context(request_id)
         self._persistence.ensure_run_and_upsert_request(

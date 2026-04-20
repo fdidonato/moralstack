@@ -18,6 +18,8 @@ from moralstack.observability.context import (
     get_current_cycle,
     get_current_request_id,
     get_current_run_id,
+    get_current_session_id,
+    get_current_turn_number,
 )
 from moralstack.observability.events import (
     EVENT_DEBUG_EVENT,
@@ -85,6 +87,8 @@ def persist_llm_call(
         run_id=run_id,
         request_id=request_id,
         cycle=cycle_val,
+        session_id=get_current_session_id(),
+        turn_number=get_current_turn_number(),
         payload={
             "phase": phase,
             "module": module,
@@ -135,6 +139,8 @@ def persist_decision_trace(
         EVENT_DECISION_TRACE,
         run_id=run_id,
         request_id=request_id,
+        session_id=get_current_session_id(),
+        turn_number=get_current_turn_number(),
         payload={
             "stage": stage,
             "sequence": sequence,
@@ -167,6 +173,8 @@ def persist_debug_event(
         EVENT_DEBUG_EVENT,
         run_id=run_id,
         request_id=request_id or get_current_request_id(),
+        session_id=get_current_session_id(),
+        turn_number=get_current_turn_number(),
         payload=payload,
     )
     try:
@@ -209,6 +217,8 @@ def persist_orchestration_event(
         run_id=run_id,
         request_id=request_id,
         cycle=cycle_val,
+        session_id=get_current_session_id(),
+        turn_number=get_current_turn_number(),
         payload={
             "stage": stage,
             "component": component,
@@ -249,6 +259,8 @@ def persist_llm_calls_batch(
     default_run = get_current_run_id()
     default_req = get_current_request_id()
     default_cycle = get_current_cycle()
+    default_sess = get_current_session_id()
+    default_turn = get_current_turn_number()
     now_ms = int(time.time() * 1000)
     envelopes = []
     for e in entries:
@@ -263,6 +275,8 @@ def persist_llm_calls_batch(
                 run_id=run_id,
                 request_id=request_id,
                 cycle=cycle_val,
+                session_id=default_sess,
+                turn_number=default_turn,
                 payload={
                     "phase": e.get("phase", ""),
                     "module": e.get("module", ""),
@@ -307,6 +321,8 @@ def persist_decision_traces_batch(
         return True
     default_run = get_current_run_id()
     default_req = get_current_request_id()
+    default_sess = get_current_session_id()
+    default_turn = get_current_turn_number()
     now_ms = int(time.time() * 1000)
     envelopes = []
     for e in entries:
@@ -319,6 +335,8 @@ def persist_decision_traces_batch(
                 EVENT_DECISION_TRACE,
                 run_id=run_id,
                 request_id=request_id,
+                session_id=default_sess,
+                turn_number=default_turn,
                 payload={
                     "stage": e.get("stage", ""),
                     "sequence": e.get("sequence", 0),
@@ -347,6 +365,8 @@ def persist_debug_events_batch(
     if not entries:
         return True
     default_run = get_current_run_id()
+    default_sess = get_current_session_id()
+    default_turn = get_current_turn_number()
     envelopes = []
     for e in entries:
         run_id = e.get("run_id") or default_run
@@ -358,6 +378,8 @@ def persist_debug_events_batch(
                 EVENT_DEBUG_EVENT,
                 run_id=run_id,
                 request_id=e.get("request_id") or "",
+                session_id=default_sess,
+                turn_number=default_turn,
                 payload=payload if isinstance(payload, dict) else {"payload": payload},
             )
         )
@@ -382,6 +404,8 @@ def persist_orchestration_events_batch(
         return True
     default_run = get_current_run_id()
     default_req = get_current_request_id()
+    default_sess = get_current_session_id()
+    default_turn = get_current_turn_number()
     now_ms = int(time.time() * 1000)
     envelopes = []
     for e in entries:
@@ -395,6 +419,8 @@ def persist_orchestration_events_batch(
                 run_id=run_id,
                 request_id=request_id,
                 cycle=e.get("cycle"),
+                session_id=default_sess,
+                turn_number=default_turn,
                 payload={
                     "stage": e.get("stage", ""),
                     "component": e.get("component", ""),

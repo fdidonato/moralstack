@@ -7,6 +7,7 @@ from __future__ import annotations
 RISK_ASSESSMENT = "RISK_ASSESSMENT"
 REQUEST_ANALYSIS_CONTEXT = "REQUEST_ANALYSIS_CONTEXT"
 CYCLE_SUMMARY = "CYCLE_SUMMARY"
+DELIBERATION_AGGREGATE = "DELIBERATION_AGGREGATE"
 
 # Existing stages used elsewhere (reference only; not exhaustive)
 PRE_POLICY = "PRE_POLICY"

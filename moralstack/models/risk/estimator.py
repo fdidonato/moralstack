@@ -13,6 +13,8 @@ from moralstack.core.types import PolicyLLMProtocol
 from moralstack.observability.context import get_current_cycle as _get_cycle
 from moralstack.observability.context import get_current_request_id as _get_request_id
 from moralstack.observability.context import get_current_run_id as _get_run_id
+from moralstack.observability.context import get_current_session_id as _get_session_id
+from moralstack.observability.context import get_current_turn_number as _get_turn_number
 from moralstack.observability.events import EVENT_LLM_CALL
 from moralstack.observability.events import make_envelope as _make_envelope
 from moralstack.observability.router import route as _obs_route
@@ -94,6 +96,8 @@ def persist_llm_call(
         run_id=_run_id,
         request_id=_request_id,
         cycle=_cycle,
+        session_id=_get_session_id(),
+        turn_number=_get_turn_number(),
         payload={
             "phase": phase,
             "module": module,
@@ -340,6 +344,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         attempts: int,
         parsed_summary_json: str | None = None,
         error: str | None = None,
+        token_usage_json: str | None = None,
     ) -> None:
         """Persist LLM call for risk estimation. Logs debug on ImportError."""
         risk_model = getattr(self.policy, "model", None) if self.policy else None
@@ -359,6 +364,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                 parsed_summary_json=parsed_summary_json,
                 attempts=attempts,
                 error=error,
+                token_usage_json=token_usage_json,
             )
         except Exception as e:
             _RISK_LOG.debug("persist_llm_call failed: %s", e)
@@ -375,6 +381,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         assert self.policy is not None, "policy must be set before calling _call_llm_with_retry"
         raw_response = ""
         for attempt in range(self.config.max_retries):
+            _tu_json: str | None = None
             try:
                 start_gen = time.time()
                 result = self.policy.generate(
@@ -384,6 +391,9 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                 )
                 elapsed_ms = (time.time() - start_gen) * 1000
                 raw_response = result.text if hasattr(result, "text") else str(result)
+                # Capture token usage immediately after generate so it's available
+                # in both the success path and any subsequent except handler.
+                _tu_json = result.token_usage_json() if hasattr(result, "token_usage_json") else None
                 _RISK_LOG.info(
                     "risk_estimator raw_output (troncato): %s",
                     (raw_response or "")[:200],
@@ -406,6 +416,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                     raw_response=raw_response,
                     attempts=attempt + 1,
                     parsed_summary_json=summary,
+                    token_usage_json=_tu_json,
                 )
                 return raw_response, parsed
             except JSONParseError as e:
@@ -434,6 +445,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                     attempts=attempt + 1,
                     parsed_summary_json=summary,
                     error=str(e)[:1000],
+                    token_usage_json=_tu_json,
                 )
                 continue
             except Exception as e:
@@ -558,6 +570,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         duration_ms: float,
         attempts: int,
         parse_contract: dict[str, Any] | None = None,
+        token_usage_json: str | None = None,
     ) -> None:
         """Persist a single mini-estimator LLM call. Logs debug on ImportError."""
         import json as _json
@@ -581,6 +594,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                 raw_response=raw_response,
                 parsed_summary_json=_json.dumps(summary, ensure_ascii=False),
                 attempts=attempts,
+                token_usage_json=token_usage_json,
             )
         except Exception as e:
             _RISK_LOG.debug("persist_mini_llm_call failed: %s", e)
@@ -615,7 +629,9 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         operational_prompt = OPERATIONAL_RISK_PROMPT_TEMPLATE.format(request=prompt)
 
         # Each future returns (data_dict, raw_response, duration_ms, attempts, started_at_ms, parse_contract)
-        def _call_and_track(system_prompt: str, full_prompt: str, mini_name: str) -> tuple[Any, str, float, int, int, Any]:
+        def _call_and_track(
+            system_prompt: str, full_prompt: str, mini_name: str
+        ) -> tuple[Any, str, float, int, int, Any, str | None]:
             from moralstack.utils.json_utils import JSONParseError
 
             # Determine the model for this mini-call
@@ -660,7 +676,8 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                         elapsed_ms,
                     )
                     data, p_contract = parse_dict_with_contract(raw_response, strict_json_requested=True)
-                    return data, raw_response, elapsed_ms, attempt + 1, int(start_gen * 1000), p_contract
+                    _tu = result.token_usage_json() if hasattr(result, "token_usage_json") else None
+                    return data, raw_response, elapsed_ms, attempt + 1, int(start_gen * 1000), p_contract, _tu
                 except JSONParseError as e:
                     _RISK_LOG.warning(
                         "mini_estimator[%s] attempt %s/%s failed (JSONParseError): %s",
@@ -685,9 +702,9 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             fut3 = executor.submit(
                 _call_and_track, OPERATIONAL_RISK_SYSTEM_PROMPT, operational_prompt, "estimate_operational"
             )
-            intent_data, intent_raw, intent_ms, intent_attempts, intent_started, intent_pc = fut1.result()
-            signal_data, signal_raw, signal_ms, signal_attempts, signal_started, signal_pc = fut2.result()
-            operational_data, op_raw, op_ms, op_attempts, op_started, op_pc = fut3.result()
+            intent_data, intent_raw, intent_ms, intent_attempts, intent_started, intent_pc, intent_tu = fut1.result()
+            signal_data, signal_raw, signal_ms, signal_attempts, signal_started, signal_pc, signal_tu = fut2.result()
+            operational_data, op_raw, op_ms, op_attempts, op_started, op_pc, op_tu = fut3.result()
 
         # Persist all 3 mini-estimator LLM calls for UI visibility
         self._persist_mini_llm_call(
@@ -699,6 +716,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             duration_ms=intent_ms,
             attempts=intent_attempts,
             parse_contract=intent_pc,
+            token_usage_json=intent_tu,
         )
         self._persist_mini_llm_call(
             system_prompt=HARM_SIGNAL_SYSTEM_PROMPT,
@@ -709,6 +727,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             duration_ms=signal_ms,
             attempts=signal_attempts,
             parse_contract=signal_pc,
+            token_usage_json=signal_tu,
         )
         self._persist_mini_llm_call(
             system_prompt=OPERATIONAL_RISK_SYSTEM_PROMPT,
@@ -719,6 +738,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             duration_ms=op_ms,
             attempts=op_attempts,
             parse_contract=op_pc,
+            token_usage_json=op_tu,
         )
 
         merged = merge_mini_estimator_results(intent_data, signal_data, operational_data)

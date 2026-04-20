@@ -104,6 +104,18 @@ def _emit_aggregated_guidance_observability(
             decision="rewrite_skipped" if empty else "rewrite_prepared",
             status="skipped" if empty else "ok",
             reason_codes=reason_codes,
+            inputs={
+                "cycle": state.cycle,
+                "draft_response_len": len(state.draft_response or ""),
+                "critiques_count": len(state.critiques),
+                "simulations_count": len(state.simulations),
+                "perspectives_count": len(state.perspectives) if state.perspectives else 0,
+            },
+            outputs={
+                "guidance_char_len": len(guidance),
+                "guidance_empty": empty,
+                "rewrite_decision": "skipped" if empty else "prepared",
+            },
             payload={
                 **telemetry,
                 "guidance_char_len": len(guidance),
@@ -538,6 +550,7 @@ class DeliberationRunner:
                             "system_prompt": system_used or "",
                             "raw_response": response_text,
                             "sequence_in_cycle": SEQ_POLICY,
+                            "token_usage_json": result.token_usage_json(),
                         },
                     )
                     protection_result = self._output_protector.validate(response_text)
@@ -630,6 +643,7 @@ class DeliberationRunner:
                         "system_prompt": system_used or "",
                         "raw_response": response_text,
                         "sequence_in_cycle": SEQ_POLICY,
+                        "token_usage_json": result.token_usage_json(),
                     },
                 )
             except Exception as e:
@@ -807,6 +821,7 @@ class DeliberationRunner:
                             "system_prompt": system_used or "",
                             "raw_response": response_text,
                             "sequence_in_cycle": SEQ_POLICY,
+                            "token_usage_json": result.token_usage_json(),
                         },
                     )
             except Exception as e:
@@ -1121,6 +1136,19 @@ class DeliberationRunner:
                 status="ok" if outcome.converged else "continue",
                 sequence=state.cycle,
                 reason_codes=list(conv_reason_codes),
+                inputs={
+                    "cycle": state.cycle,
+                    "max_cycles": max_cycles,
+                    "risk_score": float(getattr(risk_estimation, "score", 0.5) or 0.5),
+                    "critic_decision": critic_decision,
+                    "violations_count": violations_count,
+                },
+                outputs={
+                    "should_continue": outcome.should_continue,
+                    "converged": outcome.converged,
+                    "stop_reason": outcome.stop_reason,
+                    "deliberation_decision": delib_decision,
+                },
                 payload=ce_payload,
             )
             if state.cycle == 1 and early_considered is True:
@@ -1784,6 +1812,11 @@ class DeliberationRunner:
         gate: SimulatorGateDecision,
     ) -> None:
         try:
+            sim_out: dict[str, Any] = {"duration_ms": duration_ms}
+            if state.simulations:
+                last_s = state.simulations[-1]
+                sim_out["semantic_expected_harm"] = float(getattr(last_s, "semantic_expected_harm", 0.0) or 0.0)
+                sim_out["expected_valence"] = float(getattr(last_s, "expected_valence", 0.0) or 0.0)
             persist_orchestration_event(
                 cycle=state.cycle,
                 stage="deliberation",
@@ -1794,6 +1827,12 @@ class DeliberationRunner:
                 sequence=state.cycle * 10 + 4,
                 duration_ms=duration_ms,
                 reason_codes=list(gate.reason_codes),
+                inputs={
+                    "cycle": state.cycle,
+                    "draft_response_len": len(state.draft_response or ""),
+                    "gate_reason_codes": list(gate.reason_codes),
+                },
+                outputs=sim_out,
                 payload={
                     "cycle": state.cycle,
                     "duration_ms": duration_ms,
@@ -2433,6 +2472,7 @@ class DeliberationRunner:
                     "system_prompt": system_used or "",
                     "raw_response": response_text,
                     "sequence_in_cycle": SEQ_POLICY,
+                    "token_usage_json": result.token_usage_json(),
                 },
             )
         except Exception as e:
@@ -2600,6 +2640,7 @@ class DeliberationRunner:
                     "system_prompt": system_used or "",
                     "raw_response": response_text,
                     "sequence_in_cycle": SEQ_POLICY,
+                    "token_usage_json": result.token_usage_json(),
                 },
             )
         except Exception as e:

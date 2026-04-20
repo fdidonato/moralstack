@@ -16,6 +16,8 @@ from moralstack.observability.context import (
     get_current_cycle,
     get_current_request_id,
     get_current_run_id,
+    get_current_session_id,
+    get_current_turn_number,
 )
 from moralstack.observability.events import (
     EVENT_DEBUG_EVENT,
@@ -45,6 +47,8 @@ def async_persist_llm_call(**kwargs: Any) -> None:
         run_id=run_id,
         request_id=request_id,
         cycle=cycle_val,
+        session_id=kwargs.get("session_id") or get_current_session_id(),
+        turn_number=kwargs.get("turn_number") or get_current_turn_number(),
         payload={
             "phase": kwargs.get("phase", ""),
             "module": kwargs.get("module", ""),
@@ -80,6 +84,8 @@ def async_persist_decision_trace(**kwargs: Any) -> None:
         EVENT_DECISION_TRACE,
         run_id=run_id,
         request_id=request_id,
+        session_id=kwargs.get("session_id") or get_current_session_id(),
+        turn_number=kwargs.get("turn_number") or get_current_turn_number(),
         payload={
             "stage": kwargs.get("stage", ""),
             "sequence": kwargs.get("sequence", 0),
@@ -100,6 +106,8 @@ def async_persist_debug_event(**kwargs: Any) -> None:
         EVENT_DEBUG_EVENT,
         run_id=run_id,
         request_id=kwargs.get("request_id") or get_current_request_id(),
+        session_id=kwargs.get("session_id") or get_current_session_id(),
+        turn_number=kwargs.get("turn_number") or get_current_turn_number(),
         payload=payload if isinstance(payload, dict) else {"payload": payload},
     )
     get_obs()._queue.submit(router.route, envelope)

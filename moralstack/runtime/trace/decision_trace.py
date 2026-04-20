@@ -154,7 +154,11 @@ def append_decision_trace(trace: DecisionTrace, path: str | None = None) -> None
     The path= parameter is accepted for backwards compatibility but ignored;
     output location is controlled by MORALSTACK_OBSERVABILITY_JSONL_DIR.
     """
-    from moralstack.observability.context import get_current_run_id
+    from moralstack.observability.context import (
+        get_current_run_id,
+        get_current_session_id,
+        get_current_turn_number,
+    )
     from moralstack.observability.events import EVENT_DECISION_TRACE, make_envelope
     from moralstack.observability.service import get_obs
 
@@ -167,6 +171,8 @@ def append_decision_trace(trace: DecisionTrace, path: str | None = None) -> None
             EVENT_DECISION_TRACE,
             run_id=run_id,
             request_id=request_id,
+            session_id=get_current_session_id(),
+            turn_number=get_current_turn_number(),
             payload={
                 "stage": trace.stage or "",
                 "sequence": trace.sequence or 0,

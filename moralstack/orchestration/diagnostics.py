@@ -60,12 +60,55 @@ def log_deliberation_inconsistency(
         )
 
 
+def _infer_component(location: str) -> str:
+    """Derive a component name from the dotted location string."""
+    if not location:
+        return "unknown"
+    parts = location.split(":")
+    filename = parts[0].rsplit(".", 1)[0] if parts else ""
+    mapping = {
+        "controller": "orchestrator",
+        "orchestrator": "orchestrator",
+        "deliberation_runner": "deliberation",
+        "convergence": "convergence",
+        "risk": "risk_estimator",
+        "simulator": "simulator",
+        "critic": "critic",
+        "perspectives": "perspectives",
+        "hindsight": "hindsight",
+        "policy": "policy",
+    }
+    lower = filename.lower()
+    for key, comp in mapping.items():
+        if key in lower:
+            return comp
+    return filename or "unknown"
+
+
+def _infer_event_type(location: str, message: str) -> str:
+    """Derive a coarse event_type from location + message."""
+    if not location and not message:
+        return "debug"
+    combined = f"{location} {message}".lower()
+    if "entry" in combined or "start" in combined:
+        return "lifecycle.start"
+    if "exit" in combined or "end" in combined:
+        return "lifecycle.end"
+    if "error" in combined or "fail" in combined:
+        return "error"
+    if "inconsisten" in combined or "drift" in combined:
+        return "warning"
+    return "debug"
+
+
 def orch_debug_log(
     location: str,
     message: str,
     data: dict[str, Any],
     hypothesis_id: str = "",
     request_id: str = "",
+    component: str = "",
+    event_type: str = "",
 ) -> None:
     """Emits a debug event via observability. Does not raise.
 
@@ -77,10 +120,14 @@ def orch_debug_log(
     try:
         from moralstack.persistence.write_queue import async_persist_debug_event
 
+        inferred_component = component or _infer_component(location)
+        inferred_event_type = event_type or _infer_event_type(location, message)
         payload = {
             "location": location,
             "message": message,
             "data": data,
+            "component": inferred_component,
+            "event_type": inferred_event_type,
             "timestamp": int(time.time() * 1000),
         }
         if request_id:

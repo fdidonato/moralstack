@@ -169,10 +169,11 @@ class OpenAIPolicy:
         response_format: Any = None,
         prediction: dict[str, str] | None = None,
         model_override: str | None = None,
-    ) -> tuple[str, int, str]:
+    ) -> tuple[str, int, str, int, int]:
         """
         Completions call with retry on transient errors (429/503/timeout).
-        Returns (text, tokens_used, finish_reason). Uses classifier and jittered backoff.
+        Returns (text, tokens_used, finish_reason, prompt_tokens, completion_tokens).
+        Uses classifier and jittered backoff.
 
         Args:
             prediction: Optional predicted output for speculative decoding.
@@ -216,7 +217,7 @@ class OpenAIPolicy:
                 if self._cost_tracker is not None and hasattr(self._cost_tracker, "add_call"):
                     self._cost_tracker.add_call(effective_model, prompt_tokens, completion_tokens)
                 reason = choice.finish_reason or "stop"
-                return text, tokens, reason
+                return text, tokens, reason, prompt_tokens, completion_tokens
             except Exception as e:
                 last_error = e
                 if classify_provider_error(e) == "transient" and attempt < self._max_retries - 1:
@@ -262,7 +263,7 @@ class OpenAIPolicy:
             top_p = getattr(config, "top_p", top_p)
             response_format = getattr(config, "response_format", None)
 
-        text, tokens_used, finish_reason = self._complete(
+        text, tokens_used, finish_reason, p_tok, c_tok = self._complete(
             messages,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -278,6 +279,8 @@ class OpenAIPolicy:
             logprobs=None,
             prompt_used=prompt,
             system_used=system if system else None,
+            prompt_tokens=p_tok,
+            completion_tokens=c_tok,
         )
 
     def rewrite(
