@@ -6,6 +6,8 @@ Overlays let you tailor MoralStack's ethical governance to a specific domain —
 
 For the architecture behind overlays, see [constitution.md](./constitution.md). For the full list of existing overlays, see `moralstack/constitution/data/overlays/`.
 
+> **Note:** All overlays in `moralstack/constitution/data/overlays/` are loaded automatically at startup. The LLM-based domain detector selects the most relevant one for each query. To force a specific overlay (bypassing detection), pass `domain_overlay="<name>"` to `GovernanceConfig`. See [`examples/forced_overlay.py`](../examples/forced_overlay.py) and [`examples/domain_detection.py`](../examples/domain_detection.py) for both patterns.
+
 ---
 
 ## Quick Start
@@ -325,6 +327,10 @@ print(response.governance_metadata.final_action)
 print(response.governance_metadata.domain_overlay)
 print(response.governance_metadata.triggered_principles)
 ```
+
+### Testing your overlay with the SDK
+
+For a reusable end-to-end pattern, see `examples/custom_overlay/`. The script copies the bundled constitution into a temporary directory, adds your custom YAML, and passes that path via `GovernanceConfig(constitution_dir=...)`. This lets you validate custom overlays without changing package files under `moralstack/constitution/data/overlays/`.
 
 ### 5. Iterate
 

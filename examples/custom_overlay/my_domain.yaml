@@ -1,0 +1,77 @@
+# Custom domain overlay example for local SDK experiments.
+# This file is intentionally verbose and documented field-by-field.
+
+# Human-readable description used by LLM-based domain detection.
+# Include broad and specific terms so the detector can map queries reliably.
+description: "Real estate transactions, home buying and selling, lease contracts, property valuation, mortgages, landlord-tenant obligations, housing regulations, due diligence before closing deals."
+
+# Optional keyword list used as additional lexical hints for domain matching.
+# Use concrete terms that appear in real user prompts.
+keywords:
+  - real estate
+  - property purchase
+  - lease agreement
+  - mortgage
+  - down payment
+  - closing costs
+  - landlord
+  - tenant rights
+  - appraisal
+  - zoning
+
+# Marks the overlay as sensitive. Sensitive overlays apply a risk floor and
+# enable a SAFE_COMPLETE fallback when deliberation cycles are exhausted.
+sensitive: true
+
+# Redirection shown when the system refuses a request in this domain.
+# Keep this practical and point to qualified professionals.
+refusal_redirection: |
+  Suggest the user consult qualified professionals before making binding property decisions:
+  - Licensed real estate agents or brokers for market and offer strategy.
+  - Real estate attorneys for contract clauses and legal obligations.
+  - Licensed mortgage advisors for affordability and financing options.
+  - Local housing authorities for jurisdiction-specific regulations.
+
+# Optional override of core principle priorities for this domain.
+# Higher priority means stronger influence during conflict resolution.
+priority_overrides:
+  SOFT.HONEST.1: 92
+  SOFT.HELPFUL.1: 86
+
+# Domain-specific principles added on top of the core constitution.
+additional_principles:
+  # Hard principle: blocks actionable financial recommendations.
+  - id: "RE.NOFINANCIAL.1"
+    level: hard
+    priority: 96
+    title: "No Specific Financial Commitment Advice"
+    rule: "Do not provide specific financial recommendations on whether to buy, sell, or finance a property. Require professional evaluation for binding decisions."
+    examples_allow:
+      - "Here are common factors buyers evaluate before an offer."
+      - "A licensed advisor can assess affordability for your exact situation."
+    examples_deny:
+      - "You should buy this apartment now; it is guaranteed profit."
+      - "Take this exact mortgage product, it is the best choice for you."
+    keywords:
+      - buy now
+      - investment return
+      - mortgage advice
+      - guaranteed profit
+
+  # Soft principle: requires clear disclaimer and local-jurisdiction caveat.
+  - id: "RE.DISCLAIMER.1"
+    level: soft
+    priority: 82
+    title: "Real Estate Disclaimer"
+    rule: "State that guidance is informational and not legal or financial advice; remind users that local regulations and contract terms vary by jurisdiction."
+    examples_allow:
+      - "This is general information and local laws may differ."
+      - "Review the contract with a qualified local professional before signing."
+    examples_deny:
+      - "This answer is valid everywhere and you can act on it directly."
+      - "Sign immediately without verifying local legal requirements."
+    keywords:
+      - disclaimer
+      - jurisdiction
+      - contract review
+      - local regulation

@@ -31,7 +31,8 @@ A deliberative governance engine that decides *whether*, *how*, and *under what 
 - [Decision Model](#decision-model)
 - [Architecture](#architecture)
 - [Benchmark Results](#benchmark-results)
-- [Quickstart](#quickstart)
+- [Installation](#installation)
+- [30-Second Quickstart](#30-second-quickstart)
 - [SDK Usage](#sdk-usage)
 - [Configuration](#configuration)
 - [Running the Benchmark](#running-the-benchmark)
@@ -173,33 +174,27 @@ Deliberative paths add latency by design. See [Limitations & Trade-offs](#limita
 
 ---
 
-## Quickstart
+## Installation
 
-### Prerequisites
-
-- Python 3.11+
-- OpenAI API key
-
-### Install
-
-Create and activate a virtual environment first:
+### From PyPI (recommended for users)
 
 ```bash
+pip install moralstack
+```
+
+For the optional admin UI:
+
+```bash
+pip install "moralstack[ui]"
+```
+
+### From source (for contributors)
+
+```bash
+git clone https://github.com/fdidonato/moralstack.git
+cd moralstack
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-```
-
-**One-command (recommended):**
-
-```bash
-python scripts/install.py
-```
-
-Installs the package in editable mode with all extras (`dev`, `ui`). Registers `moralstack` and `moralstack-ui` CLI entrypoints.
-
-**Manual (equivalent to install.py):**
-
-```bash
+source venv/bin/activate
 pip install -e ".[dev,ui]"
 ```
 
@@ -207,27 +202,34 @@ pip install -e ".[dev,ui]"
 
 ```bash
 cp .env.minimal .env
+# edit .env and set OPENAI_API_KEY=sk-...
 ```
 
-Set at least:
+## 30-Second Quickstart
 
-```env
-OPENAI_API_KEY=sk-...
+```python
+from moralstack import govern
+from openai import OpenAI
+
+# Wrap any OpenAI-compatible client with MoralStack governance.
+client = govern(OpenAI())
+
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "What are the symptoms of vitamin D deficiency?"}],
+)
+
+# Full OpenAI API compatibility:
+print(response.choices[0].message.content)
+
+# Plus governance metadata on every call:
+meta = response.governance_metadata
+print(f"Decision: {meta.final_action}")
+print(f"Risk: {meta.risk_score:.2f} ({meta.risk_category})")
+print(f"Overlay: {meta.domain_overlay}")
 ```
 
-### Run
-
-```bash
-moralstack
-```
-
-Useful commands:
-
-- `moralstack --help`
-- `moralstack --verbose`
-- `moralstack --mock`
-
-Legacy wrapper (same runtime entrypoint): `python scripts/mstack_run.py`
+More patterns in [`examples/`](./examples/).
 
 ---
 
@@ -447,13 +449,15 @@ Inspect every decision: LLM calls, critic scores, risk traces, decision explanat
 
 ## Documentation
 
-- [INSTALL.md](INSTALL.md)
-- [Architecture spec](docs/architecture_spec.md)
-- [Decision policy](docs/decision_policy.md)
-- [Constitution design](docs/constitution.md)
-- [Module docs](docs/modules/README.md)
-- [Development guide](docs/DEVELOPMENT.md)
-- [Limitations and trade-offs](docs/limitations_and_tradeoffs.md)
+- [INSTALL.md](./INSTALL.md) — detailed installation guide
+- [examples/](./examples/) — runnable code examples
+- [docs/architecture_spec.md](./docs/architecture_spec.md)
+- [docs/decision_policy.md](./docs/decision_policy.md)
+- [docs/constitution.md](./docs/constitution.md)
+- [docs/creating_overlays.md](./docs/creating_overlays.md)
+- [docs/modules/](./docs/modules/README.md)
+- [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md)
+- [docs/limitations_and_tradeoffs.md](./docs/limitations_and_tradeoffs.md)
 
 ---
 

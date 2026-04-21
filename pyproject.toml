@@ -4,10 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "moralstack"
-version = "0.1.0"
+version = "0.3.0"
 description = "Policy-aware reasoning orchestration layer for LLM systems"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
+keywords = ["llm", "governance", "ai-safety", "openai", "deliberation", "auditability"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 authors = [
     { name = "Francesco di Donato" }
 ]
@@ -39,6 +52,13 @@ ui = [
 moralstack = "moralstack.cli.run:main"
 moralstack-ui = "moralstack.ui.app:main"
 moralstack-validate-overlay = "moralstack.cli.validate_overlay:main"
+
+[project.urls]
+Homepage = "https://github.com/fdidonato/moralstack"
+Repository = "https://github.com/fdidonato/moralstack"
+Issues = "https://github.com/fdidonato/moralstack/issues"
+Documentation = "https://github.com/fdidonato/moralstack/blob/main/README.md"
+Changelog = "https://github.com/fdidonato/moralstack/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["."]
