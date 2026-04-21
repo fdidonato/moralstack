@@ -108,6 +108,9 @@ class SimulationResult:
     parse_attempts: int = 1
     prompt: str = ""
     system_prompt: str = ""
+    tokens_used: int = 0
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
     @classmethod
     def empty(cls) -> SimulationResult:
@@ -366,6 +369,9 @@ class LLMConsequenceSimulator:
         raw_response = ""
         parse_attempts = 0
         last_error: Exception | None = None
+        tokens_used = 0
+        prompt_tokens: int | None = None
+        completion_tokens: int | None = None
 
         for attempt in range(self.config.max_retries):
             parse_attempts = attempt + 1
@@ -386,6 +392,9 @@ class LLMConsequenceSimulator:
                     )
 
                 raw_response = result.text
+                tokens_used = int(getattr(result, "tokens_used", 0) or 0)
+                prompt_tokens = getattr(result, "prompt_tokens", None)
+                completion_tokens = getattr(result, "completion_tokens", None)
 
                 # Parse JSON (parser strutturato obbligatorio; nessun fallback)
                 consequences = parse_simulator_response(raw_response)
@@ -396,6 +405,9 @@ class LLMConsequenceSimulator:
                     parse_attempts=parse_attempts,
                     prompt=effective_prompt,
                     system_prompt=SIMULATOR_SYSTEM_PROMPT,
+                    tokens_used=tokens_used,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
                 )
             except (JSONParseError, Exception) as e:
                 last_error = e
@@ -441,6 +453,11 @@ class LLMConsequenceSimulator:
         raw_responses: list[str] = []
         prompts_used: list[str] = []
         total_attempts = 0
+        total_tokens_used = 0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        has_prompt_tokens = False
+        has_completion_tokens = False
 
         # Seleziona seed appropriati
         selected_seeds = self._select_seeds(num_scenarios)
@@ -472,6 +489,15 @@ class LLMConsequenceSimulator:
 
                     raw_responses.append(result.text)
                     prompts_used.append(prompt if attempt == 0 else f"{prompt}\n\n{RETRY_PROMPT}")
+                    total_tokens_used += int(getattr(result, "tokens_used", 0) or 0)
+                    pt = getattr(result, "prompt_tokens", None)
+                    if pt is not None:
+                        total_prompt_tokens += int(pt)
+                        has_prompt_tokens = True
+                    ct = getattr(result, "completion_tokens", None)
+                    if ct is not None:
+                        total_completion_tokens += int(ct)
+                        has_completion_tokens = True
                     parsed = parse_simulator_response(result.text)
                     consequences.extend(parsed)
                     break
@@ -486,6 +512,9 @@ class LLMConsequenceSimulator:
             parse_attempts=total_attempts,
             prompt="\n---\n".join(prompts_used) if prompts_used else "",
             system_prompt=SIMULATOR_SYSTEM_PROMPT,
+            tokens_used=total_tokens_used,
+            prompt_tokens=(total_prompt_tokens if has_prompt_tokens else None),
+            completion_tokens=(total_completion_tokens if has_completion_tokens else None),
         )
 
     def _select_seeds(self, num_scenarios: int) -> list[str]:
@@ -517,6 +546,9 @@ class LLMConsequenceSimulator:
         parse_attempts: int,
         prompt: str = "",
         system_prompt: str = "",
+        tokens_used: int = 0,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
     ) -> SimulationResult:
         """
         Costruisce SimulationResult con metriche aggregate.
@@ -567,6 +599,9 @@ class LLMConsequenceSimulator:
             parse_attempts=parse_attempts,
             prompt=prompt,
             system_prompt=system_prompt,
+            tokens_used=tokens_used,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
 
 

@@ -66,6 +66,9 @@ class CriticReport:
     parse_attempts: int = 1
     prompt: str = ""
     system_prompt: str = ""
+    tokens_used: int = 0
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
     @classmethod
     def empty(cls) -> CriticReport:
@@ -413,6 +416,9 @@ class LLMConstitutionalCritic:
                     parse_attempts=parse_attempts,
                     prompt=effective_prompt,
                     system_prompt=CRITIC_SYSTEM_PROMPT,
+                    tokens_used=int(getattr(result, "tokens_used", 0) or 0),
+                    prompt_tokens=getattr(result, "prompt_tokens", None),
+                    completion_tokens=getattr(result, "completion_tokens", None),
                 )
 
             except (JSONParseError, StructuredValidationError, PydanticValidationError) as e:

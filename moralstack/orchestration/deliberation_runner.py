@@ -260,6 +260,22 @@ def _policy_system_used(result: PolicyGenerationResultProtocol, fallback: str) -
     return getattr(result, "system_used", None) or fallback
 
 
+def _token_usage_json_from_result(result: Any) -> str | None:
+    """Build token usage json from result-like objects used by deliberative modules."""
+    tokens_used = int(getattr(result, "tokens_used", 0) or 0)
+    prompt_tokens = getattr(result, "prompt_tokens", None)
+    completion_tokens = getattr(result, "completion_tokens", None)
+    if tokens_used == 0 and prompt_tokens is None and completion_tokens is None:
+        return None
+    return json.dumps(
+        {
+            "prompt_tokens": int(prompt_tokens or 0),
+            "completion_tokens": int(completion_tokens or 0),
+            "total_tokens": tokens_used,
+        }
+    )
+
+
 def _constitution_corrupted(constitution: object) -> bool:
     """Return True if constitution is marked corrupted (single point for optional attribute)."""
     return bool(getattr(constitution, "constitution_corrupted", False))
@@ -1108,6 +1124,10 @@ class DeliberationRunner:
                 sequence=200 + int(state.cycle),
                 risk_score=float(getattr(risk_estimation, "score", 0.5) or 0.5),
             )
+            dt.sim_semantic_expected_harm = float(sem_harm or 0.0)
+            if state.simulations:
+                dt.sim_dominant_harm_types = list(getattr(state.simulations[-1], "dominant_harm_types", []) or [])
+            dt.total_cycles = int(state.cycle)
             dt.stage_payload = payload
             normalize_trace_fields(dt)
             append_decision_trace(dt)
@@ -2779,6 +2799,7 @@ class DeliberationRunner:
                     "parsed_summary_json": response_text,
                     "attempts": getattr(critique, "parse_attempts", 1),
                     "sequence_in_cycle": SEQ_CRITIC,
+                    "token_usage_json": _token_usage_json_from_result(critique),
                 },
             )
             state.critiques.append(critique)
@@ -2889,6 +2910,7 @@ class DeliberationRunner:
                     ),
                     "attempts": getattr(simulation, "parse_attempts", 1),
                     "sequence_in_cycle": SEQ_SIMULATOR,
+                    "token_usage_json": _token_usage_json_from_result(simulation),
                 },
             )
             state.simulations.append(simulation)
@@ -2988,6 +3010,7 @@ class DeliberationRunner:
                     "raw_response": getattr(hindsight_result, "raw_response", ""),
                     "attempts": getattr(hindsight_result, "parse_attempts", 1),
                     "sequence_in_cycle": SEQ_HINDSIGHT,
+                    "token_usage_json": _token_usage_json_from_result(hindsight_result),
                 },
             )
             state.hindsight = hindsight_result
@@ -3097,6 +3120,7 @@ class DeliberationRunner:
                     "system_prompt": "\n---\n".join(system_list) if system_list else "",
                     "raw_response": raw_resp,
                     "sequence_in_cycle": SEQ_PERSPECTIVES,
+                    "token_usage_json": _token_usage_json_from_result(result),
                 },
             )
             if getattr(result, "results", None):

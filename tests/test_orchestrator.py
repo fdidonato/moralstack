@@ -1578,6 +1578,71 @@ class TestPathRouter:
 
 
 class TestObservabilityFixes:
+    def test_cycle_summary_trace_maps_root_fields(self):
+        from moralstack.orchestration.types import ConvergenceOutcome
+        from moralstack.runtime.modules.simulator_module import SimulationResult
+
+        orchestrator = create_orchestrator(
+            policy=MockPolicyLLM(),
+            risk_estimator=MockRiskEstimator(default_score=0.8),
+            critic=MockCritic(),
+            simulator=MockSimulator(),
+            constitution_store=MockConstitutionStore(),
+            enable_hindsight=False,
+            enable_perspectives=False,
+        )
+        runner = orchestrator._controller._runner
+        state = DeliberationState(cycle=2, draft_response="draft")
+        state.simulations.append(
+            SimulationResult(
+                semantic_expected_harm=0.42,
+                dominant_harm_types=["physical_harm"],
+            )
+        )
+        state.perspectives = [type("P", (), {"approval_score": 0.8})(), type("P", (), {"approval_score": 0.6})()]
+        outcome = ConvergenceOutcome(
+            should_continue=False,
+            converged=True,
+            stop_reason="CONVERGED",
+            cycle=2,
+            max_cycles=3,
+        )
+        risk_estimation = MockRiskEstimation(score=0.85)
+        captured = {}
+
+        def _capture(trace):
+            captured["trace"] = trace
+
+        with patch("moralstack.orchestration.deliberation_runner.append_decision_trace", side_effect=_capture):
+            runner._emit_cycle_summary_trace(
+                request_id="req-cycle-summary",
+                state=state,
+                outcome=outcome,
+                max_cycles=3,
+                risk_estimation=risk_estimation,
+            )
+
+        trace = captured["trace"]
+        assert trace.stage == "CYCLE_SUMMARY"
+        assert trace.sim_semantic_expected_harm == 0.42
+        assert trace.sim_dominant_harm_types == ["physical_harm"]
+        assert trace.total_cycles == 2
+        assert trace.stage_payload["perspectives_weighted_approval"] == pytest.approx(0.7)
+
+    def test_token_usage_json_builder_from_deliberative_result(self):
+        from moralstack.orchestration.deliberation_runner import _token_usage_json_from_result
+
+        result = type(
+            "Result",
+            (),
+            {"tokens_used": 120, "prompt_tokens": 70, "completion_tokens": 50},
+        )()
+        payload = _token_usage_json_from_result(result)
+        assert payload is not None
+        assert '"prompt_tokens": 70' in payload
+        assert '"completion_tokens": 50' in payload
+        assert '"total_tokens": 120' in payload
+
     def test_deliberation_cycle_preserves_authoritative_max_cycles_for_hindsight(self):
         config = OrchestratorConfig(
             max_deliberation_cycles=2,

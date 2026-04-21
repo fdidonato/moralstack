@@ -80,6 +80,9 @@ class PerspectiveResult:
     raw_response: str = ""
     prompt: str = ""
     system_prompt: str = ""
+    tokens_used: int = 0
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
     def __post_init__(self) -> None:
         """Normalizza l'approval score in range valido."""
@@ -164,6 +167,9 @@ class EnsembleResult:
     failed_perspectives: list[str] = field(default_factory=list)
     prompts: list[str] = field(default_factory=list)
     system_prompts: list[str] = field(default_factory=list)
+    tokens_used: int = 0
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
     @classmethod
     def empty(cls) -> EnsembleResult:
@@ -336,6 +342,17 @@ def parse_perspective_response(
         rationale=rationale,
         raw_response=text,
     )
+
+
+def _sum_optional_token_field(results: list[PerspectiveResult], field_name: str) -> int | None:
+    values: list[int] = []
+    for result in results:
+        value = getattr(result, field_name, None)
+        if value is not None:
+            values.append(int(value))
+    if not values:
+        return None
+    return sum(values)
 
 
 # =============================================================================
@@ -532,6 +549,8 @@ class LLMPerspectiveEnsemble:
 
         prompts_list = [getattr(r, "prompt", "") for r in results]
         system_prompts_list = [getattr(r, "system_prompt", "") for r in results]
+        prompt_tokens = _sum_optional_token_field(results, "prompt_tokens")
+        completion_tokens = _sum_optional_token_field(results, "completion_tokens")
 
         return EnsembleResult(
             results=results,
@@ -541,6 +560,9 @@ class LLMPerspectiveEnsemble:
             failed_perspectives=failed_perspectives,
             prompts=prompts_list,
             system_prompts=system_prompts_list,
+            tokens_used=sum(int(getattr(r, "tokens_used", 0) or 0) for r in results),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
 
     def _evaluate_sequential(
@@ -569,6 +591,8 @@ class LLMPerspectiveEnsemble:
 
         prompts_list = [getattr(r, "prompt", "") for r in results]
         system_prompts_list = [getattr(r, "system_prompt", "") for r in results]
+        prompt_tokens = _sum_optional_token_field(results, "prompt_tokens")
+        completion_tokens = _sum_optional_token_field(results, "completion_tokens")
 
         return EnsembleResult(
             results=results,
@@ -578,6 +602,9 @@ class LLMPerspectiveEnsemble:
             failed_perspectives=failed_perspectives,
             prompts=prompts_list,
             system_prompts=system_prompts_list,
+            tokens_used=sum(int(getattr(r, "tokens_used", 0) or 0) for r in results),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
 
     def _evaluate_single_perspective(
@@ -608,6 +635,9 @@ class LLMPerspectiveEnsemble:
                 pr = parse_perspective_response(result.text, perspective)
                 pr.prompt = effective_prompt
                 pr.system_prompt = shared_system_prompt
+                pr.tokens_used = int(getattr(result, "tokens_used", 0) or 0)
+                pr.prompt_tokens = getattr(result, "prompt_tokens", None)
+                pr.completion_tokens = getattr(result, "completion_tokens", None)
                 return pr
             except (JSONParseError, Exception):
                 continue
