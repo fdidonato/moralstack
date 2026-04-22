@@ -183,6 +183,48 @@ The contract is produced by `moralstack.reports.runtime_decisions.build_runtime_
 
 ---
 
+## SDK auto-initialisation
+
+When using the Python SDK (`govern()` / `GovernedClient`), observability context is initialised **automatically** — no manual setup is required.
+
+### What happens at `govern(OpenAI())`
+
+1. `GovernedClient.__init__` generates a session-scoped `run_id` (UUID4) and registers it via `set_current_run_id()`.
+2. If the active mode is `db_only` or `dual`, `init_db()` and `create_run()` are called to satisfy FK constraints for subsequent event inserts.
+3. At the end of every `chat.completions.create()` call, `obs.flush()` is invoked inside a `try/finally` block to guarantee that all enqueued events are written to disk before the call returns — critical for short-lived scripts.
+
+### Minimum working configuration
+
+```bash
+# .env
+MORALSTACK_OBSERVABILITY_MODE=file_only
+MORALSTACK_OBSERVABILITY_JSONL_DIR=./traces/jsonl
+```
+
+```python
+from moralstack import govern
+from openai import OpenAI
+
+client = govern(OpenAI())
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Hello"}],
+)
+# ./traces/jsonl/llm.call.jsonl, decision.trace.jsonl, etc. are now written.
+```
+
+### Observability mode behaviour in SDK
+
+| Mode | DB init called | JSONL written | When to use |
+|---|---|---|---|
+| `file_only` | No | Yes | Lightweight audit trail, no UI |
+| `db_only` | Yes (if `MORALSTACK_OBSERVABILITY_DB_PATH` set) | No | Full UI + query access |
+| `dual` | Yes | Yes | Debugging / migration |
+
+> Note: the `GovernanceConfig` fields `observability_mode`, `db_path`, and `jsonl_dir` are reserved for a future wiring layer. Today the active routing is driven exclusively by env vars (`MORALSTACK_OBSERVABILITY_*`).
+
+---
+
 ## Context vars
 
 ```python
@@ -194,6 +236,8 @@ from moralstack.observability.context import (
 ```
 
 These are propagated across thread boundaries via `contextvars.copy_context()` inside `ObservabilityWriteQueue.submit()`.
+
+> In the SDK path, `run_id` is set automatically by `GovernedClient._init_run_context()`. Direct calls to `set_current_run_id()` are only needed when using the orchestrator API directly (e.g. CLI or custom integrations).
 
 ---
 

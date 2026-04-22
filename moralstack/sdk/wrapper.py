@@ -197,7 +197,24 @@ class GovernedCompletions:
         - REFUSE: return GovernedResponse/GovernedRefusalStream without calling OpenAI
         - SAFE_COMPLETE: inject guidance into system prompt, call OpenAI
         - NORMAL_COMPLETE: call OpenAI directly
+
+        Observability events emitted during deliberation are flushed synchronously
+        before returning so that JSONL/SQLite writes are guaranteed even in short-lived
+        scripts (the write queue uses a daemon thread that would otherwise be lost on
+        process exit).
         """
+        try:
+            return self._create_inner(**kwargs)
+        finally:
+            try:
+                from moralstack.observability.service import get_obs
+
+                get_obs().flush()
+            except Exception:
+                pass
+
+    def _create_inner(self, **kwargs: Any) -> GovernedResponse | GovernedStreamResponse | GovernedRefusalStream:
+        """Core deliberation + routing logic, separated from flush concern."""
         is_stream = kwargs.get("stream", False)
         messages = kwargs.get("messages", [])
 
@@ -320,7 +337,36 @@ class GovernedClient:
         self._orchestrator = orchestrator
         self._config = config
         self._session = SessionState(config)
+        self._run_id: str = self._init_run_context()
         self.chat = GovernedChat(self)
+
+    @staticmethod
+    def _init_run_context() -> str:
+        """
+        Generate a session-scoped run_id and register it in the observability context.
+
+        For db_only/dual modes also ensures the DB schema exists and inserts the run
+        row so FK constraints on subsequent request/event inserts are satisfied.
+        Does not raise: observability failures are best-effort.
+        """
+        from moralstack.observability.config import get_db_path, get_observability_mode
+        from moralstack.observability.context import set_current_run_id
+        from moralstack.observability.sinks.sqlite_sink import create_run, init_db
+
+        run_id = str(uuid.uuid4())
+        set_current_run_id(run_id)
+
+        mode = get_observability_mode()
+        if mode in ("db_only", "dual"):
+            db_path = get_db_path()
+            if db_path:
+                try:
+                    init_db(db_path)
+                    create_run(run_id, "sdk_session", {})
+                except Exception:
+                    pass
+
+        return run_id
 
     def __getattr__(self, name: str) -> Any:
         """Passthrough for undefined attributes (e.g. client.models, client.files)."""

@@ -290,3 +290,139 @@ class TestGovernFactory:
             govern(mock_openai, config=config)
 
         mock_bootstrap.assert_called_once_with(config)
+
+
+# =============================================================================
+# GovernedClient — auto run_id initialisation
+# =============================================================================
+
+
+class TestGovernedClientRunId:
+    def test_run_id_set_in_context_after_init(self):
+        """GovernedClient.__init__ must register a non-empty run_id in the observability context."""
+        from moralstack.observability.context import get_current_run_id
+
+        mock_openai = MagicMock()
+        orch = _make_orchestrator()
+        GovernedClient(mock_openai, orch, GovernanceConfig())
+
+        run_id = get_current_run_id()
+        assert run_id is not None
+        assert len(run_id) > 0
+
+    def test_run_id_stored_on_instance(self):
+        """_run_id attribute on GovernedClient must be a valid UUID string."""
+        import uuid
+
+        mock_openai = MagicMock()
+        orch = _make_orchestrator()
+        client = GovernedClient(mock_openai, orch, GovernanceConfig())
+
+        # Must not raise — UUID4 format
+        parsed = uuid.UUID(client._run_id)
+        assert parsed.version == 4
+
+    def test_different_clients_get_different_run_ids(self):
+        """Each GovernedClient instance must receive a unique run_id."""
+        mock_openai = MagicMock()
+        orch = _make_orchestrator()
+        c1 = GovernedClient(mock_openai, orch, GovernanceConfig())
+        c2 = GovernedClient(mock_openai, orch, GovernanceConfig())
+
+        assert c1._run_id != c2._run_id
+
+    def test_db_init_skipped_in_file_only_mode(self):
+        """In file_only mode no DB calls must be made."""
+        from moralstack.sdk.wrapper import GovernedClient
+
+        mock_openai = MagicMock()
+        orch = _make_orchestrator()
+
+        with (
+            patch("moralstack.observability.config.get_observability_mode", return_value="file_only"),
+            patch("moralstack.observability.sinks.sqlite_sink.init_db") as mock_init,
+            patch("moralstack.observability.sinks.sqlite_sink.create_run") as mock_create,
+        ):
+            GovernedClient(mock_openai, orch, GovernanceConfig())
+
+        mock_init.assert_not_called()
+        mock_create.assert_not_called()
+
+    def test_db_init_called_in_db_only_mode(self):
+        """In db_only mode, init_db and create_run must be called when DB path is configured."""
+        from moralstack.sdk.wrapper import GovernedClient
+
+        mock_openai = MagicMock()
+        orch = _make_orchestrator()
+
+        with (
+            patch(
+                "moralstack.sdk.wrapper.GovernedClient._init_run_context",
+                wraps=GovernedClient._init_run_context,
+            ),
+            patch("moralstack.observability.config.get_observability_mode", return_value="db_only"),
+            patch("moralstack.observability.config.get_db_path", return_value="/tmp/test.db"),
+            patch("moralstack.observability.sinks.sqlite_sink.init_db", return_value=True) as mock_init,
+            patch("moralstack.observability.sinks.sqlite_sink.create_run", return_value=True) as mock_create,
+        ):
+            GovernedClient(mock_openai, orch, GovernanceConfig())
+
+        mock_init.assert_called_once_with("/tmp/test.db")
+        mock_create.assert_called_once()
+
+
+# =============================================================================
+# GovernedCompletions.create() — safe flush
+# =============================================================================
+
+
+class TestGovernedCompletionsFlush:
+    def test_flush_called_after_normal_complete(self):
+        """obs.flush() must be called after every successful create() regardless of final_action."""
+        mock_openai, client = _make_governed_client("NORMAL_COMPLETE")
+
+        with patch("moralstack.observability.service.get_obs") as mock_get_obs:
+            mock_obs = MagicMock()
+            mock_get_obs.return_value = mock_obs
+            client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
+
+        mock_obs.flush.assert_called_once()
+
+    def test_flush_called_after_refuse(self):
+        """obs.flush() must be called even when the pipeline returns REFUSE."""
+        mock_openai, client = _make_governed_client("REFUSE")
+        client._orchestrator.process.return_value.response.content = "No."
+
+        with patch("moralstack.observability.service.get_obs") as mock_get_obs:
+            mock_obs = MagicMock()
+            mock_get_obs.return_value = mock_obs
+            client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
+
+        mock_obs.flush.assert_called_once()
+
+    def test_flush_called_after_pipeline_failure(self):
+        """obs.flush() must be called even when the pipeline raises an exception."""
+        mock_openai = MagicMock()
+        orch = _make_orchestrator()
+        orch.process.side_effect = RuntimeError("Pipeline down")
+        client = GovernedClient(mock_openai, orch, GovernanceConfig(failure_policy="refuse"))
+
+        with patch("moralstack.observability.service.get_obs") as mock_get_obs:
+            mock_obs = MagicMock()
+            mock_get_obs.return_value = mock_obs
+            client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
+
+        mock_obs.flush.assert_called_once()
+
+    def test_flush_failure_does_not_propagate(self):
+        """A flush() error must never surface to the caller."""
+        mock_openai, client = _make_governed_client("NORMAL_COMPLETE")
+
+        with patch("moralstack.observability.service.get_obs") as mock_get_obs:
+            mock_obs = MagicMock()
+            mock_obs.flush.side_effect = RuntimeError("Queue exploded")
+            mock_get_obs.return_value = mock_obs
+            # Must not raise
+            resp = client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
+
+        assert resp is not None
