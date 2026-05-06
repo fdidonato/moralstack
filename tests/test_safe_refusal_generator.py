@@ -7,10 +7,13 @@ _fallback_refusal, and generate_llm_safe_refusal.
 
 from moralstack.orchestration.safe_refusal_generator import (
     REFUSAL_FALLBACK_MARKER,
+    SIGNAL_DOMAIN_MAP,
     _detect_language_fallback,
     _fallback_refusal,
     _iso_to_language_name,
+    _normalize_refusal_domain,
     generate_llm_safe_refusal,
+    resolve_refusal_domain_and_redirection,
 )
 
 
@@ -65,3 +68,75 @@ def test_generate_llm_safe_refusal_no_client():
         llm_client=None,
     )
     assert result == REFUSAL_FALLBACK_MARKER
+
+
+# =============================================================================
+# Refusal domain normalization
+# =============================================================================
+# `core` is a retrieval-only pseudo-domain; it must never guide refusal
+# redirection (would surface implementation detail and has no overlay anyway).
+
+
+def test_normalize_refusal_domain_strips_core():
+    assert _normalize_refusal_domain("core") is None
+
+
+def test_normalize_refusal_domain_strips_whitespace_core():
+    assert _normalize_refusal_domain("  core  ") is None
+
+
+def test_normalize_refusal_domain_passes_real_domain():
+    assert _normalize_refusal_domain("legal") == "legal"
+    assert _normalize_refusal_domain("  legal  ") == "legal"
+
+
+def test_normalize_refusal_domain_none_and_empty():
+    assert _normalize_refusal_domain(None) is None
+    assert _normalize_refusal_domain("") is None
+    assert _normalize_refusal_domain("   ") is None
+
+
+def test_resolve_refusal_domain_core_detected_falls_back_to_general():
+    """When detected_domain == 'core', resolver MUST NOT propagate it."""
+    domain, redirection = resolve_refusal_domain_and_redirection(
+        request_prompt="Some prompt",
+        request_domain=None,
+        detected_domain="core",
+        risk_signals=None,
+        constitution_store=None,
+    )
+    assert domain == "general"
+    assert redirection == ""
+
+
+def test_resolve_refusal_domain_core_request_falls_back_to_general():
+    """When request_domain == 'core', resolver MUST NOT propagate it."""
+    domain, redirection = resolve_refusal_domain_and_redirection(
+        request_prompt="Some prompt",
+        request_domain="core",
+        detected_domain=None,
+        risk_signals=None,
+        constitution_store=None,
+    )
+    assert domain == "general"
+    assert redirection == ""
+
+
+def test_resolve_refusal_domain_no_longer_uses_signal_fallback():
+    """Signals MUST NOT drive domain selection anymore."""
+    domain, _ = resolve_refusal_domain_and_redirection(
+        request_prompt="Some prompt",
+        request_domain=None,
+        detected_domain=None,
+        risk_signals=["Q5:physical_harm"],
+        constitution_store=None,
+    )
+    assert domain == "general"
+
+
+def test_signal_domain_map_does_not_route_to_legal():
+    """Invariant: physical_harm / weapons signals must NOT map to 'legal'."""
+    assert SIGNAL_DOMAIN_MAP.get("Q5:physical_harm") != "legal"
+    assert SIGNAL_DOMAIN_MAP.get("Q10:weapons_explosives_toxins") != "legal"
+    assert SIGNAL_DOMAIN_MAP.get("Q17:minor_exploitation") != "legal"
+    assert "legal" not in SIGNAL_DOMAIN_MAP.values()

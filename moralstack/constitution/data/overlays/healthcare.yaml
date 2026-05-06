@@ -2,7 +2,7 @@
 # Principles for general healthcare contexts (complementary to medical.yaml for professionalism).
 
 # Semantic domain description (used for automatic matching)
-description: "Healthcare services, patient care, medical facilities, health insurance, care providers, healthcare systems, HIPAA compliance, healthcare professionals, nursing, clinical care, healthcare administration."
+description: "Healthcare services, patient care, medical facilities, health insurance, care providers, healthcare systems, HIPAA compliance, healthcare professionals, nursing, clinical care, healthcare administration. NOT for: harming patients, circumventing clinical safeguards, or defrauding payers when unrelated to lawful care coordination or administration."
 
 # Alternative keywords for matching
 keywords:

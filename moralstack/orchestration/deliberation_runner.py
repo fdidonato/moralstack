@@ -888,20 +888,10 @@ class DeliberationRunner:
             constitution_store=self.constitution_store,
         )
         if getattr(response.metadata, "final_action", "") == "REFUSE" or response.response_type == ResponseType.FULL_REFUSAL:
-            record_llm_call(
-                self.logger,
-                None,
-                {
-                    "cycle": state.cycle,
-                    "phase": "refusal",
-                    "module": "orchestration",
-                    "action": "refuse (deliberative)",
-                    "duration_ms": 0.0,
-                    "prompt": request.prompt or "",
-                    "raw_response": response.content,
-                    "sequence_in_cycle": SEQ_REFUSAL_OR_FINALIZE,
-                },
-            )
+            # NOTE: the refusal LLM call (with full system+user prompt) is
+            # persisted by ResponseAssembler.assemble itself, so it is visible
+            # in observability (UI, markdown export). Here we only persist the
+            # decision trace marking the RESPONSE stage.
             try:
                 import json
 
@@ -952,6 +942,7 @@ class DeliberationRunner:
             state.simulations[-1] if state.simulations else None,
             state.hindsight,
             append_pre_policy_trace=False,
+            risk_thresholds=getattr(getattr(self, "config", None), "risk_thresholds", None),
         )
         processing_time = int((time.time() - start_time) * 1000)
         if constitution is None and self.constitution_store is not None:
@@ -971,20 +962,9 @@ class DeliberationRunner:
             constitution_store=self.constitution_store,
         )
         if getattr(response.metadata, "final_action", "") == "REFUSE" or response.response_type == ResponseType.FULL_REFUSAL:
-            record_llm_call(
-                self.logger,
-                None,
-                {
-                    "cycle": state.cycle,
-                    "phase": "refusal",
-                    "module": "orchestration",
-                    "action": "refuse (deliberative)",
-                    "duration_ms": 0.0,
-                    "prompt": request.prompt or "",
-                    "raw_response": response.content,
-                    "sequence_in_cycle": SEQ_REFUSAL_OR_FINALIZE,
-                },
-            )
+            # See FAST_PATH branch above: the refusal LLM call is persisted by
+            # ResponseAssembler.assemble itself; here only the RESPONSE-stage
+            # decision trace is recorded.
             try:
                 import json
 

@@ -6,14 +6,17 @@ Renderer deterministico: response_type determinato SOLO da decision.final_action
 from __future__ import annotations
 
 import logging
+import time
 
 from moralstack.core.types import PolicyLLMProtocol
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.risk import RiskPolicyAction
+from moralstack.orchestration.persistence_helpers import record_llm_call
+from moralstack.orchestration.refusal_context import build_refusal_context
 from moralstack.orchestration.safe_refusal_generator import (
     _detect_language_fallback,
     _iso_to_language_name,
-    generate_llm_safe_refusal,
+    generate_llm_safe_refusal_detailed,
     resolve_refusal_domain_and_redirection,
 )
 from moralstack.orchestration.types import (
@@ -29,6 +32,10 @@ from moralstack.orchestration.types import (
     RiskEstimationProtocol,
     risk_category_str,
 )
+
+# Same value used by deliberation_runner.SEQ_REFUSAL_OR_FINALIZE; duplicated
+# here to avoid a cyclic import (deliberation_runner depends on this module).
+_SEQ_REFUSAL_OR_FINALIZE = 6
 
 _LOG = logging.getLogger(__name__)
 
@@ -264,20 +271,69 @@ class ResponseAssembler:
                     risk_signals=list(getattr(decision, "risk_signals", None) or []),
                     constitution_store=constitution_store,
                 )
-                content = generate_llm_safe_refusal(
+                risk_cat_str = risk_category_str(risk_estimation) if risk_estimation is not None else ""
+                refusal_context = build_refusal_context(
+                    risk_estimation=risk_estimation,
+                    decision=decision,
+                    domain=resolved_domain,
+                    refusal_redirection=refusal_redirection,
+                    risk_score=getattr(metadata, "risk_score", None),
+                    risk_category=risk_cat_str,
+                )
+                _refusal_t0 = time.time()
+                refusal_result = generate_llm_safe_refusal_detailed(
                     user_prompt=request.prompt,
-                    risk_category=risk_category_str(risk_estimation) if risk_estimation is not None else "",
+                    risk_category=risk_cat_str,
                     policy_reason_codes=list(getattr(decision, "reason_codes", None) or []),
                     language=explicit_lang or "English",
                     domain=resolved_domain,
                     llm_client=self.policy,
                     rationale=reason if reason else None,
                     refusal_redirection=refusal_redirection,
+                    refusal_context=refusal_context,
                 )
+                _refusal_duration_ms = (time.time() - _refusal_t0) * 1000.0
+                content = refusal_result.text
+                # Persist the synthetic refusal prompts so they appear in the UI
+                # / markdown export. Without this, only request.prompt would be
+                # logged (set by the deliberation_runner downstream), which hides
+                # the actual refusal-LLM input from observability.
+                try:
+                    record_llm_call(
+                        None,
+                        None,
+                        {
+                            "phase": "refusal",
+                            "module": "orchestration",
+                            "action": (
+                                "refuse (deliberative, retried_no_leak)"
+                                if refusal_result.leak_retried
+                                else "refuse (deliberative)"
+                            ),
+                            "duration_ms": _refusal_duration_ms,
+                            "prompt": refusal_result.user_prompt,
+                            "system_prompt": refusal_result.system_prompt,
+                            "raw_response": content,
+                            "attempts": refusal_result.attempts,
+                            "sequence_in_cycle": _SEQ_REFUSAL_OR_FINALIZE,
+                        },
+                    )
+                except Exception as _persist_e:
+                    _LOG.warning(
+                        "response_assembler: persisting refusal LLM call failed: %s",
+                        _persist_e,
+                    )
                 if len(content.strip()) > 20:
                     metadata.predicted_action = RiskPolicyAction.DENY.value
                     metadata.must_refuse = True
                     metadata.refusal_reason = (reason or content[:200] or "").strip() or "[REFUSAL_POLICY]"
+                    metadata.refusal_domain = resolved_domain
+                    metadata.refusal_redirection_source = (
+                        "domain_overlay"
+                        if (refusal_redirection and resolved_domain != "general")
+                        else ("refusal_context" if refusal_context.safe_redirection_guidance else "none")
+                    )
+                    metadata.safe_refusal_focus = refusal_context.safe_refusal_focus
                     return FinalResponse(
                         content=content,
                         response_type=ResponseType.FULL_REFUSAL,

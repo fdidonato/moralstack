@@ -6,10 +6,12 @@ The Risk Estimator performs semantic classification of the ethical risk associat
 organized as a subpackage: `schema.py`, `categories.py`, `estimator.py`, `calibration.py`, `parse_result.py`, `utils.py`;
 the public API is exposed via `__init__.py`.
 
-**For testers and stakeholders**: The output includes `risk_category`, `score` and semantic signals (`intent_clarity`,
-`misuse_plausibility`, `actionability_risk`, `operational_risk`) used by the Orchestrator for routing (Fast Path vs
-Deliberative) and for the **SAFE_COMPLETE** vs **NORMAL_COMPLETE** decision. Tests can verify that benign requests
-receive `BENIGN` and that harmful requests receive `CLEARLY_HARMFUL` or `POTENTIALLY_HARMFUL`.
+**For testers and stakeholders**: The output includes `risk_category`, `score`, calibrated **`semantic_signals`**
+strings (from `calibration.py`), routing dimensions (`intent_clarity`, `misuse_plausibility`, `actionability_risk`,
+`operational_risk`), intent **`request_type`**, and boolean **`stated_personal_bias`**, **`seeks_norm_circumvention`**,
+**`q13_protected_class_targeting`** for governance/trace consistency. The Orchestrator uses these for Fast Path vs
+Deliberative routing and for **SAFE_COMPLETE** vs **NORMAL_COMPLETE**. Tests can verify that benign requests stay
+`BENIGN` and harmful paths surface `CLEARLY_HARMFUL` or `POTENTIALLY_HARMFUL` as appropriate.
 
 ---
 
@@ -62,34 +64,65 @@ class RiskCategory(Enum):
 
 ### RiskParseResult (parsing)
 
-`parse_risk_response(text)` returns an immutable `RiskParseResult` (from `parse_result.py`) with all parsed and
-calibrated fields (score, confidence, category, signals, rationale, risk_policy_action, domain_sensitivity,
-operational_risk, intent_clarity, misuse_plausibility, actionability_risk, harm_type, self_harm_language,
-requested_instructions, intent_to_harm, request_type, intent_operational, detected_language). The estimator uses this
-result to build the public `RiskEstimation` and applies crisis post-processing when needed.
+`parse_risk_response(text)` returns an immutable `RiskParseResult` (from `parse_result.py`) used to build
+`RiskEstimation`. Core fields: score, confidence, category, signals, rationale, risk_policy_action,
+domain_sensitivity, operational_risk, intent_clarity, misuse_plausibility, actionability_risk, harm_type,
+self_harm_language, requested_instructions, intent_to_harm, request_type, intent_operational, detected_language.
+
+Additional parsed fields (intent / topic layer):
+
+- **`stated_personal_bias`**, **`seeks_norm_circumvention`** — boolean flags produced by the intent mini-estimator (or
+  monolithic prompt) for **execution-of-stated-intent** framing: first-person bias toward identifiable persons/groups and
+  acknowledgement of a norm the requester wants to work around. Downstream logic uses them to falsify incoherent
+  `ethical_dilemma`-style classifications (see prompt coherence checks in `moralstack/models/risk/prompts.py`).
+- **`q13_protected_class_targeting`** — boolean mirror of harm-topic signal **q13** (differential treatment of
+  identifiable individuals or groups based on characteristics commonly covered by anti-discrimination norms). Pure
+  topic detection; combined with intent/calibration in `calibration.py`.
 
 ### RiskEstimation
+
+Public surface (selected fields; see `moralstack/models/risk/schema.py` for the full dataclass):
 
 ```python
 @dataclass
 class RiskEstimation:
-    score: float                     # [0, 1] - higher = riskier
-    confidence: float                # [0, 1] - estimate confidence
-    risk_category: RiskCategory     # Assigned category
-    semantic_signals: list[str]      # Identified semantic signals
-    rationale: str                   # Judge explanation
-    raw_response: str                # Raw LLM response (debug)
+    score: float
+    confidence: float
+    risk_category: RiskCategory
+    domain_sensitivity: DomainSensitivity
+    operational_risk: OperationalRisk
+    semantic_signals: list[str]       # Calibrated diagnostic strings (e.g. Q5:physical_harm, request_type:...)
+    risk_policy_action: RiskPolicyAction
+    rationale: str
+    raw_response: str
+    intent_clarity: IntentClarity
+    misuse_plausibility: MisusePlausibility
+    actionability_risk: ActionabilityRisk
+    harm_type: str
+    request_type: str
+    intent_operational: bool
+    requested_instructions: bool
+    intent_to_harm: bool
+    detected_language: str             # ISO 639-1 from judge (response language alignment)
+    estimation_mode: str               # "" | "monolithic" | "parallel"
+    stated_personal_bias: bool
+    seeks_norm_circumvention: bool
+    q13_protected_class_targeting: bool
 ```
 
 ### Example Output
 
 ```python
 RiskEstimation(
-    score=0.35,
+    score=0.42,
     confidence=0.85,
     risk_category=RiskCategory.MORALLY_NUANCED,
-    semantic_signals=["ethical_dilemma", "interpersonal_conflict"],
-    rationale="The request presents an ethical dilemma that requires moral deliberation"
+    semantic_signals=["Q7:ethical_dilemma", "request_type:ethical_dilemma", "harm_type:none"],
+    rationale="...",
+    stated_personal_bias=False,
+    seeks_norm_circumvention=False,
+    q13_protected_class_targeting=False,
+    estimation_mode="parallel",
 )
 ```
 
@@ -106,36 +139,92 @@ RiskEstimation(
 
 ### Internal flow (semantic analysis)
 
-Semantic analysis in `LLMBasedRiskEstimator._semantic_analysis` is split into:
+Semantic analysis in `LLMBasedRiskEstimator._semantic_analysis` chooses **monolithic** or **parallel** mode:
 
-1. **Prompt building** — `_build_generation_config()`, `_build_full_prompt(prompt)` (base template + optional principles from constitution store). `GenerationConfig` requests OpenAI **`response_format={"type":"json_object"}`** for monolithic and parallel mini-estimator calls (structured output); tolerant recovery via `extract_json` remains for parse classification and edge cases. In parallel mini-estimator mode, `OpenAIPolicy` objects for per-mini model overrides are **pooled per model id** on the `LLMBasedRiskEstimator` instance (optional diagnostics: `get_pooling_diagnostics()`).
-2. **LLM call with retry** — `_call_llm_with_retry(full_prompt, gen_config)` runs the policy LLM, persists the call via `_persist_risk_llm_call` (when persistence is available), and returns `(raw_response, RiskParseResult)` on success; `parsed_summary_json` includes a **`parse_contract`** object (`response_contract`, `strict_json_requested`, `parse_status`, `fallback_used`, `retry_count`, etc.). On parse/generation failure it retries up to `max_retries` (unchanged policy), then raises `RiskEstimationError`.
-3. **Parsing** — `parse_risk_dict` after `parse_dict_with_contract` (direct `json.loads` vs `extract_json` fallback) produces a `RiskParseResult` (same governance semantics as the former `parse_risk_response` pipeline).
-4. **Crisis post-processing** — `_post_process_crisis(parsed)` applies the crisis/help-seeking clamp (self-harm language without requested instructions or intent to harm → score clamp, category/signals overrides).
-5. **Mapping** — `_to_risk_estimation(...)` builds the public `RiskEstimation` from the parsed result and post-processed values (including `intent_type` from request type).
+| Mode | Entry | Notes |
+|------|--------|--------|
+| Parallel | `RiskEstimatorConfig.use_parallel_estimators=True` (env: `MORALSTACK_RISK_PARALLEL_ESTIMATORS`) | Three concurrent LLM calls (`estimate_intent`, `estimate_signals`, `estimate_operational`), merged by `merge_mini_estimator_results()` in `calibration.py`, then the usual calibration / parse pipeline. `RiskEstimation.estimation_mode="parallel"`. |
+| Monolithic | Default or parallel failure fallback | Single structured judgment via `RISK_SYSTEM_PROMPT` / `RISK_PROMPT_TEMPLATE`. `estimation_mode="monolithic"`. |
+
+Shared steps:
+
+1. **Prompt building** — Monolithic: `_build_full_prompt(prompt)` (template + optional constitution snippet). Parallel:
+   dedicated templates in `prompts.py` (`INTENT_CONTEXT_*`, `HARM_SIGNAL_*`, `OPERATIONAL_RISK_*`). `GenerationConfig`
+   requests OpenAI **`response_format={"type":"json_object"}`**. Per-mini model overrides use **pooled** `OpenAIPolicy`
+   instances keyed by model id (`get_pooling_diagnostics()`).
+2. **LLM call(s) with retry** — Monolithic: `_call_llm_with_retry`. Parallel: each mini-call retries up to `max_retries`
+   independently; observable persistence actions include `estimate_intent`, `estimate_signals`, `estimate_operational`.
+   Responses carry **`parse_contract`** metadata where persisted.
+3. **Parsing / calibration** — Merged JSON (parallel) or single JSON (monolithic) flows through `parse_risk_dict` /
+   calibration helpers; output remains a `RiskParseResult`-compatible structure before crisis mapping.
+4. **Crisis post-processing** — `_post_process_crisis(parsed)` (help-seeking / crisis clamp).
+5. **Mapping** — `_to_risk_estimation(...)` fills `RiskEstimation`, including `stated_personal_bias`,
+   `seeks_norm_circumvention`, `q13_protected_class_targeting`, and `estimation_mode`.
 
 Persistence of LLM calls is best-effort: if `moralstack.persistence.sink.persist_llm_call` is unavailable (e.g. import error), a debug log is emitted and execution continues.
 
-### Prompt Template
+### Prompt templates (`prompts.py`)
 
-The Risk Estimator uses a structured prompt that asks the LLM to:
+Templates live in `moralstack/models/risk/prompts.py`. Engineering constraints (v2 rework, prompt-only):
 
-- Analyze the intent of the request
-- Identify potential ethical risks
-- Evaluate context and nuance
-- **Identify request language** (`detected_language`, ISO 639-1, required) — used for response language matching (
-  refusal, safe_complete)
-- Produce a structured JSON judgment
+1. Each mini-estimator references **only its own JSON fields** (no cross-contamination).
+2. Score bands are explicit ranges instead of inline arithmetic in prose.
+3. **Invariant principles** stay in system prompts; procedural steps sit in user prompts.
+4. Prompts are **English** for the model; they instruct semantic classification **across all human languages** (no
+   runtime keyword matching).
+5. **Coherence checks** appear immediately before JSON output (forward rules + **falsification** overrides for
+   ethical-dilemma vs execution-of-stated-intent conflicts).
+
+**Rationale field — substantive semantic payload**
+
+The monolithic judge and the **intent** and **operational** mini-estimators each produce a `rationale` string in JSON.
+In **parallel** mode, `calibration.merge_mini_estimator_results()` merges intent and operational rationales into a
+single `RiskEstimation.rationale` with `[intent]` / `[op_risk]` prefixes when both are present.
+
+Prompt obligations (see pre-output checks and JSON field hints in `moralstack/models/risk/prompts.py`):
+
+- **Substantive payload first**: The rationale must state what harmful or sensitive **topic or operational objective**
+  the requester seeks — including meaning **recoverable** from encoding, obfuscation, compression, or embedded segments
+  in the visible prompt — at **category level**, consistent with affirmative signals and `harm_type`. Summaries that
+  describe only **wrappers** (output schema, Wikipedia/article genre, platform takedown avoidance, jailbreak tone
+  rules) are insufficient when the recovered semantic payload differs.
+- **Alignment with structured fields**: When `harm_type` is `child_exploitation` or **q17_minor_exploitation** is yes,
+  the rationale must **explicitly** name minor-contact, grooming, or exploitation of minors — not solely generic policy
+  circumvention or vague “harmful article” wording.
+- **Operational estimator**: If the model would output only vague placeholders (e.g. “harmful behaviors”, “dangerous
+  practices”) while the recovered payload maps to a specific harm category, prompts require **rewrite** to name that
+  category; a separate check forces correction when rationale uses technical violence frames but the payload is
+  interpersonal exploitation or grooming.
+
+The **harm-signal** mini-estimator does **not** emit `rationale`; only structured yes/no signals and `domain_sensitivity`.
+
+**Harm topic questionnaire (q1–q17)** — yes/no topic presence for calibration (not intent by itself). q13 is
+**protected-class targeting**: differential treatment, exclusion, filtering, or selection of identifiable people or
+groups based on characteristics commonly protected by anti-discrimination norms. Self-harm branch still uses **Q8a /
+Q8b** sub-signals in the monolithic template when `q8_self_harm_suicide=yes`.
+
+**Mini-estimator roles**
+
+| Call | System role | JSON focus |
+|------|-------------|------------|
+| Intent | Semantic intent judge | Framing, `request_type`, `harm_type`, intent flags, **stated_personal_bias**, **seeks_norm_circumvention**, `detected_language`, rationale |
+| Signals | Harm signal detector | **q1–q17**, `domain_sensitivity` only (no operational scoring) |
+| Operational | Operational risk assessor | `operational_risk`, `risk_score`, `misuse_plausibility`, `actionability_risk`, `risk_policy_action`, rationale |
+
+The **monolithic** template combines all of the above into one schema (same fields, single JSON).
 
 ### Configuration
 
 `RiskEstimatorConfig` (in `moralstack/models/risk/schema.py`) controls LLM settings. When no explicit config is passed,
 the estimator loads values from environment variables (see [Environment Variables](#environment-variables)).
 
-- **max_tokens**: 512 (configurable) — response budget for the semantic judge; 512 avoids JSON truncation with Q1–Q12,
-  rationale, and all fields. The API parameter name (`max_tokens` vs `max_completion_tokens`) is chosen automatically
-  based on the model; see [OpenAI Params](./openai_params.md).
-- **max_retries**: 2 — parse retries before fallback
+- **`use_parallel_estimators`** — toggles parallel triple-call path (default `False`).
+- **Per-mini models** — `intent_model`, `signals_model`, `operational_model` (defaults `gpt-4o`; overridden only when
+  different from the estimator’s primary policy model so extra `OpenAIPolicy` instances are created).
+- **max_tokens**: 512 (configurable) — budget large enough for rationale plus q1–q17 and governance fields. The API
+  parameter name (`max_tokens` vs `max_completion_tokens`) is chosen automatically based on the model; see
+  [OpenAI Params](./openai_params.md).
+- **max_retries**: 2 — parse/generation retries before failure
 - **temperature**: 0.1 — low for consistent decisions
 
 ---
@@ -162,6 +251,36 @@ configuration is the single source of configuration — no CLI or code path over
       behaviour.
 - **Esempio**: `MORALSTACK_RISK_MODEL=gpt-4o-mini` uses a smaller model for risk classification to reduce cost/latency
   while keeping `OPENAI_MODEL=gpt-4o` for generation.
+- **Interaction with parallel mode**: Unset `MORALSTACK_RISK_INTENT_MODEL`, `MORALSTACK_RISK_SIGNALS_MODEL`, and
+  `MORALSTACK_RISK_OPERATIONAL_MODEL` inherit the same resolution order as the primary risk policy:
+  `MORALSTACK_RISK_MODEL` if set, otherwise `OPENAI_MODEL`,
+  otherwise `gpt-4o`. When a mini-call's resolved model id differs from the estimator's primary policy model, a dedicated
+  pooled `OpenAIPolicy` is used for that call.
+
+#### MORALSTACK_RISK_PARALLEL_ESTIMATORS
+
+- **Default**: `false`
+- **Tipo**: bool (`true`/`false`, `1`/`0`, `yes`/`no`)
+- **Significato**: Enables three parallel LLM calls (intent, harm signals, operational risk) instead of one monolithic judge JSON.
+- **Effetto**: Higher parallelism and latency trade-offs (three calls vs one); see [Internal flow](#internal-flow-semantic-analysis).
+
+#### MORALSTACK_RISK_INTENT_MODEL
+
+- **Default**: inherits `MORALSTACK_RISK_MODEL` if set, else `OPENAI_MODEL`, else `gpt-4o`
+- **Tipo**: string (OpenAI model id)
+- **Significato**: Model for the **intent / framing** mini-estimator (`estimate_intent`). Used only when parallel estimators are enabled and the id differs from the estimator’s primary policy model.
+
+#### MORALSTACK_RISK_SIGNALS_MODEL
+
+- **Default**: inherits `MORALSTACK_RISK_MODEL` if set, else `OPENAI_MODEL`, else `gpt-4o`
+- **Tipo**: string (OpenAI model id)
+- **Significato**: Model for the **harm signal scanner** mini-estimator (`estimate_signals`), covering **q1–q17** and `domain_sensitivity`.
+
+#### MORALSTACK_RISK_OPERATIONAL_MODEL
+
+- **Default**: inherits `MORALSTACK_RISK_MODEL` if set, else `OPENAI_MODEL`, else `gpt-4o`
+- **Tipo**: string (OpenAI model id)
+- **Significato**: Model for the **operational risk** mini-estimator (`estimate_operational`).
 
 ### Thresholds and path routing
 
@@ -204,7 +323,7 @@ configuration is the single source of configuration — no CLI or code path over
 - **Default**: `512`
 - **Tipo**: int (≥ 1)
 - **Significato**: Maximum tokens for the semantic judge LLM response. 512 is tuned to avoid truncating the JSON (
-  Q1–Q12, rationale, etc.).
+  q1–q17, rationale, etc.).
 - **Effetto della modifica**:
     - **Valore più alto**: Longer responses possible; higher token cost and risk of truncation if the model outputs more
       than expected.
@@ -420,17 +539,28 @@ else:
 
 ---
 
-## Common Semantic Signals
+## Semantic signals and calibrated strings
 
-| Signal               | Description                       | Impact                      |
-|----------------------|-----------------------------------|-----------------------------|
-| `educational_intent` | Informational/educational request | Reduces risk                |
-| `ethical_dilemma`    | Moral dilemma present             | MORALLY_NUANCED             |
-| `vulnerable_context` | Potential vulnerable user         | Increases scrutiny          |
-| `harm_potential`     | Possibility of harm               | Increases risk              |
-| `illegal_activity`   | Reference to illegal activity     | CLEARLY_HARMFUL             |
-| `medical_context`    | Medical/health context            | Activates medical overlay   |
-| `financial_advice`   | Financial advice request          | Activates financial overlay |
+`RiskEstimation.semantic_signals` is a **diagnostic string list** produced mainly by **`calibration.py`** after merging
+LLM outputs—not an unconstrained copy of model prose. Examples (non-exhaustive):
+
+| Pattern | Meaning |
+|---------|---------|
+| `Q1:confidential_data` … `Q6:illegal_items` | Operational / legal-risk topics mapped from the questionnaire when calibration fires |
+| `Q5:physical_harm`, `Q8:self_harm_suicide`, `Q9:cyber_malware`, … | Priority **harm** topics (including medical / weapons / privacy variants per calibration rules) |
+| `Q7:ethical_dilemma` | Interpersonal or dilemma-shaped emotional signal |
+| `request_type:<kind>` | Resolved request class (e.g. `crisis_support`, `ethical_dilemma`, `clear_harm`) |
+| `Q17:minor_exploitation` | Minor grooming/contact/exploitation topic (paired with `harm_type=child_exploitation` when calibration assigns it) |
+| `harm_type:<kind>` | Harm channel (`none`, `emotional_relational`, `physical`, `child_exploitation`, …) |
+| `corrected_from_q7` | Calibration adjusted an emotional-only path |
+
+**Topic q13** contributes to harm calibration like other qi fields; the parsed boolean **`q13_protected_class_targeting`**
+on `RiskEstimation` / `RiskParseResult` mirrors the LLM’s q13 answer for downstream consumers.
+
+**Intent falsification flags** (booleans on `RiskEstimation`, not the string list): **`stated_personal_bias`**,
+**`seeks_norm_circumvention`** — from the intent estimator; used with coherence / falsification rules in `prompts.py`.
+
+**System markers** (when applicable): e.g. `SYSTEM.REQUIRES_DELIBERATION`, `NO_LLM_AVAILABLE`.
 
 ---
 

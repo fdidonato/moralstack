@@ -46,6 +46,8 @@ from moralstack.utils.env_loader import _purge_empty_env_vars
 
 _rs = obs.read_store
 get_all_runs = _rs.get_all_runs
+get_request_domains = _rs.get_request_domains
+get_runs_page = _rs.get_runs_page
 get_debug_events_for_request = _rs.get_debug_events_for_request
 get_decision_traces_for_request = _rs.get_decision_traces_for_request
 get_llm_calls_for_request = _rs.get_llm_calls_for_request
@@ -321,14 +323,27 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
                 if key in risk_data:
                     outputs.append({"label": key.replace("_", " "), "value": risk_data[key]})
         elif action == "estimate_signals":
-            # Show count of positive harm signals
-            harm_qs = [k for k in risk_data if k.startswith("q") and k[1:].split("_")[0].isdigit()]
-            _yes_vals = ("yes", "true", "1", "sì", "si")
-            positive = [k for k in harm_qs if str(risk_data[k]).lower().strip() in _yes_vals]
-            if positive:
-                outputs.append({"label": "harm signals", "value": f"{len(positive)} positive"})
-            else:
-                outputs.append({"label": "harm signals", "value": "none"})
+            hc_keys = _positive_calibration_signal_keys(risk_data, _CALIBRATION_HARMFUL_COUNT_KEYS)
+            q13_on = _positive_calibration_signal_keys(risk_data, (_CALIBRATION_Q13_TOPIC_KEY,))
+            rq_on = _positive_calibration_signal_keys(risk_data, _CALIBRATION_REPUTATIONAL_TOPIC_KEYS)
+            outputs.append(
+                {
+                    "label": "harm signals",
+                    "value": f"{len(hc_keys)} positive (harmful_count keys)",
+                }
+            )
+            topic_bits: list[str] = []
+            if q13_on:
+                topic_bits.append("q13")
+            if rq_on:
+                topic_bits.append(f"q14–q16:{len(rq_on)}")
+            topic_summary = ", ".join(topic_bits) if topic_bits else "none"
+            outputs.append(
+                {
+                    "label": "topic signals",
+                    "value": f"{topic_summary} (q13–q16; excluded from harmful_count)",
+                }
+            )
     elif "policy" in module:
         outputs.append({"label": "draft", "value": "text"})
     elif "critic" in module:
@@ -628,6 +643,37 @@ def _is_yes_ui(value: Any) -> bool:
     return str(value).lower().strip() in ("yes", "true", "1", "sì", "si")
 
 
+# Keys whose affirmative answers increment calibration harmful_count (see
+# moralstack.models.risk.calibration._parse_verification_questions).
+_CALIBRATION_HARMFUL_COUNT_KEYS: tuple[str, ...] = (
+    "q1_confidential",
+    "q2_unauthorized",
+    "q3_breach",
+    "q4_fraud",
+    "q5_physical",
+    "q6_illegal_items",
+    "q8_self_harm_suicide",
+    "q9_cyber_malware",
+    "q10_weapons_explosives_toxins",
+    "q11_privacy_doxxing_stalking",
+    "q12_medical_harmful",
+    "q17_minor_exploitation",
+)
+
+# q13–q16 do not increment harmful_count. q14–q16 still enter the harm-signals
+# calibration branch (reputational cluster).
+_CALIBRATION_Q13_TOPIC_KEY = "q13_protected_class_targeting"
+_CALIBRATION_REPUTATIONAL_TOPIC_KEYS: tuple[str, ...] = (
+    "q14_reputational_harm",
+    "q15_deceptive_online_campaign",
+    "q16_harassment_smear_campaign",
+)
+
+
+def _positive_calibration_signal_keys(signal_data: dict[str, Any], keys: tuple[str, ...]) -> list[str]:
+    return [k for k in keys if _is_yes_ui(signal_data.get(k, "no"))]
+
+
 def _describe_calibration_path(
     intent_data: dict[str, Any],
     signal_data: dict[str, Any],
@@ -645,27 +691,36 @@ def _describe_calibration_path(
     intent_operational = _is_yes_ui(intent_data.get("intent_operational", "no"))
     op_risk = str(operational_data.get("operational_risk", "")).upper().strip()
 
-    harm_keys = [
-        "q1_confidential",
-        "q2_unauthorized",
-        "q3_breach",
-        "q4_fraud",
-        "q5_physical",
-        "q6_illegal_items",
-        "q8_self_harm_suicide",
-        "q9_cyber_malware",
-        "q10_weapons_explosives_toxins",
-        "q11_privacy_doxxing_stalking",
-        "q12_medical_harmful",
-    ]
-    positive_signals = [k for k in harm_keys if _is_yes_ui(signal_data.get(k, "no"))]
+    positive_signals = _positive_calibration_signal_keys(signal_data, _CALIBRATION_HARMFUL_COUNT_KEYS)
     harmful_count = len(positive_signals)
+    q13_positive = _positive_calibration_signal_keys(signal_data, (_CALIBRATION_Q13_TOPIC_KEY,))
+    reputational_positive = _positive_calibration_signal_keys(signal_data, _CALIBRATION_REPUTATIONAL_TOPIC_KEYS)
+    has_reputational_cluster = len(reputational_positive) > 0
     q7 = _is_yes_ui(signal_data.get("q7_only_emotional", "no"))
+
+    topic_signal_summary_parts: list[str] = []
+    if q13_positive:
+        topic_signal_summary_parts.append("q13=yes")
+    if reputational_positive:
+        topic_signal_summary_parts.append(
+            f"q14–q16={len(reputational_positive)} ({', '.join(reputational_positive)})"
+        )
+    topic_signal_summary = (
+        "; ".join(topic_signal_summary_parts)
+        + " — excluded from harmful_count"
+        + ("; q14–q16 still open harm calibration branch" if has_reputational_cluster else "")
+        if topic_signal_summary_parts
+        else "0 affirmative (q13–q16)"
+    )
 
     inputs: list[dict[str, Any]] = [
         {"label": "request_type", "source": request_type or "unknown"},
         {"label": "op_risk", "source": op_risk or "NONE"},
-        {"label": "harm_signals", "source": f"{harmful_count} positive"},
+        {
+            "label": "harm_signals",
+            "source": f"{harmful_count} positive (q1–q6, q8–q12, q17 = calibration harmful_count)",
+        },
+        {"label": "topic_signals", "source": topic_signal_summary},
     ]
     if intent_to_harm:
         inputs.append({"label": "intent_to_harm", "source": "yes"})
@@ -678,10 +733,10 @@ def _describe_calibration_path(
     rules_applied: list[str] = []
     calibration_path = ""
 
-    if harmful_count > 0:
+    if harmful_count > 0 or has_reputational_cluster:
         calibration_path = "harm_signals_present"
         all_intent_false = not intent_to_harm and not requested_instructions and not intent_operational
-        is_defensive = all_intent_false and op_risk in ("NONE", "LOW", "")
+        is_defensive = harmful_count >= 1 and all_intent_false and op_risk in ("NONE", "LOW", "")
         if is_defensive:
             rules_applied.append(
                 f"defensive_override: {harmful_count} harm signal(s) "
@@ -690,10 +745,16 @@ def _describe_calibration_path(
             )
         elif harmful_count >= 3 or raw_score >= 0.85:
             rules_applied.append(
-                f"harm_escalation: {harmful_count} signals, " f"score={raw_score:.2f} -> CLEARLY_HARMFUL, " f"floor 0.85"
+                f"harm_escalation: {harmful_count} signals, score={raw_score:.2f} "
+                f"-> CLEARLY_HARMFUL, floor 0.85"
             )
-        else:
-            rules_applied.append(f"harm_present: {harmful_count} signal(s) " f"({', '.join(positive_signals)})")
+        elif harmful_count > 0:
+            rules_applied.append(f"harm_present: {harmful_count} signal(s) ({', '.join(positive_signals)})")
+        elif has_reputational_cluster:
+            rules_applied.append(
+                "reputational_cluster: q14–q16 affirmative routes through harm_signals_present "
+                "without increasing harmful_count (calibration._apply_calibration)"
+            )
     elif q7:
         calibration_path = "emotional_only"
         rules_applied.append(f"emotional_only: q7_only_emotional=yes, " f"request_type={request_type}")
@@ -706,7 +767,7 @@ def _describe_calibration_path(
         rules_applied.append(
             "non_operational_clamp: op_risk=NONE + all intent=False " "-> cap score 0.30, CLEARLY_HARMFUL->SENSITIVE"
         )
-    elif op_risk == "HIGH" and all_intent_false and harmful_count == 0:
+    elif op_risk == "HIGH" and all_intent_false and harmful_count == 0 and not has_reputational_cluster:
         rules_applied.append(
             "intent_contradiction: op_risk=HIGH but all intent=False "
             "-> CLEARLY_HARMFUL->SENSITIVE, cap 0.55, DENY->DELIBERATE"
@@ -740,6 +801,9 @@ def _describe_calibration_path(
             "intent_operational": intent_operational,
             "harmful_count": harmful_count,
             "positive_harm_signals": positive_signals,
+            "positive_topic_signal_q13": q13_positive,
+            "positive_topic_signals_q14_q16": reputational_positive,
+            "has_reputational_cluster": has_reputational_cluster,
             "q7_emotional": q7,
             "rules_applied": rules_applied,
         },
@@ -1334,13 +1398,48 @@ button:hover{opacity:0.9}
         templates.env.filters["module_result"] = _filter_module_result
 
     @app.get("/runs", response_class=HTMLResponse)
-    def list_runs(request: Request) -> Response:
+    def list_runs(
+        request: Request,
+        page: int = 1,
+        domain: str = "",
+        search_text: str = "",
+    ) -> Response:
         _require_session(request)
         if not get_db_path():
             raise HTTPException(500, "No database configured (MORALSTACK_DB_PATH)")
-        runs = get_all_runs(limit=100)
+        page_size = 20
+        safe_page = max(1, int(page))
+        runs, total_runs = get_runs_page(
+            page=safe_page,
+            page_size=page_size,
+            domain=domain,
+            search_text=search_text,
+        )
+        total_pages = max(1, (total_runs + page_size - 1) // page_size) if total_runs else 1
+        if safe_page > total_pages:
+            safe_page = total_pages
+            runs, total_runs = get_runs_page(
+                page=safe_page,
+                page_size=page_size,
+                domain=domain,
+                search_text=search_text,
+            )
+        available_domains = get_request_domains()
         if templates:
-            return templates.TemplateResponse(request, "runs.html", {"runs": runs})
+            return templates.TemplateResponse(
+                request,
+                "runs.html",
+                {
+                    "runs": runs,
+                    "page": safe_page,
+                    "page_size": page_size,
+                    "total_runs": total_runs,
+                    "total_pages": total_pages,
+                    "domain": domain.strip(),
+                    "search_text": search_text.strip(),
+                    "available_domains": available_domains,
+                },
+            )
         return HTMLResponse(f"<html><body><h1>Runs</h1><pre>{runs}</pre></body></html>")
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)

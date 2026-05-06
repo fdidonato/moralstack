@@ -93,5 +93,18 @@ def get_all_runs(limit: int = 100) -> list[dict[str, Any]]:
     return _rs.get_all_runs(limit)
 
 
+def get_runs_page(
+    page: int = 1,
+    page_size: int = 20,
+    domain: str | None = None,
+    search_text: str | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    return _rs.get_runs_page(page=page, page_size=page_size, domain=domain, search_text=search_text)
+
+
+def get_request_domains() -> list[str]:
+    return _rs.get_request_domains()
+
+
 def get_models_used_for_run(run_id: str) -> dict[str, str]:
     return _rs.get_models_used_for_run(run_id)

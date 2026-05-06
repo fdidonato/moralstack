@@ -6,6 +6,33 @@
     <p class="subtitle">Recent benchmark runs</p>
 </div>
 
+<div class="card filters-card">
+    <form method="get" action="/runs" class="runs-filters-form">
+        <div class="runs-filter-group">
+            <label for="domain">Domain</label>
+            <select id="domain" name="domain">
+                <option value="">All domains</option>
+                {% for d in available_domains %}
+                <option value="{{ d }}" {% if d == domain %}selected{% endif %}>{{ d }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="runs-filter-group runs-filter-text">
+            <label for="search_text">Question/Response contains</label>
+            <input id="search_text" name="search_text" type="text" value="{{ search_text }}"
+                   placeholder="Search in prompt or final response"/>
+        </div>
+        <div class="runs-filter-actions">
+            <button type="submit" class="btn btn-sm">Search</button>
+            <a href="/runs" class="btn btn-sm btn-outline">Reset</a>
+        </div>
+    </form>
+</div>
+
+<div class="runs-summary">
+    Showing {{ runs|length }} of {{ total_runs }} runs · page {{ page }} / {{ total_pages }}
+</div>
+
 {% if runs %}
 <div class="card">
     <table class="table">
@@ -54,6 +81,21 @@
         {% endfor %}
         </tbody>
     </table>
+</div>
+<div class="runs-pagination">
+    {% if page > 1 %}
+    <a class="btn btn-sm btn-outline"
+       href="/runs?page={{ page - 1 }}&domain={{ domain|urlencode }}&search_text={{ search_text|urlencode }}">
+        Previous
+    </a>
+    {% endif %}
+    <span class="runs-page-label">Page {{ page }} of {{ total_pages }}</span>
+    {% if page < total_pages %}
+    <a class="btn btn-sm btn-outline"
+       href="/runs?page={{ page + 1 }}&domain={{ domain|urlencode }}&search_text={{ search_text|urlencode }}">
+        Next
+    </a>
+    {% endif %}
 </div>
 {% else %}
 <div class="empty-state">

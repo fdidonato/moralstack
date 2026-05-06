@@ -8,11 +8,14 @@ env when set and non-empty, and fall back to defaults otherwise.
 from __future__ import annotations
 
 from moralstack.models.risk.config_loader import (
+    ENV_INTENT_MODEL,
     ENV_LOW_THRESHOLD,
     ENV_MAX_RETRIES,
     ENV_MEDIUM_THRESHOLD,
     ENV_MODEL,
+    ENV_OPERATIONAL_MODEL,
     ENV_REQUIRE_DELIBERATION_ON_FALLBACK,
+    ENV_SIGNALS_MODEL,
     get_risk_env_bool,
     get_risk_env_float,
     get_risk_env_int,
@@ -164,3 +167,59 @@ class TestLoadRiskEstimatorConfigFromEnv:
         monkeypatch.setenv(ENV_REQUIRE_DELIBERATION_ON_FALLBACK, "false")
         config = load_risk_estimator_config_from_env()
         assert config.require_deliberation_on_fallback is False
+
+    def test_parallel_mini_models_fallback_to_builtin_when_no_env(self, monkeypatch):
+        """Unset mini slots and base models → built-in default for all three slots."""
+        for key in (
+            ENV_MODEL,
+            ENV_INTENT_MODEL,
+            ENV_SIGNALS_MODEL,
+            ENV_OPERATIONAL_MODEL,
+            "OPENAI_MODEL",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        cfg = load_risk_estimator_config_from_env()
+        assert cfg.intent_model == "gpt-4o"
+        assert cfg.signals_model == "gpt-4o"
+        assert cfg.operational_model == "gpt-4o"
+
+    def test_parallel_mini_models_fallback_to_risk_model(self, monkeypatch):
+        monkeypatch.delenv(ENV_INTENT_MODEL, raising=False)
+        monkeypatch.delenv(ENV_SIGNALS_MODEL, raising=False)
+        monkeypatch.delenv(ENV_OPERATIONAL_MODEL, raising=False)
+        monkeypatch.delenv("OPENAI_MODEL", raising=False)
+        monkeypatch.setenv(ENV_MODEL, "gpt-4o-mini")
+        cfg = load_risk_estimator_config_from_env()
+        assert cfg.intent_model == "gpt-4o-mini"
+        assert cfg.signals_model == "gpt-4o-mini"
+        assert cfg.operational_model == "gpt-4o-mini"
+
+    def test_parallel_mini_models_fallback_to_openai_model(self, monkeypatch):
+        monkeypatch.delenv(ENV_MODEL, raising=False)
+        monkeypatch.delenv(ENV_INTENT_MODEL, raising=False)
+        monkeypatch.delenv(ENV_SIGNALS_MODEL, raising=False)
+        monkeypatch.delenv(ENV_OPERATIONAL_MODEL, raising=False)
+        monkeypatch.setenv("OPENAI_MODEL", "gpt-4.1")
+        cfg = load_risk_estimator_config_from_env()
+        assert cfg.intent_model == "gpt-4.1"
+        assert cfg.signals_model == "gpt-4.1"
+        assert cfg.operational_model == "gpt-4.1"
+
+    def test_parallel_mini_risk_model_over_openai_for_fallback(self, monkeypatch):
+        monkeypatch.delenv(ENV_INTENT_MODEL, raising=False)
+        monkeypatch.delenv(ENV_SIGNALS_MODEL, raising=False)
+        monkeypatch.delenv(ENV_OPERATIONAL_MODEL, raising=False)
+        monkeypatch.setenv(ENV_MODEL, "risk-dedicated")
+        monkeypatch.setenv("OPENAI_MODEL", "openai-primary")
+        cfg = load_risk_estimator_config_from_env()
+        assert cfg.intent_model == "risk-dedicated"
+
+    def test_parallel_mini_per_slot_override(self, monkeypatch):
+        monkeypatch.setenv(ENV_MODEL, "gpt-4o-mini")
+        monkeypatch.setenv(ENV_INTENT_MODEL, "gpt-4o")
+        monkeypatch.delenv(ENV_SIGNALS_MODEL, raising=False)
+        monkeypatch.setenv(ENV_OPERATIONAL_MODEL, "custom-op")
+        cfg = load_risk_estimator_config_from_env()
+        assert cfg.intent_model == "gpt-4o"
+        assert cfg.signals_model == "gpt-4o-mini"
+        assert cfg.operational_model == "custom-op"

@@ -11,10 +11,11 @@ from moralstack.models.risk import RiskPolicyAction
 from moralstack.orchestration.diagnostics import orch_debug_log
 from moralstack.orchestration.event_emitter import EventEmitter
 from moralstack.orchestration.overlay_policy import get_constitution_safe
+from moralstack.orchestration.refusal_context import build_refusal_context
 from moralstack.orchestration.safe_refusal_generator import (
     _detect_language_fallback,
     _iso_to_language_name,
-    generate_llm_safe_refusal,
+    generate_llm_safe_refusal_detailed,
     resolve_refusal_domain_and_redirection,
 )
 from moralstack.orchestration.trace import Trace
@@ -78,7 +79,17 @@ class RefusalHandler:
         )
         rationale = getattr(risk_estimation, "rationale", None) or ""
 
-        refusal_content = generate_llm_safe_refusal(
+        refusal_context = build_refusal_context(
+            risk_estimation=risk_estimation,
+            decision=decision,
+            domain=domain,
+            refusal_redirection=refusal_redirection,
+            risk_score=risk_score,
+            risk_category=risk_cat_str,
+        )
+
+        _refusal_t0 = time.time()
+        refusal_result = generate_llm_safe_refusal_detailed(
             user_prompt=request.prompt,
             risk_category=risk_cat_str,
             policy_reason_codes=list(decision.reason_codes),
@@ -87,7 +98,10 @@ class RefusalHandler:
             llm_client=self.policy,
             rationale=rationale if rationale else None,
             refusal_redirection=refusal_redirection,
+            refusal_context=refusal_context,
         )
+        _refusal_duration_ms = (time.time() - _refusal_t0) * 1000.0
+        refusal_content = refusal_result.text
 
         metadata = ResponseMetadata.from_decision(
             decision=decision,
@@ -101,6 +115,13 @@ class RefusalHandler:
             early_stop_reason="REFUSE",
             must_refuse=True,
             refusal_reason="[REFUSAL_HIGH_RISK]",
+            refusal_domain=domain,
+            refusal_redirection_source=(
+                "domain_overlay"
+                if (refusal_redirection and domain != "general")
+                else ("refusal_context" if refusal_context.safe_redirection_guidance else "none")
+            ),
+            safe_refusal_focus=refusal_context.safe_refusal_focus,
             operational_risk=(
                 getattr(
                     getattr(risk_estimation, "operational_risk", None),
@@ -126,9 +147,11 @@ class RefusalHandler:
             phase="refusal",
             module="orchestration",
             action="refuse (fast_path)",
-            duration_ms=0.0,
-            prompt=request.prompt or "",
+            duration_ms=_refusal_duration_ms,
+            prompt=refusal_result.user_prompt,
+            system_prompt=refusal_result.system_prompt,
             raw_response=refusal_content,
+            attempts=refusal_result.attempts,
             sequence_in_cycle=6,
         )
         try:

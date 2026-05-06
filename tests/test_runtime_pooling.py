@@ -99,3 +99,38 @@ def test_get_pooling_diagnostics_stable_keys():
     assert "risk_mini_policy_pool_models" in d
     assert "risk_policy_pool_hits" in d
     assert "risk_policy_pool_misses" in d
+
+
+def test_persist_mini_llm_call_records_effective_model_not_main_policy():
+    """Parallel mini-estimators may use pooled policies; observability must store that model."""
+    main = MagicMock()
+    main.model = "gpt-4o-mini"
+    main.tracker = None
+    est = LLMBasedRiskEstimator(policy=main, config=RiskEstimatorConfig())
+    captured: list[str | None] = []
+
+    def _cap(**kw):
+        captured.append(kw.get("model"))
+        return True
+
+    with patch("moralstack.models.risk.estimator.persist_llm_call", side_effect=_cap):
+        est._persist_mini_llm_call(
+            system_prompt="s",
+            prompt="p",
+            raw_response="{}",
+            action="estimate_intent",
+            duration_ms=1.0,
+            attempts=1,
+            llm_model="gpt-4o",
+        )
+        est._persist_mini_llm_call(
+            system_prompt="s",
+            prompt="p",
+            raw_response="{}",
+            action="estimate_signals",
+            duration_ms=1.0,
+            attempts=1,
+        )
+
+    assert captured[0] == "gpt-4o"
+    assert captured[1] == "gpt-4o-mini"

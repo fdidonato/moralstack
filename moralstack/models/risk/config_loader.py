@@ -7,6 +7,8 @@ to hardcoded defaults. Used when no explicit RiskEstimatorConfig is passed.
 
 from __future__ import annotations
 
+import os
+
 from moralstack.utils.env_helpers import get_env_bool, get_env_float, get_env_int, get_env_str
 
 from .schema import RiskEstimatorConfig
@@ -40,12 +42,36 @@ ENV_SIGNALS_MODEL = "MORALSTACK_RISK_SIGNALS_MODEL"
 ENV_OPERATIONAL_MODEL = "MORALSTACK_RISK_OPERATIONAL_MODEL"
 ENV_PARALLEL_ESTIMATORS = "MORALSTACK_RISK_PARALLEL_ESTIMATORS"
 
+_DEFAULT_MODEL_ID = "gpt-4o"
+
+
+def resolve_risk_base_model_from_env() -> str:
+    """
+    Default OpenAI model id for parallel mini-estimators when per-slot env vars are unset.
+
+    Resolution order matches deliberation wiring (`build_deliberation_modules`): explicit
+    `MORALSTACK_RISK_MODEL`, then `OPENAI_MODEL`, then a built-in default.
+    """
+    explicit_risk = get_env_str(ENV_MODEL, "")
+    if explicit_risk:
+        return explicit_risk
+    primary = (os.getenv("OPENAI_MODEL") or "").strip()
+    return primary if primary else _DEFAULT_MODEL_ID
+
+
+def resolve_parallel_mini_model_slot(env_key: str, base_model: str) -> str:
+    """Return mini-estimator model id: non-empty env override, else *base_model*."""
+    return get_env_str(env_key, "") or base_model
+
 
 def load_risk_estimator_config_from_env() -> RiskEstimatorConfig:
     """
     Build RiskEstimatorConfig from environment variables.
 
-    Only non-empty env values are used; otherwise hardcoded defaults apply.
+    Only non-empty env values are used; otherwise defaults apply. Parallel mini-estimator
+    model slots (`*_INTENT_MODEL`, etc.) fall back to `MORALSTACK_RISK_MODEL`, then
+    `OPENAI_MODEL`, then ``gpt-4o`` when unset.
+
     Float thresholds and scores are clamped to [0, 1]. Ints are enforced >= 1 where applicable.
     """
     low = get_env_float(ENV_LOW_THRESHOLD, 0.3, 0.0, 1.0)
@@ -57,9 +83,10 @@ def load_risk_estimator_config_from_env() -> RiskEstimatorConfig:
     fallback_confidence = get_env_float(ENV_FALLBACK_CONFIDENCE, 0.3, 0.0, 1.0)
     require_delib = get_env_bool(ENV_REQUIRE_DELIBERATION_ON_FALLBACK, True)
     use_parallel = get_env_bool(ENV_PARALLEL_ESTIMATORS, False)
-    intent_model = get_env_str(ENV_INTENT_MODEL, "gpt-4o")
-    signals_model = get_env_str(ENV_SIGNALS_MODEL, "gpt-4o")
-    operational_model = get_env_str(ENV_OPERATIONAL_MODEL, "gpt-4o")
+    mini_base = resolve_risk_base_model_from_env()
+    intent_model = resolve_parallel_mini_model_slot(ENV_INTENT_MODEL, mini_base)
+    signals_model = resolve_parallel_mini_model_slot(ENV_SIGNALS_MODEL, mini_base)
+    operational_model = resolve_parallel_mini_model_slot(ENV_OPERATIONAL_MODEL, mini_base)
     return RiskEstimatorConfig(
         low_threshold=low,
         medium_threshold=medium,

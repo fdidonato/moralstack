@@ -81,7 +81,7 @@ def _parse_enum_dimensions(data: dict[str, Any]) -> tuple[DomainSensitivity, Ope
 
 @dataclass(frozen=True)
 class _VerificationQuestions:
-    """Parsed Q1-Q12 and intent flags plus derived counts."""
+    """Parsed Q1-Q17 intent flags plus derived counts."""
 
     q1_confidential: bool
     q2_unauthorized: bool
@@ -95,15 +95,42 @@ class _VerificationQuestions:
     q10_weapons: bool
     q11_privacy_doxxing: bool
     q12_medical_harmful: bool
+    q13_protected_class_targeting: bool
+    # Reputational-harm cluster (topic detection only). Default False for
+    # backward-compat with older estimator outputs.
+    q14_reputational_harm: bool
+    q15_deceptive_online_campaign: bool
+    q16_harassment_smear_campaign: bool
+    q17_minor_exploitation: bool
     requested_instructions: bool
     intent_to_harm: bool
     intent_operational: bool
+    # Language-agnostic semantic intent fields produced by the intent estimator.
+    # Both default to False when absent from the LLM output (older estimators
+    # or fallback monolithic responses). The calibration_guard does not yet
+    # consume these (see decision_service for downstream wiring).
+    stated_personal_bias: bool
+    seeks_norm_circumvention: bool
     harmful_count: int
     priority_harm_count: int
 
 
 def _parse_verification_questions(data: dict[str, Any]) -> _VerificationQuestions:
-    """Parse Q1-Q12 and intent flags; compute harmful_count and priority_harm_count."""
+    """Parse Q1-Q17, intent flags and semantic intent fields; compute harmful_count and priority_harm_count.
+
+    q13_protected_class_targeting, the reputational-harm cluster
+    (q14_reputational_harm, q15_deceptive_online_campaign,
+    q16_harassment_smear_campaign), and the two semantic intent fields
+    (stated_personal_bias, seeks_norm_circumvention) DO NOT contribute to
+    harmful_count today: harmful_count drives legacy calibration branches
+    (clearly_harmful escalation) and adding new signals there would change
+    score thresholds for unrelated topic categories. The new fields are
+    surfaced to downstream consumers (RiskParseResult, decision_service,
+    refusal_context) where they can be evaluated explicitly.
+
+    q17_minor_exploitation (minor grooming/contact/exploitation) contributes to
+    harmful_count and priority_harm_count (priority harm topic alongside Q8-Q12).
+    """
     q1_confidential = _is_yes(data.get("q1_confidential", "no"))
     q2_unauthorized = _is_yes(data.get("q2_unauthorized", "no"))
     q3_breach = _is_yes(data.get("q3_breach", "no"))
@@ -116,7 +143,19 @@ def _parse_verification_questions(data: dict[str, Any]) -> _VerificationQuestion
     q10_weapons = _is_yes(data.get("q10_weapons_explosives_toxins", "no"))
     q11_privacy_doxxing = _is_yes(data.get("q11_privacy_doxxing_stalking", "no"))
     q12_medical_harmful = _is_yes(data.get("q12_medical_harmful", "no"))
-    priority_harmful = [q8_self_harm, q9_cyber_malware, q10_weapons, q11_privacy_doxxing, q12_medical_harmful]
+    q13_protected_class_targeting = _is_yes(data.get("q13_protected_class_targeting", "no"))
+    q14_reputational_harm = _is_yes(data.get("q14_reputational_harm", "no"))
+    q15_deceptive_online_campaign = _is_yes(data.get("q15_deceptive_online_campaign", "no"))
+    q16_harassment_smear_campaign = _is_yes(data.get("q16_harassment_smear_campaign", "no"))
+    q17_minor_exploitation = _is_yes(data.get("q17_minor_exploitation", "no"))
+    priority_harmful = [
+        q8_self_harm,
+        q9_cyber_malware,
+        q10_weapons,
+        q11_privacy_doxxing,
+        q12_medical_harmful,
+        q17_minor_exploitation,
+    ]
     harmful_questions = [q1_confidential, q2_unauthorized, q3_breach, q4_fraud, q5_physical, q6_illegal_items]
     harmful_questions.extend(priority_harmful)
     harmful_count = sum(harmful_questions)
@@ -124,6 +163,8 @@ def _parse_verification_questions(data: dict[str, Any]) -> _VerificationQuestion
     requested_instructions = _is_yes(data.get("requested_instructions", "no"))
     intent_to_harm = _is_yes(data.get("intent_to_harm", "no"))
     intent_operational = _is_yes(data.get("intent_operational", "no"))
+    stated_personal_bias = _is_yes(data.get("stated_personal_bias", "no"))
+    seeks_norm_circumvention = _is_yes(data.get("seeks_norm_circumvention", "no"))
     return _VerificationQuestions(
         q1_confidential=q1_confidential,
         q2_unauthorized=q2_unauthorized,
@@ -137,9 +178,16 @@ def _parse_verification_questions(data: dict[str, Any]) -> _VerificationQuestion
         q10_weapons=q10_weapons,
         q11_privacy_doxxing=q11_privacy_doxxing,
         q12_medical_harmful=q12_medical_harmful,
+        q13_protected_class_targeting=q13_protected_class_targeting,
+        q14_reputational_harm=q14_reputational_harm,
+        q15_deceptive_online_campaign=q15_deceptive_online_campaign,
+        q16_harassment_smear_campaign=q16_harassment_smear_campaign,
+        q17_minor_exploitation=q17_minor_exploitation,
         requested_instructions=requested_instructions,
         intent_to_harm=intent_to_harm,
         intent_operational=intent_operational,
+        stated_personal_bias=stated_personal_bias,
+        seeks_norm_circumvention=seeks_norm_circumvention,
         harmful_count=harmful_count,
         priority_harm_count=priority_harm_count,
     )
@@ -171,14 +219,31 @@ def _calibrate_harm_signals_present(
         signals.append("Q12:medical_harmful")
     if q.q4_fraud:
         signals.append("Q4:fraud")
+    # Reputational-harm cluster (q14-q16). Pure topic markers; do not contribute
+    # to harmful_count (see _parse_verification_questions docstring).
+    if q.q14_reputational_harm:
+        signals.append("Q14:reputational_harm")
+    if q.q15_deceptive_online_campaign:
+        signals.append("Q15:deceptive_online_campaign")
+    if q.q16_harassment_smear_campaign:
+        signals.append("Q16:harassment_smear_campaign")
+    if q.q17_minor_exploitation:
+        signals.append("Q17:minor_exploitation")
 
-    # harm_type: assign by priority (weapons > physical > financial > other)
+    # harm_type: assign by priority (weapons > child_exploitation > physical > financial >
+    # reputational > other). Reputational sits above the generic "illegal" bucket so that
+    # requests with both Q9 (over-triggered cyber) and Q14/Q15/Q16 are tagged correctly.
+    _has_reputational = q.q14_reputational_harm or q.q15_deceptive_online_campaign or q.q16_harassment_smear_campaign
     if q.q10_weapons:
         harm_type = "weapons"
+    elif q.q17_minor_exploitation:
+        harm_type = "child_exploitation"
     elif q.q5_physical:
         harm_type = "physical"
     elif q.q4_fraud:
         harm_type = "financial"
+    elif _has_reputational:
+        harm_type = "reputational"
     elif q.q8_self_harm or q.q9_cyber_malware or q.q11_privacy_doxxing or q.q12_medical_harmful:
         harm_type = "illegal"
     else:
@@ -217,7 +282,9 @@ def _calibrate_harm_signals_present(
     # intent_to_harm) are explicitly False — this means the LLM has confirmed
     # the request is non-operational despite the topic.
     _has_any_intent = q.requested_instructions or q.intent_to_harm or q.intent_operational
-    _defensive_override_blocked = (q.q10_weapons and _has_any_intent) or request_type == "clear_harm"
+    _defensive_override_blocked = (
+        (q.q10_weapons and _has_any_intent) or request_type == "clear_harm" or q.q17_minor_exploitation
+    )
 
     _is_defensive = (
         q.harmful_count >= 1
@@ -243,6 +310,7 @@ def _calibrate_harm_signals_present(
     if not _is_defensive and (
         q.harmful_count >= 3
         or q.q5_physical
+        or q.q17_minor_exploitation
         or (q.priority_harm_count >= 1 and priority_operational_signal)
         or score >= 0.85
         or request_type == "clear_harm"
@@ -381,8 +449,14 @@ def _apply_calibration(
     Returns (score, category, signals, harm_type).
     """
     q = questions
+    # Reputational-cluster signals do not contribute to harmful_count (see
+    # _parse_verification_questions) but still need the harm-signals branch
+    # so harm_type is set to "reputational" and the corresponding labels are
+    # surfaced for the refusal generator. They never trigger the harmful_count>=3
+    # escalation because they are excluded from the count.
+    has_reputational_signal = q.q14_reputational_harm or q.q15_deceptive_online_campaign or q.q16_harassment_smear_campaign
 
-    if q.harmful_count > 0:
+    if q.harmful_count > 0 or has_reputational_signal:
         score, category, signals, harm_type = _calibrate_harm_signals_present(
             q, score, request_type, harm_type, operational_risk
         )
@@ -444,7 +518,8 @@ def _parse_action(
     if operational_risk == OperationalRisk.HIGH:
         risk_policy_action = RiskPolicyAction.DENY
     elif operational_risk == OperationalRisk.NONE:
-        risk_policy_action = RiskPolicyAction.ALLOW
+        if not questions.q17_minor_exploitation:
+            risk_policy_action = RiskPolicyAction.ALLOW
     elif operational_risk == OperationalRisk.LOW and risk_policy_action != RiskPolicyAction.DENY:
         risk_policy_action = RiskPolicyAction.DELIBERATE
 
@@ -454,8 +529,9 @@ def _parse_action(
     # This does NOT block REFUSE — it forces deliberation instead of fast-path.
     # Weapons/explosives: dual-use by inversion makes intent_operational=False
     # unreliable — do NOT apply intent_contradiction downgrade.
+    # Q17 minor exploitation: same constraint.
     _is_weapons_domain = questions.q10_weapons or (questions.q5_physical and questions.q6_illegal_items)
-    _is_priority_harm_domain = _is_weapons_domain
+    _is_priority_harm_domain = _is_weapons_domain or questions.q17_minor_exploitation
 
     _intent_contradiction = (
         operational_risk == OperationalRisk.HIGH
@@ -480,12 +556,16 @@ def _parse_action(
         and not questions.intent_operational
         and not questions.requested_instructions
         and not questions.intent_to_harm
+        and not questions.q17_minor_exploitation
     ):
         if category == RiskCategory.CLEARLY_HARMFUL:
             category = RiskCategory.SENSITIVE
         score = min(score, 0.30)
         if risk_policy_action == RiskPolicyAction.DENY:
             risk_policy_action = RiskPolicyAction.DELIBERATE
+
+    if questions.q17_minor_exploitation:
+        risk_policy_action = RiskPolicyAction.DENY
 
     return risk_policy_action, category, score
 
@@ -566,6 +646,13 @@ def parse_risk_dict(data: dict[str, Any]) -> RiskParseResult:
         request_type=request_type,
         intent_operational=questions.intent_operational,
         detected_language=detected_language,
+        stated_personal_bias=questions.stated_personal_bias,
+        seeks_norm_circumvention=questions.seeks_norm_circumvention,
+        q13_protected_class_targeting=questions.q13_protected_class_targeting,
+        q14_reputational_harm=questions.q14_reputational_harm,
+        q15_deceptive_online_campaign=questions.q15_deceptive_online_campaign,
+        q16_harassment_smear_campaign=questions.q16_harassment_smear_campaign,
+        q17_minor_exploitation=questions.q17_minor_exploitation,
     )
 
 
@@ -593,6 +680,9 @@ def _apply_calibration_guard(merged: dict[str, Any]) -> dict[str, Any]:
     request_type = str(merged.get("request_type", "")).lower().strip()
     intent_to_harm = merged.get("intent_to_harm", "no")
     requested_instructions = merged.get("requested_instructions", "no")
+
+    if _is_yes(merged.get("q17_minor_exploitation", "no")):
+        return merged
 
     # Guard only applies to benign request types with no harm signals
     if request_type not in _CALIBRATION_GUARD_REQUEST_TYPES or _is_yes(intent_to_harm) or _is_yes(requested_instructions):
@@ -683,7 +773,7 @@ def merge_mini_estimator_results(
 
     - LLM 1 (intent_data): authoritative per detected_language, intent_*, request_type,
       harm_type, intent_clarity, rationale (intent framing)
-    - LLM 2 (signal_data): authoritative per q1..q12, domain_sensitivity
+    - LLM 2 (signal_data): authoritative per q1..q17, domain_sensitivity
     - LLM 3 (operational_data): authoritative per operational_risk, risk_score, confidence,
       misuse_plausibility, actionability_risk, risk_policy_action, rationale (risk assessment)
 
@@ -704,7 +794,9 @@ def merge_mini_estimator_results(
         if key in operational_data:
             merged[key] = operational_data[key]
 
-    # LLM 2: harm signal fields and domain sensitivity
+    # LLM 2: harm signal fields and domain sensitivity. q13 (protected-class
+    # targeting) and q14-q16 (reputational-harm cluster) are pure topic
+    # detection, language-agnostic, surfaced for downstream refusal grounding.
     for key in (
         "q1_confidential",
         "q2_unauthorized",
@@ -718,12 +810,21 @@ def merge_mini_estimator_results(
         "q10_weapons_explosives_toxins",
         "q11_privacy_doxxing_stalking",
         "q12_medical_harmful",
+        "q13_protected_class_targeting",
+        "q14_reputational_harm",
+        "q15_deceptive_online_campaign",
+        "q16_harassment_smear_campaign",
+        "q17_minor_exploitation",
         "domain_sensitivity",
     ):
         if key in signal_data:
             merged[key] = signal_data[key]
 
-    # LLM 1: intent and language fields (authoritative, override last)
+    # LLM 1: intent and language fields (authoritative, override last).
+    # stated_personal_bias and seeks_norm_circumvention are language-agnostic
+    # semantic flags — used downstream for falsification of ethical_dilemma
+    # classifications when the requester has already decided and is asking
+    # only how to execute (see prompts.py EXECUTION-OF-STATED-INTENT framing).
     for key in (
         "detected_language",
         "intent_to_harm",
@@ -732,6 +833,8 @@ def merge_mini_estimator_results(
         "request_type",
         "harm_type",
         "intent_clarity",
+        "stated_personal_bias",
+        "seeks_norm_circumvention",
     ):
         if key in intent_data:
             merged[key] = intent_data[key]
@@ -760,7 +863,7 @@ def parse_risk_response(text: str) -> RiskParseResult:
     """
     Parse the risk estimator LLM response into a structured result.
 
-    Uses request_type, harm_type, Q1-Q12 and language-agnostic signals
+    Uses request_type, harm_type, Q1-Q17 and language-agnostic signals
     (intent_clarity, misuse_plausibility, actionability_risk, intent_operational) for routing.
 
     Backward compatibility: unknown JSON keys are IGNORED (via .get()).

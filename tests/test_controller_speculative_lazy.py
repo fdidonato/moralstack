@@ -91,10 +91,15 @@ def test_refuse_route_returns_before_speculative_worker_finishes(
         risk_category="clearly_harmful",
     )
 
+    from moralstack.orchestration.safe_refusal_generator import RefusalGenerationResult
+
     with (
         patch("moralstack.orchestration.controller.decide_action", return_value=(refuse_decision, explanation)),
         patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
-        patch("moralstack.orchestration.refusal_handler.generate_llm_safe_refusal", return_value="[REFUSE]"),
+        patch(
+            "moralstack.orchestration.refusal_handler.generate_llm_safe_refusal_detailed",
+            return_value=RefusalGenerationResult(text="[REFUSE]", system_prompt="<sys>", user_prompt="<user>", attempts=1),
+        ),
     ):
         req = ProcessedRequest(prompt="blocked speculative draft", request_id="req-lazy-spec")
         result = ctrl.process(req)

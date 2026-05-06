@@ -24,6 +24,16 @@ class ReadStore(Protocol):
 
     def get_all_runs(self, limit: int = 100) -> list[dict[str, Any]]: ...
 
+    def get_runs_page(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        domain: str | None = None,
+        search_text: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]: ...
+
+    def get_request_domains(self) -> list[str]: ...
+
     def get_request(self, run_id: str, request_id: str) -> dict[str, Any] | None: ...
 
     def get_requests_for_run(self, run_id: str) -> list[dict[str, Any]]: ...
@@ -66,6 +76,88 @@ class SqliteReadStore:
             return [dict(r) for r in rows]
         except Exception as e:
             logger.warning("observability[read_store]: get_all_runs failed: %s", e)
+            return []
+
+    def get_runs_page(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        domain: str | None = None,
+        search_text: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        path = get_db_path()
+        if not path:
+            return [], 0
+        safe_page = max(1, int(page))
+        safe_page_size = max(1, int(page_size))
+        offset = (safe_page - 1) * safe_page_size
+        domain_filter = (domain or "").strip()
+        text_filter = (search_text or "").strip()
+        try:
+            conn = _get_connection(path)
+            if not domain_filter and not text_filter:
+                total = conn.execute("SELECT COUNT(*) AS c FROM runs").fetchone()["c"]
+                rows = conn.execute(
+                    "SELECT * FROM runs ORDER BY started_at DESC LIMIT ? OFFSET ?",
+                    (safe_page_size, offset),
+                ).fetchall()
+            else:
+                where_clauses = []
+                params: list[Any] = []
+                if domain_filter:
+                    where_clauses.append("LOWER(COALESCE(req.domain, '')) = LOWER(?)")
+                    params.append(domain_filter)
+                if text_filter:
+                    where_clauses.append(
+                        "(LOWER(COALESCE(req.prompt, '')) LIKE LOWER(?) "
+                        "OR LOWER(COALESCE(req.final_response, '')) LIKE LOWER(?))"
+                    )
+                    like_text = f"%{text_filter}%"
+                    params.extend([like_text, like_text])
+                where_sql = " AND ".join(where_clauses)
+                total = conn.execute(
+                    f"""
+                    SELECT COUNT(DISTINCT r.run_id) AS c
+                    FROM runs r
+                    JOIN requests req ON req.run_id = r.run_id
+                    WHERE {where_sql}
+                    """,
+                    params,
+                ).fetchone()["c"]
+                rows = conn.execute(
+                    f"""
+                    SELECT r.*
+                    FROM runs r
+                    JOIN requests req ON req.run_id = r.run_id
+                    WHERE {where_sql}
+                    GROUP BY r.run_id
+                    ORDER BY r.started_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    [*params, safe_page_size, offset],
+                ).fetchall()
+            conn.close()
+            return [dict(r) for r in rows], int(total or 0)
+        except Exception as e:
+            logger.warning("observability[read_store]: get_runs_page failed: %s", e)
+            return [], 0
+
+    def get_request_domains(self) -> list[str]:
+        path = get_db_path()
+        if not path:
+            return []
+        try:
+            conn = _get_connection(path)
+            rows = conn.execute("""
+                SELECT DISTINCT TRIM(domain) AS domain
+                FROM requests
+                WHERE TRIM(COALESCE(domain, '')) != ''
+                ORDER BY domain ASC
+                """).fetchall()
+            conn.close()
+            return [str(r["domain"]) for r in rows if r["domain"]]
+        except Exception as e:
+            logger.warning("observability[read_store]: get_request_domains failed: %s", e)
             return []
 
     def get_request(self, run_id: str, request_id: str) -> dict[str, Any] | None:
