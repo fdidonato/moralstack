@@ -129,7 +129,6 @@ def test_set_domain_descriptions_change_clears_cache():
     assert len(pf._cache) == 0, "cache must be cleared after change"
 
 
-
 def test_prefilter_prompt_surfaces_multiple_not_for_scopes():
     """At least two overlays with explicit negative scoping must appear verbatim."""
     captured: dict = {}
