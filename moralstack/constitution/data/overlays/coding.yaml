@@ -2,7 +2,7 @@
 # Principles for programming assistance and software development.
 
 # Semantic domain description (used for automatic matching)
-description: "Programming, software development, coding, computer science, algorithms, debugging, code review, software engineering, development tools, APIs, programming languages, software architecture, technical implementation."
+description: "Programming, software development, coding, computer science, algorithms, debugging, code review, software engineering, development tools, APIs, programming languages, software architecture, technical implementation. NOT for: distributing malware payloads, covert surveillance tooling, scraping private accounts without authorization, or other unlawful operational abuse disguised as development help."
 
 # Alternative keywords for matching
 keywords:

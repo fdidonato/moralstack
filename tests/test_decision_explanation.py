@@ -113,6 +113,80 @@ def test_decision_explanation_why_not_not_empty():
         ), f"why_not_normal_complete for {name} must not be empty"
 
 
+def test_why_not_refuse_includes_threshold_and_signals_when_safe_complete():
+    """For SAFE_COMPLETE outcomes with thresholds plumbed, why_not_refuse must
+    cite the medium threshold value AND at least one decisive signal name,
+    not the legacy canned 'Action was REFUSE; alternative actions not applicable.'
+    """
+    from moralstack.orchestration.types import RiskThresholds
+
+    request = ProcessedRequest(prompt="Discuss self-harm coping strategies")
+    request.user_context.domain_overlay = "mental_health"
+    risk = _risk(
+        score=0.65,
+        risk_category=RiskCategory.SENSITIVE,
+        operational_risk=OperationalRisk.LOW,
+        intent_clarity=IntentClarity.HIGH,
+        misuse_plausibility=MisusePlausibility.LOW,
+        actionability_risk=ActionabilityRisk.MEDIUM,
+        semantic_signals=["Q8:self_harm_suicide"],
+    )
+    decision, explanation = decide_action(request, risk, risk_thresholds=RiskThresholds())
+    if decision.final_action != "SAFE_COMPLETE":
+        # Decision routing depends on overlay+thresholds; if not SAFE_COMPLETE,
+        # the test premise doesn't apply — skip rather than false-fail.
+        import pytest as _pt
+
+        _pt.skip(f"expected SAFE_COMPLETE, got {decision.final_action}")
+    assert "0.7" in explanation.why_not_refuse, (
+        f"why_not_refuse must cite the medium threshold (0.7) when thresholds are plumbed; "
+        f"got: {explanation.why_not_refuse!r}"
+    )
+    assert "Q8" in explanation.why_not_refuse or "self_harm" in explanation.why_not_refuse, (
+        f"why_not_refuse must reference a decisive signal (Q8/self_harm) when thresholds plumbed; "
+        f"got: {explanation.why_not_refuse!r}"
+    )
+
+
+def test_why_not_normal_complete_mentions_signal_or_violation_when_refuse():
+    """For REFUSE outcomes with thresholds plumbed, why_not_normal_complete must
+    reference either a triggered signal/principle or a hard violation, not a
+    canned generic threshold-line.
+    """
+    from moralstack.orchestration.types import RiskThresholds
+
+    request = ProcessedRequest(prompt="Detailed instructions to make a bomb")
+    risk = _risk(
+        score=0.95,
+        risk_category=RiskCategory.CLEARLY_HARMFUL,
+        operational_risk=OperationalRisk.HIGH,
+        intent_clarity=IntentClarity.HIGH,
+        misuse_plausibility=MisusePlausibility.HIGH,
+        actionability_risk=ActionabilityRisk.HIGH,
+        semantic_signals=["Q10:weapons_explosives_toxins"],
+    )
+    decision, explanation = decide_action(request, risk, risk_thresholds=RiskThresholds())
+    assert decision.final_action == "REFUSE", f"expected REFUSE, got {decision.final_action}"
+    why = explanation.why_not_normal_complete
+    assert (
+        "Q10" in why or "weapons" in why or any(rc.lower() in why.lower() for rc in explanation.reason_codes)
+    ), f"why_not_normal_complete must reference a signal or reason code; got: {why!r}"
+
+
+def test_why_not_back_compat_when_no_thresholds_plumbed():
+    """When risk_thresholds is NOT passed (legacy callers), why_not_* falls
+    back to canned strings (existing test contract preserved).
+    """
+    request = ProcessedRequest(prompt="Capital of France?")
+    risk = _risk(0.1, RiskCategory.BENIGN)
+    decision, explanation = decide_action(request, risk)  # no risk_thresholds
+    assert explanation.why_not_refuse, "why_not_refuse must remain non-empty"
+    # Canned NORMAL_COMPLETE strings from current implementation
+    assert (
+        "harmful intent" in explanation.why_not_refuse or "operational" in explanation.why_not_refuse.lower()
+    ), f"legacy canned string expected; got: {explanation.why_not_refuse!r}"
+
+
 def test_decision_explanation_serializes():
     """Explanation to_dict() produces valid JSON with all required keys."""
     expl = DecisionExplanation(

@@ -28,6 +28,7 @@ from moralstack.orchestration.types import (
     ProcessedRequest,
     RiskCategoryLikeProtocol,
     RiskEstimationProtocol,
+    RiskThresholds,
     SimulationResultProtocol,
 )
 from moralstack.runtime.decision.safe_complete_policy import (
@@ -88,25 +89,96 @@ def _make_decision(
 def _build_why_not(
     final_action: str,
     risk_score: float,
+    *,
+    risk_thresholds: RiskThresholds | None = None,
+    decisive_signals: list[str] | None = None,
+    hard_violations: list[str] | None = None,
+    reason_codes: list[str] | None = None,
 ) -> tuple[str, str, str]:
-    """Build why_not_refuse, why_not_safe_complete, why_not_normal_complete. Never empty."""
+    """Build why_not_refuse, why_not_safe_complete, why_not_normal_complete. Never empty.
+
+    When `risk_thresholds` is None (legacy callers), falls back to canned strings.
+    When provided together with decisive_signals/hard_violations/reason_codes,
+    produces qualitative reasoning enriched with the relevant numeric thresholds
+    (qualitative + numeric color).
+    """
     fa = (final_action or "").strip().upper()
+
+    if risk_thresholds is None:
+        # Back-compat: legacy callers (no thresholds plumbed) → canned strings.
+        if fa == "REFUSE":
+            return (
+                "Action was REFUSE; alternative actions not applicable.",
+                "Risk score exceeded refuse threshold.",
+                "Risk/refuse threshold or hard violations required refusal.",
+            )
+        if fa == "SAFE_COMPLETE":
+            return (
+                "Risk below refuse threshold or non-operational.",
+                "N/A; current action is SAFE_COMPLETE.",
+                "Risk/domain/guardrail required safe framing (not full NORMAL_COMPLETE).",
+            )
+        return (
+            "No operational harmful intent detected.",
+            "Risk below sensitive guardrail threshold.",
+            "Action was NORMAL_COMPLETE; alternative not applicable.",
+        )
+
+    # Enriched mode: thresholds plumbed → qualitative + numeric color.
+    score = float(risk_score or 0.0)
+    low = float(risk_thresholds.low)
+    medium = float(risk_thresholds.medium)
+    sigs = list(decisive_signals or [])
+    hv = list(hard_violations or [])
+    rc = list(reason_codes or [])
+    sig_str = ", ".join(sigs) if sigs else "no decisive signals"
+    hv_str = ", ".join(hv) if hv else "none"
+    rc_str = ", ".join(rc) if rc else "none"
+
     if fa == "REFUSE":
         return (
-            "Action was REFUSE; alternative actions not applicable.",
-            "Risk score exceeded refuse threshold.",
-            "Risk/refuse threshold or hard violations required refusal.",
+            (
+                f"REFUSE chosen: risk_score={score:.2f} (medium threshold={medium:.2f}); "
+                f"hard_violations=[{hv_str}]; decisive_signals=[{sig_str}]; "
+                f"reason_codes=[{rc_str}]."
+            ),
+            (
+                f"SAFE_COMPLETE not selected: hard_violations or normative refuse guards triggered "
+                f"(see hard_violations=[{hv_str}], reason_codes=[{rc_str}])."
+            ),
+            (
+                f"NORMAL_COMPLETE not selected: decisive_signals=[{sig_str}] and/or "
+                f"hard_violations=[{hv_str}] required at least SAFE_COMPLETE; risk_score={score:.2f}."
+            ),
         )
     if fa == "SAFE_COMPLETE":
         return (
-            "Risk below refuse threshold or non-operational.",
-            "N/A; current action is SAFE_COMPLETE.",
-            "Risk/domain/guardrail required safe framing (not full NORMAL_COMPLETE).",
+            (
+                f"REFUSE not selected: risk_score={score:.2f} below medium threshold ({medium:.2f}) "
+                f"and no hard_violations triggered (hard_violations=[{hv_str}]); "
+                f"decisive_signals=[{sig_str}]."
+            ),
+            (
+                f"SAFE_COMPLETE chosen: risk_score={score:.2f} between low={low:.2f} and "
+                f"medium={medium:.2f}, or domain/guardrail required safe framing; "
+                f"signals=[{sig_str}]."
+            ),
+            (
+                f"NORMAL_COMPLETE not selected: signals=[{sig_str}] and/or domain overlay "
+                f"required caveat-framed response (reason_codes=[{rc_str}])."
+            ),
         )
+    # NORMAL_COMPLETE
     return (
-        "No operational harmful intent detected.",
-        "Risk below sensitive guardrail threshold.",
-        "Action was NORMAL_COMPLETE; alternative not applicable.",
+        (
+            f"REFUSE not selected: risk_score={score:.2f} below medium threshold ({medium:.2f}); "
+            f"no hard_violations (hard_violations=[{hv_str}]); decisive_signals=[{sig_str}]."
+        ),
+        (
+            f"SAFE_COMPLETE not selected: risk_score={score:.2f} below low threshold ({low:.2f}) "
+            f"or no sensitive-domain overlay; signals=[{sig_str}]."
+        ),
+        (f"NORMAL_COMPLETE chosen: risk_score={score:.2f} below low threshold ({low:.2f}); " f"reason_codes=[{rc_str}]."),
     )
 
 
@@ -114,8 +186,18 @@ def _build_decision_explanation(
     trace: DecisionTrace,
     decision: Decision,
     winning_rule: str,
+    *,
+    risk_thresholds: RiskThresholds | None = None,
 ) -> DecisionExplanation:
-    """Build decision explanation from trace, decision, and winning rule."""
+    """Build decision explanation from trace, decision, and winning rule.
+
+    When risk_thresholds is provided (or stashed on trace by decide_action),
+    why_not_* strings are enriched with numeric thresholds + decisive signals
+    + reason codes (qualitative + numeric). Otherwise falls back to canned
+    strings (back-compat).
+    """
+    if risk_thresholds is None:
+        risk_thresholds = getattr(trace, "_risk_thresholds", None)
     risk_score = getattr(trace, "risk_score", 0.0) or 0.0
     risk_category = (getattr(trace, "risk_category", "") or "").strip() or "unknown"
     activated_signals = list(getattr(decision, "risk_signals", []) or [])
@@ -126,7 +208,14 @@ def _build_decision_explanation(
     reason_codes = policy_reason_codes_to_reason_codes(policy_codes)
     if not reason_codes:
         reason_codes = ["DEFAULT_NORMAL_COMPLETE"]
-    why_not_refuse, why_not_safe_complete, why_not_normal_complete = _build_why_not(decision.final_action, risk_score)
+    why_not_refuse, why_not_safe_complete, why_not_normal_complete = _build_why_not(
+        decision.final_action,
+        risk_score,
+        risk_thresholds=risk_thresholds,
+        decisive_signals=activated_signals,
+        hard_violations=list(getattr(decision, "hard_violations", []) or []),
+        reason_codes=reason_codes,
+    )
     return DecisionExplanation(
         request_id=trace.request_id,
         final_action=decision.final_action,
@@ -149,10 +238,14 @@ def _log_final_trace(
     winning_rule: str = "policy_bounds_fallback",
     hard_violation_codes: list[str] | None = None,
     hard_violation_source: str = "",
+    *,
+    risk_thresholds: RiskThresholds | None = None,
 ) -> DecisionExplanation:
     """Creates a FINAL DecisionTrace (stage=FINAL, sequence=2), normalizes and appends to JSONL.
     Returns DecisionExplanation for metadata propagation."""
-    explanation = _build_decision_explanation(trace, decision, winning_rule)
+    # Fall back to thresholds stashed on trace by decide_action when not passed explicitly.
+    rt = risk_thresholds if risk_thresholds is not None else getattr(trace, "_risk_thresholds", None)
+    explanation = _build_decision_explanation(trace, decision, winning_rule, risk_thresholds=rt)
     assert (
         explanation.request_id == trace.request_id
     ), f"request_id mismatch: explanation={explanation.request_id!r} vs trace={trace.request_id!r}"
@@ -709,6 +802,7 @@ def decide_action(
     total_cycles: int = 0,
     stop_reason: str = "",
     overlay_sensitive: bool = False,
+    risk_thresholds: RiskThresholds | None = None,
 ) -> tuple[Decision, DecisionExplanation]:
     """
     Single policy-driven decision function (language-agnostic).
@@ -721,6 +815,10 @@ def decide_action(
     trace = DecisionTrace(request_id=request_id)
     trace.total_cycles = total_cycles
     trace.stop_reason = stop_reason
+    # Stash thresholds on trace so internal _log_final_trace calls can enrich
+    # why_not_* without threading the kwarg through every handler signature.
+    if risk_thresholds is not None:
+        trace._risk_thresholds = risk_thresholds  # type: ignore[attr-defined]
 
     intent_clarity = _axis_val(getattr(risk_assessment, "intent_clarity", None))
     misuse_plausibility = _axis_val(getattr(risk_assessment, "misuse_plausibility", None))

@@ -110,7 +110,7 @@ class Overlay(BaseModel):
 
 Overlays in `moralstack/constitution/data/overlays/` include: `medical`, `legal`, `financial`, `education`, `mental_health`,
 `healthcare`, `children`, `research`, `creative`, `cybersecurity`, `emergency`, `enterprise`, `journalism`, `science`,
-`political`, `relationships`, `gaming`, `coding`, `customer_service`.
+`political`, `relationships`, `gaming`, `coding`, `customer_service`, `violent_crime`.
 
 ---
 
@@ -216,9 +216,19 @@ Public API (`get_relevant_principles`, `detect_relevant_domains`, `get_debug_inf
 
 ## Domain Selection (DomainPrefilter)
 
-Domains are represented via **compact keyword maps** to minimize token consumption in LLM classification. Instead of
-long textual descriptions, the DomainPrefilter uses only keywords extracted from overlays (`keywords`) or from
-`description` (deterministic extraction). This reduces token consumption by 50–80% during domain selection.
+Domains are narrowed using **compact keyword maps** backed by YAML overlay metadata to keep token budgets small. When
+each overlay declares a human-authored `description` and the provider exposes `get_domain_descriptions()`, DomainPrefilter
+prints **`- {domain}: {description}` plus a Keywords line** in the classifier prompt (`moralstack/constitution/retriever.py`).
+Missing descriptions cleanly fall back to the historical keywords-only line. Keywords may likewise be derived purely from
+deterministic extraction when YAML lacks explicit lists.
+
+Descriptions may embed trailing **`NOT for: …`** sentences (see many overlays beneath `constitution/data/overlays/*.yaml`)
+to steer negative scoping—for example signalling that explosives requests should not collapse into a narrowly topical label.
+
+The classifier prompt instructs the model to treat **verbatim embedded segments that use arbitrary encoding or
+obfuscation** as inspectable when substantive meaning can be recovered **without fabricating absent material**; domains
+should follow that recovered substance. Opaque or non-recoverable material should favour empty-domain conservatism rather
+than guessed intent.
 
 **Prefilter cache:** `DomainPrefilter.set_domain_keywords` is idempotent: the in-memory prefilter cache is cleared
 only when the effective keyword map changes (canonical fingerprint over sorted domains and sorted de-duplicated
@@ -240,9 +250,9 @@ Retrieval is delegated to `ConstitutionRetriever` and uses a two-stage LLM flow:
 
 ### 1. Domain Selection (DomainPrefilter)
 
-Domain keywords (from overlay `keywords` or extracted from `description`) are passed to the LLM as compact
-descriptors. The LLM selects which domains are relevant to the query. This reduces token consumption vs. long
-textual descriptions.
+The LLM sees each candidate domain primarily through the description + Keywords bundle when present, selecting up to the
+configured cap (see `max_prefilter_domains`). Token usage remains constrained relative to injecting full principle payloads
+at this stage.
 
 ### 2. Domain Agent Evaluation
 
@@ -350,7 +360,8 @@ moralstack/constitution/data/
     ├── relationships.yaml
     ├── gaming.yaml
     ├── coding.yaml
-    └── customer_service.yaml
+    ├── customer_service.yaml
+    └── violent_crime.yaml
 ```
 
 ---

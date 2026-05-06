@@ -2,7 +2,7 @@
 # Principles for cybersecurity, ethical hacking and data protection.
 
 # Semantic domain description (used for automatic matching)
-description: "Security vulnerabilities, hacking, malware, data protection, network security, cyber attacks, penetration testing, ethical hacking, cybersecurity practices, information security, security audits, threat analysis."
+description: "Security vulnerabilities, hacking, malware, data protection, network security, cyber attacks, penetration testing, ethical hacking, cybersecurity practices, information security, security audits, threat analysis. NOT for: ransomware delivery targeting victims, operational account takeover unrelated to lawful authorized testing."
 
 # Alternative keywords for matching
 keywords:

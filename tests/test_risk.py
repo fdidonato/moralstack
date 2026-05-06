@@ -1062,6 +1062,13 @@ class TestRiskPromptThirdParty:
         assert "support_request" in RISK_PROMPT_TEMPLATE
         assert "de-escalation" in RISK_PROMPT_TEMPLATE or "constructive" in RISK_PROMPT_TEMPLATE
 
+    def test_prompt_requires_rationale_substantive_semantic_payload(self):
+        """Monolithic template obligates rationale to state recovered payload, not wrappers only."""
+        from moralstack.models.risk.prompts import RISK_PROMPT_TEMPLATE
+
+        assert "RATIONALE TEXT — substantive payload" in RISK_PROMPT_TEMPLATE
+        assert "substantive semantic payload" in RISK_PROMPT_TEMPLATE
+
 
 # =============================================================================
 # Run Tests

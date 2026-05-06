@@ -266,6 +266,9 @@ class ResponseMetadata:
     safe_alternative_present: bool = True
     no_prescriptive_language: bool = True
     excluded_domain: str | None = None
+    refusal_domain: str | None = None
+    refusal_redirection_source: str | None = None
+    safe_refusal_focus: str | None = None
 
     @classmethod
     def from_decision(

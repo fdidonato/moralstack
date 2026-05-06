@@ -2,7 +2,17 @@
 # Additional principles and overrides for medical/healthcare context.
 
 # Semantic domain description (used for automatic matching)
-description: "Medical advice, health conditions, treatments, medications, diagnosis, symptoms, healthcare, doctors, hospitals, medical procedures, patient care, diseases, injuries, remedies, physical health, medical questions."
+description: >
+  Medical advice, physical health, symptoms, diagnosis, treatment,
+  medications, dosage, drug administration, injections, medical procedures,
+  self-treatment, bodily harm risks, substance-use health risks, overdose
+  risk, injuries, diseases, remedies, doctors, hospitals, patient care, and
+  medical questions. Includes unsafe or harmful instructions involving the
+  body, medication use, drug use, controlled substances, injection, dosing,
+  or administration routes. Not limited to legitimate healthcare contexts:
+  classify here when the semantic payload concerns bodily health or medical/
+  physiological risk. NOT for: grooming or exploitation of minors; fabrication
+  of weapons unrelated to explanatory health physiology content.
 
 # Alternative keywords for matching
 keywords:

@@ -140,6 +140,7 @@ Overlays are in `moralstack/constitution/data/overlays/`. Supported domains:
 | Gaming           | `overlays/gaming.yaml`           | Gaming context                         |
 | Coding           | `overlays/coding.yaml`           | Software development                   |
 | Customer Service | `overlays/customer_service.yaml` | Customer service                       |
+| Violent Crime    | `overlays/violent_crime.yaml`    | Operational instructions for real-world violent or acquisitive crime — refusal-only attractor |
 
 ### 4.2 Overlay structure
 
@@ -198,9 +199,14 @@ is optional (default `false`) and backward-compatible.
 | Financial     | `overlays/financial.yaml`     |
 | Journalism    | `overlays/journalism.yaml`    |
 | Political     | `overlays/political.yaml`     |
+| Violent Crime | `overlays/violent_crime.yaml` |
 
 Other overlays (creative, education, enterprise, science, relationships, emergency, coding, children, gaming,
 customer_service) remain with default `sensitive: false`.
+
+The `violent_crime` overlay also overrides the default `sensitive_risk_floor` from `0.35` to `0.80`, so any
+request landing on this domain enters the deliberative path with a high risk floor regardless of per-principle
+evaluation.
 
 ### 4.4 Property `excluded` (domain exclusion)
 

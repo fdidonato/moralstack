@@ -98,6 +98,36 @@ class RequestReport:
     parent_request_id: str | None = None
 
 
+def _merge_intervals_total_ms(calls: list[dict[str, Any]]) -> float:
+    """Wall-clock total of the union of [started_at, started_at+duration_ms) intervals.
+
+    Used to aggregate parallel module durations correctly: 3 risk_estimator calls
+    overlapping in time contribute their merged span, not the sum of their
+    individual durations.
+    """
+    intervals: list[tuple[float, float]] = []
+    for c in calls:
+        start = float(c.get("started_at") or 0)
+        dur = float(c.get("duration_ms") or 0)
+        if dur <= 0:
+            continue
+        intervals.append((start, start + dur))
+    if not intervals:
+        return 0.0
+    intervals.sort()
+    total = 0.0
+    cur_start, cur_end = intervals[0]
+    for s, e in intervals[1:]:
+        if s <= cur_end:
+            if e > cur_end:
+                cur_end = e
+        else:
+            total += cur_end - cur_start
+            cur_start, cur_end = s, e
+    total += cur_end - cur_start
+    return total
+
+
 def get_final_response_text(calls: list[dict[str, Any]], final_action: str | None = None) -> str:
     """
     Determine the final response text from LLM calls for report display.
@@ -282,6 +312,23 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
         by_cycle[cy].append(c)
     phases_by_cycle: list[tuple[int, list[PhaseInfo]]] = []
     for cycle_num in sorted(by_cycle.keys()):
+        # Logical journey order:
+        #   cycle 0 (FAST_PATH / pre-deliberation): SEQ_* constants don't apply
+        #     consistently here (constitution and risk_estimator emit NULL→999,
+        #     refusal inherits SEQ_REFUSAL_OR_FINALIZE=6). Wall-clock is the
+        #     only reliable causal order.
+        #   cycle >= 1 (deliberation): SEQ_POLICY..SEQ_HINDSIGHT define the
+        #     pipeline order; honor it even when modules overlap in wall-clock.
+        if cycle_num == 0:
+            by_cycle[cycle_num].sort(key=lambda c: (c.get("started_at") or 0, c.get("phase") or ""))
+        else:
+            by_cycle[cycle_num].sort(
+                key=lambda c: (
+                    c.get("sequence_in_cycle") if c.get("sequence_in_cycle") is not None else 999,
+                    c.get("started_at") or 0,
+                    c.get("phase") or "",
+                )
+            )
         phase_infos = []
         for c in by_cycle[cycle_num]:
             mod = c.get("module", "")
@@ -304,7 +351,9 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
             )
         phases_by_cycle.append((cycle_num, phase_infos))
 
-    total_ms = sum((c.get("duration_ms") or 0) for c in llm_calls)
+    # Total wall-clock: merge overlapping intervals (parallel calls must not
+    # double-count). See _merge_intervals_total_ms.
+    total_ms = _merge_intervals_total_ms(llm_calls)
     by_module = defaultdict(list)
     for c in llm_calls:
         mod = c.get("module", "unknown")
@@ -316,11 +365,12 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
         durs = by_module[mod]
         total = sum(durs)
         module_stats[mod] = {"calls": len(durs), "total_ms": total, "avg_ms": total / len(durs) if durs else 0.0}
-    phase_durations: dict[str, float] = {}
-    for _, pi_list in phases_by_cycle:
-        for pi in pi_list:
-            key = pi.phase_type
-            phase_durations[key] = phase_durations.get(key, 0) + pi.duration_ms
+    # Per-phase wall-clock: same merge logic, scoped per phase_type (across cycles).
+    by_phase: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for c in llm_calls:
+        key = (c.get("module", "") or "") + " / " + (c.get("phase", "") or "")
+        by_phase[key].append(c)
+    phase_durations: dict[str, float] = {key: _merge_intervals_total_ms(group) for key, group in by_phase.items()}
     policy_overlay = None
     stop_reason = td.get("stop_reason", "").strip()
     principle_ids = td.get("policy_principle_ids") or []

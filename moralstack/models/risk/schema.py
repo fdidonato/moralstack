@@ -51,7 +51,8 @@ class RiskEstimation:
     intent_clarity: IntentClarity = IntentClarity.HIGH
     misuse_plausibility: MisusePlausibility = MisusePlausibility.LOW
     actionability_risk: ActionabilityRisk = ActionabilityRisk.LOW
-    harm_type: str = "none"  # none|emotional_relational|reputational|financial|physical|illegal
+    harm_type: str = "none"
+    # none|emotional_relational|reputational|financial|physical|illegal|child_exploitation
     request_type: str = ""  # e.g. crisis_support for help-seeking
     intent_type: str = ""  # support|advice|factual|explanation (derivable from request_type)
     intent_operational: bool = False  # true=HOW-TO/steps; false=informational/descriptive
@@ -61,6 +62,25 @@ class RiskEstimation:
     detected_language: str = ""  # ISO 639-1 (en, it, es) from user request; for refusal
     detected_domain: str | None = None  # Domain from _detect_domain() in risk estimator
     estimation_mode: str = ""  # "parallel" (3 mini-estimators) | "monolithic" | "" (fallback/no LLM)
+
+    # ── Semantic flags (LLM-judged, language-agnostic) ─────────────────────
+    # Surfaced from the intent estimator's EXECUTION-OF-STATED-INTENT framing
+    # detection. Both default to False so older traces / fallback paths are
+    # unaffected. Downstream consumers (decision_service, reports) read these
+    # to falsify ethical_dilemma classifications when the requester has
+    # already decided and is asking only how to execute (see prompts.py).
+    stated_personal_bias: bool = False
+    seeks_norm_circumvention: bool = False
+    # Topic signal: differential treatment of identifiable individuals based
+    # on protected characteristics. Pure topic detection, language-agnostic.
+    q13_protected_class_targeting: bool = False
+    # Reputational-harm cluster (q14-q16): defamation, deceptive online
+    # campaigns, coordinated harassment/smear. Distinct from q11 which targets
+    # private data; these target public reputation/social standing.
+    q14_reputational_harm: bool = False
+    q15_deceptive_online_campaign: bool = False
+    q16_harassment_smear_campaign: bool = False
+    q17_minor_exploitation: bool = False
 
     # Alias per backward compatibility
     @property

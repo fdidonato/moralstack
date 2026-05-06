@@ -57,6 +57,86 @@ def test_get_all_runs_returns_list(tmp_path, monkeypatch):
     assert "run-all-2" in run_ids
 
 
+def test_get_runs_page_applies_pagination_and_returns_total(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    rs = SqliteReadStore()
+    for i in range(25):
+        run_id = f"run-page-{i:02d}"
+        create_run(run_id, run_type="test", meta={})
+    page_1, total_1 = rs.get_runs_page(page=1, page_size=20)
+    page_2, total_2 = rs.get_runs_page(page=2, page_size=20)
+    assert total_1 == 25
+    assert total_2 == 25
+    assert len(page_1) == 20
+    assert len(page_2) == 5
+
+
+def test_get_runs_page_filters_by_domain_and_text(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    create_run("run-filter-med", run_type="test", meta={})
+    create_run("run-filter-legal", run_type="test", meta={})
+    create_run("run-filter-other", run_type="test", meta={})
+    upsert_request(
+        "run-filter-med",
+        "req-med-1",
+        prompt="How to interpret these symptoms?",
+        domain="medical",
+    )
+    upsert_request(
+        "run-filter-legal",
+        "req-legal-1",
+        prompt="Need legal opinion",
+        domain="legal",
+    )
+    upsert_request(
+        "run-filter-legal",
+        "req-legal-2",
+        prompt="Second legal question",
+        domain="legal",
+    )
+    upsert_request(
+        "run-filter-other",
+        "req-gen-1",
+        prompt="General topic",
+        domain="general",
+    )
+    from moralstack.observability.sinks.sqlite_sink import update_request_response
+
+    update_request_response("run-filter-med", "req-med-1", "Please contact your physician.")
+    update_request_response("run-filter-legal", "req-legal-1", "This is a legal information response.")
+    update_request_response("run-filter-legal", "req-legal-2", "Another legal answer.")
+    update_request_response("run-filter-other", "req-gen-1", "Generic response.")
+
+    rs = SqliteReadStore()
+    legal_runs, legal_total = rs.get_runs_page(page=1, page_size=20, domain="legal")
+    assert legal_total == 1
+    assert [r["run_id"] for r in legal_runs] == ["run-filter-legal"]
+
+    text_runs, text_total = rs.get_runs_page(page=1, page_size=20, search_text="physician")
+    assert text_total == 1
+    assert [r["run_id"] for r in text_runs] == ["run-filter-med"]
+
+    combined_runs, combined_total = rs.get_runs_page(
+        page=1,
+        page_size=20,
+        domain="legal",
+        search_text="second",
+    )
+    assert combined_total == 1
+    assert [r["run_id"] for r in combined_runs] == ["run-filter-legal"]
+
+
+def test_get_request_domains_returns_distinct_sorted_values(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    create_run("run-domains", run_type="test", meta={})
+    upsert_request("run-domains", "req-1", prompt="a", domain="legal")
+    upsert_request("run-domains", "req-2", prompt="b", domain="medical")
+    upsert_request("run-domains", "req-3", prompt="c", domain="legal")
+    upsert_request("run-domains", "req-4", prompt="d", domain="")
+    rs = SqliteReadStore()
+    assert rs.get_request_domains() == ["legal", "medical"]
+
+
 def test_get_requests_for_run(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     create_run("run-req-1", run_type="test", meta={})

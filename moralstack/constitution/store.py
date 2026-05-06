@@ -83,19 +83,30 @@ def detect_domain(
     available_domains: list[str] | None = None,
 ) -> str | None:
     """
-    Rileva automaticamente il dominio dalla query usando classificazione semantica LLM.
+    DEPRECATED for runtime domain selection.
 
-    Usa SOLO LLM per il rilevamento - nessun fallback keyword matching.
+    Runtime code MUST use ConstitutionRetriever / DomainPrefilter through
+    `ConstitutionStore.get_relevant_principles()` and read the resulting
+    `prefiltered_domains` from `ConstitutionStore.get_debug_info()` instead.
+
+    This function uses a legacy standalone LLM classifier whose prompt does not
+    enforce the same domain-exclusion contract as the DomainPrefilter (e.g. it
+    can classify weapon/violent requests as `legal`). Calling it from the
+    runtime pipeline causes a duplicate, silent, contract-divergent LLM call
+    whose output then propagates as `request.user_context.domain_overlay` /
+    `overlay_applied` / refusal redirection. Do not use it to set request
+    `domain_overlay`, `overlay_applied`, or `refusal_domain`.
+
+    Kept for backward compatibility with external callers and tests only.
 
     Args:
-        query: Query utente
-        query_tokens: Token della query (non usato, mantenuto per compatibilità)
-        policy_llm: Policy LLM per classificazione semantica (obbligatorio)
-        domain_descriptions: Dizionario delle descrizioni dei domini {nome: descrizione}
-        available_domains: Lista di domini disponibili (se None, usa tutti)
+        query: User query.
+        policy_llm: Policy LLM for semantic classification (required).
+        domain_descriptions: Mapping {domain_name: description}.
+        available_domains: Optional restriction over the candidate domain set.
 
     Returns:
-        Dominio rilevato o None se non rilevato o LLM non disponibile.
+        Detected domain or None if not detected or LLM unavailable.
     """
     # Usa SOLO LLM per rilevamento dominio
     if policy_llm is None or not domain_descriptions:

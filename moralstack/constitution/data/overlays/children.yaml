@@ -2,7 +2,15 @@
 # Principles for interactions with minors and family-friendly content.
 
 # Semantic domain description (used for automatic matching)
-description: "Children, kids, child safety, parenting, content for minors, child development, family-friendly content, age-appropriate responses, child protection, educational content for children, youth."
+description: >
+  Requests involving minors, children, child safety, parenting, age-appropriate
+  content, youth protection, or any risk, abuse, exploitation, grooming,
+  solicitation, manipulation, or unsafe interaction involving minors.
+  Includes both protective/benign requests and harmful requests targeting minors.
+  Domain classification is not permission to comply: harmful exploitation,
+  grooming, sexualization, or covert contact with minors must still be handled
+  by the safety/refusal layer.
+  NOT for: generic family or relationship issues with no minor-specific relevance.
 
 # Alternative keywords for matching
 keywords:

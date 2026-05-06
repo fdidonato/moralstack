@@ -95,6 +95,22 @@ def _as_risk_protocol(r: RiskEstimation) -> RiskEstimationProtocol:
     return cast(RiskEstimationProtocol, r)
 
 
+def _normalize_runtime_domain(domain: str | None) -> str | None:
+    """
+    Normalize a runtime domain value before propagating it as request domain_overlay.
+
+    `core` is a retrieval-only pseudo-domain (constitutional baseline) and must
+    never become a runtime/applicative domain. Returns None for empty/whitespace
+    values or for "core".
+    """
+    if not domain:
+        return None
+    value = str(domain).strip()
+    if not value or value == "core":
+        return None
+    return value
+
+
 class OrchestrationController:
     """
     Coordinamento alto livello: stima rischio, decide path, delega a runner/assembler/diagnostics.
@@ -277,6 +293,13 @@ class OrchestrationController:
                 "selected_domain": dom_str or None,
                 "selection_reason": selection_reason or None,
                 "activated_signals": sigs,
+                # Semantic intent flags (LLM-judged, language-agnostic).
+                # Surfaced for full traceability in DB + UI; downstream
+                # consumers (e.g. decision_service) may use them but absence
+                # must not break parsing — defaults are False.
+                "stated_personal_bias": bool(getattr(risk_proto, "stated_personal_bias", False)),
+                "seeks_norm_circumvention": bool(getattr(risk_proto, "seeks_norm_circumvention", False)),
+                "q13_protected_class_targeting": bool(getattr(risk_proto, "q13_protected_class_targeting", False)),
             }
             normalize_trace_fields(dt)
             append_decision_trace(dt)
@@ -795,6 +818,7 @@ class OrchestrationController:
             total_cycles=state.cycle,
             stop_reason=outcome.stop_reason if outcome else "",
             overlay_sensitive=overlay_sensitive,
+            risk_thresholds=getattr(getattr(self, "config", None), "risk_thresholds", None),
         )
         # Execution path was deliberative; ensure decision.path is DELIBERATIVE_PATH for metadata/trace.
         if state.cycle > 0 and decision1.path != "DELIBERATIVE_PATH":
@@ -1055,9 +1079,12 @@ class OrchestrationController:
                 {"risk_score": risk_score, "op_risk": str(op_risk)},
             )
 
-            # Persist domain (user overlay or risk-detected) for dashboard and export
+            # Persist domain (user overlay or risk-detected) for dashboard and export.
+            # `core` is a retrieval-only pseudo-domain and is normalized away here so
+            # it never becomes a runtime overlay (see _normalize_runtime_domain).
             _domain = request.get_domain() if hasattr(request, "get_domain") else None
             _domain = _domain or getattr(risk_estimation, "detected_domain", None)
+            _domain = _normalize_runtime_domain(_domain)
             if _domain is not None:
                 self._persistence.update_request_domain(request_id, _domain)
 
@@ -1108,7 +1135,12 @@ class OrchestrationController:
             if overlay_sensitive and risk_score != original_risk:
                 risk_proto = cast(RiskEstimationProtocol, _dc_replace(risk_estimation, score=risk_score))
             self._emit_risk_assessment_trace(request_id, risk_proto, risk_score)
-            decision, explanation = decide_action(request, risk_proto, overlay_sensitive=overlay_sensitive)
+            decision, explanation = decide_action(
+                request,
+                risk_proto,
+                overlay_sensitive=overlay_sensitive,
+                risk_thresholds=getattr(getattr(self, "config", None), "risk_thresholds", None),
+            )
             decision = apply_safe_complete_gating(
                 decision,
                 request,

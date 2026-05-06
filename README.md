@@ -88,7 +88,7 @@ Request
   │
   ▼
 [Risk Estimator] ─────────── parallel mini-estimators:
-  │                          intent · operational risk · signal detection
+  │                          intent · signal detection (q1–q17) · operational risk
   ▼
 [Policy Router] ──────────── applies domain overlay, computes action bounds
   │

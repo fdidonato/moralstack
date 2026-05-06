@@ -281,19 +281,35 @@ class LLMBasedRiskEstimator:
             return None
 
     def _get_principles_context(self, prompt: str) -> tuple[str, str | None]:
-        """Retrieve and format relevant constitution principles for the prompt. Returns (context, domain) or ('', None)."""
+        """
+        Retrieve and format relevant constitution principles for the prompt.
+
+        Returns (context, runtime_domain). `runtime_domain` is derived from the
+        DomainPrefilter's prefiltered_domains (single source of truth) — never
+        from a separate LLM call. `core` is treated as a retrieval-only pseudo-
+        domain and is never returned as runtime_domain.
+        """
         if self.constitution_store is None:
             return "", None
         try:
-            from moralstack.constitution.store import detect_domain
-
-            domain_descriptions = self.constitution_store.get_domain_descriptions() if self.constitution_store else {}
-            domain = detect_domain(prompt, self.policy, domain_descriptions)
             relevant_principles = self.constitution_store.get_relevant_principles(
-                query=prompt, top_k=self._top_k, domain=domain
+                query=prompt, top_k=self._top_k, domain=None
             )
+
+            runtime_domain: str | None = None
+            try:
+                get_debug_info = getattr(self.constitution_store, "get_debug_info", None)
+                debug_info = get_debug_info() if callable(get_debug_info) else {}
+                prefiltered_domains = list(debug_info.get("prefiltered_domains") or [])
+                specific_domains = [
+                    d.strip() for d in prefiltered_domains if isinstance(d, str) and d.strip() and d.strip() != "core"
+                ]
+                runtime_domain = specific_domains[0] if specific_domains else None
+            except Exception:
+                runtime_domain = None
+
             if not relevant_principles:
-                return "", domain
+                return "", runtime_domain
             n_principles = self._top_k
             hard_principles = [p for p in relevant_principles[:n_principles] if p.level == "hard"]
             soft_principles = [p for p in relevant_principles[:n_principles] if p.level == "soft"]
@@ -324,7 +340,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
 5. Only classify as harmful if the request ACTIVELY SEEKS TO CAUSE HARM:
    - Asking HOW TO harm, deceive, or manipulate someone → potentially harmful
    - Asking ABOUT ethics, psychology, or controversial topics → educational/sensitive"""
-            return formatted_context, domain
+            return formatted_context, runtime_domain
         except Exception as e:
             _RISK_LOG.warning("principles retrieval failed, continuing without: %s", e)
             return "", None
@@ -557,6 +573,13 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             detected_language=parsed.detected_language,
             detected_domain=detected_domain,
             estimation_mode=estimation_mode,
+            stated_personal_bias=parsed.stated_personal_bias,
+            seeks_norm_circumvention=parsed.seeks_norm_circumvention,
+            q13_protected_class_targeting=parsed.q13_protected_class_targeting,
+            q14_reputational_harm=parsed.q14_reputational_harm,
+            q15_deceptive_online_campaign=parsed.q15_deceptive_online_campaign,
+            q16_harassment_smear_campaign=parsed.q16_harassment_smear_campaign,
+            q17_minor_exploitation=parsed.q17_minor_exploitation,
         )
 
     def _persist_mini_llm_call(
@@ -571,12 +594,18 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         attempts: int,
         parse_contract: dict[str, Any] | None = None,
         token_usage_json: str | None = None,
+        llm_model: str | None = None,
     ) -> None:
         """Persist a single mini-estimator LLM call. Logs debug on ImportError."""
         import json as _json
 
-        risk_model = getattr(self.policy, "model", None) if self.policy else None
-        risk_model_str = str(risk_model) if risk_model is not None else None
+        # Parallel mini-estimators may use pooled policies with a different model than self.policy;
+        # pass llm_model from the caller when the effective OpenAI policy differs.
+        if llm_model is not None:
+            risk_model_str = llm_model or None
+        else:
+            risk_model = getattr(self.policy, "model", None) if self.policy else None
+            risk_model_str = str(risk_model) if risk_model is not None else None
         summary: dict[str, Any] = {"mini_estimator": action, "estimation_mode": "parallel"}
         if parse_contract is not None:
             summary["parse_contract"] = parse_contract
@@ -604,7 +633,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         Esegue 3 mini-chiamate LLM in parallelo via ThreadPoolExecutor.
 
         LLM 1 (estimate_intent): detected_language, intent_*, request_type, harm_type, rationale (intent)
-        LLM 2 (estimate_signals): q1-q12, domain_sensitivity
+        LLM 2 (estimate_signals): q1-q13, domain_sensitivity
         LLM 3 (estimate_operational): operational_risk, risk_score, confidence, misuse_plausibility, ..., rationale (risk)
 
         Aggrega i risultati con merge_mini_estimator_results() e li processa con
@@ -628,10 +657,22 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         signal_prompt = HARM_SIGNAL_PROMPT_TEMPLATE.format(request=prompt)
         operational_prompt = OPERATIONAL_RISK_PROMPT_TEMPLATE.format(request=prompt)
 
-        # Each future returns (data_dict, raw_response, duration_ms, attempts, started_at_ms, parse_contract)
+        _RISK_LOG.info(
+            "risk_estimator parallel mini-models (config): intent=%s signals=%s operational=%s; "
+            "main risk policy model=%s",
+            self.config.intent_model,
+            self.config.signals_model,
+            self.config.operational_model,
+            getattr(_policy, "model", None),
+        )
+
+        # Each future returns (
+        #   data_dict, raw_response, duration_ms, attempts, started_at_ms, parse_contract, token_usage_json,
+        #   resolved_model_str for observability,
+        # )
         def _call_and_track(
             system_prompt: str, full_prompt: str, mini_name: str
-        ) -> tuple[Any, str, float, int, int, Any, str | None]:
+        ) -> tuple[Any, str, float, int, int, Any, str | None, str | None]:
             from moralstack.utils.json_utils import JSONParseError
 
             # Determine the model for this mini-call
@@ -658,6 +699,11 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                     )
                     effective_policy = _policy
 
+            resolved_for_obs = getattr(effective_policy, "model", None)
+            if resolved_for_obs is None and target_model:
+                resolved_for_obs = target_model
+            resolved_model_str = str(resolved_for_obs) if resolved_for_obs is not None else None
+
             raw_response = ""
             for attempt in range(self.config.max_retries):
                 try:
@@ -677,7 +723,16 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                     )
                     data, p_contract = parse_dict_with_contract(raw_response, strict_json_requested=True)
                     _tu = result.token_usage_json() if hasattr(result, "token_usage_json") else None
-                    return data, raw_response, elapsed_ms, attempt + 1, int(start_gen * 1000), p_contract, _tu
+                    return (
+                        data,
+                        raw_response,
+                        elapsed_ms,
+                        attempt + 1,
+                        int(start_gen * 1000),
+                        p_contract,
+                        _tu,
+                        resolved_model_str,
+                    )
                 except JSONParseError as e:
                     _RISK_LOG.warning(
                         "mini_estimator[%s] attempt %s/%s failed (JSONParseError): %s",
@@ -702,9 +757,22 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             fut3 = executor.submit(
                 _call_and_track, OPERATIONAL_RISK_SYSTEM_PROMPT, operational_prompt, "estimate_operational"
             )
-            intent_data, intent_raw, intent_ms, intent_attempts, intent_started, intent_pc, intent_tu = fut1.result()
-            signal_data, signal_raw, signal_ms, signal_attempts, signal_started, signal_pc, signal_tu = fut2.result()
-            operational_data, op_raw, op_ms, op_attempts, op_started, op_pc, op_tu = fut3.result()
+            intent_data, intent_raw, intent_ms, intent_attempts, intent_started, intent_pc, intent_tu, intent_m_obs = (
+                fut1.result()
+            )
+            signal_data, signal_raw, signal_ms, signal_attempts, signal_started, signal_pc, signal_tu, signal_m_obs = (
+                fut2.result()
+            )
+            (
+                operational_data,
+                op_raw,
+                op_ms,
+                op_attempts,
+                op_started,
+                op_pc,
+                op_tu,
+                op_m_obs,
+            ) = fut3.result()
 
         # Persist all 3 mini-estimator LLM calls for UI visibility
         self._persist_mini_llm_call(
@@ -717,6 +785,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             attempts=intent_attempts,
             parse_contract=intent_pc,
             token_usage_json=intent_tu,
+            llm_model=intent_m_obs,
         )
         self._persist_mini_llm_call(
             system_prompt=HARM_SIGNAL_SYSTEM_PROMPT,
@@ -728,6 +797,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             attempts=signal_attempts,
             parse_contract=signal_pc,
             token_usage_json=signal_tu,
+            llm_model=signal_m_obs,
         )
         self._persist_mini_llm_call(
             system_prompt=OPERATIONAL_RISK_SYSTEM_PROMPT,
@@ -739,6 +809,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             attempts=op_attempts,
             parse_contract=op_pc,
             token_usage_json=op_tu,
+            llm_model=op_m_obs,
         )
 
         merged = merge_mini_estimator_results(intent_data, signal_data, operational_data)
@@ -787,17 +858,24 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
 
         _RISK_LOG.info(
             "parallel_mini_estimator [mode=parallel] parsed: score=%.2f category=%s "
-            "risk_policy_action=%s lang=%s request_type=%s",
+            "risk_policy_action=%s lang=%s request_type=%s "
+            "stated_personal_bias=%s seeks_norm_circumvention=%s q13=%s",
             parsed.score,
             getattr(parsed.category, "value", parsed.category),
             getattr(parsed.risk_policy_action, "value", parsed.risk_policy_action),
             parsed.detected_language,
             parsed.request_type,
+            parsed.stated_personal_bias,
+            parsed.seeks_norm_circumvention,
+            parsed.q13_protected_class_targeting,
             extra={
                 "estimation_mode": "parallel",
                 "score": parsed.score,
                 "category": getattr(parsed.category, "value", str(parsed.category)),
                 "risk_policy_action": getattr(parsed.risk_policy_action, "value", parsed.risk_policy_action),
+                "stated_personal_bias": parsed.stated_personal_bias,
+                "seeks_norm_circumvention": parsed.seeks_norm_circumvention,
+                "q13_protected_class_targeting": parsed.q13_protected_class_targeting,
             },
         )
         (
@@ -849,17 +927,24 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
 
         _RISK_LOG.info(
             "risk_estimator [mode=monolithic] parsed: score=%.2f category=%s "
-            "risk_policy_action=%s lang=%s request_type=%s",
+            "risk_policy_action=%s lang=%s request_type=%s "
+            "stated_personal_bias=%s seeks_norm_circumvention=%s q13=%s",
             parsed.score,
             getattr(parsed.category, "value", parsed.category),
             getattr(parsed.risk_policy_action, "value", parsed.risk_policy_action),
             parsed.detected_language,
             parsed.request_type,
+            parsed.stated_personal_bias,
+            parsed.seeks_norm_circumvention,
+            parsed.q13_protected_class_targeting,
             extra={
                 "estimation_mode": "monolithic",
                 "score": parsed.score,
                 "category": getattr(parsed.category, "value", str(parsed.category)),
                 "risk_policy_action": getattr(parsed.risk_policy_action, "value", parsed.risk_policy_action),
+                "stated_personal_bias": parsed.stated_personal_bias,
+                "seeks_norm_circumvention": parsed.seeks_norm_circumvention,
+                "q13_protected_class_targeting": parsed.q13_protected_class_targeting,
             },
         )
         (

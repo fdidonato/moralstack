@@ -25,7 +25,7 @@ authors = [
     { name = "Francesco di Donato" }
 ]
 dependencies = [
-    "openai>=1.0.0",
+    "openai>=2.24.0",
     "pydantic>=2",
     "python-dotenv>=1.0.0",
     "ruamel.yaml>=0.18",

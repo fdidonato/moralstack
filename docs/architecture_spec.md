@@ -295,7 +295,7 @@ class RiskEstimation:
     score: float                       # [0, 1]
     confidence: float                  # [0, 1]
     risk_category: RiskCategory
-    semantic_signals: list[str]        # *[impl]* alias triggered_signals
+    semantic_signals: list[str]        # *[impl]* alias triggered_signals; calibrated strings (e.g. Qn:..., request_type:...)
     domain_sensitivity: str = "LOW"   # LOW | MEDIUM | HIGH
     operational_risk: str = "NONE"     # NONE | LOW | HIGH
     risk_policy_action: RiskPolicyAction = RiskPolicyAction.DELIBERATE
@@ -303,10 +303,14 @@ class RiskEstimation:
     intent_clarity: str = "HIGH"       # For SAFE_COMPLETE routing
     misuse_plausibility: str = "LOW"
     actionability_risk: str = "LOW"
+    stated_personal_bias: bool = False            # *[impl]* intent framing / falsification (prompts.py)
+    seeks_norm_circumvention: bool = False       # *[impl]* intent framing / falsification
+    q13_protected_class_targeting: bool = False    # *[impl]* harm-topic signal q13 (protected-class differential treatment)
+    estimation_mode: str = ""                    # *[impl]* "" | "monolithic" | "parallel"
 
 class RiskCategory(Enum):
     BENIGN = "benign"
-    MORALLY_NUANCED = "morally_nuanced"  # Dilemmi etici
+    MORALLY_NUANCED = "morally_nuanced"  # Ethical dilemmas
     SENSITIVE = "sensitive"
     POTENTIALLY_HARMFUL = "potentially_harmful"
     CLEARLY_HARMFUL = "clearly_harmful"
@@ -330,8 +334,12 @@ class RiskEstimator(Protocol):
 from environment variables (`MORALSTACK_RISK_*`);
 see [modules/risk_estimator.md](modules/risk_estimator.md#environment-variables).
 
-*[impl]* In `moralstack` il protocollo usa `estimate(prompt: str)`. L'implementazione è LLM-based (Policy con prompt
-strutturato), non un classificatore leggero; i segnali sono semantici (es. `ethical_dilemma`, `harm_potential`).
+*[impl]* In `moralstack` the protocol uses `estimate(prompt: str)`. The implementation is LLM-based (structured prompts
+in `models/risk/prompts.py`): either a **monolithic** judge JSON or **three parallel mini-estimators** (intent, harm signals
+q1–q17 + `domain_sensitivity`, operational risk) when `use_parallel_estimators` is enabled; merge and calibration live in
+`calibration.py`. **Q17** (`minor_exploitation`) extends the harm scanner for grooming or contact targeting minors;
+auxiliary fields such as `stated_personal_bias`, `seeks_norm_circumvention`, and **q13** support coherence and
+falsification rules on the intent classifier.
 
 ---
 
