@@ -79,21 +79,27 @@ class TestTotalDurationWallClock:
         # Call B: [1200, 1800] (duration 600), overlaps A in [1200, 1500]
         # Naive sum = 1100. Wall-clock merged = 800 (1000 → 1800).
         assert _seed_call(
-            run_id=run_id, request_id=request_id,
-            started_at=1000, duration_ms=500,
-            module="risk_estimator", phase="estimate_intent", action="estimate_intent",
+            run_id=run_id,
+            request_id=request_id,
+            started_at=1000,
+            duration_ms=500,
+            module="risk_estimator",
+            phase="estimate_intent",
+            action="estimate_intent",
         )
         assert _seed_call(
-            run_id=run_id, request_id=request_id,
-            started_at=1200, duration_ms=600,
-            module="risk_estimator", phase="estimate_operational", action="estimate_operational",
+            run_id=run_id,
+            request_id=request_id,
+            started_at=1200,
+            duration_ms=600,
+            module="risk_estimator",
+            phase="estimate_operational",
+            action="estimate_operational",
         )
 
         report = request_report_from_db(run_id, request_id)
         assert report is not None
-        assert report.total_duration_ms == 800.0, (
-            f"expected wall-clock merged 800ms, got {report.total_duration_ms}"
-        )
+        assert report.total_duration_ms == 800.0, f"expected wall-clock merged 800ms, got {report.total_duration_ms}"
 
 
 class TestPhaseDurationsWallClock:
@@ -105,45 +111,61 @@ class TestPhaseDurationsWallClock:
         run_id, request_id = tmp_db
         # Two risk_estimator/estimate calls overlap → wall-clock 800ms, not 1100.
         assert _seed_call(
-            run_id=run_id, request_id=request_id,
-            started_at=1000, duration_ms=500,
-            module="risk_estimator", phase="estimate", action="estimate",
+            run_id=run_id,
+            request_id=request_id,
+            started_at=1000,
+            duration_ms=500,
+            module="risk_estimator",
+            phase="estimate",
+            action="estimate",
         )
         assert _seed_call(
-            run_id=run_id, request_id=request_id,
-            started_at=1200, duration_ms=600,
-            module="risk_estimator", phase="estimate", action="estimate",
+            run_id=run_id,
+            request_id=request_id,
+            started_at=1200,
+            duration_ms=600,
+            module="risk_estimator",
+            phase="estimate",
+            action="estimate",
         )
 
         report = request_report_from_db(run_id, request_id)
         assert report is not None
         # phase_type key built as `module + " / " + phase`
         key = "risk_estimator / estimate"
-        assert key in report.phase_durations, (
-            f"expected phase '{key}' in phase_durations; got {list(report.phase_durations.keys())}"
-        )
-        assert report.phase_durations[key] == 800.0, (
-            f"expected merged wall-clock 800ms for '{key}', got {report.phase_durations[key]}"
-        )
+        assert (
+            key in report.phase_durations
+        ), f"expected phase '{key}' in phase_durations; got {list(report.phase_durations.keys())}"
+        assert (
+            report.phase_durations[key] == 800.0
+        ), f"expected merged wall-clock 800ms for '{key}', got {report.phase_durations[key]}"
 
     def test_phase_durations_disjoint_intervals_still_sum(self, tmp_db):
         run_id, request_id = tmp_db
         # Two NON-overlapping calls of same phase: [1000,1500] and [2000,2400].
         # Wall-clock total = 500 + 400 = 900 (no overlap to merge).
         assert _seed_call(
-            run_id=run_id, request_id=request_id,
-            started_at=1000, duration_ms=500,
-            module="critic", phase="critique", action="critique",
+            run_id=run_id,
+            request_id=request_id,
+            started_at=1000,
+            duration_ms=500,
+            module="critic",
+            phase="critique",
+            action="critique",
         )
         assert _seed_call(
-            run_id=run_id, request_id=request_id,
-            started_at=2000, duration_ms=400,
-            module="critic", phase="critique", action="critique",
+            run_id=run_id,
+            request_id=request_id,
+            started_at=2000,
+            duration_ms=400,
+            module="critic",
+            phase="critique",
+            action="critique",
         )
 
         report = request_report_from_db(run_id, request_id)
         assert report is not None
         key = "critic / critique"
-        assert report.phase_durations[key] == 900.0, (
-            f"disjoint intervals must sum (no over-merge); expected 900, got {report.phase_durations[key]}"
-        )
+        assert (
+            report.phase_durations[key] == 900.0
+        ), f"disjoint intervals must sum (no over-merge); expected 900, got {report.phase_durations[key]}"

@@ -324,7 +324,9 @@ correct the conflicting field before outputting.
 ══════════════════════════════════════════════════════════════════
 
 {{
-  "rationale": "First state substantive semantic payload (include recoverable hidden meaning when applicable); then framing, intent, and risk; align with harm_type and affirmative q-signals",
+  "rationale": "First state substantive semantic payload
+                (include recoverable hidden meaning when applicable);
+                then framing, intent, and risk; align with harm_type and affirmative q-signals",
   "detected_language": "ISO 639-1 code",
   "q1_confidential": "yes" | "no",
   "q2_unauthorized": "yes" | "no",
@@ -659,7 +661,9 @@ seeks_norm_circumvention: "yes" only when the requester THEMSELVES
   to handle a sensitive situation or asks whether a norm applies.
 
 {{
-  "rationale": "Substantive semantic payload first (recovered encoded/obfuscated meaning when applicable); then framing fired and why; align with harm_type",
+  "rationale": "Substantive semantic payload first
+                (recovered encoded/obfuscated meaning when applicable);
+                then framing fired and why; align with harm_type",
   "detected_language": "ISO 639-1 code",
   "intent_to_harm": "yes" | "no",
   "requested_instructions": "yes" | "no",
@@ -1176,7 +1180,11 @@ Before generating JSON, verify:
 ══════════════════════════════════════════════════════════════════
 
 {{
-  "rationale": "Lead with substantive semantic payload (recovered hidden meaning when applicable); state framing (defensive/offensive/socio-behavioral); operational assessment — must match payload semantics and harm category; no wrapper-only summaries",
+  "rationale": "Lead with substantive semantic payload
+                (recovered hidden meaning when applicable);
+                state framing (defensive/offensive/socio-behavioral);
+                operational assessment — must match payload semantics and harm category;
+                no wrapper-only summaries",
   "operational_risk": "NONE" | "LOW" | "HIGH",
   "risk_score": 0.0-1.0,
   "confidence": 0.0-1.0,

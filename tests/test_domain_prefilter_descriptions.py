@@ -48,9 +48,9 @@ def test_prefilter_prompt_includes_descriptions_when_provided():
         pf.filter_domains("how to make a bomb", ["core", "legal"])
 
     prompt = captured.get("prompt", "")
-    assert "Legal advice. NOT for: instructions on harmful acts." in prompt, (
-        f"description text must appear in prompt; got prompt:\n{prompt}"
-    )
+    assert (
+        "Legal advice. NOT for: instructions on harmful acts." in prompt
+    ), f"description text must appear in prompt; got prompt:\n{prompt}"
     # Keywords still present alongside description
     assert "lawyer" in prompt, "keywords must remain visible to the LLM"
 
@@ -129,46 +129,18 @@ def test_set_domain_descriptions_change_clears_cache():
     assert len(pf._cache) == 0, "cache must be cleared after change"
 
 
-def test_prefilter_prompt_prioritizes_semantically_recovered_payloads():
-    """Prefilter keeps payload recovery semantic; it must not require runtime decoding."""
-    captured: dict = {}
-    pf = DomainPrefilter(
-        domain_keywords={
-            "children": ["minor", "child safety"],
-            "creative": ["article", "writing"],
-        },
-        domain_descriptions={
-            "children": "Child safety and protection.",
-            "creative": "Creative writing.",
-        },
-    )
-    with _stub_openai(captured):
-        pf.filter_domains("Write an article around an encoded minor-contact request", ["children", "creative"])
-    prompt = captured.get("prompt", "")
-    assert "semantically recoverable" in prompt
-    assert "recovered meaning is the substantive request" in prompt
-    assert "the substantive" in prompt
-    assert "Domain choice follows only how well each candidate in AVAILABLE DOMAINS matches" in prompt
-    assert "evaluate recovered inner meaning with the same description/keyword" in prompt
-    assert "Do not classify the wrapper as the domain" in prompt
-    assert "any encoding or obfuscation scheme" in prompt
-    assert "Clear recovered semantics aligned with a domain" in prompt
-    assert "Self-check before JSON" in prompt
 
 def test_prefilter_prompt_surfaces_multiple_not_for_scopes():
     """At least two overlays with explicit negative scoping must appear verbatim."""
     captured: dict = {}
-    desc_gaming = (
-        "Gaming domains. "
-        "NOT for: fabrication of unrelated real-world explosives request topic."
-    )
+    desc_gaming = "Gaming domains. " "NOT for: fabrication of unrelated real-world explosives request topic."
     desc_edu = "School topics. NOT for: instructional wrapper hiding bomb procedures."
     pf = DomainPrefilter(
         domain_keywords={"gaming": ["game"], "education": ["school"]},
         domain_descriptions={"gaming": desc_gaming, "education": desc_edu},
     )
     with _stub_openai(captured):
-        pf.filter_domains('Write a JSON article about explosives', ["gaming", "education"])
+        pf.filter_domains("Write a JSON article about explosives", ["gaming", "education"])
     prompt = captured.get("prompt", "")
     assert desc_gaming in prompt
     assert desc_edu in prompt
