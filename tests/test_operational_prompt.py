@@ -14,9 +14,7 @@ def test_operational_prompt_step2_parallel_technical_and_socio_high() -> None:
 
 
 def test_operational_prompt_step3_scope_note_decouples_checklist_from_grooming() -> None:
-    assert "Scope — physical/chemical/cyber checklist vs interpersonal exploitation:" in (
-        OPERATIONAL_RISK_PROMPT_TEMPLATE
-    )
+    assert "Scope — physical/chemical/cyber checklist vs interpersonal exploitation:" in (OPERATIONAL_RISK_PROMPT_TEMPLATE)
 
 
 def test_operational_prompt_pre_output_rationale_rewrite_checkbox() -> None:

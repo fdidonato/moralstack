@@ -702,9 +702,7 @@ def _describe_calibration_path(
     if q13_positive:
         topic_signal_summary_parts.append("q13=yes")
     if reputational_positive:
-        topic_signal_summary_parts.append(
-            f"q14–q16={len(reputational_positive)} ({', '.join(reputational_positive)})"
-        )
+        topic_signal_summary_parts.append(f"q14–q16={len(reputational_positive)} ({', '.join(reputational_positive)})")
     topic_signal_summary = (
         "; ".join(topic_signal_summary_parts)
         + " — excluded from harmful_count"
@@ -745,8 +743,7 @@ def _describe_calibration_path(
             )
         elif harmful_count >= 3 or raw_score >= 0.85:
             rules_applied.append(
-                f"harm_escalation: {harmful_count} signals, score={raw_score:.2f} "
-                f"-> CLEARLY_HARMFUL, floor 0.85"
+                f"harm_escalation: {harmful_count} signals, score={raw_score:.2f} " f"-> CLEARLY_HARMFUL, floor 0.85"
             )
         elif harmful_count > 0:
             rules_applied.append(f"harm_present: {harmful_count} signal(s) ({', '.join(positive_signals)})")

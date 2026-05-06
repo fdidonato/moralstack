@@ -134,9 +134,7 @@ def test_refusal_handler_emits_real_duration_ms():
     assert captured_duration is not None, "duration_ms missing from emit_llm_call kwargs"
     # 50ms sleep should yield ~50-200ms wall time on any reasonable runner;
     # bound generously to avoid flakiness.
-    assert captured_duration >= 40.0, (
-        f"duration_ms must reflect real LLM latency (>= 40ms with 50ms sleep stub); got {captured_duration}"
-    )
-    assert captured_duration < 5000.0, (
-        f"duration_ms suspiciously high (sanity bound 5s); got {captured_duration}"
-    )
+    assert (
+        captured_duration >= 40.0
+    ), f"duration_ms must reflect real LLM latency (>= 40ms with 50ms sleep stub); got {captured_duration}"
+    assert captured_duration < 5000.0, f"duration_ms suspiciously high (sanity bound 5s); got {captured_duration}"

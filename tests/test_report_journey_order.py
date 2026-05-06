@@ -95,19 +95,31 @@ class TestCycle0OrderingIsByStartedAt:
         # emits sequence_in_cycle=6 (because it inherits SEQ_REFUSAL_OR_FINALIZE
         # which is designed for cycle>=1 deliberation).
         assert _seed_call(
-            run_id=run_id, request_id=request_id, cycle=0,
-            sequence_in_cycle=None, started_at=1000,
-            module="constitution_retriever", phase="constitution_retrieval",
+            run_id=run_id,
+            request_id=request_id,
+            cycle=0,
+            sequence_in_cycle=None,
+            started_at=1000,
+            module="constitution_retriever",
+            phase="constitution_retrieval",
         )
         assert _seed_call(
-            run_id=run_id, request_id=request_id, cycle=0,
-            sequence_in_cycle=None, started_at=1500,
-            module="risk_estimator", phase="risk_assessment",
+            run_id=run_id,
+            request_id=request_id,
+            cycle=0,
+            sequence_in_cycle=None,
+            started_at=1500,
+            module="risk_estimator",
+            phase="risk_assessment",
         )
         assert _seed_call(
-            run_id=run_id, request_id=request_id, cycle=0,
-            sequence_in_cycle=6, started_at=5000,  # LATER in wall-clock!
-            module="orchestration", phase="refusal",
+            run_id=run_id,
+            request_id=request_id,
+            cycle=0,
+            sequence_in_cycle=6,
+            started_at=5000,  # LATER in wall-clock!
+            module="orchestration",
+            phase="refusal",
         )
 
         report = request_report_from_db(run_id, request_id)
@@ -122,12 +134,12 @@ class TestCycle0OrderingIsByStartedAt:
         constitution_index = next(i for i, t in enumerate(phase_types_in_order) if "constitution" in t)
         risk_index = next(i for i, t in enumerate(phase_types_in_order) if "risk" in t)
 
-        assert constitution_index < refusal_index, (
-            f"constitution must precede refusal (started_at 1000 < 5000); got {phase_types_in_order}"
-        )
-        assert risk_index < refusal_index, (
-            f"risk_estimator must precede refusal (started_at 1500 < 5000); got {phase_types_in_order}"
-        )
+        assert (
+            constitution_index < refusal_index
+        ), f"constitution must precede refusal (started_at 1000 < 5000); got {phase_types_in_order}"
+        assert (
+            risk_index < refusal_index
+        ), f"risk_estimator must precede refusal (started_at 1500 < 5000); got {phase_types_in_order}"
         # Constitution started at 1000, risk at 1500 → constitution first.
         assert constitution_index < risk_index
 
@@ -147,19 +159,31 @@ class TestCycleGE1OrderingIsBySequenceInCycle:
         # critic has seq=2, simulator has seq=3 → critic must come first
         # regardless of which started slightly earlier in wall-clock.
         assert _seed_call(
-            run_id=run_id, request_id=request_id, cycle=1,
-            sequence_in_cycle=3, started_at=2000,  # simulator started slightly earlier
-            module="simulator", phase="simulate",
+            run_id=run_id,
+            request_id=request_id,
+            cycle=1,
+            sequence_in_cycle=3,
+            started_at=2000,  # simulator started slightly earlier
+            module="simulator",
+            phase="simulate",
         )
         assert _seed_call(
-            run_id=run_id, request_id=request_id, cycle=1,
-            sequence_in_cycle=2, started_at=2050,  # critic started slightly later
-            module="critic", phase="critique",
+            run_id=run_id,
+            request_id=request_id,
+            cycle=1,
+            sequence_in_cycle=2,
+            started_at=2050,  # critic started slightly later
+            module="critic",
+            phase="critique",
         )
         assert _seed_call(
-            run_id=run_id, request_id=request_id, cycle=1,
-            sequence_in_cycle=1, started_at=1900,
-            module="policy", phase="policy_generate",
+            run_id=run_id,
+            request_id=request_id,
+            cycle=1,
+            sequence_in_cycle=1,
+            started_at=1900,
+            module="policy",
+            phase="policy_generate",
         )
 
         report = request_report_from_db(run_id, request_id)
@@ -173,6 +197,5 @@ class TestCycleGE1OrderingIsBySequenceInCycle:
         simulator_index = next(i for i, t in enumerate(phase_types_in_order) if "simulat" in t)
 
         assert policy_index < critic_index < simulator_index, (
-            f"deliberation order must be policy→critic→simulator by sequence_in_cycle; "
-            f"got {phase_types_in_order}"
+            f"deliberation order must be policy→critic→simulator by sequence_in_cycle; " f"got {phase_types_in_order}"
         )

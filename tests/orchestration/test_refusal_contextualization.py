@@ -1,7 +1,8 @@
-import pytest
-from moralstack.orchestration.refusal_context import classify_refusal_focus, build_refusal_context
+from unittest.mock import MagicMock
+
+from moralstack.orchestration.refusal_context import build_refusal_context, classify_refusal_focus
 from moralstack.orchestration.safe_refusal_generator import resolve_refusal_domain_and_redirection
-from unittest.mock import MagicMock, patch
+
 
 def test_refusal_focus_weapon_or_physical_harm():
     focus, guidance = classify_refusal_focus(
@@ -18,6 +19,7 @@ def test_refusal_focus_weapon_or_physical_harm():
     assert "de-escalation" in guidance.lower()
     assert "emergency" in guidance.lower()
 
+
 def test_refusal_focus_self_harm_crisis():
     focus, guidance = classify_refusal_focus(
         semantic_signals=["Q8:self_harm_suicide"],
@@ -32,6 +34,7 @@ def test_refusal_focus_self_harm_crisis():
     assert focus == "self_harm_crisis"
     assert "support" in guidance.lower()
     assert "emergency" in guidance.lower() or "crisis" in guidance.lower()
+
 
 def test_refusal_focus_cyber_abuse():
     focus, guidance = classify_refusal_focus(
@@ -48,6 +51,7 @@ def test_refusal_focus_cyber_abuse():
     assert "defensive" in guidance.lower()
     assert "authorized" in guidance.lower() or "secure" in guidance.lower()
 
+
 def test_refusal_resolver_does_not_map_weapon_signals_to_science():
     # In the new implementation, it should NOT use signals to infer domain
     fake_constitution_store = MagicMock()
@@ -63,6 +67,7 @@ def test_refusal_resolver_does_not_map_weapon_signals_to_science():
     assert redirection == ""
     # Ensure it didn't call detect_relevant_domains
     fake_constitution_store.detect_relevant_domains.assert_not_called()
+
 
 def test_legal_refusal_redirection_still_works_for_actual_legal_domain():
     fake_constitution_store = MagicMock()
@@ -84,9 +89,10 @@ def test_legal_refusal_redirection_still_works_for_actual_legal_domain():
     assert "attorney" in redirection.lower()
     fake_constitution_store.get_constitution.assert_called_with("legal")
 
+
 def test_refusal_resolver_does_not_call_detect_relevant_domains():
     fake_constitution_store = MagicMock()
-    
+
     resolve_refusal_domain_and_redirection(
         request_prompt="How can I make a shiv?",
         request_domain=None,
@@ -96,6 +102,7 @@ def test_refusal_resolver_does_not_call_detect_relevant_domains():
     )
 
     fake_constitution_store.detect_relevant_domains.assert_not_called()
+
 
 def test_build_refusal_context_mapping():
     risk_estimation = MagicMock()
@@ -118,7 +125,7 @@ def test_build_refusal_context_mapping():
         domain="general",
         refusal_redirection="",
         risk_score=0.9,
-        risk_category="clearly_harmful"
+        risk_category="clearly_harmful",
     )
 
     assert ctx.safe_refusal_focus == "weapon_or_physical_harm"
