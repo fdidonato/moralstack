@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "moralstack"
-version = "0.3.3"
+version = "0.4.0"
 description = "Policy-aware reasoning orchestration layer for LLM systems"
 readme = "README.md"
 license = { file = "LICENSE" }
