@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Any, Literal, Union, cast
+from typing import Any, Literal, Union
 
 # =============================================================================
 # Protocols
@@ -445,7 +445,6 @@ class LLMPerspectiveEnsemble:
         response: str,
         perspectives: list[Perspective] | None = None,
         delib_context: Any = None,
-        context_mode: str = "full",
     ) -> EnsembleResult:
         """
         Valuta la risposta da tutte le prospettive.
@@ -480,11 +479,7 @@ class LLMPerspectiveEnsemble:
 
         # OPT-2: build shared system once (REQUEST+RESPONSE+common instructions)
         ctx = delib_context or DelibContext(user_prompt=request, draft_text_full=response)
-        shared_system = (
-            PERSPECTIVE_SYSTEM_PROMPT
-            + "\n\n"
-            + build_perspectives_system_prompt(ctx, cast(Literal["full", "thin"], context_mode))
-        )
+        shared_system = PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + build_perspectives_system_prompt(ctx)
 
         if self.config.parallel_evaluation:
             result = self._evaluate_parallel(active_perspectives, shared_system)
@@ -667,7 +662,7 @@ class LLMPerspectiveEnsemble:
             return None
 
         ctx = DelibContext(user_prompt=request, draft_text_full=response)
-        shared_system = PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + build_perspectives_system_prompt(ctx, "full")
+        shared_system = PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + build_perspectives_system_prompt(ctx)
         return self._evaluate_single_perspective(shared_system, perspective)
 
     def aggregate(

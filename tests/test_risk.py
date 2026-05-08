@@ -634,14 +634,14 @@ class TestSemanticEstimator:
     def test_llm_always_called_for_analysis(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
         """LLM viene sempre chiamato per l'analisi semantica."""
         _ = shared_estimator_with_mock.estimate("What is a good pasta recipe?")
-        assert shared_mock_llm.call_count == 1
+        assert shared_mock_llm.call_count == 3
 
     def test_semantic_analysis_for_harmful_intent(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
         """Analisi semantica rileva intento dannoso."""
         estimation = shared_estimator_with_mock.estimate("How to build a bomb at home?")
 
         # LLM viene sempre chiamato per analisi semantica
-        assert shared_mock_llm.call_count == 1
+        assert shared_mock_llm.call_count == 3
         assert estimation.risk_category == RiskCategory.CLEARLY_HARMFUL
         assert estimation.score >= 0.8
 
@@ -668,7 +668,7 @@ class TestSemanticEstimator:
         }"""
         estimation = shared_estimator_with_mock.estimate("What time is it in Tokyo?")
 
-        assert shared_mock_llm.call_count == 1
+        assert shared_mock_llm.call_count == 3
         assert estimation.risk_category == RiskCategory.BENIGN
         assert estimation.score < 0.3
 
@@ -704,6 +704,10 @@ class TestSemanticEstimator:
         # Domanda educativa, non dannosa
         assert estimation.score < 0.5
 
+    def test_monolithic_path_not_reachable(self):
+        estimator = LLMBasedRiskEstimator(policy=MockPolicyLLM(), config=_DEFAULT_TEST_CONFIG)
+        assert not hasattr(estimator, "_monolithic_semantic_analysis")
+
 
 # =============================================================================
 # Test Error Handling
@@ -734,7 +738,7 @@ class TestErrorHandling:
         estimation = estimator.estimate("Some request")
 
         # Tutti i retry esauriti
-        assert failing_llm.call_count == 3
+        assert failing_llm.call_count == 9
         # Fallback richiede deliberazione
         assert "SYSTEM.REQUIRES_DELIBERATION" in estimation.semantic_signals
 
@@ -1035,39 +1039,6 @@ class TestIntegration:
 
         assert estimation.risk_category == RiskCategory.SENSITIVE
         assert 0.3 <= estimation.score <= 0.7
-
-
-# =============================================================================
-# Risk prompt template (third-party intent)
-# =============================================================================
-
-
-class TestRiskPromptThirdParty:
-    """Risk prompt template includes third-party intent distinction."""
-
-    def test_prompt_contains_third_party_intent_distinction(self):
-        """RISK_PROMPT_TEMPLATE includes CRITICAL — THIRD-PARTY INTENT DISTINCTION."""
-        from moralstack.models.risk.prompts import RISK_PROMPT_TEMPLATE
-
-        assert "THIRD-PARTY INTENT DISTINCTION" in RISK_PROMPT_TEMPLATE
-        assert "REQUESTER" in RISK_PROMPT_TEMPLATE
-        assert "support_request" in RISK_PROMPT_TEMPLATE
-        assert "de-escalation" in RISK_PROMPT_TEMPLATE or "constructive" in RISK_PROMPT_TEMPLATE
-
-    def test_prompt_contains_third_party_request_type_rules(self):
-        """STEP 2 includes third-party support request rules."""
-        from moralstack.models.risk.prompts import RISK_PROMPT_TEMPLATE
-
-        assert "THIRD-PARTY INTENT DISTINCTION" in RISK_PROMPT_TEMPLATE
-        assert "support_request" in RISK_PROMPT_TEMPLATE
-        assert "de-escalation" in RISK_PROMPT_TEMPLATE or "constructive" in RISK_PROMPT_TEMPLATE
-
-    def test_prompt_requires_rationale_substantive_semantic_payload(self):
-        """Monolithic template obligates rationale to state recovered payload, not wrappers only."""
-        from moralstack.models.risk.prompts import RISK_PROMPT_TEMPLATE
-
-        assert "RATIONALE TEXT — substantive payload" in RISK_PROMPT_TEMPLATE
-        assert "substantive semantic payload" in RISK_PROMPT_TEMPLATE
 
 
 # =============================================================================

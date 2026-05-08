@@ -324,7 +324,6 @@ class LLMConstitutionalCritic:
         principles: list[Principle] | None = None,
         request_id: str = "",
         delib_context: Any = None,
-        context_mode: Literal["full", "thin"] = "full",
         previous_violations: str = "",
         previous_guidance: str = "",
     ) -> CriticReport:
@@ -363,7 +362,6 @@ class LLMConstitutionalCritic:
         prompt = build_critic_prompt(
             ctx,
             principles_text,
-            mode=context_mode,
             previous_violations=previous_violations,
             previous_guidance=previous_guidance,
         )
@@ -565,7 +563,6 @@ class LLMConstitutionalCritic:
         domain: str | None = None,
         request_id: str = "",
         delib_context: Any = None,
-        context_mode: Literal["full", "thin"] = "full",
         previous_violations: str = "",
         previous_guidance: str = "",
     ) -> CriticReport:
@@ -586,7 +583,6 @@ class LLMConstitutionalCritic:
             :param domain:
             :param previous_guidance:
             :param previous_violations:
-            :param context_mode:
             :param delib_context:
             :param request_id:
         """
@@ -609,7 +605,6 @@ class LLMConstitutionalCritic:
             principles=principles,
             request_id=request_id,
             delib_context=delib_context,
-            context_mode=context_mode,
             previous_violations=previous_violations,
             previous_guidance=previous_guidance,
         )

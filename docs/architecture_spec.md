@@ -239,17 +239,14 @@ def check_convergence(state: DeliberationState) -> bool:
 
 *[impl]* Convergence and decision logic live in `moralstack/orchestration/convergence_evaluator.py` (`ConvergenceEvaluator.check_convergence`, `determine_decision`). Loop invariants and structured logging remain in `moralstack/orchestration/convergence.py` (`enforce_convergence_invariants`, `log_convergence_event`). Aggregated guidance is built by `moralstack/orchestration/guidance_builder.py` (`build_aggregated_guidance(state, *, filter_marginal=True, telemetry=None)`). By default, marginal signals are dropped using state-only thresholds (critic, weighted perspective approval, hindsight score, semantic expected harm); when no substantive guidance remains, the string is empty and cycle-2 policy rewrite is skipped. `filter_marginal=False` preserves the legacy unfiltered aggregation. Observability: `AGGREGATED_GUIDANCE_EVALUATED` orchestration events.
 
-**Token Optimization (DelibContext, thin prompts)**:
+**Cycle Gating and Deliberation Context**:
 
 To reduce tokens and latency, the deliberative cycle supports:
 
-- **DelibContext** (`moralstack/models/delib_context.py`): shared context with `draft_summary_compact`, `key_points`,
-  `change_log`
+- **DelibContext** (`moralstack/models/delib_context.py`): shared context with full draft and `change_log`
 - **Context Builder** (`moralstack/pipeline/context_builder.py`): `build_context()`, `compute_delta()` (difflib)
-- **Thin prompts**: cycle 2+ = THIN (summary + delta) if `enable_thin_mode=True`; default `False` (FULL for all
-  cycles) to preserve revision context
 - **Gating**: `enable_hindsight_gating` is true by default (hindsight only in final cycle; opt-out for legacy). `enable_simulator_gating` (opt-in) skips simulator when safe.
-- **Trace**: optional fields `context_mode_by_module`, `modules_skipped` for reporting
+- **Trace**: optional field `modules_skipped` for reporting
 - **Policy rewrite model**: deliberative `rewrite()` at cycle 2+ may use `MORALSTACK_POLICY_REWRITE_MODEL` (when unset,
   same as `OPENAI_MODEL`) to reduce latency; initial `generate()` / speculative draft stays on the primary model.
 
@@ -306,7 +303,7 @@ class RiskEstimation:
     stated_personal_bias: bool = False            # *[impl]* intent framing / falsification (prompts.py)
     seeks_norm_circumvention: bool = False       # *[impl]* intent framing / falsification
     q13_protected_class_targeting: bool = False    # *[impl]* harm-topic signal q13 (protected-class differential treatment)
-    estimation_mode: str = ""                    # *[impl]* "" | "monolithic" | "parallel"
+    estimation_mode: str = ""                    # *[impl]* "" | "parallel"
 
 class RiskCategory(Enum):
     BENIGN = "benign"
@@ -335,8 +332,8 @@ from environment variables (`MORALSTACK_RISK_*`);
 see [modules/risk_estimator.md](modules/risk_estimator.md#environment-variables).
 
 *[impl]* In `moralstack` the protocol uses `estimate(prompt: str)`. The implementation is LLM-based (structured prompts
-in `models/risk/prompts.py`): either a **monolithic** judge JSON or **three parallel mini-estimators** (intent, harm signals
-q1–q17 + `domain_sensitivity`, operational risk) when `use_parallel_estimators` is enabled; merge and calibration live in
+in `models/risk/prompts.py`) and uses **three parallel mini-estimators** (intent, harm signals q1–q17 + `domain_sensitivity`,
+operational risk); merge and calibration live in
 `calibration.py`. **Q17** (`minor_exploitation`) extends the harm scanner for grooming or contact targeting minors;
 auxiliary fields such as `stated_personal_bias`, `seeks_norm_circumvention`, and **q13** support coherence and
 falsification rules on the intent classifier.

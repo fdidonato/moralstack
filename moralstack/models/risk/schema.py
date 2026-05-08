@@ -61,7 +61,7 @@ class RiskEstimation:
     used_fallback_parse: bool = False  # True when using fallback/default (no LLM)
     detected_language: str = ""  # ISO 639-1 (en, it, es) from user request; for refusal
     detected_domain: str | None = None  # Domain from _detect_domain() in risk estimator
-    estimation_mode: str = ""  # "parallel" (3 mini-estimators) | "monolithic" | "" (fallback/no LLM)
+    estimation_mode: str = ""  # "parallel" | "" (fallback/no LLM)
 
     # ── Semantic flags (LLM-judged, language-agnostic) ─────────────────────
     # Surfaced from the intent estimator's EXECUTION-OF-STATED-INTENT framing
@@ -165,9 +165,7 @@ class RiskEstimatorConfig:
     fallback_confidence: float = 0.3  # Bassa confidenza senza LLM
     require_deliberation_on_fallback: bool = True  # Sempre deliberare senza LLM
 
-    # Parallel mini-estimator strategy (3 focused LLM calls instead of 1 monolithic).
-    # Default False for backward compatibility; set True to enable parallel mode.
-    use_parallel_estimators: bool = False
+    # Focused mini-estimator strategy (3 focused LLM calls).
     intent_model: str = "gpt-4o"
     signals_model: str = "gpt-4o"
     operational_model: str = "gpt-4o"

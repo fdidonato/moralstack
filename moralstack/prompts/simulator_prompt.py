@@ -1,17 +1,15 @@
 """
-Simulator prompt builder - FULL and THIN mode for token reduction.
+Simulator prompt builder.
 
 Generates potential consequences for an AI response.
 """
 
 from __future__ import annotations
 
-from typing import Literal
-
 from moralstack.models.delib_context import DelibContext
-from moralstack.prompts._common import OUTPUT_JSON_ONLY, build_thin_context_sections
+from moralstack.prompts._common import OUTPUT_JSON_ONLY
 
-# JSON skeleton (shared across FULL / THIN)
+# JSON skeleton
 SIMULATOR_SCHEMA_SKELETON = """{{
   "consequences": [
     {{
@@ -172,85 +170,9 @@ DOMAIN-SPECIFIC GUIDANCE:
 """
 
 
-# THIN template
-SIMULATOR_THIN_TEMPLATE = (
-    """
-Generate {num_scenarios} potential consequences for this AI response.
-
-REQUEST:
-{request}
-
-RESPONSE SUMMARY (compact):
-{response_summary}
-
-KEY POINTS:
-{key_points}
-
-RISK CONTEXT:
-{risk_signals}
-{change_log_section}
-
-Requirements:
-
-- Generate exactly {num_scenarios} consequences.
-- Return exactly {num_scenarios} objects inside "consequences".
-
-- Include a balanced mix:
-  - at least one positive outcome (scenario_type: positive_outcome)
-  - at least one risk or harm scenario.
-
-- Do not focus only on harms; consider both risks and benefits.
-
-Text constraints:
-
-- consequence.text:
-  - max 15 words (do not exceed)
-  - use short noun phrases
-  - no explanations
-
-Stakeholders:
-
-- affected_stakeholders:
-  - max 3 short strings
-
-Fields required for each consequence:
-
-- likelihood
-- scenario_type
-- outcome_valence
-- affected_stakeholders
-- harm_type
-- harm_severity
-- harm_scope
-- reversibility
-
-Choose harm_type based on REQUEST topic using this mapping:
-
-"""
-    + HARM_TYPE_MAPPING_RULE
-    + """
-
-Minimal schema skeleton:
-
-"""
-    + SIMULATOR_SCHEMA_SKELETON
-    + """
-
-"""
-    + SIMULATOR_ENUMS
-    + """
-
-"""
-    + OUTPUT_JSON_ONLY
-    + """
-"""
-)
-
-
 def build_simulator_prompt(
     context: DelibContext,
     num_scenarios: int = 3,
-    mode: Literal["full", "thin"] = "full",
 ) -> str:
     """
     Build prompt for the consequence simulator.
@@ -258,44 +180,29 @@ def build_simulator_prompt(
     Args:
         context: DelibContext with request, draft, and risk signals
         num_scenarios: number of consequences to generate
-        mode: "full" = full draft, "thin" = summary + key_points + delta
-
     Returns:
         Prompt string for the LLM
     """
 
     request = context.user_prompt or ""
 
-    if mode == "full":
-        response = context.draft_text_full or ""
-        domain = (
-            getattr(context, "domain_overlay", None)
-            or getattr(context, "domain", None)
-            or getattr(context, "detected_domain", "general")
-        )
-        domain_str = domain if isinstance(domain, str) else "general"
-        domain_guidance = getattr(context, "simulator_domain_guidance", "") or DOMAIN_GUIDANCE.get(
-            domain_str.lower(), DEFAULT_DOMAIN_GUIDANCE
-        )
-        risk_signals = context.get_risk_signals_str() or "none"
+    response = context.draft_text_full or ""
+    domain = (
+        getattr(context, "domain_overlay", None)
+        or getattr(context, "domain", None)
+        or getattr(context, "detected_domain", "general")
+    )
+    domain_str = domain if isinstance(domain, str) else "general"
+    domain_guidance = getattr(context, "simulator_domain_guidance", "") or DOMAIN_GUIDANCE.get(
+        domain_str.lower(), DEFAULT_DOMAIN_GUIDANCE
+    )
+    risk_signals = context.get_risk_signals_str() or "none"
 
-        return SIMULATOR_FULL_TEMPLATE.format(
-            num_scenarios=num_scenarios,
-            request=request,
-            response=response,
-            risk_signals=risk_signals,
-            domain=domain_str,
-            domain_guidance=domain_guidance,
-        )
-
-    # THIN mode
-    sections = build_thin_context_sections(context)
-
-    return SIMULATOR_THIN_TEMPLATE.format(
+    return SIMULATOR_FULL_TEMPLATE.format(
         num_scenarios=num_scenarios,
         request=request,
-        response_summary=sections["response_summary"],
-        key_points=sections["key_points"],
-        risk_signals=sections["risk_signals"],
-        change_log_section=sections["change_log_section"],
+        response=response,
+        risk_signals=risk_signals,
+        domain=domain_str,
+        domain_guidance=domain_guidance,
     )

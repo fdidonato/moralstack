@@ -24,7 +24,7 @@ def test_build_critic_prompt_full_includes_risk_assessment():
         requested_instructions=True,
     )
 
-    prompt = build_critic_prompt(ctx, principles="P1: Test principle", mode="full")
+    prompt = build_critic_prompt(ctx, principles="P1: Test principle")
 
     assert "RISK ASSESSMENT:" in prompt
     assert "risk_score=" in prompt
@@ -34,27 +34,3 @@ def test_build_critic_prompt_full_includes_risk_assessment():
     assert "misuse_plausibility=HIGH" in prompt
     assert "intent_to_harm=true" in prompt
     assert "requested_instructions=true" in prompt
-
-
-def test_build_critic_prompt_thin_uses_risk_signals():
-    """THIN mode uses risk_signals from DelibContext."""
-    ctx = DelibContext(
-        user_prompt="User question",
-        draft_text_full="Draft answer.",
-        draft_summary_compact="Summary.",
-        key_points=["Point A"],
-        risk_score=0.7,
-        risk_category="SENSITIVE",
-        operational_risk="LOW",
-        actionability_risk="HIGH",
-        intent_operational=True,
-        risk_policy_action="DENY",
-    )
-
-    prompt = build_critic_prompt(ctx, principles="P1: Test principle", mode="thin")
-
-    # RISK CONTEXT block is present and includes risk_signals
-    assert "RISK CONTEXT:" in prompt
-    assert "risk_score=" in prompt
-    assert "SENSITIVE" in prompt
-    assert "risk_policy_action=DENY" in prompt

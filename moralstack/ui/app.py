@@ -225,7 +225,6 @@ def _build_final_decision_card(traces: list[dict[str, Any]]) -> dict[str, Any] |
         "why_not_normal_complete": td.get("why_not_normal_complete"),
         "overlay_applied": td.get("overlay_applied"),
         "modules_skipped": td.get("modules_skipped") or [],
-        "context_mode_by_module": td.get("context_mode_by_module") or {},
         "duration_ms": td.get("duration_ms"),
         "policy_min_action": (td.get("policy_min_action") or "").strip(),
         "policy_max_action": (td.get("policy_max_action") or "").strip(),

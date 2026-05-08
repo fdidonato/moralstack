@@ -223,3 +223,13 @@ class TestLoadRiskEstimatorConfigFromEnv:
         assert cfg.intent_model == "gpt-4o"
         assert cfg.signals_model == "gpt-4o-mini"
         assert cfg.operational_model == "custom-op"
+
+    def test_model_slot_resolution_without_legacy_toggle_env(self, monkeypatch):
+        monkeypatch.setenv(ENV_MODEL, "risk-dedicated")
+        monkeypatch.delenv(ENV_INTENT_MODEL, raising=False)
+        monkeypatch.delenv(ENV_SIGNALS_MODEL, raising=False)
+        monkeypatch.delenv(ENV_OPERATIONAL_MODEL, raising=False)
+        cfg = load_risk_estimator_config_from_env()
+        assert cfg.intent_model == "risk-dedicated"
+        assert cfg.signals_model == "risk-dedicated"
+        assert cfg.operational_model == "risk-dedicated"

@@ -71,8 +71,8 @@ self_harm_language, requested_instructions, intent_to_harm, request_type, intent
 
 Additional parsed fields (intent / topic layer):
 
-- **`stated_personal_bias`**, **`seeks_norm_circumvention`** — boolean flags produced by the intent mini-estimator (or
-  monolithic prompt) for **execution-of-stated-intent** framing: first-person bias toward identifiable persons/groups and
+- **`stated_personal_bias`**, **`seeks_norm_circumvention`** — boolean flags produced by the intent mini-estimator for
+  **execution-of-stated-intent** framing: first-person bias toward identifiable persons/groups and
   acknowledgement of a norm the requester wants to work around. Downstream logic uses them to falsify incoherent
   `ethical_dilemma`-style classifications (see prompt coherence checks in `moralstack/models/risk/prompts.py`).
 - **`q13_protected_class_targeting`** — boolean mirror of harm-topic signal **q13** (differential treatment of
@@ -104,7 +104,7 @@ class RiskEstimation:
     requested_instructions: bool
     intent_to_harm: bool
     detected_language: str             # ISO 639-1 from judge (response language alignment)
-    estimation_mode: str               # "" | "monolithic" | "parallel"
+    estimation_mode: str               # "" | "parallel"
     stated_personal_bias: bool
     seeks_norm_circumvention: bool
     q13_protected_class_targeting: bool
@@ -139,23 +139,20 @@ RiskEstimation(
 
 ### Internal flow (semantic analysis)
 
-Semantic analysis in `LLMBasedRiskEstimator._semantic_analysis` chooses **monolithic** or **parallel** mode:
+Semantic analysis in `LLMBasedRiskEstimator._semantic_analysis` always runs in **parallel focused** mode:
 
-| Mode | Entry | Notes |
-|------|--------|--------|
-| Parallel | `RiskEstimatorConfig.use_parallel_estimators=True` (env: `MORALSTACK_RISK_PARALLEL_ESTIMATORS`) | Three concurrent LLM calls (`estimate_intent`, `estimate_signals`, `estimate_operational`), merged by `merge_mini_estimator_results()` in `calibration.py`, then the usual calibration / parse pipeline. `RiskEstimation.estimation_mode="parallel"`. |
-| Monolithic | Default or parallel failure fallback | Single structured judgment via `RISK_SYSTEM_PROMPT` / `RISK_PROMPT_TEMPLATE`. `estimation_mode="monolithic"`. |
+Three concurrent LLM calls (`estimate_intent`, `estimate_signals`, `estimate_operational`) are merged by
+`merge_mini_estimator_results()` in `calibration.py`, then parsed and calibrated. `RiskEstimation.estimation_mode="parallel"`.
 
 Shared steps:
 
-1. **Prompt building** — Monolithic: `_build_full_prompt(prompt)` (template + optional constitution snippet). Parallel:
-   dedicated templates in `prompts.py` (`INTENT_CONTEXT_*`, `HARM_SIGNAL_*`, `OPERATIONAL_RISK_*`). `GenerationConfig`
+1. **Prompt building** — dedicated templates in `prompts.py` (`INTENT_CONTEXT_*`, `HARM_SIGNAL_*`, `OPERATIONAL_RISK_*`). `GenerationConfig`
    requests OpenAI **`response_format={"type":"json_object"}`**. Per-mini model overrides use **pooled** `OpenAIPolicy`
    instances keyed by model id (`get_pooling_diagnostics()`).
-2. **LLM call(s) with retry** — Monolithic: `_call_llm_with_retry`. Parallel: each mini-call retries up to `max_retries`
+2. **LLM call(s) with retry** — each mini-call retries up to `max_retries`
    independently; observable persistence actions include `estimate_intent`, `estimate_signals`, `estimate_operational`.
    Responses carry **`parse_contract`** metadata where persisted.
-3. **Parsing / calibration** — Merged JSON (parallel) or single JSON (monolithic) flows through `parse_risk_dict` /
+3. **Parsing / calibration** — Merged JSON flows through `parse_risk_dict` /
    calibration helpers; output remains a `RiskParseResult`-compatible structure before crisis mapping.
 4. **Crisis post-processing** — `_post_process_crisis(parsed)` (help-seeking / crisis clamp).
 5. **Mapping** — `_to_risk_estimation(...)` fills `RiskEstimation`, including `stated_personal_bias`,
@@ -177,7 +174,7 @@ Templates live in `moralstack/models/risk/prompts.py`. Engineering constraints (
 
 **Rationale field — substantive semantic payload**
 
-The monolithic judge and the **intent** and **operational** mini-estimators each produce a `rationale` string in JSON.
+The **intent** and **operational** mini-estimators each produce a `rationale` string in JSON.
 In **parallel** mode, `calibration.merge_mini_estimator_results()` merges intent and operational rationales into a
 single `RiskEstimation.rationale` with `[intent]` / `[op_risk]` prefixes when both are present.
 
@@ -200,8 +197,7 @@ The **harm-signal** mini-estimator does **not** emit `rationale`; only structure
 
 **Harm topic questionnaire (q1–q17)** — yes/no topic presence for calibration (not intent by itself). q13 is
 **protected-class targeting**: differential treatment, exclusion, filtering, or selection of identifiable people or
-groups based on characteristics commonly protected by anti-discrimination norms. Self-harm branch still uses **Q8a /
-Q8b** sub-signals in the monolithic template when `q8_self_harm_suicide=yes`.
+groups based on characteristics commonly protected by anti-discrimination norms.
 
 **Mini-estimator roles**
 
@@ -211,14 +207,11 @@ Q8b** sub-signals in the monolithic template when `q8_self_harm_suicide=yes`.
 | Signals | Harm signal detector | **q1–q17**, `domain_sensitivity` only (no operational scoring) |
 | Operational | Operational risk assessor | `operational_risk`, `risk_score`, `misuse_plausibility`, `actionability_risk`, `risk_policy_action`, rationale |
 
-The **monolithic** template combines all of the above into one schema (same fields, single JSON).
-
 ### Configuration
 
 `RiskEstimatorConfig` (in `moralstack/models/risk/schema.py`) controls LLM settings. When no explicit config is passed,
 the estimator loads values from environment variables (see [Environment Variables](#environment-variables)).
 
-- **`use_parallel_estimators`** — toggles parallel triple-call path (default `False`).
 - **Per-mini models** — `intent_model`, `signals_model`, `operational_model` (defaults `gpt-4o`; overridden only when
   different from the estimator’s primary policy model so extra `OpenAIPolicy` instances are created).
 - **max_tokens**: 512 (configurable) — budget large enough for rationale plus q1–q17 and governance fields. The API
@@ -257,18 +250,11 @@ configuration is the single source of configuration — no CLI or code path over
   otherwise `gpt-4o`. When a mini-call's resolved model id differs from the estimator's primary policy model, a dedicated
   pooled `OpenAIPolicy` is used for that call.
 
-#### MORALSTACK_RISK_PARALLEL_ESTIMATORS
-
-- **Default**: `false`
-- **Tipo**: bool (`true`/`false`, `1`/`0`, `yes`/`no`)
-- **Significato**: Enables three parallel LLM calls (intent, harm signals, operational risk) instead of one monolithic judge JSON.
-- **Effetto**: Higher parallelism and latency trade-offs (three calls vs one); see [Internal flow](#internal-flow-semantic-analysis).
-
 #### MORALSTACK_RISK_INTENT_MODEL
 
 - **Default**: inherits `MORALSTACK_RISK_MODEL` if set, else `OPENAI_MODEL`, else `gpt-4o`
 - **Tipo**: string (OpenAI model id)
-- **Significato**: Model for the **intent / framing** mini-estimator (`estimate_intent`). Used only when parallel estimators are enabled and the id differs from the estimator’s primary policy model.
+- **Significato**: Model for the **intent / framing** mini-estimator (`estimate_intent`). Used when the id differs from the estimator’s primary policy model.
 
 #### MORALSTACK_RISK_SIGNALS_MODEL
 

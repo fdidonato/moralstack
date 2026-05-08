@@ -1,5 +1,5 @@
 """
-Context Builder - Costruisce DelibContext per thin prompts e delta evaluation.
+Context Builder - Costruisce DelibContext e delta evaluation.
 
 Summarization deterministica (no LLM) per ridurre costi.
 Caching opzionale con chiave (request_id, draft_hash).
@@ -8,24 +8,11 @@ Caching opzionale con chiave (request_id, draft_hash).
 from __future__ import annotations
 
 import difflib
-import re
 from typing import Any
 
 from moralstack.models.delib_context import DelibContext
 
-# Limite token stimato per summary (~4 chars/token)
-SUMMARY_MAX_CHARS = 480  # ~120 token
-KEY_POINTS_MAX = 5
 DELTA_MAX_BULLETS = 8
-
-
-def _extract_sentences(text: str) -> list[str]:
-    """Estrae frasi da testo (split su . ! ?)."""
-    if not text or not text.strip():
-        return []
-    # Split su punteggiatura frase
-    parts = re.split(r"[.!?]+", text.strip())
-    return [p.strip() for p in parts if p.strip()]
 
 
 def _truncate_to_chars(text: str, max_chars: int) -> str:
@@ -34,37 +21,6 @@ def _truncate_to_chars(text: str, max_chars: int) -> str:
         return text or ""
     truncated = text[: max_chars + 1].rsplit(maxsplit=1)[0]
     return truncated if truncated else text[:max_chars]
-
-
-def _make_summary_compact(draft_text: str) -> str:
-    """
-    Summary deterministico del draft (~120 token).
-    Prime frasi fino a SUMMARY_MAX_CHARS.
-    """
-    if not draft_text or not draft_text.strip():
-        return ""
-    sentences = _extract_sentences(draft_text)
-    if not sentences:
-        return _truncate_to_chars(draft_text.strip(), SUMMARY_MAX_CHARS)
-    result: list[str] = []
-    total = 0
-    for s in sentences:
-        if total + len(s) + 2 > SUMMARY_MAX_CHARS:
-            break
-        result.append(s)
-        total += len(s) + 2
-    return ". ".join(result) if result else _truncate_to_chars(draft_text.strip(), SUMMARY_MAX_CHARS)
-
-
-def _extract_key_points(draft_text: str) -> list[str]:
-    """
-    Estrae key points come bullet (prime frasi significative).
-    Deterministico, no LLM.
-    """
-    sentences = _extract_sentences(draft_text)
-    # Filtra frasi troppo corte (< 10 chars) e prendi le prime N
-    meaningful = [s for s in sentences if len(s) >= 10][:KEY_POINTS_MAX]
-    return meaningful
 
 
 def compute_delta(prev_text: str, new_text: str) -> list[str]:
@@ -146,8 +102,6 @@ def build_context(
     ctx.user_prompt = user_prompt or ""
     ctx.draft_text_full = draft_text or ""
     ctx.draft_id = f"cycle_{cycle}"
-    ctx.draft_summary_compact = _make_summary_compact(draft_text or "")
-    ctx.key_points = _extract_key_points(draft_text or "")
     ctx.domain_overlay = (domain or "").strip()
     if not ctx.domain_overlay and risk_result is not None:
         detected = getattr(risk_result, "detected_domain", None)

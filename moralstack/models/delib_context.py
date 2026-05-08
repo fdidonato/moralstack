@@ -1,8 +1,7 @@
 """
 DelibContext - Rappresentazione compatta e condivisa del contesto deliberativo.
 
-Usato per ridurre token e latenza: costruito una volta per ciclo,
-fornisce sia draft completo che summary/delta per thin prompts.
+Usato per ridurre token e latenza: costruito una volta per ciclo.
 """
 
 from __future__ import annotations
@@ -27,8 +26,6 @@ class DelibContext:
         actionability_risk: LOW | MEDIUM | HIGH
         draft_id: Identificatore versione draft (es. cycle number)
         draft_text_full: Testo completo del draft (sempre disponibile)
-        draft_summary_compact: Summary <= ~120 token (per thin mode)
-        key_points: Punti chiave estratti (bullet claims)
         safety_caveats_present: True se draft contiene caveat espliciti
         citations_or_disclaimer_present: True se disclaimer/citazioni presenti
         change_log: Per cycle>1, lista modifiche rispetto a draft precedente
@@ -50,8 +47,6 @@ class DelibContext:
     requested_instructions: bool = False
     draft_id: str = ""
     draft_text_full: str = ""
-    draft_summary_compact: str = ""
-    key_points: list[str] = field(default_factory=list)
     safety_caveats_present: bool = False
     citations_or_disclaimer_present: bool = False
     change_log: list[str] = field(default_factory=list)
@@ -61,7 +56,7 @@ class DelibContext:
     simulator_domain_guidance: str = ""
 
     def get_risk_signals_str(self) -> str:
-        """Compact string of risk signals for thin prompts."""
+        """Compact string of risk signals for prompts."""
         parts: list[str] = []
         if self.risk_score >= 0:
             parts.append(f"risk_score={self.risk_score:.2f}")

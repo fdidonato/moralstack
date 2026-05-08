@@ -599,12 +599,6 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
 - **Type**: float (0–1)
 - **Description**: Fraction of timeout_ms at which soft timeout warnings are triggered.
 
-#### MORALSTACK_ORCHESTRATOR_ENABLE_THIN_MODE
-
-- **Default**: `false`
-- **Type**: bool
-- **Description**: When true, use thin (truncated) drafts to reduce token usage.
-
 #### MORALSTACK_ORCHESTRATOR_ENABLE_SIMULATOR_GATING
 
 - **Default**: `false`

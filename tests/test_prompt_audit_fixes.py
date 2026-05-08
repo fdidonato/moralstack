@@ -37,7 +37,7 @@ class TestPerspectivesFullModeRiskContext:
             risk_category="clearly_harmful",
             intent_to_harm=True,
         )
-        out = build_perspectives_system_prompt(ctx, mode="full")
+        out = build_perspectives_system_prompt(ctx)
         assert "RISK CONTEXT:" in out
         assert "risk_score=0.60" in out
         assert "risk_category=clearly_harmful" in out
@@ -55,14 +55,14 @@ class TestSimulatorDomainGuidance:
     def test_cybersecurity_domain_gets_cybersecurity_guidance(self):
         ctx = DelibContext(user_prompt="Request", draft_text_full="Response")
         ctx.domain = "cybersecurity"
-        prompt = build_simulator_prompt(ctx, num_scenarios=3, mode="full")
+        prompt = build_simulator_prompt(ctx, num_scenarios=3)
         assert "CYBERSECURITY" in prompt
         assert "DEFENSIVE intent" in prompt
         assert "OFFENSIVE intent" in prompt
 
     def test_general_domain_gets_default_guidance(self):
         ctx = DelibContext(user_prompt="Request", draft_text_full="Response")
-        prompt = build_simulator_prompt(ctx, num_scenarios=3, mode="full")
+        prompt = build_simulator_prompt(ctx, num_scenarios=3)
         assert DEFAULT_DOMAIN_GUIDANCE in prompt
         assert "common security mistakes" not in prompt
 

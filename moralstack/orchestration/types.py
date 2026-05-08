@@ -500,7 +500,6 @@ class OrchestratorConfig:
     skip_optional_modules_threshold: float = 0.95
     soft_timeout_threshold: float = 0.90
     parallel_module_calls: bool = True
-    enable_thin_mode: bool = False  # Disabled: full draft preserves all revision context for critic/perspectives
     enable_simulator_gating: bool = False  # Cycle 2+ skip simulator when safe (opt-in to preserve behavior)
     enable_hindsight_gating: bool = True  # Default True: skip hindsight except in final cycle; set False to run every cycle
     simulator_gate_semantic_harm_threshold: float = 0.4  # Run if prev sim semantic_expected_harm >= this

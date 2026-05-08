@@ -171,12 +171,9 @@ def test_decision_trace_to_dict_includes_sim_fields():
     }
 
 
-def test_decision_trace_to_dict_includes_token_optimization_fields():
-    """to_dict() includes context_mode_by_module and modules_skipped
-    (optional token optimization)."""
+def test_decision_trace_to_dict_includes_modules_skipped():
+    """to_dict() includes modules_skipped (optional gating observability)."""
     trace = DecisionTrace(request_id="req-token")
-    trace.context_mode_by_module = {"critic": "thin", "simulator": "full"}
     trace.modules_skipped = {"simulator": "carried_forward"}
     d = trace.to_dict()
-    assert d["context_mode_by_module"] == {"critic": "thin", "simulator": "full"}
     assert d["modules_skipped"] == {"simulator": "carried_forward"}

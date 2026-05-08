@@ -40,7 +40,6 @@ ENV_MODEL = "MORALSTACK_RISK_MODEL"
 ENV_INTENT_MODEL = "MORALSTACK_RISK_INTENT_MODEL"
 ENV_SIGNALS_MODEL = "MORALSTACK_RISK_SIGNALS_MODEL"
 ENV_OPERATIONAL_MODEL = "MORALSTACK_RISK_OPERATIONAL_MODEL"
-ENV_PARALLEL_ESTIMATORS = "MORALSTACK_RISK_PARALLEL_ESTIMATORS"
 
 _DEFAULT_MODEL_ID = "gpt-4o"
 
@@ -82,7 +81,6 @@ def load_risk_estimator_config_from_env() -> RiskEstimatorConfig:
     fallback_score = get_env_float(ENV_FALLBACK_SCORE, 0.5, 0.0, 1.0)
     fallback_confidence = get_env_float(ENV_FALLBACK_CONFIDENCE, 0.3, 0.0, 1.0)
     require_delib = get_env_bool(ENV_REQUIRE_DELIBERATION_ON_FALLBACK, True)
-    use_parallel = get_env_bool(ENV_PARALLEL_ESTIMATORS, False)
     mini_base = resolve_risk_base_model_from_env()
     intent_model = resolve_parallel_mini_model_slot(ENV_INTENT_MODEL, mini_base)
     signals_model = resolve_parallel_mini_model_slot(ENV_SIGNALS_MODEL, mini_base)
@@ -96,7 +94,6 @@ def load_risk_estimator_config_from_env() -> RiskEstimatorConfig:
         fallback_risk_score=fallback_score,
         fallback_confidence=fallback_confidence,
         require_deliberation_on_fallback=require_delib,
-        use_parallel_estimators=use_parallel,
         intent_model=intent_model,
         signals_model=signals_model,
         operational_model=operational_model,

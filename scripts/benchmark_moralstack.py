@@ -1708,19 +1708,15 @@ def get_benchmark_models_config(
     MoralStack modules use env vars (MORALSTACK_*_MODEL); if unset, fall back to
     moralstack_policy_model.
     Includes `policy_rewrite` from `MORALSTACK_POLICY_REWRITE_MODEL` (or primary policy when unset).
-    When parallel mini-estimators are enabled, includes risk_intent, risk_signals,
-    risk_operational keys.
+    Includes risk_intent, risk_signals, risk_operational keys.
     """
     policy_fallback = moralstack_policy_model or baseline_model
-    use_parallel = False
     intent_m = signals_m = operational_m = None
     try:
         from moralstack.models.risk.config_loader import (
             ENV_INTENT_MODEL,
             ENV_OPERATIONAL_MODEL,
-            ENV_PARALLEL_ESTIMATORS,
             ENV_SIGNALS_MODEL,
-            get_risk_env_bool,
             get_risk_env_str,
         )
         from moralstack.models.risk.config_loader import ENV_MODEL as RISK_ENV_MODEL
@@ -1744,11 +1740,9 @@ def get_benchmark_models_config(
         simulator_m = get_simulator_env_str(SIMULATOR_ENV_MODEL, "") or policy_fallback
         hindsight_m = get_hindsight_env_str(HINDSIGHT_ENV_MODEL, "") or policy_fallback
         perspectives_m = get_perspective_env_str(PERSPECTIVES_ENV_MODEL, "") or policy_fallback
-        use_parallel = get_risk_env_bool(ENV_PARALLEL_ESTIMATORS, False)
-        if use_parallel:
-            intent_m = get_risk_env_str(ENV_INTENT_MODEL, "") or risk_m
-            signals_m = get_risk_env_str(ENV_SIGNALS_MODEL, "") or risk_m
-            operational_m = get_risk_env_str(ENV_OPERATIONAL_MODEL, "") or risk_m
+        intent_m = get_risk_env_str(ENV_INTENT_MODEL, "") or risk_m
+        signals_m = get_risk_env_str(ENV_SIGNALS_MODEL, "") or risk_m
+        operational_m = get_risk_env_str(ENV_OPERATIONAL_MODEL, "") or risk_m
     except ImportError:
         risk_m = critic_m = simulator_m = hindsight_m = perspectives_m = policy_fallback
 
@@ -1764,7 +1758,7 @@ def get_benchmark_models_config(
         "hindsight": hindsight_m,
         "perspectives": perspectives_m,
     }
-    if use_parallel and intent_m is not None:
+    if intent_m is not None:
         moralstack_cfg["risk_parallel"] = True
         moralstack_cfg["risk_intent"] = intent_m
         moralstack_cfg["risk_signals"] = signals_m

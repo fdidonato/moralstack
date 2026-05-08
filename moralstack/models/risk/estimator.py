@@ -19,10 +19,7 @@ from moralstack.observability.events import EVENT_LLM_CALL
 from moralstack.observability.events import make_envelope as _make_envelope
 from moralstack.observability.router import route as _obs_route
 from moralstack.orchestration.types import RiskEstimationError
-from moralstack.utils.json_utils import JSONParseError
 from moralstack.utils.llm_parse_contract import (
-    build_failed_parse_contract,
-    merge_parse_contract_into_summary,
     parse_dict_with_contract,
 )
 
@@ -49,15 +46,14 @@ from .config_loader import (
 )
 from .parse_result import RiskParseResult
 from .prompts import (
-    HARM_SIGNAL_PROMPT_TEMPLATE,
     HARM_SIGNAL_SYSTEM_PROMPT,
     INTENT_CONTEXT_PROMPT_TEMPLATE,
     INTENT_CONTEXT_SYSTEM_PROMPT,
     OPERATIONAL_RISK_PROMPT_TEMPLATE,
     OPERATIONAL_RISK_SYSTEM_PROMPT,
-    RISK_PROMPT_TEMPLATE,
-    RISK_SYSTEM_PROMPT,
 )
+from .signals.prompt_renderer import get_harm_signal_prompts
+from .signals.registry import registry as signal_registry
 from .schema import RiskEstimation, RiskEstimatorConfig
 from .utils import _intent_type_from_request_type
 
@@ -345,142 +341,6 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             _RISK_LOG.warning("principles retrieval failed, continuing without: %s", e)
             return "", None
 
-    def _build_full_prompt(self, prompt: str) -> tuple[str, str | None]:
-        """Build full prompt: base template + optional principles context. Returns (full_prompt, detected_domain)."""
-        context, domain = self._get_principles_context(prompt)
-        return RISK_PROMPT_TEMPLATE.format(request=prompt) + context, domain
-
-    def _persist_risk_llm_call(
-        self,
-        *,
-        started_at: int | None = None,
-        duration_ms: float,
-        prompt: str,
-        raw_response: str,
-        attempts: int,
-        parsed_summary_json: str | None = None,
-        error: str | None = None,
-        token_usage_json: str | None = None,
-    ) -> None:
-        """Persist LLM call for risk estimation. Logs debug on ImportError."""
-        risk_model = getattr(self.policy, "model", None) if self.policy else None
-        risk_model_str = str(risk_model) if risk_model is not None else None
-        try:
-            persist_llm_call(
-                cycle=0,
-                phase="risk_estimation",
-                module="risk_estimator",
-                action="estimate",
-                model=risk_model_str,
-                started_at=started_at,
-                duration_ms=duration_ms,
-                prompt=prompt,
-                system_prompt=RISK_SYSTEM_PROMPT,
-                raw_response=raw_response,
-                parsed_summary_json=parsed_summary_json,
-                attempts=attempts,
-                error=error,
-                token_usage_json=token_usage_json,
-            )
-        except Exception as e:
-            _RISK_LOG.debug("persist_llm_call failed: %s", e)
-
-    def _call_llm_with_retry(self, full_prompt: str, gen_config: Any) -> tuple[str, RiskParseResult]:
-        """
-        Call policy LLM with retry loop. Returns (raw_response, parsed) on first successful parse.
-
-        Structured JSON output is requested via GenerationConfig.response_format; tolerant extract_json
-        remains available inside parse_dict_with_contract for parse metadata only.
-
-        Raises RiskEstimationError if all retries fail (parse or generation error).
-        """
-        assert self.policy is not None, "policy must be set before calling _call_llm_with_retry"
-        raw_response = ""
-        for attempt in range(self.config.max_retries):
-            _tu_json: str | None = None
-            try:
-                start_gen = time.time()
-                result = self.policy.generate(
-                    prompt=full_prompt,
-                    system=RISK_SYSTEM_PROMPT,
-                    config=gen_config,
-                )
-                elapsed_ms = (time.time() - start_gen) * 1000
-                raw_response = result.text if hasattr(result, "text") else str(result)
-                # Capture token usage immediately after generate so it's available
-                # in both the success path and any subsequent except handler.
-                _tu_json = result.token_usage_json() if hasattr(result, "token_usage_json") else None
-                _RISK_LOG.info(
-                    "risk_estimator raw_output (troncato): %s",
-                    (raw_response or "")[:200],
-                    extra={"raw_snippet_len": min(200, len(raw_response or ""))},
-                )
-                data, p_contract = parse_dict_with_contract(raw_response, strict_json_requested=True)
-                parsed = parse_risk_dict(data)
-                summary = merge_parse_contract_into_summary(
-                    {
-                        "estimation_mode": "monolithic",
-                        "retry_count": attempt,
-                        "parse_attempts": attempt + 1,
-                    },
-                    p_contract,
-                )
-                self._persist_risk_llm_call(
-                    started_at=int(start_gen * 1000),
-                    duration_ms=elapsed_ms,
-                    prompt=full_prompt,
-                    raw_response=raw_response,
-                    attempts=attempt + 1,
-                    parsed_summary_json=summary,
-                    token_usage_json=_tu_json,
-                )
-                return raw_response, parsed
-            except JSONParseError as e:
-                _RISK_LOG.warning(
-                    "risk_estimator parse attempt %s/%s failed (JSONParseError): %s | raw_response (truncated): %s",
-                    attempt + 1,
-                    self.config.max_retries,
-                    str(e),
-                    (raw_response or "")[:500],
-                    exc_info=True,
-                )
-                fc = build_failed_parse_contract(strict_json_requested=True, message=str(e))
-                summary = merge_parse_contract_into_summary(
-                    {
-                        "estimation_mode": "monolithic",
-                        "retry_count": attempt,
-                        "parse_attempts": attempt + 1,
-                    },
-                    fc,
-                )
-                self._persist_risk_llm_call(
-                    started_at=int(start_gen * 1000),
-                    duration_ms=elapsed_ms,
-                    prompt=full_prompt,
-                    raw_response=raw_response,
-                    attempts=attempt + 1,
-                    parsed_summary_json=summary,
-                    error=str(e)[:1000],
-                    token_usage_json=_tu_json,
-                )
-                continue
-            except Exception as e:
-                _RISK_LOG.warning(
-                    "risk_estimator parse attempt %s/%s failed: %s | raw_response (truncated): %s",
-                    attempt + 1,
-                    self.config.max_retries,
-                    str(e),
-                    (raw_response or "")[:500],
-                    exc_info=True,
-                )
-                continue
-        _RISK_LOG.warning(
-            "risk_estimator fallback: parse/retry failed after %s attempts",
-            self.config.max_retries,
-            extra={"used_fallback_parse": True},
-        )
-        raise RiskEstimationError(f"Semantic analysis failed after {self.config.max_retries} attempts")
-
     def _post_process_crisis(self, parsed: RiskParseResult) -> tuple[
         float,
         RiskCategory,
@@ -654,7 +514,8 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             request=prompt,
             constitution_context=context,
         )
-        signal_prompt = HARM_SIGNAL_PROMPT_TEMPLATE.format(request=prompt)
+        _, harm_signal_user_template = get_harm_signal_prompts(signal_registry)
+        signal_prompt = harm_signal_user_template.format(request=prompt)
         operational_prompt = OPERATIONAL_RISK_PROMPT_TEMPLATE.format(request=prompt)
 
         _RISK_LOG.info(
@@ -903,85 +764,15 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             estimation_mode="parallel",
         )
 
-    def _monolithic_semantic_analysis(self, prompt: str) -> RiskEstimation:
-        """
-        Analisi semantica con singola chiamata LLM monolitica (fallback).
-
-        Il giudice semantico valuta:
-        - Intento della richiesta
-        - Potenziali conseguenze
-        - Contesto etico
-
-        Nessun keyword matching - solo comprensione del significato.
-        """
-        if self.policy is None:
-            raise RiskEstimationError("policy not set")
-        try:
-            gen_config = self._build_generation_config()
-            full_prompt, detected_domain = self._build_full_prompt(prompt)
-            raw_response, parsed = self._call_llm_with_retry(full_prompt, gen_config)
-        except RiskEstimationError as e:
-            return RiskEstimation.from_error(str(e))
-        except Exception as e:
-            return RiskEstimation.from_error(str(e))
-
-        _RISK_LOG.info(
-            "risk_estimator [mode=monolithic] parsed: score=%.2f category=%s "
-            "risk_policy_action=%s lang=%s request_type=%s "
-            "stated_personal_bias=%s seeks_norm_circumvention=%s q13=%s",
-            parsed.score,
-            getattr(parsed.category, "value", parsed.category),
-            getattr(parsed.risk_policy_action, "value", parsed.risk_policy_action),
-            parsed.detected_language,
-            parsed.request_type,
-            parsed.stated_personal_bias,
-            parsed.seeks_norm_circumvention,
-            parsed.q13_protected_class_targeting,
-            extra={
-                "estimation_mode": "monolithic",
-                "score": parsed.score,
-                "category": getattr(parsed.category, "value", str(parsed.category)),
-                "risk_policy_action": getattr(parsed.risk_policy_action, "value", parsed.risk_policy_action),
-                "stated_personal_bias": parsed.stated_personal_bias,
-                "seeks_norm_circumvention": parsed.seeks_norm_circumvention,
-                "q13_protected_class_targeting": parsed.q13_protected_class_targeting,
-            },
-        )
-        (
-            score,
-            category,
-            signals,
-            risk_policy_action,
-            intent_clarity,
-            misuse_plausibility,
-            actionability_risk,
-            request_type_final,
-        ) = self._post_process_crisis(parsed)
-        return self._to_risk_estimation(
-            parsed,
-            raw_response,
-            score,
-            category,
-            signals,
-            risk_policy_action,
-            intent_clarity,
-            misuse_plausibility,
-            actionability_risk,
-            request_type_final,
-            detected_domain=detected_domain,
-            estimation_mode="monolithic",
-        )
-
     def _semantic_analysis(self, prompt: str) -> RiskEstimation:
         """
-        Dispatch to parallel mini-analysis or monolithic fallback based on config.
+        Execute focused parallel mini-analysis.
         """
-        if self.config.use_parallel_estimators:
-            try:
-                return self._parallel_mini_analysis(prompt)
-            except Exception as e:
-                _RISK_LOG.warning("parallel mini-analysis failed, falling back to monolithic: %s", e)
-        return self._monolithic_semantic_analysis(prompt)
+        try:
+            return self._parallel_mini_analysis(prompt)
+        except Exception as e:
+            _RISK_LOG.warning("parallel mini-analysis failed, using safe fallback estimate: %s", e)
+            return RiskEstimation.from_error(str(e))
 
     def get_risk_level(self, estimation: RiskEstimation) -> Literal["low", "medium", "high"]:
         """
@@ -1139,7 +930,9 @@ def create_risk_estimator(
             fallback_risk_score=base.fallback_risk_score,
             fallback_confidence=base.fallback_confidence,
             require_deliberation_on_fallback=base.require_deliberation_on_fallback,
-            use_parallel_estimators=base.use_parallel_estimators,
+            intent_model=base.intent_model,
+            signals_model=base.signals_model,
+            operational_model=base.operational_model,
         )
     else:
         config = RiskEstimatorConfig(
@@ -1151,7 +944,9 @@ def create_risk_estimator(
             fallback_risk_score=config.fallback_risk_score,
             fallback_confidence=config.fallback_confidence,
             require_deliberation_on_fallback=config.require_deliberation_on_fallback,
-            use_parallel_estimators=config.use_parallel_estimators,
+            intent_model=config.intent_model,
+            signals_model=config.signals_model,
+            operational_model=config.operational_model,
         )
     return LLMBasedRiskEstimator(
         policy=policy,

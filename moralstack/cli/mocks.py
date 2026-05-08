@@ -2,7 +2,7 @@
 Mock modules for MoralStack CLI testing without API.
 """
 
-from typing import Any, Literal
+from typing import Any
 
 
 class MockPolicy:
@@ -86,7 +86,6 @@ class MockCritic:
         domain: str | None = None,
         request_id: str = "",
         delib_context: Any = None,
-        context_mode: Literal["full", "thin"] = "full",
         previous_violations: str = "",
         previous_guidance: str = "",
     ) -> Any:
@@ -97,7 +96,6 @@ class MockCritic:
             None,
             request_id=request_id,
             delib_context=delib_context,
-            context_mode=context_mode,
             previous_violations=previous_violations,
             previous_guidance=previous_guidance,
         )

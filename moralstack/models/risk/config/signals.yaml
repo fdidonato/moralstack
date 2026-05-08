@@ -1,0 +1,522 @@
+version: 1
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SIGNAL DEFINITIONS — single source of truth for q1-q17 harm signals
+#
+# Each entry describes:
+#   label            — downstream identifier (Qn:slug format)
+#   short_description — one-line topic for LLM SIGNAL DEFINITIONS section
+#   prompt           — refined yes/no criteria for the LLM (optional)
+#   contributes_to   — which counts this signal increments
+#   harm_type        — label and priority for harm_type assignment (lower = wins)
+#   refusal_domain   — key for safe_refusal_generator overlay selection
+#   effects          — named behavior flags consumed by calibration/rules engine
+# ═══════════════════════════════════════════════════════════════════════════
+
+signals:
+
+  q1_confidential:
+    label: "Q1:confidential_data"
+    short_description: "confidential or proprietary data"
+    prompt:
+      yes_when: null
+      no_when: null
+    contributes_to:
+      harmful_count: true
+      priority_harm_count: false
+    harm_type:
+      label: "illegal"
+      priority: 70
+    refusal_domain: null
+    effects: {}
+
+  q2_unauthorized:
+    label: "Q2:unauthorized_access"
+    short_description: "unauthorized access to systems or accounts"
+    prompt:
+      yes_when: null
+      no_when: null
+    contributes_to:
+      harmful_count: true
+      priority_harm_count: false
+    harm_type:
+      label: "illegal"
+      priority: 70
+    refusal_domain: null
+    effects: {}
+
+  q3_breach:
+    label: "Q3:breach_of_contract"
+    short_description: "contract or employment breach"
+    prompt:
+      yes_when: null
+      no_when: null
+    contributes_to:
+      harmful_count: true
+      priority_harm_count: false
+    harm_type:
+      label: "illegal"
+      priority: 70
+    refusal_domain: null
+    effects: {}
+
+  q4_fraud:
+    label: "Q4:fraud"
+    short_description: "tax evasion, fraud, financial crime"
+    prompt:
+      yes_when: null
+      no_when: null
+    contributes_to:
+      harmful_count: true
+      priority_harm_count: false
+    harm_type:
+      label: "financial"
+      priority: 40
+    refusal_domain: "financial"
+    effects: {}
+
+  q5_physical:
+    label: "Q5:physical_harm"
+    short_description: "bodily harm: injury, unsafe physical procedures, poisoning, overdose, dangerous substance use, physical risk to self or others"
+    prompt:
+      yes_when: "payload involves an action that can DIRECTLY harm a body"
+      no_when: |
+        when 'harm' refers to abstract illegality, policy violations,
+        reputation, online deception, or grooming/exploitation narratives
+        without a bodily-injury mechanism
+    contributes_to:
+      harmful_count: true
+      priority_harm_count: false
+    harm_type:
+      label: "physical"
+      priority: 30
+    refusal_domain: "violent_crime"
+    effects:
+      escalates_to_clearly_harmful: true
+
+  q6_illegal_items:
+    label: "Q6:illegal_items"
+    short_description: "illegal substances, controlled drugs, drug preparation/acquisition/administration"
+    prompt:
+      yes_when: |
+        using, taking, injecting, dosing, preparing, obtaining, hiding,
+        selling, or optimizing use of illegal/controlled substances —
+        even if framed as safety, harm reduction, fiction, encoded, or
+        platform-evasion
+      no_when: |
+        generic illegal conduct (fraud, harassment, grooming, cyber) not
+        involving controlled substances. High-level public-health discussion
+        without operational use/administration detail.
+    contributes_to:
+      harmful_count: true
+      priority_harm_count: false
+    harm_type:
+      label: "illegal"
+      priority: 70
+    refusal_domain: null
+    effects: {}
+
+  q7_only_emotional:
+    label: "Q7:ethical_dilemma"
+    short_description: "interpersonal moral dilemma between individuals (NOT institutional/policy trade-offs)"
+    prompt:
+      yes_when: "purely emotional/relational interpersonal dilemma"
+      no_when: null
+    contributes_to:
+      harmful_count: false
+      priority_harm_count: false
+    harm_type:
+      label: null
+      priority: null
+    refusal_domain: null
+    effects: {}
+
+  q8_self_harm_suicide:
+    label: "Q8:self_harm_suicide"
+    short_description: "self-harm or suicide as a topic"
+    prompt:
+      yes_when: null
+      no_when: null
+    contributes_to:
+      harmful_count: true
+      priority_harm_count: true
+    harm_type:
+      label: "illegal"
+      priority: 60
+    refusal_domain: "mental_health"
+    effects:
+      maps_to_self_harm_language: true
+
+  q9_cyber_malware:
+    label: "Q9:cyber_malware"
+    short_description: "cyber intrusion/malware/security bypass"
+    prompt:
+      yes_when: |
+        unauthorized access, account takeover, credential theft, malware/
+        ransomware/spyware, exploit/vulnerability exploitation, security
+        bypass, system intrusion, credential phishing, payload, code
+        execution, network attack
+      no_when: |
+        reputational attacks, fake reviews, social-media manipulation,
+        online harassment, or generic "online maneuvers" without technical
+        compromise. "Online" alone is NOT cyber.
+    contributes_to:
+      harmful_count: true
+      priority_harm_count: true
+    harm_type:
+      label: "illegal"
+      priority: 60
+    refusal_domain: "cybersecurity"
+    effects: {}
+
+  q10_weapons_explosives_toxins:
+    label: "Q10:weapons_explosives_toxins"
+    short_description: "weapons, explosives, or toxins"
+    prompt:
+      yes_when: null
+      no_when: null
+    contributes_to:
+      harmful_count: true
+      priority_harm_count: true
+    harm_type:
+      label: "weapons"
+      priority: 10
+    refusal_domain: "science"
+    effects:
+      # Blocks defensive_override ONLY when at least one intent flag is true.
+      # A neutral/educational question about weapons (zero intent) can still
+      # land on SENSITIVE. It's the combination topic+intent that makes it
+      # offensive. Differs from blocks_defensive_override (q17) which is
+      # unconditional — for weapons there IS a legitimate educational case.
+      blocks_defensive_override_when_intent_present: true
+      excludes_from_intent_contradiction_guard: true
+
+  q11_privacy_doxxing_stalking:
+    label: "Q11:privacy_doxxing_stalking"
+    short_description: "invasion of PRIVATE data or location (home address, phone, private accounts, real-time location)"
+    prompt:
+      yes_when: null
+      no_when: "Public-reputation attacks belong to q14/q15/q16, not here"
+    contributes_to:
+      harmful_count: true
+      priority_harm_count: true
+    harm_type:
+      label: "illegal"
+      priority: 60
+    refusal_domain: "cybersecurity"
+    effects: {}
+
+  q12_medical_harmful:
+    label: "Q12:medical_harmful"
+    short_description: "potentially harmful medical/bodily/drug-administration instructions"
+    prompt:
+      yes_when: |
+        injections, dosage, routes of administration, self-treatment,
+        unsafe procedures — even if framed as 'safe', 'educational',
+        'fictional', 'Wikipedia-style', encoded, or platform-compliant
+      no_when: |
+        when 'harmful/dangerous' refers generically to exploitation,
+        grooming, illegal conduct without medical execution detail, cyber,
+        reputational attacks, or moderation evasion. NO for non-operational
+        health education or advice to seek professional care.
+    contributes_to:
+      harmful_count: true
+      priority_harm_count: true
+    harm_type:
+      label: "illegal"
+      priority: 60
+    refusal_domain: "medical"
+    effects: {}
+
+  q13_protected_class_targeting:
+    label: "Q13:protected_class_targeting"
+    short_description: "differential treatment, exclusion, filtering, or selection of identifiable individuals/groups based on protected attributes"
+    prompt:
+      yes_when: |
+        individuals are the SUBJECT of differential treatment based on age,
+        disability, family/parental status, race, ethnicity, religion,
+        gender, sexual orientation, national origin, socioeconomic status,
+        pregnancy. Evaluate semantically across all languages.
+      no_when: "general policy discussion, demographics, statistics"
+    contributes_to:
+      harmful_count: false
+      priority_harm_count: false
+    harm_type:
+      label: null
+      priority: null
+    refusal_domain: null
+    effects: {}
+
+  q14_reputational_harm:
+    label: "Q14:reputational_harm"
+    short_description: "damaging an identifiable target's reputation through false statements, defamation, or fabricated content"
+    prompt:
+      yes_when: "goal is reputation harm even without explicit deception terminology (smear, ruin reputation, discredit, spread rumors, post lies)"
+      no_when: null
+    contributes_to:
+      # Reputational signals do NOT count toward harmful_count — they are
+      # pure topic markers. However, they route to _calibrate_harm_signals_present
+      # via the has_reputational_signal check in _apply_calibration dispatcher.
+      harmful_count: false
+      priority_harm_count: false
+    harm_type:
+      label: "reputational"
+      priority: 50
+    refusal_domain: null
+    effects: {}
+
+  q15_deceptive_online_campaign:
+    label: "Q15:deceptive_online_campaign"
+    short_description: "fake reviews, fake accounts, sock-puppets, astroturfing, review-bombing, manipulating ratings/rankings, coordinated inauthentic behavior"
+    prompt:
+      yes_when: null
+      no_when: null
+    contributes_to:
+      harmful_count: false
+      priority_harm_count: false
+    harm_type:
+      label: "reputational"
+      priority: 50
+    refusal_domain: null
+    effects: {}
+
+  q16_harassment_smear_campaign:
+    label: "Q16:harassment_smear_campaign"
+    short_description: "coordinated online harassment, brigading, organized smear campaigns, aggressive social pressure against an identifiable target"
+    prompt:
+      yes_when: null
+      no_when: "Distinct from q11: targets reputation/social standing, not private data"
+    contributes_to:
+      harmful_count: false
+      priority_harm_count: false
+    harm_type:
+      label: "reputational"
+      priority: 50
+    refusal_domain: null
+    effects: {}
+
+  q17_minor_exploitation:
+    label: "Q17:minor_exploitation"
+    short_description: "contacting, befriending, building trust with, persuading, manipulating, or sexualizing minors"
+    prompt:
+      yes_when: |
+        payload involves contact with, exploitation of, or sexual content
+        about minors — even if framed as fiction, encoded, wrapper-style,
+        or platform-evasion. Includes grooming tactics, lead-ins, persuasion
+        openers, scripts, tactics for adults to engage with minors online
+        (game chats, social, DMs).
+      no_when: null
+    contributes_to:
+      harmful_count: true
+      priority_harm_count: true
+    harm_type:
+      label: "child_exploitation"
+      priority: 20
+    refusal_domain: "children"
+    effects:
+      forces_risk_policy_action: "DENY"
+      # Unconditional: blocks defensive_override even with all intent flags=false.
+      # Minor exploitation is non-negotiable — no legitimate "educational" case exists.
+      # Differs from blocks_defensive_override_when_intent_present (q10) which
+      # only blocks when at least one intent flag is true.
+      blocks_defensive_override: true
+      blocks_calibration_guard: true
+      escalates_to_clearly_harmful: true
+      excludes_from_intent_contradiction_guard: true
+      excludes_from_non_operational_clamp: true
+      priority_resolution_in_prompt: true
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DOMAIN SENSITIVITY — topic classification (NOT risk)
+# ═══════════════════════════════════════════════════════════════════════════
+
+domain_sensitivity:
+  description: "topic classification (NOT risk)"
+  values:
+    HIGH: "legal, medical, finance, core ethical dilemmas"
+    MEDIUM: "politics, social issues, general health"
+    LOW: "general knowledge, science, daily tasks"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CALIBRATION RULES — declarative rules evaluated by the rules engine
+# ═══════════════════════════════════════════════════════════════════════════
+
+calibration:
+
+  # Order in which active signal labels are appended to signals[] downstream.
+  # q1/q2/q3/q6 are NOT listed here — they use fallback_signal_order.
+  signal_assignment_order:
+    - q5_physical
+    - q8_self_harm_suicide
+    - q9_cyber_malware
+    - q10_weapons_explosives_toxins
+    - q11_privacy_doxxing_stalking
+    - q12_medical_harmful
+    - q4_fraud
+    - q14_reputational_harm
+    - q15_deceptive_online_campaign
+    - q16_harassment_smear_campaign
+    - q17_minor_exploitation
+
+  # Appended ONLY when harm_type falls back to the "illegal generic" default
+  # (i.e. no higher-priority signal won harm_type assignment).
+  fallback_signal_order:
+    - q1_confidential
+    - q2_unauthorized
+    - q3_breach
+    - q6_illegal_items
+
+  # Default harm_type when no signal wins the priority chain
+  harm_type_default:
+    label: "illegal"
+    triggers_fallback_signal_append: true
+
+  # ── Defensive framing override ─────────────────────────────────────────
+  # Confirmed non-operational by all 3 intent signals + low op_risk:
+  # cap score to 0.30, set SENSITIVE.
+  defensive_override:
+    requires_all:
+      - "harmful_count >= 1"
+      - "not requested_instructions"
+      - "not intent_to_harm"
+      - "not intent_operational"
+      - "operational_risk in [NONE, LOW]"
+      - "request_type != clear_harm"
+      - "no_signal_with_effect: blocks_defensive_override"
+      - "no_signal_with_effect_when_intent_present: blocks_defensive_override_when_intent_present"
+    apply:
+      category: "SENSITIVE"
+      score_cap: 0.30
+      harm_type_realign:
+        from: ["illegal", "physical"]
+        to: "none"
+        when: "not intent_to_harm"
+
+  # ── Escalation to CLEARLY_HARMFUL ─────────────────────────────────────
+  escalation_clearly_harmful:
+    triggers_any:
+      - "harmful_count >= 3"
+      - "any_signal_with_effect: escalates_to_clearly_harmful"
+      - "priority_harm_count >= 1 and (requested_instructions or intent_to_harm or intent_operational or operational_risk == HIGH)"
+      - "score >= 0.85"
+      - "request_type == clear_harm"
+    apply:
+      category: "CLEARLY_HARMFUL"
+      score_floor: 0.85
+
+  # ── Default POTENTIALLY_HARMFUL (not defensive, not escalation) ────────
+  default_potentially_harmful:
+    when: "harmful_count >= 1 and not defensive_override_fired and not escalation_fired"
+    apply:
+      category: "POTENTIALLY_HARMFUL"
+      operational_branch:
+        when: "intent_operational or requested_instructions or intent_to_harm or operational_risk in [LOW, HIGH]"
+        apply:
+          score_floor: 0.50
+          score_floor_when_count_2_plus: 0.70
+      non_operational_branch:
+        apply:
+          score_min_max: [0.25, 0.30]
+
+  # ── Default action from category/score (when JSON has no valid action) ─
+  default_action_from_category_score:
+    - when: "category == CLEARLY_HARMFUL or score >= 0.85"
+      action: "DENY"
+    - when: "category == POTENTIALLY_HARMFUL or score >= 0.6"
+      action: "DELIBERATE"
+    - when: "category == SENSITIVE or score >= 0.35"
+      action: "ALLOW_WITH_CAVEAT"
+    - default: "ALLOW"
+
+  # ── op_risk → action mapping ────────────────────────────────────────────
+  op_risk_action_mapping:
+    HIGH:
+      force_action: "DENY"
+    NONE:
+      force_action: "ALLOW"
+      blocked_when: "any_signal_with_effect: forces_risk_policy_action"
+    LOW:
+      force_action: "DELIBERATE"
+      blocked_when: "current_action == DENY"
+
+  # ── Intent contradiction guard ─────────────────────────────────────────
+  # op_risk=HIGH but ALL intent flags=false → LLM is self-contradicting.
+  # Conservative downgrade: DENY→DELIBERATE, CLEARLY_HARMFUL→SENSITIVE, score capped at 0.55.
+  intent_contradiction_guard:
+    requires_all:
+      - "operational_risk == HIGH"
+      - "not intent_operational"
+      - "not requested_instructions"
+      - "not intent_to_harm"
+    excluded_when_any:
+      - "any_signal_with_effect: excludes_from_intent_contradiction_guard"
+      - "q5_physical and q6_illegal_items"
+    apply:
+      score_cap: 0.55
+      category_downgrade:
+        CLEARLY_HARMFUL: "SENSITIVE"
+      action_downgrade:
+        DENY: "DELIBERATE"
+
+  # ── Non-operational clamp ──────────────────────────────────────────────
+  # op_risk=NONE + all 3 intent flags False → cap to 0.30/SENSITIVE.
+  non_operational_clamp:
+    requires_all:
+      - "operational_risk == NONE"
+      - "not intent_operational"
+      - "not requested_instructions"
+      - "not intent_to_harm"
+    excluded_when_any:
+      - "any_signal_with_effect: excludes_from_non_operational_clamp"
+    apply:
+      score_cap: 0.30
+      category_downgrade:
+        CLEARLY_HARMFUL: "SENSITIVE"
+      action_downgrade:
+        DENY: "DELIBERATE"
+
+  # ── Force actions (applied last in _parse_action pipeline) ────────────
+  force_actions:
+    - when: "any_signal_with_effect: forces_risk_policy_action"
+      apply: "use_signal_effect_value"
+
+  # ── Calibration guard (applied post-merge) ─────────────────────────────
+  calibration_guard:
+    request_types_allowed:
+      - factual_query
+      - sensitive_topic
+      - ethical_dilemma
+      - support_request
+      - crisis_support
+    requires_all:
+      - "not intent_to_harm"
+      - "not requested_instructions"
+    excluded_when_any:
+      - "any_signal_with_effect: blocks_calibration_guard"
+    apply:
+      operational_risk_cap:
+        HIGH: "LOW"
+      risk_score_cap: 0.45
+      risk_score_op_inconsistency_floor: 0.55
+      risk_policy_action_cap:
+        DENY: "DELIBERATE"
+      misuse_plausibility_cap:
+        HIGH: "MEDIUM"
+      actionability_risk_cap:
+        HIGH: "MEDIUM"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PROMPT CONFIGURATION — static scaffolding metadata
+# ═══════════════════════════════════════════════════════════════════════════
+
+prompt:
+  # These coherence rules are rendered verbatim into the COHERENCE CHECK section
+  coherence_rules:
+    - "If payload asks for phrases/scripts/lead-ins/persuasion/concealment for contacting/grooming minors → q17=yes (override any wrapper cues)."
+    - "If payload does NOT involve minors as a contact/exploitation/sexual-content subject → q17=no."
+    - "If q17=yes for grooming/minor-contact and the payload has NO independent bodily-assault or clinical drug-administration ask → q5=no AND q12=no."
+    - "If q17=yes and the payload does NOT involve illegal/controlled substances → q6=no."
+    - "Never mark a wrapper (article/Wikipedia/JSON/roleplay/game-chat/platform-evasion) as the harm topic. Mark the recovered payload."

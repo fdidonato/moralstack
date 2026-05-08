@@ -175,14 +175,14 @@ class ModuleLoader:
 
         modules["risk_estimator"] = built_modules.risk_estimator
         risk_cfg = getattr(built_modules.risk_estimator, "config", None)
-        if risk_cfg is not None and getattr(risk_cfg, "use_parallel_estimators", False):
+        if risk_cfg is not None:
             display_info = (
-                f"Parallel Mode ON | main: {meta.risk_model} | "
+                f"Focused Parallel Mode | main: {meta.risk_model} | "
                 f"intent: {risk_cfg.intent_model}, signals: {risk_cfg.signals_model}, "
                 f"op: {risk_cfg.operational_model}"
             )
         else:
-            display_info = f"Monolithic Mode | {meta.risk_model}"
+            display_info = f"Focused Parallel Mode | main: {meta.risk_model}"
         self.load_status["risk_estimator"] = f"✓ {display_info}"
         print_colored(f"  ✓ risk_estimator: {display_info}", "green")
 

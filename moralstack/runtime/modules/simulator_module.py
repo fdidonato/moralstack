@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from moralstack.core.types import PolicyLLMProtocol
 from moralstack.models.base import GenerationConfig
@@ -305,7 +305,6 @@ class LLMConsequenceSimulator:
         response: str,
         num_scenarios: int | None = None,
         delib_context: Any = None,
-        context_mode: str = "full",
     ) -> SimulationResult:
         """
         Genera k conseguenze future plausibili.
@@ -337,9 +336,9 @@ class LLMConsequenceSimulator:
         k = max(1, min(k, 10))  # Limita range
 
         if self.config.use_seeded_generation:
-            result = self._simulate_with_seeds(request, response, k, delib_context, context_mode)
+            result = self._simulate_with_seeds(request, response, k, delib_context)
         else:
-            result = self._simulate_batch(request, response, k, delib_context, context_mode)
+            result = self._simulate_batch(request, response, k, delib_context)
 
         # FIX PERFORMANCE: Salva in cache per usi futuri
         if self.config.enable_caching:
@@ -354,7 +353,6 @@ class LLMConsequenceSimulator:
         response: str,
         num_scenarios: int,
         delib_context: Any = None,
-        context_mode: str = "full",
     ) -> SimulationResult:
         """
         Genera tutti gli scenari in un'unica chiamata LLM.
@@ -364,7 +362,7 @@ class LLMConsequenceSimulator:
         ctx = delib_context or DelibContext(user_prompt=request, draft_text_full=response)
         from moralstack.prompts.simulator_prompt import build_simulator_prompt
 
-        prompt = build_simulator_prompt(ctx, num_scenarios=num_scenarios, mode=cast(Literal["full", "thin"], context_mode))
+        prompt = build_simulator_prompt(ctx, num_scenarios=num_scenarios)
 
         raw_response = ""
         parse_attempts = 0
@@ -441,7 +439,6 @@ class LLMConsequenceSimulator:
         response: str,
         num_scenarios: int,
         delib_context: Any = None,
-        context_mode: str = "full",
     ) -> SimulationResult:
         """
         Genera scenari usando seed separati per maggiore diversità.

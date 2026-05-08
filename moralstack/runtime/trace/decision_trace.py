@@ -69,7 +69,7 @@ class DecisionTrace:
     intent_operational: bool = False
     requested_instructions: bool = False
     intent_to_harm: bool = False
-    estimation_mode: str = ""  # "parallel" (3 mini-estimators) | "monolithic" | ""
+    estimation_mode: str = ""  # "parallel" (3 mini-estimators) | ""
 
     # Domain & policy
     domain_overlay: str = ""
@@ -103,8 +103,7 @@ class DecisionTrace:
     sim_dominant_harm_types: list[str] = field(default_factory=list)
     sim_worst_harm: dict[str, Any] | None = None
 
-    # Token optimization (optional, for reporting)
-    context_mode_by_module: dict[str, str] = field(default_factory=dict)  # e.g. {"critic":"thin","simulator":"full"}
+    # Optional fields for reporting
     modules_skipped: dict[str, str] = field(default_factory=dict)  # e.g. {"simulator":"carried_forward"}
 
     # Closure state (populated when available from deliberation outcome)

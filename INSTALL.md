@@ -162,12 +162,12 @@ See [docs/modules/openai_params.md](docs/modules/openai_params.md) for details a
 | MORALSTACK_OPENAI_COMPATIBLE_RETRY_AFTER_SECONDS | 10  | Retry-After seconds returned by OpenAI-compatible bridge overload responses |
 | MORALSTACK_VERBOSE             | -                         | Set to 1 for verbose output                                    |
 
-**Risk Estimator**: Optional overrides (e.g. `MORALSTACK_RISK_MODEL`, `MORALSTACK_RISK_PARALLEL_ESTIMATORS`,
+**Risk Estimator**: Optional overrides (e.g. `MORALSTACK_RISK_MODEL`,
 `MORALSTACK_RISK_INTENT_MODEL`, `MORALSTACK_RISK_SIGNALS_MODEL`, `MORALSTACK_RISK_OPERATIONAL_MODEL`,
 `MORALSTACK_RISK_LOW_THRESHOLD`, `MORALSTACK_RISK_MEDIUM_THRESHOLD`, `MORALSTACK_RISK_MAX_RETRIES`, …) are listed in
 `.env.template` and fully documented in [docs/modules/risk_estimator.md](docs/modules/risk_estimator.md#environment-variables). Leave them commented to use
-built-in defaults (risk estimator uses the same model as `OPENAI_MODEL` when `MORALSTACK_RISK_MODEL` is not set). With
-parallel estimators enabled, each optional `MORALSTACK_RISK_*_MODEL` slot falls back to `MORALSTACK_RISK_MODEL` if set,
+built-in defaults (risk estimator uses the same model as `OPENAI_MODEL` when `MORALSTACK_RISK_MODEL` is not set). Each
+optional `MORALSTACK_RISK_*_MODEL` slot falls back to `MORALSTACK_RISK_MODEL` if set,
 otherwise `OPENAI_MODEL`, otherwise `gpt-4o`. **In
 both CLI run and benchmark, risk configuration is read only from the environment (`.env`); there is no CLI override —
 env is the single source of configuration.**

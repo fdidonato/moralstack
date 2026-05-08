@@ -72,9 +72,6 @@ from moralstack.persistence.sink import persist_orchestration_event
 from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace, normalize_trace_fields
 from moralstack.runtime.trace.trace_stages import CYCLE_SUMMARY, REQUEST_ANALYSIS_CONTEXT
 
-# Matches CriticProtocol / module context_mode for thin vs full prompts.
-DelibContextMode = Literal["full", "thin"]
-
 _LOG = logging.getLogger(__name__)
 
 
@@ -1389,7 +1386,7 @@ class DeliberationRunner:
             constrained_generation=constrained_generation,
         )
 
-        delib_context, context_mode, computed_max_cycles = self._build_delib_context(
+        delib_context, computed_max_cycles = self._build_delib_context(
             state, request, risk_estimation, request_analysis=request_analysis
         )
         if computed_max_cycles != max_cycles:
@@ -1410,7 +1407,6 @@ class DeliberationRunner:
                 state,
                 request,
                 delib_context=delib_context,
-                context_mode=context_mode,
                 risk_estimation=risk_estimation,
                 max_cycles=max_cycles,
                 constitution=constitution,
@@ -1421,7 +1417,6 @@ class DeliberationRunner:
                 state,
                 request,
                 delib_context=delib_context,
-                context_mode=context_mode,
                 risk_estimation=risk_estimation,
                 max_cycles=max_cycles,
                 constitution=constitution,
@@ -1439,9 +1434,7 @@ class DeliberationRunner:
             state.decision = DecisionType.REVISE
             return state
 
-        state = self._apply_hindsight_if_needed(
-            state, request, delib_context, context_mode=context_mode, max_cycles=max_cycles
-        )
+        state = self._apply_hindsight_if_needed(state, request, delib_context, max_cycles=max_cycles)
 
         return self._finalize_cycle(state, max_cycles, risk_estimation=risk_estimation)
 
@@ -1451,12 +1444,9 @@ class DeliberationRunner:
         request: ProcessedRequest,
         risk_estimation: RiskEstimationProtocol | None,
         request_analysis: RequestAnalysisContext | None = None,
-    ) -> tuple[DelibContext | None, DelibContextMode, int]:
-        """Build DelibContext for thin prompts in cycle 2+ and compute effective max_cycles."""
+    ) -> tuple[DelibContext | None, int]:
+        """Build DelibContext and compute effective max_cycles."""
         delib_context = None
-        context_mode: DelibContextMode = "full"
-        if self.config.enable_thin_mode and state.cycle > 1:
-            context_mode = "thin"
         if risk_estimation is not None:
             from moralstack.pipeline.context_builder import build_context
 
@@ -1483,7 +1473,7 @@ class DeliberationRunner:
 
         # risk_score = risk_estimation.score if risk_estimation is not None else 0.5
         max_cycles = self._effective_max_cycles(risk_estimation) if risk_estimation is not None else 1
-        return delib_context, context_mode, max_cycles
+        return delib_context, max_cycles
 
     def _apply_hindsight_if_needed(
         self,
@@ -1491,7 +1481,6 @@ class DeliberationRunner:
         request: ProcessedRequest,
         delib_context: DelibContext | None,
         *,
-        context_mode: DelibContextMode = "full",
         max_cycles: int = 1,
     ) -> DeliberationState:
         """Run hindsight evaluation when enabled, available, and not gated."""
@@ -1546,7 +1535,7 @@ class DeliberationRunner:
                         "enable_hindsight_gating": self.config.enable_hindsight_gating,
                     },
                 )
-                state = self._evaluate_hindsight(state, request, delib_context=delib_context, context_mode=context_mode)
+                state = self._evaluate_hindsight(state, request, delib_context=delib_context)
         else:
             record_llm_call(
                 self.logger,
@@ -1875,7 +1864,6 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None,
-        context_mode: DelibContextMode,
         gate: SimulatorGateDecision,
         emit_gate_decision: bool = True,
     ) -> DeliberationState:
@@ -1887,7 +1875,7 @@ class DeliberationRunner:
             return state
         if gate.should_run:
             t0 = time.time()
-            state = self._simulate(state, request, delib_context=delib_context, context_mode=context_mode)
+            state = self._simulate(state, request, delib_context=delib_context)
             elapsed = (time.time() - t0) * 1000
             state._simulator_ran_this_cycle = True
             state._simulator_carry_forward = False
@@ -1926,7 +1914,6 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: DelibContextMode = "full",
         risk_estimation: RiskEstimationProtocol | None = None,
         max_cycles: int = 2,
         constitution: Any | None = None,
@@ -1936,7 +1923,6 @@ class DeliberationRunner:
             state,
             request,
             delib_context=delib_context,
-            context_mode=context_mode,
             constitution=constitution,
             request_analysis=request_analysis,
         )
@@ -1952,7 +1938,6 @@ class DeliberationRunner:
                 state,
                 request,
                 delib_context=delib_context,
-                context_mode=context_mode,
                 gate=gate,
             )
         elif self.config.enable_simulation:
@@ -1980,7 +1965,7 @@ class DeliberationRunner:
                 None,
             )
         if self.config.enable_perspectives and self.perspectives is not None:
-            state = self._evaluate_perspectives(state, request, delib_context=delib_context, context_mode=context_mode)
+            state = self._evaluate_perspectives(state, request, delib_context=delib_context)
         elif self.config.enable_perspectives:
             record_llm_call(
                 self.logger,
@@ -2117,7 +2102,6 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: DelibContextMode = "full",
         risk_estimation: RiskEstimationProtocol | None = None,
         max_cycles: int = 2,
         constitution: Any | None = None,
@@ -2152,7 +2136,6 @@ class DeliberationRunner:
                 state,
                 request,
                 delib_context=delib_context,
-                context_mode=context_mode,
                 risk_estimation=risk_estimation,
                 max_cycles=max_cycles,
                 constitution=constitution,
@@ -2163,7 +2146,6 @@ class DeliberationRunner:
             state,
             request,
             delib_context=delib_context,
-            context_mode=context_mode,
             risk_estimation=risk_estimation,
             max_cycles=max_cycles,
             constitution=constitution,
@@ -2176,7 +2158,6 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: DelibContextMode = "full",
         risk_estimation: RiskEstimationProtocol | None = None,
         max_cycles: int = 2,
         constitution: Any | None = None,
@@ -2188,7 +2169,6 @@ class DeliberationRunner:
             state,
             request,
             delib_context=delib_context,
-            context_mode=context_mode,
             constitution=constitution,
             request_analysis=request_analysis,
         )
@@ -2247,7 +2227,6 @@ class DeliberationRunner:
                 s,
                 r,
                 delib_context=delib_context,
-                context_mode=context_mode,
                 gate=gate,
             )
 
@@ -2261,7 +2240,6 @@ class DeliberationRunner:
                 s,
                 r,
                 delib_context=delib_context,
-                context_mode=context_mode,
             )
 
         ctx2 = contextvars.copy_context()
@@ -2285,7 +2263,6 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: DelibContextMode = "full",
         risk_estimation: RiskEstimationProtocol | None = None,
         max_cycles: int = 2,
         constitution: Any | None = None,
@@ -2319,7 +2296,6 @@ class DeliberationRunner:
                 s,
                 r,
                 delib_context=delib_context,
-                context_mode=context_mode,
                 constitution=constitution,
                 request_analysis=request_analysis,
             )
@@ -2334,7 +2310,6 @@ class DeliberationRunner:
                 s,
                 r,
                 delib_context=delib_context,
-                context_mode=context_mode,
                 gate=gate_sim,
                 emit_gate_decision=False,
             )
@@ -2349,7 +2324,6 @@ class DeliberationRunner:
                 s,
                 r,
                 delib_context=delib_context,
-                context_mode=context_mode,
             )
 
         ctx_c = contextvars.copy_context()
@@ -2655,7 +2629,6 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: DelibContextMode = "full",
         constitution: Any | None = None,
         request_analysis: RequestAnalysisContext | None = None,
     ) -> DeliberationState:
@@ -2704,7 +2677,6 @@ class DeliberationRunner:
                     principles=list(precomputed_analysis.relevant_principles),
                     request_id=request.request_id or "",
                     delib_context=delib_context,
-                    context_mode=context_mode,
                     previous_violations=prev_violations,
                     previous_guidance=prev_guidance,
                 )
@@ -2734,7 +2706,6 @@ class DeliberationRunner:
                     domain=request.get_domain(),
                     request_id=request.request_id or "",
                     delib_context=delib_context,
-                    context_mode=context_mode,
                     previous_violations=prev_violations,
                     previous_guidance=prev_guidance,
                 )
@@ -2747,7 +2718,6 @@ class DeliberationRunner:
                     constitution,
                     request_id=request.request_id or "",
                     delib_context=delib_context,
-                    context_mode=context_mode,
                     previous_violations=prev_violations,
                     previous_guidance=prev_guidance,
                 )
@@ -2812,7 +2782,6 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: DelibContextMode = "full",
     ) -> DeliberationState:
         if self.simulator is None:
             return state
@@ -2845,7 +2814,6 @@ class DeliberationRunner:
                 state.draft_response,
                 self.config.num_simulations,
                 delib_context=delib_context,
-                context_mode=context_mode,
             )
             elapsed = (time.time() - start) * 1000
             ev = simulation.expected_valence
@@ -2928,7 +2896,6 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: DelibContextMode = "full",
     ) -> DeliberationState:
         if self.hindsight is None:
             return state
@@ -2964,7 +2931,6 @@ class DeliberationRunner:
                 state.draft_response,
                 consequences,
                 delib_context=delib_context,
-                context_mode=context_mode,
             )
             elapsed = (time.time() - start) * 1000
             hindsight_model = _module_model(self.hindsight)
@@ -3040,7 +3006,6 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
-        context_mode: DelibContextMode = "full",
     ) -> DeliberationState:
         if self.perspectives is None:
             return state
@@ -3072,7 +3037,6 @@ class DeliberationRunner:
                 request.prompt,
                 state.draft_response,
                 delib_context=delib_context,
-                context_mode=context_mode,
             )
             elapsed = (time.time() - start) * 1000
             raw_resp = "\n---\n".join(result.raw_responses or []) if getattr(result, "raw_responses", None) else ""

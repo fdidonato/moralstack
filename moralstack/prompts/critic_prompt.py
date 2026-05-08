@@ -1,13 +1,11 @@
 """
-Critic prompt builder - FULL e THIN mode con maggiore compattezza e chiarezza.
+Critic prompt builder.
 """
 
 from __future__ import annotations
 
-from typing import Literal
-
 from moralstack.models.delib_context import DelibContext
-from moralstack.prompts._common import OUTPUT_JSON_ONLY, build_thin_context_sections
+from moralstack.prompts._common import OUTPUT_JSON_ONLY
 
 CRITIC_SHARED_RULES = """RULES:
 - decision ∈ [PROCEED, REVISE, REFUSE].
@@ -74,36 +72,14 @@ REQUEST:
 
 RESPONSE:
 {response}
+{previous_guidance_section}
 """
 )
-
-CRITIC_THIN_TEMPLATE = """Evaluate the response against these principles. Output valid JSON only.
-
-PRINCIPLES:
-{principles}
-
-REQUEST:
-{request}
-
-RESPONSE SUMMARY:
-{response_summary}
-
-KEY POINTS:
-{key_points}
-
-RISK CONTEXT:
-{risk_signals}
-{change_log_section}
-{previous_guidance_section}
-
-{rules}
-""" + OUTPUT_JSON_ONLY
 
 
 def build_critic_prompt(
     context: DelibContext,
     principles: str,
-    mode: Literal["full", "thin"] = "full",
     previous_violations: str = "",
     previous_guidance: str = "",
 ) -> str:
@@ -113,26 +89,15 @@ def build_critic_prompt(
     Args:
         context: DelibContext con request, draft e risk signals
         principles: Testo formattato dei principi
-        mode: "full" = draft completo, "thin" = summary + key points + delta
-        previous_violations: Violazioni del ciclo precedente (thin, cycle > 1)
-        previous_guidance: Revision guidance del ciclo precedente (thin, cycle > 1)
+        previous_violations: Violazioni del ciclo precedente
+        previous_guidance: Revision guidance del ciclo precedente
 
     Returns:
         Prompt string pronto per l'LLM
     """
     request = context.user_prompt or ""
 
-    if mode == "full":
-        risk_signals = context.get_risk_signals_str() or "none"
-        return CRITIC_FULL_TEMPLATE.format(
-            principles=principles,
-            risk_signals=risk_signals,
-            request=request,
-            response=context.draft_text_full or "",
-            rules=CRITIC_SHARED_RULES,
-        )
-
-    sections = build_thin_context_sections(context)
+    risk_signals = context.get_risk_signals_str() or "none"
 
     prior_blocks = []
     if previous_violations and previous_violations.strip():
@@ -144,13 +109,11 @@ def build_critic_prompt(
     if prior_blocks:
         previous_guidance_section = "\n" + "\n\n".join(prior_blocks)
 
-    return CRITIC_THIN_TEMPLATE.format(
+    return CRITIC_FULL_TEMPLATE.format(
         principles=principles,
+        risk_signals=risk_signals,
         request=request,
-        response_summary=sections["response_summary"],
-        key_points=sections["key_points"],
-        risk_signals=sections["risk_signals"],
-        change_log_section=sections["change_log_section"],
+        response=context.draft_text_full or "",
         previous_guidance_section=previous_guidance_section,
         rules=CRITIC_SHARED_RULES,
     )

@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Literal, cast
+from typing import Any
 
 # =============================================================================
 # Protocols
@@ -614,7 +614,6 @@ class LLMHindsightEvaluator:
         response: str,
         consequences: list[Consequence],
         delib_context: Any = None,
-        context_mode: str = "full",
     ) -> HindsightResult:
         """
         Valuta risposta contro multiple conseguenze simulate.
@@ -644,7 +643,7 @@ class LLMHindsightEvaluator:
                 return cached_result
 
         if self.config.use_batch_evaluation and len(consequences) > 1:
-            result = self._evaluate_batch(request, response, consequences, delib_context, context_mode)
+            result = self._evaluate_batch(request, response, consequences, delib_context)
         else:
             result = self._evaluate_individual(request, response, consequences)
 
@@ -662,7 +661,6 @@ class LLMHindsightEvaluator:
         response: str,
         consequences: list[Consequence],
         delib_context: Any = None,
-        context_mode: str = "full",
     ) -> HindsightResult:
         """
         Valuta tutti gli scenari in una singola chiamata LLM.
@@ -676,7 +674,7 @@ class LLMHindsightEvaluator:
         ctx = delib_context or DelibContext(user_prompt=request, draft_text_full=response)
         from moralstack.prompts.hindsight_prompt import build_hindsight_prompt
 
-        prompt = build_hindsight_prompt(ctx, consequences_text, mode=cast(Literal["full", "thin"], context_mode))
+        prompt = build_hindsight_prompt(ctx, consequences_text)
 
         parse_attempts = 0
         last_error: Exception | None = None

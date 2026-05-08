@@ -36,7 +36,6 @@ ENV_SAFE_RESPONSE_ON_ERROR = "MORALSTACK_ORCHESTRATOR_SAFE_RESPONSE_ON_ERROR"
 ENV_SKIP_OPTIONAL_MODULES_THRESHOLD = "MORALSTACK_ORCHESTRATOR_SKIP_OPTIONAL_MODULES_THRESHOLD"
 ENV_SOFT_TIMEOUT_THRESHOLD = "MORALSTACK_ORCHESTRATOR_SOFT_TIMEOUT_THRESHOLD"
 ENV_PARALLEL_MODULE_CALLS = "MORALSTACK_ORCHESTRATOR_PARALLEL_MODULE_CALLS"
-ENV_ENABLE_THIN_MODE = "MORALSTACK_ORCHESTRATOR_ENABLE_THIN_MODE"
 ENV_ENABLE_SIMULATOR_GATING = "MORALSTACK_ORCHESTRATOR_ENABLE_SIMULATOR_GATING"
 ENV_ENABLE_HINDSIGHT_GATING = "MORALSTACK_ORCHESTRATOR_ENABLE_HINDSIGHT_GATING"
 ENV_SIMULATOR_GATE_SEMANTIC_HARM_THRESHOLD = "MORALSTACK_ORCHESTRATOR_SIMULATOR_GATE_SEMANTIC_HARM_THRESHOLD"
@@ -83,7 +82,6 @@ def load_orchestrator_config_from_env() -> OrchestratorConfig:
     skip_optional_modules_threshold = get_env_float(ENV_SKIP_OPTIONAL_MODULES_THRESHOLD, 0.95, 0.0, 1.0)
     soft_timeout_threshold = get_env_float(ENV_SOFT_TIMEOUT_THRESHOLD, 0.90, 0.0, 1.0)
     parallel_module_calls = get_env_bool(ENV_PARALLEL_MODULE_CALLS, True)
-    enable_thin_mode = get_env_bool(ENV_ENABLE_THIN_MODE, False)
     enable_simulator_gating = get_env_bool(ENV_ENABLE_SIMULATOR_GATING, False)
     enable_hindsight_gating = get_env_bool(ENV_ENABLE_HINDSIGHT_GATING, True)
     simulator_gate_semantic_harm_threshold = get_env_float(ENV_SIMULATOR_GATE_SEMANTIC_HARM_THRESHOLD, 0.4, 0.0, 1.0)
@@ -120,7 +118,6 @@ def load_orchestrator_config_from_env() -> OrchestratorConfig:
         skip_optional_modules_threshold=skip_optional_modules_threshold,
         soft_timeout_threshold=soft_timeout_threshold,
         parallel_module_calls=parallel_module_calls,
-        enable_thin_mode=enable_thin_mode,
         enable_simulator_gating=enable_simulator_gating,
         enable_hindsight_gating=enable_hindsight_gating,
         simulator_gate_semantic_harm_threshold=simulator_gate_semantic_harm_threshold,

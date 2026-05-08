@@ -48,11 +48,11 @@ def test_principle_ids_object_path():
 
 def test_merge_summary_roundtrip():
     s = merge_parse_contract_into_summary(
-        {"estimation_mode": "monolithic"},
+        {"estimation_mode": "parallel"},
         {"a": 1, "parse_status": "ok"},
     )
     d = json.loads(s)
-    assert d["estimation_mode"] == "monolithic"
+    assert d["estimation_mode"] == "parallel"
     assert d["parse_contract"]["a"] == 1
 
 
@@ -84,7 +84,7 @@ def test_generation_config_includes_json_object():
     assert getattr(cfg, "response_format", None) == {"type": "json_object"}
 
 
-def test_monolithic_retry_persist_parse_contract(monkeypatch):
+def test_parallel_mini_persist_parse_contract(monkeypatch):
     """After a clean JSON body, parse_contract records ok with no fallback."""
     clean = {
         "risk_score": 0.1,
@@ -135,13 +135,15 @@ def test_monolithic_retry_persist_parse_contract(monkeypatch):
         return True
 
     est = LLMBasedRiskEstimator(policy=policy)
-    gen_cfg = est._build_generation_config()
-    assert gen_cfg is not None
     with patch("moralstack.models.risk.estimator.persist_llm_call", side_effect=capture_persist):
-        _raw, _parsed = est._call_llm_with_retry("prompt", gen_cfg)
+        _estimation = est._parallel_mini_analysis("prompt")
 
     assert captured
-    summary = json.loads(captured[-1].get("parsed_summary_json") or "{}")
+    mini_entries = [
+        c for c in captured if c.get("action") in {"estimate_intent", "estimate_signals", "estimate_operational"}
+    ]
+    assert len(mini_entries) == 3
+    summary = json.loads(mini_entries[0].get("parsed_summary_json") or "{}")
     pc = summary.get("parse_contract") or {}
     assert pc.get("parse_status") == PARSE_STATUS_OK
     assert pc.get("fallback_used") is False

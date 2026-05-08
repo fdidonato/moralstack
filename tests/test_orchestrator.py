@@ -8,7 +8,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -315,7 +315,6 @@ class MockCritic:
         domain: str | None = None,
         request_id: str = "",
         delib_context: Any = None,
-        context_mode: Literal["full", "thin"] = "full",
         previous_violations: str = "",
         previous_guidance: str = "",
     ) -> MockCritiqueReport:
@@ -325,7 +324,6 @@ class MockCritic:
             None,
             request_id=request_id,
             delib_context=delib_context,
-            context_mode=context_mode,
             previous_violations=previous_violations,
             previous_guidance=previous_guidance,
         )
@@ -1671,7 +1669,7 @@ class TestObservabilityFixes:
             return state_arg
 
         with patch.object(runner, "_generate_or_revise", side_effect=lambda s, *_a, **_k: s):
-            with patch.object(runner, "_build_delib_context", return_value=(None, "full", 2)):
+            with patch.object(runner, "_build_delib_context", return_value=(None, 2)):
                 with patch.object(
                     runner, "_run_critique_simulate_perspectives_sequential", side_effect=lambda s, *_a, **_k: s
                 ):

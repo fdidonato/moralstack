@@ -17,7 +17,6 @@ from moralstack.orchestration.config_loader import (
     ENV_ENABLE_PERSPECTIVES,
     ENV_ENABLE_SIMULATION,
     ENV_ENABLE_SIMULATOR_GATING,
-    ENV_ENABLE_THIN_MODE,
     ENV_MAX_CRITICAL_VIOLATIONS,
     ENV_MAX_DELIBERATION_CYCLES,
     ENV_MIN_HINDSIGHT_SCORE,
@@ -97,20 +96,20 @@ class TestGetOrchestratorEnvStr:
     """Tests for get_orchestrator_env_str."""
 
     def test_missing_key_returns_default(self, monkeypatch):
-        monkeypatch.delenv(ENV_ENABLE_THIN_MODE, raising=False)
-        assert get_orchestrator_env_str(ENV_ENABLE_THIN_MODE, "false") == "false"
+        monkeypatch.delenv(ENV_PARALLEL_MODULE_CALLS, raising=False)
+        assert get_orchestrator_env_str(ENV_PARALLEL_MODULE_CALLS, "false") == "false"
 
     def test_empty_key_returns_default(self, monkeypatch):
-        monkeypatch.setenv(ENV_ENABLE_THIN_MODE, "")
-        assert get_orchestrator_env_str(ENV_ENABLE_THIN_MODE, "false") == "false"
+        monkeypatch.setenv(ENV_PARALLEL_MODULE_CALLS, "")
+        assert get_orchestrator_env_str(ENV_PARALLEL_MODULE_CALLS, "false") == "false"
 
     def test_whitespace_only_returns_default(self, monkeypatch):
-        monkeypatch.setenv(ENV_ENABLE_THIN_MODE, "  ")
-        assert get_orchestrator_env_str(ENV_ENABLE_THIN_MODE, "false") == "false"
+        monkeypatch.setenv(ENV_PARALLEL_MODULE_CALLS, "  ")
+        assert get_orchestrator_env_str(ENV_PARALLEL_MODULE_CALLS, "false") == "false"
 
     def test_valid_value_used(self, monkeypatch):
-        monkeypatch.setenv(ENV_ENABLE_THIN_MODE, "true")
-        assert get_orchestrator_env_str(ENV_ENABLE_THIN_MODE, "false") == "true"
+        monkeypatch.setenv(ENV_PARALLEL_MODULE_CALLS, "true")
+        assert get_orchestrator_env_str(ENV_PARALLEL_MODULE_CALLS, "false") == "true"
 
 
 class TestGetOrchestratorEnvBool:
@@ -155,7 +154,6 @@ class TestLoadOrchestratorConfigFromEnv:
         ENV_SKIP_OPTIONAL_MODULES_THRESHOLD,
         ENV_SOFT_TIMEOUT_THRESHOLD,
         ENV_PARALLEL_MODULE_CALLS,
-        ENV_ENABLE_THIN_MODE,
         ENV_ENABLE_SIMULATOR_GATING,
         ENV_ENABLE_HINDSIGHT_GATING,
         ENV_SIMULATOR_GATE_SEMANTIC_HARM_THRESHOLD,
@@ -182,7 +180,6 @@ class TestLoadOrchestratorConfigFromEnv:
         assert config.skip_optional_modules_threshold == 0.95
         assert config.soft_timeout_threshold == 0.90
         assert config.parallel_module_calls is True
-        assert config.enable_thin_mode is False
         assert config.enable_simulator_gating is False
         assert config.enable_hindsight_gating is True
         assert config.simulator_gate_semantic_harm_threshold == 0.4

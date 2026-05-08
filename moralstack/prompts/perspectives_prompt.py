@@ -1,5 +1,5 @@
 """
-Perspectives prompt builder - FULL and THIN mode for token reduction.
+Perspectives prompt builder.
 
 OPT-2: Shared system prompt (REQUEST+RESPONSE+common instructions) and per-perspective
 user prompt (identity/instructions only) to avoid sending the draft N times in N perspectives.
@@ -7,10 +7,8 @@ user prompt (identity/instructions only) to avoid sending the draft N times in N
 
 from __future__ import annotations
 
-from typing import Literal
-
 from moralstack.models.delib_context import DelibContext
-from moralstack.prompts._common import OUTPUT_JSON_ONLY, build_thin_context_sections
+from moralstack.prompts._common import OUTPUT_JSON_ONLY
 
 # Shared instructions and JSON schema (reused in full prompt and in shared system for OPT-2)
 PERSPECTIVE_COMMON_INSTRUCTIONS = """Suggestions should be constructive ("add X", "clarify Y")
@@ -62,27 +60,7 @@ RESPONSE: {response}
 RISK CONTEXT: {risk_signals}
 """
 
-# Thin template: same static-first layout as full; perspective + thin turn context last.
-PERSPECTIVE_THIN_TEMPLATE = RISK_CONTEXT_INTERPRETATION + PERSPECTIVE_COMMON_INSTRUCTIONS + """
-
-Evaluate this AI response from the perspective of: {perspective_name}
-
-{perspective_instructions}
-
-TURN CONTEXT:
-REQUEST: {request}
-
-RESPONSE SUMMARY (compact):
-{response_summary}
-
-KEY POINTS:
-{key_points}
-
-RISK CONTEXT: {risk_signals}
-{change_log_section}
-"""
-
-# Shared system prompt body: static block first, then REQUEST/RESPONSE (full) or thin sections.
+# Shared system prompt body: static block first, then REQUEST/RESPONSE.
 PERSPECTIVE_SYSTEM_FULL_BODY = RISK_CONTEXT_INTERPRETATION + PERSPECTIVE_COMMON_INSTRUCTIONS + """
 
 TURN CONTEXT:
@@ -93,55 +71,28 @@ RESPONSE: {response}
 RISK CONTEXT: {risk_signals}
 """
 
-PERSPECTIVE_SYSTEM_THIN_BODY = RISK_CONTEXT_INTERPRETATION + PERSPECTIVE_COMMON_INSTRUCTIONS + """
-
-TURN CONTEXT:
-REQUEST: {request}
-
-RESPONSE SUMMARY (compact):
-{response_summary}
-
-KEY POINTS:
-{key_points}
-
-RISK CONTEXT: {risk_signals}
-{change_log_section}
-"""
-
 
 def build_perspectives_system_prompt(
     context: DelibContext,
-    mode: Literal["full", "thin"] = "full",
 ) -> str:
     """
-    Build the shared system prompt body (REQUEST + RESPONSE or thin sections + common instructions).
+    Build the shared system prompt body (REQUEST + RESPONSE + common instructions).
 
     Used by OPT-2: one system prompt per evaluation round so REQUEST+RESPONSE are sent once
     instead of once per perspective. Does not include perspective identity or instructions.
 
     Args:
         context: DelibContext with request, draft, risk signals.
-        mode: "full" = full draft text; "thin" = summary, key_points, risk_signals, change_log.
-
     Returns:
         String to be appended after PERSPECTIVE_SYSTEM_PROMPT (JSON-only) in the module.
     """
     request = context.user_prompt or ""
-    if mode == "full":
-        response = context.draft_text_full or ""
-        risk_signals = context.get_risk_signals_str() or "none"
-        return PERSPECTIVE_SYSTEM_FULL_BODY.format(
-            request=request,
-            response=response,
-            risk_signals=risk_signals,
-        )
-    sections = build_thin_context_sections(context)
-    return PERSPECTIVE_SYSTEM_THIN_BODY.format(
+    response = context.draft_text_full or ""
+    risk_signals = context.get_risk_signals_str() or "none"
+    return PERSPECTIVE_SYSTEM_FULL_BODY.format(
         request=request,
-        response_summary=sections["response_summary"],
-        key_points=sections["key_points"],
-        risk_signals=sections["risk_signals"],
-        change_log_section=sections["change_log_section"],
+        response=response,
+        risk_signals=risk_signals,
     )
 
 
@@ -171,7 +122,6 @@ def build_perspectives_prompt(
     context: DelibContext,
     perspective_name: str,
     perspective_instructions: str,
-    mode: Literal["full", "thin"] = "full",
 ) -> str:
     """
     Build full prompt for a single perspective (legacy / compatibility).
@@ -184,29 +134,16 @@ def build_perspectives_prompt(
         context: DelibContext with request, draft, risk signals.
         perspective_name: Perspective name (e.g. "Direct User").
         perspective_instructions: Perspective-specific instructions.
-        mode: "full" = full draft; "thin" = summary + key_points + delta.
-
     Returns:
         Single prompt string for the LLM.
     """
     request = context.user_prompt or ""
-    if mode == "full":
-        response = context.draft_text_full or ""
-        risk_signals = context.get_risk_signals_str() or "none"
-        return PERSPECTIVE_FULL_TEMPLATE.format(
-            perspective_name=perspective_name,
-            perspective_instructions=perspective_instructions,
-            request=request,
-            response=response,
-            risk_signals=risk_signals,
-        )
-    sections = build_thin_context_sections(context)
-    return PERSPECTIVE_THIN_TEMPLATE.format(
+    response = context.draft_text_full or ""
+    risk_signals = context.get_risk_signals_str() or "none"
+    return PERSPECTIVE_FULL_TEMPLATE.format(
         perspective_name=perspective_name,
         perspective_instructions=perspective_instructions,
         request=request,
-        response_summary=sections["response_summary"],
-        key_points=sections["key_points"],
-        risk_signals=sections["risk_signals"],
-        change_log_section=sections["change_log_section"],
+        response=response,
+        risk_signals=risk_signals,
     )

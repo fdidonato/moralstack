@@ -55,8 +55,6 @@
             <span class="meta-value">
                 {% if execution_summary.estimation_mode == 'parallel' %}
                 <span class="badge badge-parallel" title="3 focused LLM calls ran in parallel: intent classifier, harm signal scanner, operational risk evaluator">Parallel (3 mini-estimators)</span>
-                {% elif execution_summary.estimation_mode == 'monolithic' %}
-                <span class="badge" style="background:#6c757d;color:#fff;" title="Single monolithic LLM call covering all 17 risk fields">Monolithic (single LLM call)</span>
                 {% else %}
                 {{ execution_summary.estimation_mode }}
                 {% endif %}

@@ -88,7 +88,6 @@ class CriticProtocol(Protocol):
         principles: Optional[List[Any]] = None,
         request_id: str = "",
         delib_context: Any = None,
-        context_mode: Literal["full", "thin"] = "full",
         previous_violations: str = "",
         previous_guidance: str = "",
     ) -> Any: ...
@@ -100,7 +99,6 @@ class CriticProtocol(Protocol):
         domain: str | None = None,
         request_id: str = "",
         delib_context: Any = None,
-        context_mode: Literal["full", "thin"] = "full",
         previous_violations: str = "",
         previous_guidance: str = "",
     ) -> Any: ...
@@ -109,9 +107,7 @@ class CriticProtocol(Protocol):
 class SimulatorProtocol(Protocol):
     """Protocollo per il Consequence Simulator."""
 
-    def simulate(
-        self, request: str, response: str, num_scenarios: int = 3, delib_context: Any = None, context_mode: str = "full"
-    ) -> Any: ...
+    def simulate(self, request: str, response: str, num_scenarios: int = 3, delib_context: Any = None) -> Any: ...
 
 
 class HindsightProtocol(Protocol):
@@ -124,7 +120,6 @@ class HindsightProtocol(Protocol):
         response: str,
         consequences: List[Any],
         delib_context: Any = None,
-        context_mode: str = "full",
     ) -> Any: ...
     def aggregate(self, evaluations: List[Any]) -> Any: ...
 
@@ -138,5 +133,4 @@ class PerspectiveEnsembleProtocol(Protocol):
         response: str,
         perspectives: Optional[List[Any]] = None,
         delib_context: Any = None,
-        context_mode: str = "full",
     ) -> Any: ...
