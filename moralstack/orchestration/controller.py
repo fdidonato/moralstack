@@ -26,7 +26,7 @@ from moralstack.observability.context import (
     set_current_session_id,
     set_current_turn_number,
 )
-from moralstack.orchestration.conversation_state import ConversationGovernanceState
+from moralstack.orchestration.conversation_state import ConversationGovernanceState, TurnDecisionSummary
 from moralstack.orchestration.decision_logger import log_decision_explanation
 from moralstack.orchestration.decision_service import decide_action
 from moralstack.orchestration.default_event_emitter import DefaultEventEmitter
@@ -40,6 +40,7 @@ from moralstack.orchestration.diagnostics import (
 from moralstack.orchestration.domain_exclusion import generate_domain_exclusion_response
 from moralstack.orchestration.event_emitter import EventEmitter
 from moralstack.orchestration.language_resolver import resolve_prompt_with_language
+from moralstack.orchestration.ledger import CachedDecision, LedgerResult, SemanticDecisionLedger
 from moralstack.orchestration.orchestration_event_taxonomy import (
     CONVERSATION_CONTEXT_ATTACHED,
     CONVERSATION_STATE_UPDATED,
@@ -86,6 +87,7 @@ from moralstack.orchestration.types import (
 from moralstack.persistence.null import NullPersistence
 from moralstack.persistence.port import PersistencePort
 from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace, normalize_trace_fields
+from moralstack.sdk.session_store import SessionStoreProtocol
 
 _LOG = logging.getLogger(__name__)
 
@@ -132,6 +134,9 @@ class OrchestrationController:
         logger: LoggerProtocol | None = None,
         persistence: PersistencePort | None = None,
         event_emitter: EventEmitter | None = None,
+        *,
+        ledger: SemanticDecisionLedger | None = None,
+        session_store: SessionStoreProtocol | None = None,
     ) -> None:
         self.config = config
         self._persistence = persistence if persistence is not None else NullPersistence()
@@ -179,11 +184,110 @@ class OrchestrationController:
             constitution_store=constitution_store,
             event_emitter=self._events,
         )
+        self._ledger: SemanticDecisionLedger | None = ledger
+        self._session_store: SessionStoreProtocol | None = session_store
 
     def set_logger(self, logger: LoggerProtocol | None) -> None:
         """Set the logger for tracking LLM calls (propagated to runner)."""
         self.logger = logger
         self._runner.logger = logger
+
+    def _lookup_cached_decision(
+        self,
+        *,
+        prompt: str,
+        contract_hash: str,
+        posture: str,
+        domain: str | None,
+        intent_clarity: str,
+        request_type: str,
+        turn_index: int,
+    ) -> LedgerResult | None:
+        """
+        Consult the SemanticDecisionLedger for a cached decision matching the current
+        (prompt, contract, posture, domain, intent_clarity, request_type, turn_index)
+        context.
+
+        Returns:
+            LedgerResult when the ledger is configured, None otherwise.
+            The caller decides what to do with hits/misses; in Step 6 the result is
+            recorded for observability only (no routing change).
+        """
+        if self._ledger is None:
+            return None
+        return self._ledger.lookup(
+            prompt=prompt,
+            contract_hash=contract_hash,
+            posture=posture,
+            domain=domain,
+            intent_clarity=intent_clarity,
+            request_type=request_type,
+            turn_index=turn_index,
+        )
+
+    def _store_decision_in_ledger(
+        self,
+        *,
+        prompt: str,
+        contract_hash: str,
+        posture: str,
+        domain: str | None,
+        decision: Decision,
+        risk_score: float,
+        request_type: str,
+        turn_index: int,
+    ) -> bool:
+        """
+        Persist the produced decision into the SemanticDecisionLedger for future reuse.
+
+        Returns:
+            True when the entry was stored; False when the ledger is None or its
+            internal skip rules tripped (e.g. turn_index < 1, posture ESCALATED).
+        """
+        if self._ledger is None:
+            return False
+        cached = CachedDecision(
+            final_action=decision.final_action,
+            risk_score=risk_score,
+            governance_posture=posture,
+            winning_rule=getattr(decision, "path", "") or "",
+            decision_reason=", ".join(getattr(decision, "reason_codes", []) or []),
+            reason_codes=tuple(getattr(decision, "reason_codes", []) or []),
+            triggered_principles=tuple(getattr(decision, "triggered_principles", []) or []),
+        )
+        return self._ledger.store(
+            prompt=prompt,
+            contract_hash=contract_hash,
+            posture=posture,
+            domain=domain,
+            decision=cached,
+            intent_clarity=getattr(decision, "intent_clarity", "HIGH"),
+            request_type=request_type,
+            turn_index=turn_index,
+        )
+
+    def _compute_governance_posture(
+        self,
+        *,
+        decision: Decision,
+        overlay_sensitive: bool,
+        hard_signal_refuse: bool,
+    ) -> str:
+        """
+        Map the runtime signals to the governance posture used as ledger key component.
+
+        Returns:
+            'ESCALATED' when the request triggered a hard refusal signal.
+            'ELEVATED' when the domain overlay is sensitive (but no hard signal).
+            'NORMAL' otherwise.
+
+        Reference: MORALSTACK_MULTITURN_DESIGN.md v1.3 §5.4.
+        """
+        if hard_signal_refuse and decision.final_action == "REFUSE":
+            return "ESCALATED"
+        if overlay_sensitive:
+            return "ELEVATED"
+        return "NORMAL"
 
     def _attach_trace_and_return(self, result: OrchestratorResult, request: ProcessedRequest) -> OrchestratorResult:
         out = self._diagnostics.attach_trace_and_return(result, request, self.execution_trace)
@@ -213,10 +317,19 @@ class OrchestrationController:
                 turn_index=tid if tid is not None else base.turn_index,
             )
             dom = request.get_domain() if hasattr(request, "get_domain") else None
-            result.conversation_governance_state_out = merged.update_from_processing_result(
+            updated = merged.update_from_processing_result(
                 request_id=getattr(request, "request_id", "") or "",
                 domain=dom,
             )
+            # --- v0.4 multi-turn: extend state_out with new governance fields ---
+            updated = self._extend_state_out_v04(
+                state=updated,
+                request=request,
+                result=result,
+                ctx=ctx,
+            )
+            # --- end v0.4 multi-turn ---
+            result.conversation_governance_state_out = updated
             result.conversation_state_updated = True
         if ctx.get("_conversation_events_emitted"):
             return
@@ -250,6 +363,164 @@ class OrchestrationController:
                 payload={
                     "summary": result.conversation_governance_state_out.to_summary_dict(),
                 },
+            )
+        # --- v0.4 multi-turn: persist decision into the ledger for next turn ---
+        # Done at the very end so any exception during routing already aborted the flow.
+        self._maybe_store_in_ledger(request=request, result=result, ctx=ctx)
+        # --- end v0.4 multi-turn ---
+
+    def _extend_state_out_v04(
+        self,
+        *,
+        state: ConversationGovernanceState,
+        request: ProcessedRequest,
+        result: OrchestratorResult,
+        ctx: dict[str, Any],
+    ) -> ConversationGovernanceState:
+        """
+        Extend the outbound governance state with v0.4 multi-turn fields:
+        - last_developer_contract_hash (from request.developer_contract)
+        - last_governance_posture (derived from the produced decision)
+        - turn_decisions_summary (append a TurnDecisionSummary for this turn)
+        """
+        _ = ctx  # Reserved for future Step 7+ context (e.g. cache-hit attribution).
+        contract_hash = ""
+        developer_contract = getattr(request, "developer_contract", None)
+        if developer_contract is not None:
+            contract_hash = getattr(developer_contract, "contract_hash", "") or ""
+
+        final_action = ""
+        risk_score = 0.0
+        metadata = getattr(getattr(result, "response", None), "metadata", None)
+        if metadata is not None:
+            final_action = getattr(metadata, "final_action", "") or ""
+            risk_score = float(getattr(metadata, "risk_score", 0.0) or 0.0)
+
+        # Posture: derive from final_action; ESCALATED if REFUSE on a hard-signal path,
+        # ELEVATED if overlay-sensitive (proxy via active_overlay on the state), else NORMAL.
+        posture = "NORMAL"
+        if final_action == "REFUSE" and len(state.last_hard_constraints_triggered) > 0:
+            posture = "ESCALATED"
+        elif state.active_overlay:
+            posture = "ELEVATED"
+
+        # Append a TurnDecisionSummary for the current turn.
+        winning_rule = ""
+        if metadata is not None:
+            winning_rule = str(getattr(metadata, "decision_path", None) or getattr(metadata, "path", None) or "").strip()
+        turn_idx_for_summary = state.turn_index if isinstance(state.turn_index, int) else 0
+        new_summary = TurnDecisionSummary(
+            turn_index=turn_idx_for_summary,
+            final_action=final_action or "NORMAL_COMPLETE",
+            risk_score=risk_score,
+            winning_rule=winning_rule,
+            was_cached=False,  # Step 6 never reuses; will become True in Step 7.
+        )
+
+        return _dc_replace(
+            state,
+            last_developer_contract_hash=contract_hash or state.last_developer_contract_hash,
+            last_governance_posture=posture,
+            turn_decisions_summary=state.turn_decisions_summary + (new_summary,),
+        )
+
+    def _maybe_store_in_ledger(
+        self,
+        *,
+        request: ProcessedRequest,
+        result: OrchestratorResult,
+        ctx: dict[str, Any],
+    ) -> None:
+        """
+        Persist the produced decision into the ledger when the runtime has one
+        configured and the conversation context permits caching. No-op when the
+        ledger is None.
+
+        The ledger's internal skip rules handle the rest (turn_index < 1, ESCALATED).
+        """
+        if self._ledger is None:
+            return
+        if ctx.get("conversation_id") is None:
+            return
+        turn_index = ctx.get("turn_index")
+        if not isinstance(turn_index, int):
+            return
+
+        contract_hash = ""
+        developer_contract = getattr(request, "developer_contract", None)
+        if developer_contract is not None:
+            contract_hash = getattr(developer_contract, "contract_hash", "") or ""
+
+        state_out = getattr(result, "conversation_governance_state_out", None)
+        posture = "NORMAL"
+        if isinstance(state_out, ConversationGovernanceState):
+            posture = state_out.last_governance_posture or "NORMAL"
+
+        metadata = getattr(getattr(result, "response", None), "metadata", None)
+        final_action = ""
+        risk_score = 0.0
+        decision_path = ""
+        if metadata is not None:
+            final_action = getattr(metadata, "final_action", "") or ""
+            risk_score = float(getattr(metadata, "risk_score", 0.0) or 0.0)
+            decision_path = str(getattr(metadata, "decision_path", None) or getattr(metadata, "path", None) or "").strip()
+
+        if not final_action:
+            # No decision produced (early failure); skip.
+            return
+
+        # Build a CachedDecision directly (we don't have the Decision object here, just metadata).
+        decision_reason = ""
+        if metadata is not None:
+            decision_reason = str(
+                getattr(metadata, "winning_decision_reason", None) or getattr(metadata, "decision_reason", None) or ""
+            ).strip()
+        reason_codes: tuple[str, ...] = ()
+        triggered: tuple[str, ...] = ()
+        if metadata is not None:
+            rc = getattr(metadata, "reason_codes", None)
+            if rc is not None:
+                reason_codes = tuple(rc)
+            tp = getattr(metadata, "triggered_principles", None)
+            if tp is not None:
+                triggered = tuple(tp)
+
+        cached = CachedDecision(
+            final_action=final_action,
+            risk_score=risk_score,
+            governance_posture=posture,
+            winning_rule=decision_path,
+            decision_reason=decision_reason,
+            reason_codes=reason_codes,
+            triggered_principles=triggered,
+        )
+
+        domain = request.get_domain() if hasattr(request, "get_domain") else None
+        intent_clarity = "HIGH"
+        request_type = ""
+        if metadata is not None:
+            intent_clarity = getattr(metadata, "intent_clarity", "HIGH") or "HIGH"
+            request_type = getattr(metadata, "request_type", "") or ""
+
+        try:
+            self._ledger.store(
+                prompt=request.prompt,
+                contract_hash=contract_hash,
+                posture=posture,
+                domain=domain,
+                decision=cached,
+                intent_clarity=intent_clarity,
+                request_type=request_type,
+                turn_index=turn_index,
+            )
+        except Exception as e:
+            # The ledger is best-effort; a store failure must never break the response flow.
+            orch_debug_log(
+                "orchestrator.py:_maybe_store_in_ledger",
+                "ledger store failed (non-fatal)",
+                {"error": str(e)},
+                "H-ledger-store-fail",
+                request_id=getattr(request, "request_id", "") or "",
             )
 
     def _emit_risk_assessment_trace(
@@ -1162,6 +1433,48 @@ class OrchestrationController:
 
             route, borderline_refuse, risk_policy_action = get_route(decision, risk_proto, risk_score, self.config, op_risk)
             hard_signal_refuse = is_hard_signal_refuse(decision, risk_proto, op_risk)
+
+            # --- v0.4 multi-turn: ledger lookup (observability in Step 6, routing in Step 7) ---
+            # Done AFTER decide_action and after hard_signal_refuse so we key on the canonical
+            # decision context. Step 6 records the LedgerResult for downstream observability;
+            # routing is NOT affected. Step 7 will use the result to skip the deliberation on hit.
+            if self._ledger is not None and conversation_id is not None:
+                _contract_hash = ""
+                _developer_contract = getattr(request, "developer_contract", None)
+                if _developer_contract is not None:
+                    _contract_hash = getattr(_developer_contract, "contract_hash", "") or ""
+                _posture = self._compute_governance_posture(
+                    decision=decision,
+                    overlay_sensitive=overlay_sensitive,
+                    hard_signal_refuse=hard_signal_refuse,
+                )
+                _request_type = getattr(risk_proto, "request_type", "") or ""
+                _turn_for_lookup = turn_index if isinstance(turn_index, int) else 0
+                _cached_lookup = self._lookup_cached_decision(
+                    prompt=request.prompt,
+                    contract_hash=_contract_hash,
+                    posture=_posture,
+                    domain=request.get_domain() if hasattr(request, "get_domain") else None,
+                    intent_clarity=getattr(decision, "intent_clarity", "HIGH"),
+                    request_type=_request_type,
+                    turn_index=_turn_for_lookup,
+                )
+                if _cached_lookup is not None:
+                    orch_debug_log(
+                        "orchestrator.py:process",
+                        "ledger lookup result",
+                        {
+                            "is_hit": _cached_lookup.is_hit,
+                            "similarity": _cached_lookup.similarity,
+                            "from_turn": _cached_lookup.from_turn,
+                            "reason": _cached_lookup.reason,
+                        },
+                        "H-ledger-lookup",
+                        request_id=request_id,
+                    )
+                if isinstance(self._conversation_process_ctx, dict):
+                    self._conversation_process_ctx["_ledger_lookup"] = _cached_lookup
+            # --- end v0.4 multi-turn ledger lookup ---
 
             if borderline_refuse:
                 orch_debug_log(
