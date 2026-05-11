@@ -14,6 +14,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, Iterator
 
 from moralstack.core.types import Turn, UserContext
+from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.types import ProcessedRequest
 from moralstack.sdk.bootstrap import _bootstrap_pipeline
 from moralstack.sdk.config import GovernanceConfig
@@ -45,6 +46,51 @@ def _extract_last_user_message(messages: list[dict[str, Any]]) -> str:
                 return " ".join(parts)
             return str(content)
     return ""
+
+
+def _extract_developer_contract(
+    messages: list[dict[str, Any]],
+) -> DeveloperContract | None:
+    """
+    Extract the developer-declared application contract from a list of OpenAI messages.
+
+    Semantics:
+    - Scan all messages with role='system' in order of appearance.
+    - The LAST system message wins (most recent override semantics, consistent with how
+      OpenAI clients typically use multiple system messages).
+    - Multimodal content (list of {type, text/image_url}) is reduced to text parts only;
+      non-text parts are ignored.
+    - If no system message is present, or the extracted text is empty/whitespace-only,
+      return None. This preserves byte-equivalent behavior for single-turn flows that
+      do not declare a contract.
+
+    Args:
+        messages: list of OpenAI-format message dicts.
+
+    Returns:
+        DeveloperContract built via DeveloperContract.from_text(text, mode='opaque'),
+        or None when no substantive system message is present.
+
+    Note:
+        Step 2 always uses mode='opaque'. Support for 'structured' mode (LLM-driven
+        scope/role/restrictions extraction) is deferred to a later step and gated by
+        an explicit GovernanceConfig flag not present in Step 2.
+    """
+    last_system_text = ""
+    for msg in messages:
+        if msg.get("role") != "system":
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            # Multimodal: keep text parts only.
+            parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+            last_system_text = " ".join(parts)
+        else:
+            last_system_text = str(content)
+
+    if not last_system_text.strip():
+        return None
+    return DeveloperContract.from_text(last_system_text, mode="opaque")
 
 
 def _messages_to_turns(messages: list[dict[str, Any]]) -> list[Turn]:
@@ -219,15 +265,18 @@ class GovernedCompletions:
         messages = kwargs.get("messages", [])
 
         user_message = _extract_last_user_message(messages)
-        # History excludes the last user message (the one being deliberated)
+        # History excludes the last user message (the one being deliberated).
         history_messages = messages[:-1] if messages else []
         conversation_history = _messages_to_turns(history_messages)
+        # Extract developer contract from any role='system' messages (last-wins).
+        developer_contract = _extract_developer_contract(messages)
 
         domain = self._governed._config.domain_overlay
         request = ProcessedRequest(
             prompt=user_message,
             conversation_history=conversation_history,
             user_context=UserContext(domain_overlay=domain),
+            developer_contract=developer_contract,
         )
 
         session = self._governed._session

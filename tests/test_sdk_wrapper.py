@@ -3,11 +3,15 @@
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from moralstack.orchestration.contract import DeveloperContract
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.response import GovernedResponse
 from moralstack.sdk.wrapper import (
     GovernedClient,
     GovernedCompletions,
+    _extract_developer_contract,
     _extract_last_user_message,
     _inject_safe_guidance,
     _messages_to_turns,
@@ -426,3 +430,173 @@ class TestGovernedCompletionsFlush:
             resp = client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
 
         assert resp is not None
+
+
+# =============================================================================
+# _extract_developer_contract
+# =============================================================================
+
+
+class TestExtractDeveloperContract:
+    """Tests for the _extract_developer_contract helper (Step 2)."""
+
+    def test_no_messages_returns_none(self):
+        assert _extract_developer_contract([]) is None
+
+    def test_no_system_message_returns_none(self):
+        msgs = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+        ]
+        assert _extract_developer_contract(msgs) is None
+
+    def test_single_system_message_returns_contract(self):
+        msgs = [
+            {"role": "system", "content": "You are a careful assistant"},
+            {"role": "user", "content": "Hello"},
+        ]
+        c = _extract_developer_contract(msgs)
+        assert isinstance(c, DeveloperContract)
+        assert c.raw_text == "You are a careful assistant"
+        assert c.mode == "opaque"
+        # Hash is deterministic and 16 chars; exact value is asserted in
+        # tests/test_developer_contract.py::test_hash_stability_across_versions.
+        assert len(c.contract_hash) == 16
+
+    def test_empty_system_content_returns_none(self):
+        msgs = [
+            {"role": "system", "content": ""},
+            {"role": "user", "content": "Hello"},
+        ]
+        assert _extract_developer_contract(msgs) is None
+
+    def test_whitespace_only_system_content_returns_none(self):
+        msgs = [
+            {"role": "system", "content": "   \n\t  "},
+            {"role": "user", "content": "Hello"},
+        ]
+        assert _extract_developer_contract(msgs) is None
+
+    def test_multiple_system_messages_last_wins(self):
+        msgs = [
+            {"role": "system", "content": "First system"},
+            {"role": "user", "content": "Hello"},
+            {"role": "system", "content": "Second system"},
+            {"role": "assistant", "content": "Hi"},
+            {"role": "system", "content": "Third system"},
+        ]
+        c = _extract_developer_contract(msgs)
+        assert c is not None
+        assert c.raw_text == "Third system"
+
+    def test_multimodal_system_content_text_parts_only(self):
+        msgs = [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": "You are X"},
+                    {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+                    {"type": "text", "text": "and Y"},
+                ],
+            },
+            {"role": "user", "content": "Hello"},
+        ]
+        c = _extract_developer_contract(msgs)
+        assert c is not None
+        assert c.raw_text == "You are X and Y"
+
+    def test_multimodal_system_content_no_text_returns_none(self):
+        msgs = [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+                ],
+            },
+            {"role": "user", "content": "Hello"},
+        ]
+        assert _extract_developer_contract(msgs) is None
+
+    def test_string_content_not_list(self):
+        """Sanity check: non-multimodal content (a plain string) is handled."""
+        msgs = [{"role": "system", "content": "plain string"}, {"role": "user", "content": "Q"}]
+        c = _extract_developer_contract(msgs)
+        assert c is not None
+        assert c.raw_text == "plain string"
+
+    def test_system_among_other_roles_extracted(self):
+        msgs = [
+            {"role": "user", "content": "earlier"},
+            {"role": "assistant", "content": "earlier reply"},
+            {"role": "system", "content": "You are X"},
+            {"role": "user", "content": "now"},
+        ]
+        c = _extract_developer_contract(msgs)
+        assert c is not None
+        assert c.raw_text == "You are X"
+
+    def test_returned_contract_is_immutable(self):
+        """Sanity check: the returned object preserves DeveloperContract frozen semantics."""
+        import dataclasses
+
+        msgs = [{"role": "system", "content": "X"}, {"role": "user", "content": "Q"}]
+        c = _extract_developer_contract(msgs)
+        assert c is not None
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            c.raw_text = "Y"  # type: ignore[misc]
+
+
+# =============================================================================
+# Integration: _create_inner populates developer_contract
+# =============================================================================
+
+
+class TestCreateInnerPropagatesContract:
+    """
+    Verifies that GovernedCompletions._create_inner builds a ProcessedRequest
+    whose developer_contract reflects the role='system' message in `messages`.
+
+    These tests reuse the existing `_make_governed_client` helper at the top of
+    this file. They invoke the wrapper through the public surface
+    (`client.chat.completions.create(...)`) and inspect the captured
+    `ProcessedRequest` via the MagicMock `call_args` of `orchestrator.process`.
+
+    The orchestrator is configured to return a `REFUSE` result so that
+    `_create_inner` exits early without calling the OpenAI client.
+    """
+
+    def test_contract_is_none_when_no_system_message(self):
+        _, client = _make_governed_client("REFUSE")
+        client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "Hello"}])
+        # The captured ProcessedRequest is the first positional argument of orchestrator.process.
+        call_args = client._orchestrator.process.call_args
+        request = call_args.args[0]
+        assert request.developer_contract is None
+
+    def test_contract_is_populated_when_system_present(self):
+        _, client = _make_governed_client("REFUSE")
+        client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a careful assistant"},
+                {"role": "user", "content": "Hello"},
+            ],
+        )
+        call_args = client._orchestrator.process.call_args
+        request = call_args.args[0]
+        assert request.developer_contract is not None
+        assert request.developer_contract.raw_text == "You are a careful assistant"
+        assert request.developer_contract.mode == "opaque"
+
+    def test_contract_is_none_when_system_is_empty(self):
+        _, client = _make_governed_client("REFUSE")
+        client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "   "},
+                {"role": "user", "content": "Hello"},
+            ],
+        )
+        call_args = client._orchestrator.process.call_args
+        request = call_args.args[0]
+        assert request.developer_contract is None
