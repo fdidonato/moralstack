@@ -52,9 +52,9 @@ from .prompts import (
     OPERATIONAL_RISK_PROMPT_TEMPLATE,
     OPERATIONAL_RISK_SYSTEM_PROMPT,
 )
+from .schema import RiskEstimation, RiskEstimatorConfig
 from .signals.prompt_renderer import get_harm_signal_prompts
 from .signals.registry import registry as signal_registry
-from .schema import RiskEstimation, RiskEstimatorConfig
 from .utils import _intent_type_from_request_type
 
 _RISK_LOG = logging.getLogger(__name__)

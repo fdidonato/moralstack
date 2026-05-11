@@ -58,7 +58,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Token counting (preferisce token_usage_json reale, fallback tiktoken,
 # ultimo fallback chars/4)
@@ -117,17 +116,14 @@ def resolve_db_path(explicit: str | None) -> Path:
 
     # Fallback ai path comuni
     for candidate in (
-            Path.cwd() / "moralstack.db",
-            Path.cwd() / "data" / "moralstack.db",
-            Path.cwd() / "logs" / "observability" / "moralstack.db",
+        Path.cwd() / "moralstack.db",
+        Path.cwd() / "data" / "moralstack.db",
+        Path.cwd() / "logs" / "observability" / "moralstack.db",
     ):
         if candidate.exists():
             return candidate
 
-    sys.exit(
-        "DB non trovato. Specifica con --db o imposta "
-        "MORALSTACK_OBSERVABILITY_DB_PATH."
-    )
+    sys.exit("DB non trovato. Specifica con --db o imposta " "MORALSTACK_OBSERVABILITY_DB_PATH.")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -136,8 +132,7 @@ def resolve_db_path(explicit: str | None) -> Path:
 
 
 def list_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    cur = conn.execute(
-        """
+    cur = conn.execute("""
         SELECT
             r.run_id, r.run_type, r.started_at, r.ended_at, r.status,
             (SELECT COUNT(*) FROM requests   WHERE run_id = r.run_id) AS n_requests,
@@ -145,20 +140,17 @@ def list_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         FROM runs r
         ORDER BY r.started_at DESC
             LIMIT 30
-        """
-    )
+        """)
     return [dict(zip([d[0] for d in cur.description], row)) for row in cur.fetchall()]
 
 
 def latest_benchmark_run(conn: sqlite3.Connection) -> str | None:
     """Trova l'ultimo run di tipo benchmark (o l'ultimo qualsiasi se niente benchmark)."""
-    cur = conn.execute(
-        """
+    cur = conn.execute("""
         SELECT run_id FROM runs
         WHERE LOWER(run_type) LIKE '%benchmark%'
         ORDER BY started_at DESC LIMIT 1
-        """
-    )
+        """)
     row = cur.fetchone()
     if row:
         return row[0]
@@ -190,8 +182,7 @@ class CallStats:
     errors: int = 0
 
     def __post_init__(self) -> None:
-        for f in ("sys_tokens", "usr_tokens", "out_tokens",
-                  "in_tokens_real", "out_tokens_real", "durations"):
+        for f in ("sys_tokens", "usr_tokens", "out_tokens", "in_tokens_real", "out_tokens_real", "durations"):
             if getattr(self, f) is None:
                 setattr(self, f, [])
 
@@ -199,14 +190,29 @@ class CallStats:
     def _avg(xs: list[float]) -> float:
         return sum(xs) / len(xs) if xs else 0.0
 
-    def avg_sys(self) -> float: return self._avg(self.sys_tokens)
-    def avg_usr(self) -> float: return self._avg(self.usr_tokens)
-    def avg_out(self) -> float: return self._avg(self.out_tokens)
-    def avg_in_real(self) -> float: return self._avg(self.in_tokens_real)
-    def avg_out_real(self) -> float: return self._avg(self.out_tokens_real)
-    def avg_dur(self) -> float: return self._avg(self.durations)
-    def total_in(self) -> float: return (self.avg_sys() + self.avg_usr()) * self.n_calls
-    def total_out(self) -> float: return self.avg_out() * self.n_calls
+    def avg_sys(self) -> float:
+        return self._avg(self.sys_tokens)
+
+    def avg_usr(self) -> float:
+        return self._avg(self.usr_tokens)
+
+    def avg_out(self) -> float:
+        return self._avg(self.out_tokens)
+
+    def avg_in_real(self) -> float:
+        return self._avg(self.in_tokens_real)
+
+    def avg_out_real(self) -> float:
+        return self._avg(self.out_tokens_real)
+
+    def avg_dur(self) -> float:
+        return self._avg(self.durations)
+
+    def total_in(self) -> float:
+        return (self.avg_sys() + self.avg_usr()) * self.n_calls
+
+    def total_out(self) -> float:
+        return self.avg_out() * self.n_calls
 
 
 def _extract_real_tokens(tu_json: str | None) -> tuple[int | None, int | None]:
@@ -283,7 +289,7 @@ def print_table(buckets: dict[str, CallStats], n_requests: int) -> None:
     grand_in = sum(b.total_in() for b in rows) or 1.0
     grand_in_real = sum(b.avg_in_real() * b.n_calls for b in rows if b.in_tokens_real)
 
-    real_label = " (real)" if grand_in_real > 0 else ""
+    # real_label = " (real)" if grand_in_real > 0 else ""
     print()
     print(f"  Requests in this run : {n_requests}")
     print(f"  LLM calls total       : {sum(b.n_calls for b in rows)}")
@@ -388,9 +394,7 @@ def print_replication_analysis(buckets: dict[str, CallStats], n_requests: int) -
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Analyze MoralStack DB for prompt costs per module."
-    )
+    parser = argparse.ArgumentParser(description="Analyze MoralStack DB for prompt costs per module.")
     parser.add_argument("--db", help="Override DB path")
     parser.add_argument("--run-id", help="Specific run_id (default: latest benchmark)")
     parser.add_argument("--list-runs", action="store_true", help="List available runs")

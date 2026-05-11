@@ -8,7 +8,6 @@ intent constitution ordering, report converged for 1-cycle, get_final_response_t
 import json
 
 from moralstack.models.delib_context import DelibContext
-from moralstack.models.risk.prompts import INTENT_CONTEXT_PROMPT_TEMPLATE
 
 # Persistence imports for report test
 from moralstack.persistence.db import create_run, init_db, upsert_request
@@ -74,7 +73,6 @@ class TestSimulatorDomainGuidance:
 # -----------------------------------------------------------------------------
 # Finding 1: Constitution context before PRE-OUTPUT COHERENCE CHECK
 # -----------------------------------------------------------------------------
-
 
 
 # -----------------------------------------------------------------------------
