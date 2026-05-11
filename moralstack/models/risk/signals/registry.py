@@ -7,12 +7,11 @@ module-level `registry` object rather than constructing a new instance.
 
 from __future__ import annotations
 
-import importlib.resources
 import logging
 from pathlib import Path
 from typing import Any
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from .schema import (
     CalibrationRules,
@@ -39,13 +38,9 @@ def _parse_signal_effects(raw: dict[str, Any]) -> SignalEffects:
         escalates_to_clearly_harmful=bool(raw.get("escalates_to_clearly_harmful", False)),
         forces_risk_policy_action=raw.get("forces_risk_policy_action") or None,
         blocks_defensive_override=bool(raw.get("blocks_defensive_override", False)),
-        blocks_defensive_override_when_intent_present=bool(
-            raw.get("blocks_defensive_override_when_intent_present", False)
-        ),
+        blocks_defensive_override_when_intent_present=bool(raw.get("blocks_defensive_override_when_intent_present", False)),
         blocks_calibration_guard=bool(raw.get("blocks_calibration_guard", False)),
-        excludes_from_intent_contradiction_guard=bool(
-            raw.get("excludes_from_intent_contradiction_guard", False)
-        ),
+        excludes_from_intent_contradiction_guard=bool(raw.get("excludes_from_intent_contradiction_guard", False)),
         excludes_from_non_operational_clamp=bool(raw.get("excludes_from_non_operational_clamp", False)),
         maps_to_self_harm_language=bool(raw.get("maps_to_self_harm_language", False)),
         priority_resolution_in_prompt=bool(raw.get("priority_resolution_in_prompt", False)),
@@ -125,16 +120,11 @@ class SignalRegistry:
         version = raw.get("version")
         if version not in _SUPPORTED_VERSIONS:
             raise ValueError(
-                f"signals.yaml version {version!r} is not supported. "
-                f"Supported: {sorted(_SUPPORTED_VERSIONS)}"
+                f"signals.yaml version {version!r} is not supported. " f"Supported: {sorted(_SUPPORTED_VERSIONS)}"
             )
 
-        self._signals: dict[str, SignalDef] = {
-            key: _parse_signal(key, val) for key, val in raw["signals"].items()
-        }
-        self._label_index: dict[str, SignalDef] = {
-            sig.label: sig for sig in self._signals.values()
-        }
+        self._signals: dict[str, SignalDef] = {key: _parse_signal(key, val) for key, val in raw["signals"].items()}
+        self._label_index: dict[str, SignalDef] = {sig.label: sig for sig in self._signals.values()}
         self.calibration: CalibrationRules = _parse_calibration(raw.get("calibration", {}))
         ds_raw = raw.get("domain_sensitivity", {})
         self.domain_sensitivity = DomainSensitivityConfig(

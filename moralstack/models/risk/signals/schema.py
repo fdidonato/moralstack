@@ -8,6 +8,7 @@ All fields map 1-to-1 to YAML keys — see signals.yaml for documentation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -81,15 +82,15 @@ class CalibrationRules:
     harm_type_default: HarmTypeDefault
     # Raw YAML sub-sections kept as dicts for rules engine consumption.
     # The rules engine parses them on first use.
-    defensive_override: dict
-    escalation_clearly_harmful: dict
-    default_potentially_harmful: dict
-    default_action_from_category_score: list[dict]
-    op_risk_action_mapping: dict
-    intent_contradiction_guard: dict
-    non_operational_clamp: dict
-    force_actions: list[dict]
-    calibration_guard: dict
+    defensive_override: dict[str, Any]
+    escalation_clearly_harmful: dict[str, Any]
+    default_potentially_harmful: dict[str, Any]
+    default_action_from_category_score: list[dict[str, Any]]
+    op_risk_action_mapping: dict[str, Any]
+    intent_contradiction_guard: dict[str, Any]
+    non_operational_clamp: dict[str, Any]
+    force_actions: list[dict[str, Any]]
+    calibration_guard: dict[str, Any]
 
 
 @dataclass(frozen=True)
