@@ -22,6 +22,7 @@ from moralstack.core.types import (
     UserContext,
 )
 from moralstack.models.decision_explanation import DecisionExplanation
+from moralstack.orchestration.contract import DeveloperContract
 from moralstack.utils.output_protection import ProtectionResult
 
 # =============================================================================
@@ -196,6 +197,7 @@ class ProcessedRequest:
     conversation_history: list[Turn] = field(default_factory=list)
     user_context: UserContext = field(default_factory=UserContext)
     timestamp: float = field(default_factory=time.time)
+    developer_contract: DeveloperContract | None = None  # NEW v0.4
 
     def get_domain(self) -> str | None:
         """Ottiene il dominio overlay dall'user context."""

@@ -128,9 +128,12 @@ class UserContext:
     domain_overlay: str | None = None   # es. "medical", "legal"
 ```
 
-*[impl]* The actual type used by the Orchestrator is **ProcessedRequest** (in `orchestrator.py`), with `request_id` (
-default UUID), `prompt`, `conversation_history`, `user_context: UserContext`, `timestamp: float`. An external gateway
-can build `ProcessedRequest` and pass it to `Orchestrator.process()`.
+*[impl]* The actual type used by the Orchestrator is **ProcessedRequest** (in `orchestrator.py`), with `request_id`
+(default UUID), `prompt`, `conversation_history`, `user_context: UserContext`, `timestamp: float`, and
+`developer_contract: DeveloperContract | None = None` (v0.4 additive field). `DeveloperContract` is defined in
+`moralstack/orchestration/contract.py` with fields `raw_text`, `mode`, and deterministic
+`contract_hash = sha256(f"{raw_text}|{mode}")[:16]`. An external gateway can build `ProcessedRequest` and pass it to
+`Orchestrator.process()`.
 
 ---
 

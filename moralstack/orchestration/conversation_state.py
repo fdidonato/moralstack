@@ -13,6 +13,63 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class TurnContext:
+    """
+    Snapshot of the current turn, used as argument for
+    ConversationGovernanceState.should_full_refresh().
+
+    Fields are populated by the controller BEFORE deciding whether to activate
+    the conversational fast path or route to deliberation.
+
+    Reference: MORALSTACK_MULTITURN_DESIGN.md v1.3 §2.3.
+    """
+
+    current_domain: str | None = None
+    current_developer_contract_hash: str | None = None
+    current_hard_signals_present: bool = False
+    current_risk_posture: str = "NORMAL"  # "NORMAL" | "ELEVATED" | "ESCALATED"
+
+
+@dataclass(frozen=True)
+class RefreshDecision:
+    """
+    Extended result for should_full_refresh() for future API evolution.
+
+    In Step 1 this is not used directly (should_full_refresh returns bool).
+    It exists now to support Step 6, where the API may evolve to return
+    RefreshDecision instead of bool, while preserving compatibility via
+    __bool__ coercion.
+
+    Reference: MORALSTACK_MULTITURN_DESIGN.md v1.3 §2.3 (c).
+    """
+
+    should_refresh: bool
+    reason_codes: tuple[str, ...] = field(default_factory=tuple)
+
+    def __bool__(self) -> bool:
+        """Enables `if state.should_full_refresh(...):` even if return type evolves."""
+        return self.should_refresh
+
+
+@dataclass(frozen=True)
+class TurnDecisionSummary:
+    """
+    Summary of a turn decision, stored in ConversationGovernanceState.turn_decisions_summary.
+
+    Used by the conversational fast-path runner (Step 7) to detect escalation
+    patterns (for example, SAFE_COMPLETE in the last three turns).
+
+    Reference: MORALSTACK_MULTITURN_DESIGN.md v1.3 §2.3 (a).
+    """
+
+    turn_index: int
+    final_action: str  # "NORMAL_COMPLETE" | "SAFE_COMPLETE" | "REFUSE"
+    risk_score: float
+    winning_rule: str = ""
+    was_cached: bool = False
+
+
+@dataclass(frozen=True)
 class ConversationGovernanceState:
     """
     Minimal governance snapshot that may be carried across turns in a future
@@ -31,15 +88,62 @@ class ConversationGovernanceState:
     last_request_id: str | None = None
     # Future: explicit flags for "full refresh required" vs "reuse eligible" (no default behavior yet)
     full_refresh_required_hint: bool | None = None
+    # --- NEW v0.4 (additive fields) ---
+    last_developer_contract_hash: str | None = None
+    last_governance_posture: str = "NORMAL"  # "NORMAL" | "ELEVATED" | "ESCALATED"
+    turn_decisions_summary: tuple[TurnDecisionSummary, ...] = field(default_factory=tuple)
 
-    def should_full_refresh(self) -> bool:
+    def should_full_refresh(
+        self,
+        *,
+        current_turn: TurnContext | None = None,
+    ) -> bool:
         """
-        Placeholder: conservative default for future delta-refresh logic.
-        When multi-turn reuse is implemented, this will encode real rules.
+        Decide whether to recompute the full pipeline (no cache, no fast-path)
+        for the current turn.
+
+        Backward compatibility:
+            When invoked WITHOUT arguments (legacy), always returns True
+            (conservative behavior). This preserves tests/test_conversation_readiness.py:18
+            (`assert s.should_full_refresh() is True`).
+
+        New logic (Step 6 wires `should_full_refresh(current_turn=...)`):
+            Returns True if at least one of the following is true:
+            - full_refresh_required_hint == True (explicit)
+            - current_turn.current_hard_signals_present == True
+            - current_turn.current_domain != self.active_domain (domain changed)
+            - current_turn.current_developer_contract_hash != self.last_developer_contract_hash
+              (contract changed)
+            - self.last_governance_posture == "ESCALATED"
+            - len(self.last_hard_constraints_triggered) > 0
+            Otherwise returns False (cache/fast-path eligible).
+
+        Args:
+            current_turn: snapshot of current turn. If None (legacy), conservative behavior.
+
+        Returns:
+            True when full refresh is required, False when cache/fast-path is eligible.
         """
+        # Legacy path (no arguments): byte-identical compatibility.
+        if current_turn is None:
+            if self.full_refresh_required_hint is True:
+                return True
+            return True
+
+        # New path (Step 6 will call with current_turn).
         if self.full_refresh_required_hint is True:
             return True
-        return True
+        if current_turn.current_hard_signals_present:
+            return True
+        if current_turn.current_domain != self.active_domain:
+            return True
+        if current_turn.current_developer_contract_hash != self.last_developer_contract_hash:
+            return True
+        if self.last_governance_posture == "ESCALATED":
+            return True
+        if len(self.last_hard_constraints_triggered) > 0:
+            return True
+        return False
 
     def with_last_request_id(self, request_id: str) -> ConversationGovernanceState:
         """Return a copy with last_request_id set (explicit carry-forward anchor)."""
@@ -47,6 +151,10 @@ class ConversationGovernanceState:
         if not rid:
             return self
         return replace(self, last_request_id=rid)
+
+    def with_developer_contract_hash(self, contract_hash: str | None) -> ConversationGovernanceState:
+        """Return a copy with last_developer_contract_hash set."""
+        return replace(self, last_developer_contract_hash=contract_hash)
 
     def with_turn_metadata(
         self,
@@ -107,4 +215,17 @@ class ConversationGovernanceState:
             "conversation_safety_summary": self.conversation_safety_summary,
             "last_request_id": self.last_request_id,
             "full_refresh_required_hint": self.full_refresh_required_hint,
+            # --- NEW v0.4 ---
+            "last_developer_contract_hash": self.last_developer_contract_hash,
+            "last_governance_posture": self.last_governance_posture,
+            "turn_decisions_summary": [
+                {
+                    "turn_index": t.turn_index,
+                    "final_action": t.final_action,
+                    "risk_score": t.risk_score,
+                    "winning_rule": t.winning_rule,
+                    "was_cached": t.was_cached,
+                }
+                for t in self.turn_decisions_summary
+            ],
         }

@@ -27,6 +27,12 @@ optional keyword-only arguments `conversation_id`, `turn_index`, `parent_request
 (`ConversationGovernanceState`). When provided, metadata is persisted on the request row and echoed on
 `OrchestratorResult`; they do not change routing or `decide_action` when omitted. See `moralstack/orchestration/conversation_state.py`.
 
+In v0.4 foundations, `ConversationGovernanceState` includes additive fields for future multi-turn routing:
+`last_developer_contract_hash`, `last_governance_posture`, and `turn_decisions_summary` (tuple of
+`TurnDecisionSummary`). `should_full_refresh(*, current_turn: TurnContext | None = None)` preserves legacy behavior
+(`should_full_refresh()` without arguments remains conservative and returns `True`) and enables forward-compatible
+rule evaluation when `current_turn` is provided.
+
 ---
 
 ## Architecture
