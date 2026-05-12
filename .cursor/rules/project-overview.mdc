@@ -45,6 +45,7 @@ SAFE_COMPLETE is an intentional governance choice, **not an error**.
 | `moralstack/cli/`              | CLI entrypoints (run, shell, loader, mocks, report, visualizer) |
 | `moralstack/reports/`          | RequestReport, renderer_markdown, benchmark_report_loader, orchestrator_observability (path-routing explainability from debug events), runtime_decisions (execution strategy / cycle cards / orchestration table view-models) |
 | `moralstack/ui/`               | FastAPI dashboard (moralstack-ui)              |
+| `moralstack/server/`           | OpenAI-compatible HTTP proxy (`create_app`, `POST /v1/chat/completions`); fingerprint, governance headers, per-conversation lock; thin wrapper on `OrchestrationController` + SDK message helpers |
 | `scripts/`                     | CLI entrypoints                               |
 | `moralstack/constitution/data/`         | YAML constitution files (core + overlays)     |
 

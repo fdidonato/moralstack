@@ -45,12 +45,20 @@ ui = [
     "fastapi>=0.110",
     "uvicorn>=0.27",
     "jinja2>=3.1",
-    "python-multipart>=0.0.9"
+    "python-multipart>=0.0.9",
+    "httpx>=0.27",
+]
+
+server = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "httpx>=0.27",
 ]
 
 [project.scripts]
 moralstack = "moralstack.cli.run:main"
 moralstack-ui = "moralstack.ui.app:main"
+moralstack-server = "moralstack.server.proxy:main"
 moralstack-validate-overlay = "moralstack.cli.validate_overlay:main"
 
 [project.urls]
@@ -117,6 +125,11 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "moralstack.ui.app"
+ignore_missing_imports = true
+disable_error_code = ["untyped-decorator"]
+
+[[tool.mypy.overrides]]
+module = "moralstack.server.*"
 ignore_missing_imports = true
 disable_error_code = ["untyped-decorator"]
 

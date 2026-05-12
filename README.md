@@ -118,6 +118,7 @@ Main packages:
 - `moralstack/constitution/` — constitution schema, loader, store (YAML-driven)
 - `moralstack/persistence/` — DB and file persistence modes
 - `moralstack/ui/` — FastAPI dashboard (`moralstack-ui`)
+- `moralstack/server/` — OpenAI-compatible governance HTTP proxy (`create_app`; install with `.[server]` or `.[ui]`)
 
 ---
 
@@ -423,6 +424,12 @@ moralstack-ui
 ```
 
 Inspect every decision: LLM calls, critic scores, risk traces, decision explanation, convergence steps, and benchmark comparisons.
+
+---
+
+## Server proxy (OpenAI-compatible)
+
+Install `fastapi`, `uvicorn`, and `httpx` via `pip install -e ".[server]"` (or use `.[ui]`). Import `create_app` from `moralstack.server`, inject an upstream OpenAI client and a configured `OrchestrationController`, and serve the app with uvicorn. The `moralstack-server` entry point is reserved for a future launcher; use `create_app` in your own module until then. See `docs/modules/server_proxy.md`.
 
 ---
 

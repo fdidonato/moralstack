@@ -26,6 +26,7 @@ globs: "pyproject.toml,requirements.txt"
 | Dependency     | Purpose                        |
 |----------------|--------------------------------|
 | openai         | LLM provider (OpenAI API)      |
+| httpx          | HTTP client (declared in `[ui]` / `[server]` for proxy and TestClient alignment) |
 | pydantic       | Schema validation              |
 | python-dotenv  | .env loading at startup        |
 | ruamel.yaml    | YAML loading (constitution)    |

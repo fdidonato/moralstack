@@ -1407,6 +1407,10 @@ print(f"Risk: {response.metadata.risk_score}")
 print(f"Cycles: {response.metadata.deliberation_cycles}")
 ```
 
+### 10.3 HTTP server proxy (v0.4 multi-turn)
+
+`moralstack.server.create_app(openai_client=..., orchestrator=..., config=..., session_store=...)` returns a FastAPI app exposing `POST /v1/chat/completions` and `GET /healthz`. Request handling mirrors the SDK: messages are converted to `ProcessedRequest`, `OrchestrationController.process` runs with optional `conversation_id` / `turn_index` / `conversation_state`, and REFUSE / SAFE_COMPLETE / NORMAL_COMPLETE routing matches the governed client. Responses include `X-Moralstack-*` audit headers. Contract details: `docs/modules/server_proxy.md`.
+
 ---
 
 ## 11. Changelog
