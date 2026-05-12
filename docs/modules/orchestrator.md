@@ -27,6 +27,12 @@ optional keyword-only arguments `conversation_id`, `turn_index`, `parent_request
 (`ConversationGovernanceState`). When provided, metadata is persisted on the request row and echoed on
 `OrchestratorResult`; they do not change routing or `decide_action` when omitted. See `moralstack/orchestration/conversation_state.py`.
 
+When `OrchestrationController` is constructed with a non-`None` `SemanticDecisionLedger` and `process(..., conversation_id=...)`
+is used, the controller consults the ledger after `decide_action` and initial routing. On a semantic cache hit,
+`ConversationalFastPathRunner` (`moralstack/orchestration/conversational_fast_path.py`) may patch `Decision` and the
+string route to skip deliberation only when a conservative gate allows (cached `REFUSE`, or current route already
+non-deliberative). Response text is never read from the ledger (DAF-4); only governance metadata is reused.
+
 In v0.4 foundations, `ConversationGovernanceState` includes additive fields for future multi-turn routing:
 `last_developer_contract_hash`, `last_governance_posture`, and `turn_decisions_summary` (tuple of
 `TurnDecisionSummary`). `should_full_refresh(*, current_turn: TurnContext | None = None)` preserves legacy behavior

@@ -27,6 +27,7 @@ from moralstack.observability.context import (
     set_current_turn_number,
 )
 from moralstack.orchestration.conversation_state import ConversationGovernanceState, TurnDecisionSummary
+from moralstack.orchestration.conversational_fast_path import ConversationalFastPathRunner
 from moralstack.orchestration.decision_logger import log_decision_explanation
 from moralstack.orchestration.decision_service import decide_action
 from moralstack.orchestration.default_event_emitter import DefaultEventEmitter
@@ -186,6 +187,7 @@ class OrchestrationController:
         )
         self._ledger: SemanticDecisionLedger | None = ledger
         self._session_store: SessionStoreProtocol | None = session_store
+        self._fast_path_runner = ConversationalFastPathRunner()
 
     def set_logger(self, logger: LoggerProtocol | None) -> None:
         """Set the logger for tracking LLM calls (propagated to runner)."""
@@ -383,7 +385,7 @@ class OrchestrationController:
         - last_governance_posture (derived from the produced decision)
         - turn_decisions_summary (append a TurnDecisionSummary for this turn)
         """
-        _ = ctx  # Reserved for future Step 7+ context (e.g. cache-hit attribution).
+        was_cached = bool(ctx.get("_ledger_hit_applied", False))
         contract_hash = ""
         developer_contract = getattr(request, "developer_contract", None)
         if developer_contract is not None:
@@ -414,7 +416,7 @@ class OrchestrationController:
             final_action=final_action or "NORMAL_COMPLETE",
             risk_score=risk_score,
             winning_rule=winning_rule,
-            was_cached=False,  # Step 6 never reuses; will become True in Step 7.
+            was_cached=was_cached,
         )
 
         return _dc_replace(
@@ -1434,10 +1436,9 @@ class OrchestrationController:
             route, borderline_refuse, risk_policy_action = get_route(decision, risk_proto, risk_score, self.config, op_risk)
             hard_signal_refuse = is_hard_signal_refuse(decision, risk_proto, op_risk)
 
-            # --- v0.4 multi-turn: ledger lookup (observability in Step 6, routing in Step 7) ---
+            # --- v0.4 multi-turn: ledger lookup (Step 6 observability + Step 7 cache-driven routing) ---
             # Done AFTER decide_action and after hard_signal_refuse so we key on the canonical
-            # decision context. Step 6 records the LedgerResult for downstream observability;
-            # routing is NOT affected. Step 7 will use the result to skip the deliberation on hit.
+            # decision context. On cache hit (Step 7), decision and route may be patched to skip deliberation.
             if self._ledger is not None and conversation_id is not None:
                 _contract_hash = ""
                 _developer_contract = getattr(request, "developer_contract", None)
@@ -1474,6 +1475,54 @@ class OrchestrationController:
                     )
                 if isinstance(self._conversation_process_ctx, dict):
                     self._conversation_process_ctx["_ledger_lookup"] = _cached_lookup
+                # --- v0.4 Step 7: apply cached decision when hit and safe to do so ---
+                if _cached_lookup is not None and _cached_lookup.is_hit:
+                    if self._fast_path_runner.is_safe_to_apply(
+                        ledger_result=_cached_lookup,
+                        current_decision=decision,
+                        current_route=route,
+                    ):
+                        decision, route = self._fast_path_runner.apply_cached_decision(
+                            ledger_result=_cached_lookup,
+                            current_decision=decision,
+                        )
+                        # Re-evaluate hard_signal_refuse on the patched decision so the
+                        # downstream routing block sees a consistent state.
+                        hard_signal_refuse = is_hard_signal_refuse(decision, risk_proto, op_risk)
+                        trace.decision_path = decision.path
+                        trace.final_action = decision.final_action
+                        # Mark the conversation context so _extend_state_out_v04 can flag was_cached=True.
+                        if isinstance(self._conversation_process_ctx, dict):
+                            self._conversation_process_ctx["_ledger_hit_applied"] = True
+                        orch_debug_log(
+                            "orchestrator.py:process",
+                            "ledger cache hit APPLIED — deliberation will be skipped",
+                            {
+                                "final_action": decision.final_action,
+                                "forced_route": route,
+                                "from_turn": _cached_lookup.from_turn,
+                                "similarity": _cached_lookup.similarity,
+                            },
+                            "H-ledger-hit-applied",
+                            request_id=request_id,
+                        )
+                    else:
+                        orch_debug_log(
+                            "orchestrator.py:process",
+                            "ledger cache hit FOUND but safety gate prevents application",
+                            {
+                                "cached_action": (
+                                    _cached_lookup.cached_decision.final_action
+                                    if _cached_lookup.cached_decision
+                                    else "unknown"
+                                ),
+                                "current_action": decision.final_action,
+                                "current_route": route,
+                            },
+                            "H-ledger-hit-skipped",
+                            request_id=request_id,
+                        )
+                # --- end v0.4 Step 7 ---
             # --- end v0.4 multi-turn ledger lookup ---
 
             if borderline_refuse:

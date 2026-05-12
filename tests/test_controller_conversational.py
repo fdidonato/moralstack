@@ -360,3 +360,41 @@ class TestStateOutV04Extension:
             ctx={},
         )
         assert extended.last_governance_posture == "ELEVATED"
+
+
+class TestStep7Integration:
+    """Verify Step 7 wiring: runner attribute, was_cached flag propagation."""
+
+    def test_controller_has_fast_path_runner(self):
+        """The controller owns an instance of ConversationalFastPathRunner."""
+        from moralstack.orchestration.conversational_fast_path import ConversationalFastPathRunner
+
+        orch = _build_controller_minimal()
+        assert hasattr(orch, "_fast_path_runner")
+        assert isinstance(orch._fast_path_runner, ConversationalFastPathRunner)
+
+    def test_extend_state_out_marks_cached_when_flag_set(self):
+        """_extend_state_out_v04 reads _ledger_hit_applied from ctx and marks was_cached."""
+        orch = _build_controller_minimal()
+        request = ProcessedRequest(prompt="hello")
+        base_state = ConversationGovernanceState()
+
+        # Build a minimal result like the existing tests do.
+        metadata = MagicMock()
+        metadata.final_action = "NORMAL_COMPLETE"
+        metadata.risk_score = 0.1
+        metadata.decision_path = "BENIGN_FAST_PATH"
+        response = MagicMock()
+        response.metadata = metadata
+        result = MagicMock()
+        result.response = response
+
+        # Without the flag: was_cached is False (Step 6 baseline).
+        extended_no_flag = orch._extend_state_out_v04(state=base_state, request=request, result=result, ctx={})
+        assert extended_no_flag.turn_decisions_summary[-1].was_cached is False
+
+        # With the flag: was_cached is True.
+        extended_with_flag = orch._extend_state_out_v04(
+            state=base_state, request=request, result=result, ctx={"_ledger_hit_applied": True}
+        )
+        assert extended_with_flag.turn_decisions_summary[-1].was_cached is True
