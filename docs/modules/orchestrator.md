@@ -33,6 +33,8 @@ is used, the controller consults the ledger after `decide_action` and initial ro
 string route to skip deliberation only when a conservative gate allows (cached `REFUSE`, or current route already
 non-deliberative). Response text is never read from the ledger (DAF-4); only governance metadata is reused.
 
+`moralstack/orchestration/system_prompt_resolver.py` exposes `effective_system_for_request(...)`, composing the policy system prompt per request from the protected base, optional non-empty `DeveloperContract.raw_text`, and an optional mode suffix (`normal`, `safe_complete`, `constrained`). When no contract text is present, output matches the legacy single-turn byte strings.
+
 In v0.4 foundations, `ConversationGovernanceState` includes additive fields for future multi-turn routing:
 `last_developer_contract_hash`, `last_governance_posture`, and `turn_decisions_summary` (tuple of
 `TurnDecisionSummary`). `should_full_refresh(*, current_turn: TurnContext | None = None)` preserves legacy behavior

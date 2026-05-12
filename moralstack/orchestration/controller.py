@@ -59,6 +59,7 @@ from moralstack.orchestration.refusal_handler import RefusalHandler
 from moralstack.orchestration.response_assembler import ResponseAssembler
 from moralstack.orchestration.safe_complete_gating import apply_safe_complete_gating
 from moralstack.orchestration.speculative_overlap import SpeculativeOverlapHandle
+from moralstack.orchestration.system_prompt_resolver import effective_system_for_request
 from moralstack.orchestration.trace import Trace
 from moralstack.orchestration.trace_lifecycle import (
     TraceLifecycle,
@@ -694,7 +695,7 @@ class OrchestrationController:
             try:
                 result = self.policy.generate(
                     prompt=prompt_text,
-                    system=self._protected_system_prompt,
+                    system=effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal"),
                 )
             except TypeError:
                 result = self.policy.generate(prompt_text)
@@ -702,7 +703,9 @@ class OrchestrationController:
             response_text = getattr(result, "text", None) or str(result)
             protection = self._output_protector.validate(response_text)
             prompt_used = getattr(result, "prompt_used", None) or prompt_text
-            system_used = getattr(result, "system_used", None) or self._protected_system_prompt
+            system_used = getattr(result, "system_used", None) or effective_system_for_request(
+                base=self._protected_system_prompt, request=request, mode="normal"
+            )
             policy_model = getattr(self.policy, "model", None)
             policy_model_str = str(policy_model) if policy_model is not None else None
             persist_kwargs: dict[str, Any] = {
