@@ -125,7 +125,7 @@ class Turn:
 class UserContext:
     locale: str = "en-US"
     permission_level: Literal["standard", "research", "admin"] = "standard"
-    domain_overlay: str | None = None   # es. "medical", "legal"
+    domain_overlay: str | None = None   # e.g. "medical", "legal"
 ```
 
 *[impl]* The actual type used by the Orchestrator is **ProcessedRequest** (in `orchestrator.py`), with `request_id`
@@ -134,6 +134,13 @@ class UserContext:
 `moralstack/orchestration/contract.py` with fields `raw_text`, `mode`, and deterministic
 `contract_hash = sha256(f"{raw_text}|{mode}")[:16]`. An external gateway can build `ProcessedRequest` and pass it to
 `Orchestrator.process()`.
+
+**Refusal context (v0.4)**: `moralstack/orchestration/refusal_context.py` defines frozen **`RefusalContext`** and
+`build_refusal_context(...)`. The builder accepts optional **`developer_contract`** and **`conversation_history`**
+to populate **`developer_contract_summary`** and **`conversation_history_snippet`** (bounded text for refusal
+generation). **`classify_refusal_focus`** selects `safe_refusal_focus` / guidance using priority **P0–P6**:
+hard topical signals (P0) cannot be overridden by deployer contract redirection; structured-contract redirection (P1)
+is gated on `DeveloperContract.mode == "structured"` and keyword heuristics in `raw_text` (see module docstring).
 
 ---
 

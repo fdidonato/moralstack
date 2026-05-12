@@ -265,7 +265,7 @@ print(response.governance_metadata.risk_score)
 | `final_action` | What happens |
 |---|---|
 | `NORMAL_COMPLETE` | Request passes unchanged to your OpenAI client |
-| `SAFE_COMPLETE` | Governance constraints injected into system prompt, then calls your client |
+| `SAFE_COMPLETE` | A synthetic trailing `user` message is appended to `messages` with governance guidance; existing system prompts are left byte-identical; then your OpenAI client is called |
 | `REFUSE` | OpenAI is **not called** — refusal text returned directly |
 
 ### Governance metadata
@@ -317,7 +317,7 @@ The model passed in `client.chat.completions.create(model="...")` controls only 
 | Stage | Model source |
 |---|---|
 | Final response (`NORMAL_COMPLETE`) | `model=` passed to `chat.completions.create(...)` |
-| Final response (`SAFE_COMPLETE`) | same `model=`, with governance constraints injected into system message |
+| Final response (`SAFE_COMPLETE`) | same `model=`, with governance guidance in an extra trailing `user` message (system messages unchanged) |
 | `REFUSE` response text | internal policy model (`OPENAI_MODEL`) |
 | Speculative overlap draft | internal policy model (`OPENAI_MODEL`) |
 | Policy `rewrite()` (cycle 2+) | `MORALSTACK_POLICY_REWRITE_MODEL` (fallback: `OPENAI_MODEL`) |
