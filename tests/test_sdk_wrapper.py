@@ -11,9 +11,9 @@ from moralstack.sdk.response import GovernedResponse
 from moralstack.sdk.wrapper import (
     GovernedClient,
     GovernedCompletions,
+    _build_safe_complete_user_turn,
     _extract_developer_contract,
     _extract_last_user_message,
-    _inject_safe_guidance,
     _messages_to_turns,
     govern,
 )
@@ -119,11 +119,11 @@ class TestMessageToTurns:
 
 
 # =============================================================================
-# _inject_safe_guidance
+# _build_safe_complete_user_turn (Step 10: caveat-as-extra-user-turn)
 # =============================================================================
 
 
-class TestInjectSafeGuidance:
+class TestBuildSafeCompleteUserTurn:
     def _make_result_with_content(self, content: str) -> Any:
         result = MagicMock()
         result.response.content = content
@@ -132,28 +132,22 @@ class TestInjectSafeGuidance:
         result.response.metadata.decision_reason = ""
         return result
 
-    def test_injects_into_existing_system_message(self):
-        kwargs = {"messages": [{"role": "system", "content": "Existing"}, {"role": "user", "content": "Q"}]}
+    def test_returns_user_dict_with_governance_phrase(self):
         result = self._make_result_with_content("Be careful.")
-        modified = _inject_safe_guidance(kwargs, result)
-        system_msg = next(m for m in modified["messages"] if m["role"] == "system")
-        assert "Existing" in system_msg["content"]
-        assert "Be careful." in system_msg["content"]
+        turn = _build_safe_complete_user_turn(result)
+        assert turn["role"] == "user"
+        assert "Be careful." in turn["content"]
+        assert "governance" in turn["content"].lower()
 
-    def test_inserts_system_message_when_missing(self):
-        kwargs = {"messages": [{"role": "user", "content": "Q"}]}
-        result = self._make_result_with_content("Be careful.")
-        modified = _inject_safe_guidance(kwargs, result)
-        assert modified["messages"][0]["role"] == "system"
-        assert "Be careful." in modified["messages"][0]["content"]
-
-    def test_does_not_modify_original_kwargs(self):
-        original_msgs = [{"role": "user", "content": "Q"}]
-        kwargs = {"messages": original_msgs}
-        result = self._make_result_with_content("Guidance")
-        _inject_safe_guidance(kwargs, result)
-        # Original must not be mutated
-        assert len(original_msgs) == 1
+    def test_fallback_uses_metadata_when_content_empty(self):
+        result = MagicMock()
+        result.response.content = ""
+        result.response.metadata.triggered_principles = ["p1"]
+        result.response.metadata.reason_codes = ["R1"]
+        result.response.metadata.decision_reason = ""
+        turn = _build_safe_complete_user_turn(result)
+        assert turn["role"] == "user"
+        assert "p1" in turn["content"] or "R1" in turn["content"]
 
 
 # =============================================================================
@@ -210,17 +204,23 @@ class TestGovernedCompletionsRouting:
         assert resp.governance_metadata.final_action == "REFUSE"
         assert "I cannot help." in resp.content
 
-    def test_safe_complete_calls_openai_with_modified_kwargs(self):
+    def test_safe_complete_calls_openai_with_appended_user_turn(self):
         mock_openai, client = _make_governed_client("SAFE_COMPLETE")
         client._orchestrator.process.return_value.response.content = "Use caution."
-        client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
+        msgs = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Hello"},
+        ]
+        client.chat.completions.create(model="gpt-4o", messages=msgs)
 
         mock_openai.chat.completions.create.assert_called_once()
         call_kwargs = mock_openai.chat.completions.create.call_args[1]
-        # Must include system message with guidance
-        msgs = call_kwargs.get("messages", [])
-        system_msgs = [m for m in msgs if m.get("role") == "system"]
-        assert len(system_msgs) >= 1
+        out_msgs = call_kwargs.get("messages", [])
+        assert out_msgs[-1]["role"] == "user"
+        assert "governance" in out_msgs[-1]["content"].lower()
+        sys_msgs = [m for m in out_msgs if m.get("role") == "system"]
+        assert len(sys_msgs) == 1
+        assert sys_msgs[0]["content"] == "You are helpful."
 
     def test_session_turn_index_increments(self):
         _, client = _make_governed_client("NORMAL_COMPLETE")

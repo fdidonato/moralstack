@@ -111,48 +111,38 @@ def _messages_to_turns(messages: list[dict[str, Any]]) -> list[Turn]:
     return turns
 
 
-def _build_safe_system_injection(result: Any) -> str:
+def _build_safe_complete_user_turn(result: Any) -> dict[str, str]:
     """
-    Build governance guidance to inject into the system prompt
-    for SAFE_COMPLETE cases. Uses content assembled from ResponseAssembler.
+    Build a synthetic user turn carrying the SAFE_COMPLETE governance guidance.
+
+    Per design v1.3 section 3.7, the SAFE_COMPLETE guidance is injected as an additional
+    user message at the end of the messages list, NOT as a modification of the
+    user's system prompt. This preserves the developer-declared system prompt
+    byte-identical (transparency invariant section 1.3).
+
+    Returns:
+        A dict {"role": "user", "content": "..."} ready to be appended to messages.
     """
     governance_content = result.response.content
     if governance_content:
-        return "You must follow these governance constraints for this response:\n" f"{governance_content}"
-    # Fallback: use reason_codes and triggered_principles
-    meta = result.response.metadata
-    parts: list[str] = []
-    if meta.triggered_principles:
-        parts.append(f"Relevant principles: {', '.join(meta.triggered_principles)}.")
-    if meta.reason_codes:
-        parts.append(f"Reason codes: {', '.join(meta.reason_codes)}.")
-    if meta.decision_reason:
-        parts.append(meta.decision_reason)
-    return "\n".join(parts) if parts else "Respond with appropriate care and caveats."
-
-
-def _inject_safe_guidance(kwargs: dict[str, Any], result: Any) -> dict[str, Any]:
-    """
-    Clone kwargs and inject governance guidance into the system prompt.
-    If no system message exists, prepends one.
-    """
-    guidance = _build_safe_system_injection(result)
-    messages = list(kwargs.get("messages", []))
-
-    # Look for an existing system message
-    for i, msg in enumerate(messages):
-        if msg.get("role") == "system":
-            original_content = msg.get("content", "")
-            messages[i] = {
-                **msg,
-                "content": f"{original_content}\n\n{guidance}".strip(),
-            }
-            break
+        guidance_body = governance_content
     else:
-        # No system message: insert at the beginning
-        messages.insert(0, {"role": "system", "content": guidance})
+        meta = result.response.metadata
+        parts: list[str] = []
+        if meta.triggered_principles:
+            parts.append(f"Relevant principles: {', '.join(meta.triggered_principles)}.")
+        if meta.reason_codes:
+            parts.append(f"Reason codes: {', '.join(meta.reason_codes)}.")
+        if meta.decision_reason:
+            parts.append(meta.decision_reason)
+        guidance_body = "\n".join(parts) if parts else "Respond with appropriate care and caveats."
 
-    return {**kwargs, "messages": messages}
+    content = (
+        "Please respond to my last message above taking into account the following "
+        "governance guidance:\n\n"
+        f"{guidance_body}"
+    )
+    return {"role": "user", "content": content}
 
 
 # =============================================================================
@@ -241,7 +231,7 @@ class GovernedCompletions:
         """
         Deliberate on the prompt, then:
         - REFUSE: return GovernedResponse/GovernedRefusalStream without calling OpenAI
-        - SAFE_COMPLETE: inject guidance into system prompt, call OpenAI
+        - SAFE_COMPLETE: append a synthetic user turn with governance guidance, call OpenAI
         - NORMAL_COMPLETE: call OpenAI directly
 
         Observability events emitted during deliberation are flushed synchronously
@@ -307,7 +297,12 @@ class GovernedCompletions:
             return GovernedResponse.from_refusal(result)
 
         if final_action == "SAFE_COMPLETE":
-            modified_kwargs = _inject_safe_guidance(kwargs, result)
+            # Caveat-as-extra-user-turn (design v1.3 section 3.7): append a synthetic
+            # user turn to messages instead of modifying the system prompt.
+            # The user's system prompt is preserved byte-identical.
+            safe_turn = _build_safe_complete_user_turn(result)
+            modified_messages = list(kwargs.get("messages", [])) + [safe_turn]
+            modified_kwargs = {**kwargs, "messages": modified_messages}
             if is_stream:
                 stream = self._governed._client.chat.completions.create(**modified_kwargs)
                 return GovernedStreamResponse(stream, result)
