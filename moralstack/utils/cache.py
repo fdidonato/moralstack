@@ -208,32 +208,64 @@ class ModuleResultCache:
         self._hindsight: LRUCache[Any] = LRUCache(max_hindsight, ttl_seconds)
 
     def _hash_input(self, *args: str) -> str:
-        """Genera hash per input multipli."""
-        combined = "|".join(args)
+        """
+        Generate a hash for multiple inputs.
+
+        Empty strings are filtered out before joining. This preserves
+        byte-equality with legacy cache keys when context_fingerprint="".
+        """
+        parts = [a for a in args if a]
+        combined = "|".join(parts)
         return hashlib.md5(combined.encode()).hexdigest()
 
     # --- Perspectives ---
 
-    def get_perspective_result(self, request: str, response: str) -> Any | None:
-        """Recupera risultato perspectives dalla cache."""
-        key = self._hash_input(request, response)
+    def get_perspective_result(
+        self,
+        request: str,
+        response: str,
+        *,
+        context_fingerprint: str = "",
+    ) -> Any | None:
+        """Retrieve cached perspectives result."""
+        key = self._hash_input(request, response, context_fingerprint)
         return self._perspectives.get(key)
 
-    def set_perspective_result(self, request: str, response: str, result: Any) -> None:
-        """Salva risultato perspectives nella cache."""
-        key = self._hash_input(request, response)
+    def set_perspective_result(
+        self,
+        request: str,
+        response: str,
+        result: Any,
+        *,
+        context_fingerprint: str = "",
+    ) -> None:
+        """Store perspectives result."""
+        key = self._hash_input(request, response, context_fingerprint)
         self._perspectives.set(key, result)
 
     # --- Simulations ---
 
-    def get_simulation_result(self, request: str, response: str) -> Any | None:
-        """Recupera risultato simulation dalla cache."""
-        key = self._hash_input(request, response)
+    def get_simulation_result(
+        self,
+        request: str,
+        response: str,
+        *,
+        context_fingerprint: str = "",
+    ) -> Any | None:
+        """Retrieve cached simulation result."""
+        key = self._hash_input(request, response, context_fingerprint)
         return self._simulations.get(key)
 
-    def set_simulation_result(self, request: str, response: str, result: Any) -> None:
-        """Salva risultato simulation nella cache."""
-        key = self._hash_input(request, response)
+    def set_simulation_result(
+        self,
+        request: str,
+        response: str,
+        result: Any,
+        *,
+        context_fingerprint: str = "",
+    ) -> None:
+        """Store simulation result."""
+        key = self._hash_input(request, response, context_fingerprint)
         self._simulations.set(key, result)
 
     # --- Hindsight ---
@@ -243,9 +275,11 @@ class ModuleResultCache:
         request: str,
         response: str,
         consequences_hash: str = "",
+        *,
+        context_fingerprint: str = "",
     ) -> Any | None:
-        """Recupera risultato hindsight dalla cache."""
-        key = self._hash_input(request, response, consequences_hash)
+        """Retrieve cached hindsight result."""
+        key = self._hash_input(request, response, consequences_hash, context_fingerprint)
         return self._hindsight.get(key)
 
     def set_hindsight_result(
@@ -254,9 +288,11 @@ class ModuleResultCache:
         response: str,
         result: Any,
         consequences_hash: str = "",
+        *,
+        context_fingerprint: str = "",
     ) -> None:
-        """Salva risultato hindsight nella cache."""
-        key = self._hash_input(request, response, consequences_hash)
+        """Store hindsight result."""
+        key = self._hash_input(request, response, consequences_hash, context_fingerprint)
         self._hindsight.set(key, result)
 
     def clear_all(self) -> None:
@@ -275,7 +311,43 @@ class ModuleResultCache:
         }
 
 
-# Istanza globale per uso condiviso tra moduli
+def build_context_fingerprint(
+    *,
+    developer_contract: Any = None,
+    conversation_history: Any = None,
+) -> str:
+    """
+    Build a deterministic fingerprint of the conversational context.
+
+    Returns an empty string when both inputs are missing or empty.
+    """
+    parts: list[str] = []
+
+    if developer_contract is not None:
+        contract_hash = getattr(developer_contract, "contract_hash", "")
+        if contract_hash:
+            parts.append(f"dc:{contract_hash}")
+
+    if conversation_history:
+        try:
+            last_turns = list(conversation_history)[-3:]
+        except TypeError:
+            last_turns = []
+
+        if last_turns:
+            turn_strings: list[str] = []
+            for turn in last_turns:
+                role = str(getattr(turn, "role", "") or "")
+                content = str(getattr(turn, "content", "") or "")[:200]
+                turn_strings.append(f"{role}:{content}")
+            turns_blob = "|".join(turn_strings)
+            history_hash = hashlib.md5(turns_blob.encode()).hexdigest()[:12]
+            parts.append(f"ch:{history_hash}")
+
+    return ";".join(parts)
+
+
+# Global shared cache instance
 _global_cache: ModuleResultCache | None = None
 
 
