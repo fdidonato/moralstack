@@ -88,7 +88,11 @@ class TestHealthz:
         client, _, _ = client_factory("NORMAL_COMPLETE")
         response = client.get("/healthz")
         assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
+        body = response.json()
+        assert body.get("status") == "ok"
+        # The healthz response also reports the proxy observability run_id
+        # (empty string when observability is not configured).
+        assert "run_id" in body
 
 
 class TestRouting:
@@ -496,3 +500,143 @@ class TestMultiTurnConversation:
         # Both are turn 0 (first turn in each conversation independently).
         assert all_kwargs[0]["turn_index"] == 0
         assert all_kwargs[1]["turn_index"] == 0
+
+
+class TestObservabilityPersistence:
+    """
+    Verifies that the proxy correctly initializes observability and persists
+    request data to the configured backend (SQLite DB + JSONL).
+
+    This was the bug: Step 11/12 proxy never set run_id/request_id in the
+    observability context, so DefaultPersistence.ensure_run_and_upsert_request
+    silently no-op'd and nothing was written. Fixed by Step 12-bis with
+    _initialize_observability_run + set_current_request_id in the handler.
+    """
+
+    def test_proxy_persists_to_sqlite_db(self, client_factory, tmp_path, monkeypatch):
+        """When MORALSTACK_OBSERVABILITY_DB_PATH is set, the proxy creates a run and persists requests."""
+        db_path = str(tmp_path / "test_proxy.db")
+        monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", db_path)
+        monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
+
+        # Re-import the proxy module so create_app picks up the env vars.
+        # We rebuild a client_factory inline since the fixture's create_app
+        # was instantiated before the monkeypatch.
+        from moralstack.sdk.config import GovernanceConfig
+        from moralstack.server.proxy import create_app
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.process = MagicMock(return_value=_make_result("NORMAL_COMPLETE"))
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion())
+        app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+        client = TestClient(app)
+
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello"}]},
+            headers={"X-Moralstack-Conversation-Id": "persistence-test"},
+        )
+        assert response.status_code == 200
+
+        # The DB must now exist with a runs row and a requests row.
+        import os as _os
+        import sqlite3
+
+        assert _os.path.exists(db_path), f"DB not created at {db_path}"
+        conn = sqlite3.connect(db_path)
+        runs = conn.execute("SELECT run_id, run_type FROM runs").fetchall()
+        assert len(runs) == 1
+        assert runs[0][1] == "proxy"
+        requests_count = conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
+        assert requests_count == 1
+        # The request row has the conversation_id we passed.
+        row = conn.execute("SELECT conversation_id, final_response FROM requests LIMIT 1").fetchone()
+        assert row[0] == "persistence-test"
+        # final_response was updated with the upstream content.
+        assert row[1] == "Upstream answer."
+        conn.close()
+
+    def test_healthz_reports_run_id_when_persistence_active(self, tmp_path, monkeypatch):
+        """The /healthz endpoint reports the proxy run_id when observability is configured."""
+        db_path = str(tmp_path / "test_healthz.db")
+        monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", db_path)
+        monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
+
+        from moralstack.sdk.config import GovernanceConfig
+        from moralstack.server.proxy import create_app
+
+        app = create_app(openai_client=MagicMock(), orchestrator=MagicMock(), config=GovernanceConfig())
+        client = TestClient(app)
+
+        response = client.get("/healthz")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "ok"
+        # run_id is a non-empty UUID-like string when persistence is active.
+        assert body["run_id"] and len(body["run_id"]) >= 8
+
+    def test_proxy_persists_orchestration_events(self, tmp_path, monkeypatch):
+        """Verify that orchestration events emitted by the pipeline are persisted to DB.
+
+        This is the FK fix: the requests row must be pre-inserted BEFORE the pipeline
+        emits orchestration_events / llm_calls / decision_traces (which have FK
+        constraints on requests).
+        """
+        db_path = str(tmp_path / "test_orch_events.db")
+        monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", db_path)
+        monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
+
+        from moralstack.observability import make_envelope, obs
+        from moralstack.observability.events import EVENT_ORCHESTRATION_EVENT
+        from moralstack.sdk.config import GovernanceConfig
+        from moralstack.server.proxy import create_app
+
+        # An orchestrator that emits an orchestration event during process().
+        def fake_process(*args, **kwargs):
+            del args, kwargs
+            from moralstack.observability.context import get_current_request_id, get_current_run_id
+
+            run_id = get_current_run_id()
+            request_id = get_current_request_id()
+            if run_id and request_id:
+                obs.emit(
+                    make_envelope(
+                        EVENT_ORCHESTRATION_EVENT,
+                        run_id=run_id,
+                        request_id=request_id,
+                        payload={
+                            "stage": "deliberation",
+                            "component": "critic",
+                            "decision": "approved",
+                            "status": "ok",
+                            "started_at": 1000,
+                            "duration_ms": 5,
+                        },
+                    )
+                )
+            return _make_result("NORMAL_COMPLETE")
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.process = fake_process
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion())
+
+        app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+        client = TestClient(app)
+
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Hi"}]},
+            headers={"X-Moralstack-Conversation-Id": "orch-events-test"},
+        )
+        assert response.status_code == 200
+
+        # Verify the orchestration_event row is in the DB (no FK violation).
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        events = conn.execute("SELECT stage, component, decision FROM orchestration_events").fetchall()
+        conn.close()
+        assert len(events) == 1
+        assert events[0] == ("deliberation", "critic", "approved")
