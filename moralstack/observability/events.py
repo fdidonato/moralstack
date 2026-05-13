@@ -34,6 +34,14 @@ EVENT_DEBUG_EVENT = "debug.event"
 # Multi-turn / conversation lifecycle
 EVENT_CONVERSATION_STATE_UPDATED = "conversation.state_updated"
 
+# Step 13 — multi-turn observability extensions
+EVENT_REQUEST_META_UPDATED = "request.meta_updated"
+EVENT_LEDGER_LOOKUP = "ledger.lookup"
+EVENT_LEDGER_STORE = "ledger.store"
+EVENT_SESSION_STORE_GET = "session_store.get"
+EVENT_SESSION_STORE_PUT = "session_store.put"
+EVENT_PROXY_REQUEST_FINALIZED = "proxy.request_finalized"
+
 ALL_EVENT_TYPES: frozenset[str] = frozenset(
     {
         EVENT_RUN_STARTED,
@@ -46,6 +54,13 @@ ALL_EVENT_TYPES: frozenset[str] = frozenset(
         EVENT_DECISION_TRACE,
         EVENT_DEBUG_EVENT,
         EVENT_CONVERSATION_STATE_UPDATED,
+        # Step 13 multi-turn observability
+        EVENT_REQUEST_META_UPDATED,
+        EVENT_LEDGER_LOOKUP,
+        EVENT_LEDGER_STORE,
+        EVENT_SESSION_STORE_GET,
+        EVENT_SESSION_STORE_PUT,
+        EVENT_PROXY_REQUEST_FINALIZED,
     }
 )
 

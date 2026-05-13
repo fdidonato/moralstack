@@ -26,6 +26,7 @@ from moralstack.observability.context import (
     set_current_session_id,
     set_current_turn_number,
 )
+from moralstack.observability.conversation_events import emit_conversation_state_updated
 from moralstack.orchestration.conversation_state import ConversationGovernanceState, TurnDecisionSummary
 from moralstack.orchestration.conversational_fast_path import ConversationalFastPathRunner
 from moralstack.orchestration.decision_logger import log_decision_explanation
@@ -298,7 +299,18 @@ class OrchestrationController:
         return out
 
     def _apply_conversation_metadata_to_result(self, result: OrchestratorResult, request: ProcessedRequest) -> None:
-        """Stamp optional conversation linkage and updated governance state (no routing impact)."""
+        """Stamp optional conversation linkage and updated governance state (no routing impact).
+
+        Step 13: when the caller provides a ``conversation_id`` (even without
+        an inbound ``state_in`` — e.g. turn 0 of a brand-new conversation),
+        the controller now produces a ``conversation_governance_state_out``
+        seeded from an empty :class:`ConversationGovernanceState`. This is a
+        pure observability widening: it ensures the canonical
+        ``conversation.state_updated`` envelope is emitted for every turn of
+        a tracked conversation, so the audit timeline never skips turn 0.
+        ``conversation_state_provided`` still reflects the input contract
+        accurately (True only when a real state_in was supplied).
+        """
         ctx = getattr(self, "_conversation_process_ctx", None)
         if not isinstance(ctx, dict):
             return
@@ -312,8 +324,9 @@ class OrchestrationController:
             result.turn_index = tid
         if pid is not None:
             result.parent_request_id = pid
-        if state_in is not None:
-            result.conversation_state_provided = True
+        should_build_state_out = state_in is not None or cid is not None
+        if should_build_state_out:
+            result.conversation_state_provided = state_in is not None
             base = state_in if isinstance(state_in, ConversationGovernanceState) else ConversationGovernanceState()
             merged = base.with_turn_metadata(
                 conversation_id=cid if cid is not None else base.conversation_id,
@@ -367,10 +380,78 @@ class OrchestrationController:
                     "summary": result.conversation_governance_state_out.to_summary_dict(),
                 },
             )
+            # Step 13 — also emit the canonical conversation.state_updated event so
+            # JSONL captures the full snapshot and SQLite persists a queryable row
+            # in conversation_states. The orchestration_event above is kept for
+            # backward compatibility (it carries only a summary payload).
+            self._emit_canonical_conversation_state_updated(result=result, request=request, ctx=ctx)
         # --- v0.4 multi-turn: persist decision into the ledger for next turn ---
         # Done at the very end so any exception during routing already aborted the flow.
         self._maybe_store_in_ledger(request=request, result=result, ctx=ctx)
         # --- end v0.4 multi-turn ---
+
+    def _emit_canonical_conversation_state_updated(
+        self,
+        *,
+        result: OrchestratorResult,
+        request: ProcessedRequest,
+        ctx: dict[str, Any],
+    ) -> None:
+        """
+        Emit the canonical ``conversation.state_updated`` event so JSONL and
+        SQLite capture the full state transition for the current turn.
+
+        Step 13 multi-turn observability: complements the orchestration_event
+        emitted above (which only carries a summary), giving us a queryable
+        ``conversation_states`` row plus a complete JSONL envelope. Best-effort:
+        any failure is debug-logged and never breaks the response flow.
+        """
+        try:
+            state_out = result.conversation_governance_state_out
+            state_in = ctx.get("conversation_state")
+            cid = ctx.get("conversation_id")
+            tid = ctx.get("turn_index")
+            request_id = getattr(request, "request_id", "") or ""
+
+            # Risk score and final action from the produced metadata.
+            metadata = getattr(getattr(result, "response", None), "metadata", None)
+            final_action = getattr(metadata, "final_action", None) if metadata is not None else None
+            risk_score: float | None = None
+            if metadata is not None:
+                rs = getattr(metadata, "risk_score", None)
+                try:
+                    risk_score = float(rs) if rs is not None else None
+                except (ValueError, TypeError):
+                    risk_score = None
+
+            posture = state_out.last_governance_posture if isinstance(state_out, ConversationGovernanceState) else None
+
+            ledger_lookup = ctx.get("_ledger_lookup")
+            was_cached = bool(ctx.get("_ledger_hit_applied", False))
+            cached_from_turn: int | None = None
+            if ledger_lookup is not None and getattr(ledger_lookup, "is_hit", False):
+                cached_from_turn = getattr(ledger_lookup, "from_turn", None)
+
+            refresh_required = ctx.get("_refresh_required")
+            refresh_reason = ctx.get("_refresh_reason")
+
+            emit_conversation_state_updated(
+                run_id=None,  # falls back to current run_id from context
+                request_id=request_id,
+                conversation_id=cid if isinstance(cid, str) and cid else None,
+                turn_index=tid if isinstance(tid, int) else None,
+                state_in=state_in,
+                state_out=state_out,
+                final_action=final_action,
+                risk_score=risk_score,
+                posture=posture,
+                was_cached=was_cached if was_cached else None,
+                cached_from_turn=cached_from_turn,
+                refresh_required=refresh_required if isinstance(refresh_required, bool) else None,
+                refresh_reason=refresh_reason if isinstance(refresh_reason, str) and refresh_reason else None,
+            )
+        except Exception:
+            _LOG.debug("_emit_canonical_conversation_state_updated failed", exc_info=True)
 
     def _extend_state_out_v04(
         self,

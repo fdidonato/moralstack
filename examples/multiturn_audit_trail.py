@@ -9,13 +9,20 @@ Run with: OPENAI_API_KEY=sk-... python examples/multiturn_audit_trail.py
 
 from __future__ import annotations
 
+import os
+
 from openai import OpenAI
 
 from moralstack import govern
 from moralstack.reports.conversation_export import export_conversation_to_markdown
+from moralstack.utils.env_loader import load_env
 
 
 def main() -> None:
+    load_env()
+    if not os.getenv("OPENAI_API_KEY"):
+        raise EnvironmentError("OPENAI_API_KEY is not set. Copy examples/.env.example and export the variable.")
+
     client = govern(OpenAI())
     messages: list[dict[str, str]] = []
 
@@ -27,6 +34,7 @@ def main() -> None:
     ]:
         messages.append({"role": "user", "content": user_msg})
         response = client.chat.completions.create(model="gpt-4o", messages=messages)
+        print(f"User: {user_msg}\nAssistant: {response.choices[0].message.content}\n")
         messages.append({"role": "assistant", "content": response.choices[0].message.content})
 
     conversation_id = response.governance_metadata.conversation_id

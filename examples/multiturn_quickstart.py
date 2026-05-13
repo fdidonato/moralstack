@@ -9,12 +9,19 @@ Run with: OPENAI_API_KEY=sk-... python examples/multiturn_quickstart.py
 
 from __future__ import annotations
 
+import os
+
 from openai import OpenAI
 
 from moralstack import govern
+from moralstack.utils.env_loader import load_env
 
 
 def main() -> None:
+    load_env()
+    print("env loaded")
+    if not os.getenv("OPENAI_API_KEY"):
+        raise EnvironmentError("OPENAI_API_KEY is not set. Copy examples/.env.example and export the variable.")
     client = govern(OpenAI())
 
     messages: list[dict[str, str]] = []

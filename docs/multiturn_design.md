@@ -17,6 +17,7 @@ public surfaces of that design.
 | v1.1 | 2026-04 | Added ConversationGovernanceState, fast-path runner |
 | v1.2 | 2026-04 | Cache governance hole fix (§6.7) |
 | v1.3 | 2026-05 | RefusalContext 7-priority + caveat-as-extra-user-turn + server proxy |
+| v1.4 | 2026-05 | Step 13 — multi-turn conversation observability (states, ledger, session_store, proxy summaries, UI timeline, Markdown export, inspector CLI) |
 
 ## Public surfaces introduced in v0.4
 
@@ -33,6 +34,9 @@ public surfaces of that design.
 | `_build_safe_complete_user_turn` | `moralstack.sdk.wrapper` | 10 |
 | Server proxy (FastAPI) | `moralstack.server.*` | 11 |
 | Audit conversation export | `moralstack.reports.conversation_export` | 12 |
+| Multi-turn conversation observability (states, ledger, session_store, proxy summaries) | `moralstack.observability.conversation_events`, `moralstack.observability.read_store` | 13 |
+| Conversation UI views + Markdown export | `moralstack.ui.app` (`/conversations/{id}`, `/conversations/{id}/export.md`) | 13 |
+| Inspector CLI | `scripts/inspect_multiturn_trace.py` | 13 |
 
 ## Key invariants
 

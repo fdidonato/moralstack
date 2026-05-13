@@ -95,11 +95,26 @@ class InMemorySessionStore:
     def get(self, conversation_id: str) -> "ConversationGovernanceState | None":
         entry = self._entries.get(conversation_id)
         if entry is None:
+            self._emit_get_event(conversation_id=conversation_id, outcome="miss", state=None, ttl_age=None)
             return None
         if self._is_expired(entry):
             # Drop lazily.
+            age = time.time() - entry.inserted_at
             self._entries.pop(conversation_id, None)
+            self._emit_get_event(
+                conversation_id=conversation_id,
+                outcome="expired",
+                state=None,
+                ttl_age=age,
+            )
             return None
+        age = time.time() - entry.inserted_at
+        self._emit_get_event(
+            conversation_id=conversation_id,
+            outcome="hit",
+            state=entry.state,
+            ttl_age=age,
+        )
         return entry.state
 
     def put(self, conversation_id: str, state: "ConversationGovernanceState") -> None:
@@ -108,9 +123,17 @@ class InMemorySessionStore:
             del self._entries[conversation_id]
         self._entries[conversation_id] = _SessionEntry(state=state)
         # Capacity cap: FIFO eviction.
+        evicted_ids: list[str] = []
         while len(self._entries) > self._max_sessions:
             evicted_id, _ = self._entries.popitem(last=False)
+            evicted_ids.append(evicted_id)
             _LOG.debug("InMemorySessionStore evicted conversation (capacity): id=%s", evicted_id)
+        self._emit_put_event(
+            conversation_id=conversation_id,
+            outcome="stored",
+            state=state,
+            evicted_ids=evicted_ids,
+        )
 
     def delete(self, conversation_id: str) -> None:
         self._entries.pop(conversation_id, None)
@@ -138,3 +161,49 @@ class InMemorySessionStore:
     def _is_expired(self, entry: _SessionEntry) -> bool:
         age = time.time() - entry.inserted_at
         return age > self._ttl_seconds
+
+    # ------------------------------------------------------------------
+    # Step 13 — observability for SessionStore lifecycle
+    # ------------------------------------------------------------------
+
+    def _emit_get_event(
+        self,
+        *,
+        conversation_id: str,
+        outcome: str,
+        state: "ConversationGovernanceState | None",
+        ttl_age: float | None,
+    ) -> None:
+        """Emit ``session_store.get`` (hit/miss/expired). Best-effort."""
+        try:
+            from moralstack.observability.conversation_events import emit_session_store_get
+
+            emit_session_store_get(
+                conversation_id=conversation_id,
+                outcome=outcome,
+                state=state,
+                ttl_age_seconds=ttl_age,
+            )
+        except Exception:
+            _LOG.debug("InMemorySessionStore: emit_session_store_get failed", exc_info=True)
+
+    def _emit_put_event(
+        self,
+        *,
+        conversation_id: str,
+        outcome: str,
+        state: "ConversationGovernanceState",
+        evicted_ids: list[str] | None,
+    ) -> None:
+        """Emit ``session_store.put`` with optional eviction info. Best-effort."""
+        try:
+            from moralstack.observability.conversation_events import emit_session_store_put
+
+            emit_session_store_put(
+                conversation_id=conversation_id,
+                outcome=outcome,
+                state=state,
+                evicted_ids=evicted_ids if evicted_ids else None,
+            )
+        except Exception:
+            _LOG.debug("InMemorySessionStore: emit_session_store_put failed", exc_info=True)

@@ -20,15 +20,22 @@ from typing import Any, Sequence
 
 from moralstack.observability.config import get_db_path, get_observability_mode
 from moralstack.observability.events import (
+    EVENT_CONVERSATION_STATE_UPDATED,
     EVENT_DEBUG_EVENT,
     EVENT_DECISION_TRACE,
+    EVENT_LEDGER_LOOKUP,
+    EVENT_LEDGER_STORE,
     EVENT_LLM_CALL,
     EVENT_ORCHESTRATION_EVENT,
+    EVENT_PROXY_REQUEST_FINALIZED,
     EVENT_REQUEST_DOMAIN_UPDATED,
+    EVENT_REQUEST_META_UPDATED,
     EVENT_REQUEST_RESPONSE_UPDATED,
     EVENT_REQUEST_UPSERTED,
     EVENT_RUN_ENDED,
     EVENT_RUN_STARTED,
+    EVENT_SESSION_STORE_GET,
+    EVENT_SESSION_STORE_PUT,
     EventEnvelope,
 )
 
@@ -358,7 +365,127 @@ _SCHEMA = """
               request_id,
               export_type
           )
-              ); \
+              );
+
+          -- Step 13 multi-turn observability: conversation state snapshots per request/turn.
+          CREATE TABLE IF NOT EXISTS conversation_states
+          (
+              id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+              run_id              TEXT    NOT NULL,
+              request_id          TEXT    NOT NULL,
+              conversation_id     TEXT    NOT NULL,
+              turn_index          INTEGER,
+              created_at          INTEGER NOT NULL,
+              state_in_json       TEXT,
+              state_out_json      TEXT    NOT NULL,
+              state_summary_json  TEXT,
+              final_action        TEXT,
+              risk_score          REAL,
+              posture             TEXT,
+              was_cached          INTEGER,
+              cached_from_turn    INTEGER,
+              refresh_required    INTEGER,
+              refresh_reason      TEXT,
+              FOREIGN KEY (run_id, request_id)
+                  REFERENCES requests(run_id, request_id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_conversation_states_conv_turn
+              ON conversation_states(conversation_id, turn_index);
+
+          CREATE INDEX IF NOT EXISTS idx_conversation_states_request
+              ON conversation_states(run_id, request_id);
+
+          -- Step 13 multi-turn observability: SemanticDecisionLedger lookup/store events.
+          CREATE TABLE IF NOT EXISTS ledger_events
+          (
+              id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+              run_id              TEXT    NOT NULL,
+              request_id          TEXT,
+              conversation_id     TEXT,
+              turn_index          INTEGER,
+              created_at          INTEGER NOT NULL,
+              operation           TEXT    NOT NULL,
+              outcome             TEXT    NOT NULL,
+              reason              TEXT,
+              similarity          REAL,
+              from_turn           INTEGER,
+              contract_hash       TEXT,
+              posture             TEXT,
+              domain              TEXT,
+              intent_clarity      TEXT,
+              request_type        TEXT,
+              final_action        TEXT,
+              risk_score          REAL,
+              payload_json        TEXT,
+              FOREIGN KEY (run_id, request_id)
+                  REFERENCES requests(run_id, request_id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_ledger_events_conv_turn
+              ON ledger_events(conversation_id, turn_index);
+
+          CREATE INDEX IF NOT EXISTS idx_ledger_events_request
+              ON ledger_events(run_id, request_id);
+
+          CREATE INDEX IF NOT EXISTS idx_ledger_events_operation
+              ON ledger_events(operation, outcome);
+
+          -- Step 13 multi-turn observability: SessionStore get/put events.
+          CREATE TABLE IF NOT EXISTS session_store_events
+          (
+              id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+              run_id              TEXT,
+              request_id          TEXT,
+              conversation_id     TEXT    NOT NULL,
+              turn_index          INTEGER,
+              created_at          INTEGER NOT NULL,
+              operation           TEXT    NOT NULL,
+              outcome             TEXT    NOT NULL,
+              state_summary_json  TEXT,
+              payload_json        TEXT
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_session_store_events_conv_turn
+              ON session_store_events(conversation_id, turn_index);
+
+          CREATE INDEX IF NOT EXISTS idx_session_store_events_request
+              ON session_store_events(run_id, request_id);
+
+          -- Step 13 multi-turn observability: per-request proxy finalization summary.
+          CREATE TABLE IF NOT EXISTS proxy_request_events
+          (
+              id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+              run_id                TEXT    NOT NULL,
+              request_id            TEXT    NOT NULL,
+              conversation_id       TEXT,
+              turn_index            INTEGER,
+              created_at            INTEGER NOT NULL,
+              final_action          TEXT,
+              risk_score            REAL,
+              path                  TEXT,
+              domain                TEXT,
+              posture_in            TEXT,
+              posture_out           TEXT,
+              state_provided        INTEGER,
+              state_updated         INTEGER,
+              was_cached            INTEGER,
+              cached_from_turn      INTEGER,
+              final_response_length INTEGER,
+              headers_json          TEXT,
+              metadata_json         TEXT,
+              state_in_json         TEXT,
+              state_out_json        TEXT,
+              payload_json          TEXT,
+              FOREIGN KEY (run_id, request_id)
+                  REFERENCES requests(run_id, request_id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_proxy_request_events_conv_turn
+              ON proxy_request_events(conversation_id, turn_index);
+
+          CREATE INDEX IF NOT EXISTS idx_proxy_request_events_request
+              ON proxy_request_events(run_id, request_id); \
           """
 
 
@@ -710,6 +837,333 @@ def update_request_domain(run_id: str, request_id: str, domain: str | None) -> b
             conn.close()
 
 
+# ---------------------------------------------------------------------------
+# Step 13 — multi-turn observability writers
+# ---------------------------------------------------------------------------
+
+
+def _coerce_bool_to_int(value: Any) -> int | None:
+    """Coerce Python truthy/falsy/None into INTEGER or NULL for SQLite."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return 1 if value else 0
+    try:
+        return 1 if int(value) != 0 else 0
+    except (ValueError, TypeError):
+        return None
+
+
+def update_request_meta(
+    run_id: str,
+    request_id: str,
+    meta: dict[str, Any],
+    *,
+    merge: bool = True,
+) -> bool:
+    """
+    Merge or replace governance metadata on the requests.meta_json column.
+
+    Behaviour:
+        - merge=True (default): read current meta_json, parse it as a JSON
+          object when possible, update with `meta`, write back.
+        - merge=False: replace meta_json entirely.
+        - Malformed / empty / non-object meta_json is treated as `{}`.
+        - Always best-effort: returns False on any failure, never raises.
+    """
+    if get_observability_mode() == "file_only":
+        return False
+    path = get_db_path()
+    if not path:
+        return False
+    if not run_id or not request_id:
+        return False
+    if not isinstance(meta, dict):
+        return False
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _get_connection(path)
+        if merge:
+            row = conn.execute(
+                "SELECT meta_json FROM requests WHERE run_id = ? AND request_id = ?",
+                (run_id, request_id),
+            ).fetchone()
+            current: dict[str, Any] = {}
+            if row is not None:
+                raw = row["meta_json"]
+                if isinstance(raw, str) and raw.strip():
+                    try:
+                        parsed = json.loads(raw)
+                        if isinstance(parsed, dict):
+                            current = parsed
+                    except (ValueError, TypeError):
+                        current = {}
+            current.update(meta)
+            merged_json = json.dumps(current, ensure_ascii=False, default=str)
+        else:
+            merged_json = json.dumps(meta, ensure_ascii=False, default=str)
+        conn.execute(
+            "UPDATE requests SET meta_json = ? WHERE run_id = ? AND request_id = ?",
+            (merged_json, run_id, request_id),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning("observability: update_request_meta failed: %s", e)
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+_CONVERSATION_STATES_INSERT = """
+    INSERT INTO conversation_states (
+        run_id, request_id, conversation_id, turn_index, created_at,
+        state_in_json, state_out_json, state_summary_json,
+        final_action, risk_score, posture,
+        was_cached, cached_from_turn, refresh_required, refresh_reason
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+_LEDGER_EVENTS_INSERT = """
+    INSERT INTO ledger_events (
+        run_id, request_id, conversation_id, turn_index, created_at,
+        operation, outcome, reason, similarity, from_turn,
+        contract_hash, posture, domain, intent_clarity, request_type,
+        final_action, risk_score, payload_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+_SESSION_STORE_EVENTS_INSERT = """
+    INSERT INTO session_store_events (
+        run_id, request_id, conversation_id, turn_index, created_at,
+        operation, outcome, state_summary_json, payload_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+_PROXY_REQUEST_EVENTS_INSERT = """
+    INSERT INTO proxy_request_events (
+        run_id, request_id, conversation_id, turn_index, created_at,
+        final_action, risk_score, path, domain,
+        posture_in, posture_out,
+        state_provided, state_updated, was_cached, cached_from_turn,
+        final_response_length, headers_json, metadata_json,
+        state_in_json, state_out_json, payload_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+
+def insert_conversation_state_event(payload: dict[str, Any]) -> bool:
+    """Insert one row into `conversation_states`. Best-effort, never raises."""
+    if get_observability_mode() == "file_only":
+        return False
+    path = get_db_path()
+    if not path:
+        return False
+    run_id = (payload.get("run_id") or "").strip()
+    request_id = (payload.get("request_id") or "").strip()
+    conversation_id = (payload.get("conversation_id") or "").strip()
+    if not run_id or not request_id or not conversation_id:
+        return False
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _get_connection(path)
+        conn.execute(
+            _CONVERSATION_STATES_INSERT,
+            (
+                run_id,
+                request_id,
+                conversation_id,
+                payload.get("turn_index"),
+                int(payload.get("created_at") or time.time() * 1000),
+                _json_or_none(payload.get("state_in")),
+                _json_or_none(payload.get("state_out")) or "{}",
+                _json_or_none(payload.get("state_summary")),
+                payload.get("final_action"),
+                payload.get("risk_score"),
+                payload.get("posture"),
+                _coerce_bool_to_int(payload.get("was_cached")),
+                payload.get("cached_from_turn"),
+                _coerce_bool_to_int(payload.get("refresh_required")),
+                payload.get("refresh_reason"),
+            ),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning("observability: insert_conversation_state_event failed: %s", e)
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def insert_ledger_event(payload: dict[str, Any]) -> bool:
+    """Insert one row into `ledger_events`. Best-effort, never raises."""
+    if get_observability_mode() == "file_only":
+        return False
+    path = get_db_path()
+    if not path:
+        return False
+    run_id = (payload.get("run_id") or "").strip()
+    operation = (payload.get("operation") or "").strip()
+    outcome = (payload.get("outcome") or "").strip()
+    if not run_id or not operation or not outcome:
+        return False
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _get_connection(path)
+        conn.execute(
+            _LEDGER_EVENTS_INSERT,
+            (
+                run_id,
+                payload.get("request_id"),
+                payload.get("conversation_id"),
+                payload.get("turn_index"),
+                int(payload.get("created_at") or time.time() * 1000),
+                operation,
+                outcome,
+                payload.get("reason"),
+                payload.get("similarity"),
+                payload.get("from_turn"),
+                payload.get("contract_hash"),
+                payload.get("posture"),
+                payload.get("domain"),
+                payload.get("intent_clarity"),
+                payload.get("request_type"),
+                payload.get("final_action"),
+                payload.get("risk_score"),
+                _json_or_none(payload.get("payload")),
+            ),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning("observability: insert_ledger_event failed: %s", e)
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def insert_session_store_event(payload: dict[str, Any]) -> bool:
+    """Insert one row into `session_store_events`. Best-effort, never raises."""
+    if get_observability_mode() == "file_only":
+        return False
+    path = get_db_path()
+    if not path:
+        return False
+    conversation_id = (payload.get("conversation_id") or "").strip()
+    operation = (payload.get("operation") or "").strip()
+    outcome = (payload.get("outcome") or "").strip()
+    if not conversation_id or not operation or not outcome:
+        return False
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _get_connection(path)
+        conn.execute(
+            _SESSION_STORE_EVENTS_INSERT,
+            (
+                payload.get("run_id"),
+                payload.get("request_id"),
+                conversation_id,
+                payload.get("turn_index"),
+                int(payload.get("created_at") or time.time() * 1000),
+                operation,
+                outcome,
+                _json_or_none(payload.get("state_summary")),
+                _json_or_none(payload.get("payload")),
+            ),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning("observability: insert_session_store_event failed: %s", e)
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def insert_proxy_request_event(payload: dict[str, Any]) -> bool:
+    """Insert one row into `proxy_request_events`. Best-effort, never raises."""
+    if get_observability_mode() == "file_only":
+        return False
+    path = get_db_path()
+    if not path:
+        return False
+    run_id = (payload.get("run_id") or "").strip()
+    request_id = (payload.get("request_id") or "").strip()
+    if not run_id or not request_id:
+        return False
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _get_connection(path)
+        conn.execute(
+            _PROXY_REQUEST_EVENTS_INSERT,
+            (
+                run_id,
+                request_id,
+                payload.get("conversation_id"),
+                payload.get("turn_index"),
+                int(payload.get("created_at") or time.time() * 1000),
+                payload.get("final_action"),
+                payload.get("risk_score"),
+                payload.get("path"),
+                payload.get("domain"),
+                payload.get("posture_in"),
+                payload.get("posture_out"),
+                _coerce_bool_to_int(payload.get("state_provided")),
+                _coerce_bool_to_int(payload.get("state_updated")),
+                _coerce_bool_to_int(payload.get("was_cached")),
+                payload.get("cached_from_turn"),
+                payload.get("final_response_length"),
+                _json_or_none(payload.get("headers")),
+                _json_or_none(payload.get("metadata")),
+                _json_or_none(payload.get("state_in")),
+                _json_or_none(payload.get("state_out")),
+                _json_or_none(payload.get("payload")),
+            ),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.warning("observability: insert_proxy_request_event failed: %s", e)
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def delete_run(run_id: str) -> bool:
     """Deletes a run and all related data (CASCADE). Returns True on success."""
     path = get_db_path()
@@ -900,6 +1354,31 @@ class SqliteEventSink:
         elif et == EVENT_DEBUG_EVENT:
             self._write_debug_event_single(envelope)
 
+        # Step 13 multi-turn observability dispatch
+        elif et == EVENT_REQUEST_META_UPDATED:
+            run_id = envelope.run_id or p.get("run_id", "")
+            request_id = envelope.request_id or p.get("request_id", "")
+            meta_payload = p.get("meta")
+            if isinstance(meta_payload, dict):
+                update_request_meta(
+                    run_id=run_id,
+                    request_id=request_id,
+                    meta=meta_payload,
+                    merge=bool(p.get("merge", True)),
+                )
+
+        elif et == EVENT_CONVERSATION_STATE_UPDATED:
+            insert_conversation_state_event(self._build_conversation_state_payload(envelope))
+
+        elif et in (EVENT_LEDGER_LOOKUP, EVENT_LEDGER_STORE):
+            insert_ledger_event(self._build_ledger_event_payload(envelope))
+
+        elif et in (EVENT_SESSION_STORE_GET, EVENT_SESSION_STORE_PUT):
+            insert_session_store_event(self._build_session_store_event_payload(envelope))
+
+        elif et == EVENT_PROXY_REQUEST_FINALIZED:
+            insert_proxy_request_event(self._build_proxy_request_event_payload(envelope))
+
         # Lifecycle events that don't map to a table are silently ignored.
 
     def _dispatch_batch(self, event_type: str, batch: list[EventEnvelope]) -> None:
@@ -912,8 +1391,66 @@ class SqliteEventSink:
         elif event_type == EVENT_DEBUG_EVENT:
             self._write_debug_event_batch(batch)
         else:
+            # Step 13 multi-turn events are looped individually; the inserts
+            # are small and infrequent, so per-event commits keep the schema
+            # simple and side-effects predictable.
             for ev in batch:
                 self._dispatch(ev)
+
+    # ------------------------------------------------------------------
+    # Step 13 multi-turn payload builders (EventEnvelope -> writer dict)
+    # ------------------------------------------------------------------
+
+    def _build_conversation_state_payload(self, ev: EventEnvelope) -> dict[str, Any]:
+        p = dict(ev.payload or {})
+        p.setdefault("run_id", ev.run_id or "")
+        p.setdefault("request_id", ev.request_id or "")
+        if "conversation_id" not in p:
+            p["conversation_id"] = ev.session_id or ""
+        if "turn_index" not in p:
+            p["turn_index"] = ev.turn_number
+        if "created_at" not in p:
+            p["created_at"] = ev.timestamp_ms
+        return p
+
+    def _build_ledger_event_payload(self, ev: EventEnvelope) -> dict[str, Any]:
+        p = dict(ev.payload or {})
+        p.setdefault("run_id", ev.run_id or "")
+        if "request_id" not in p:
+            p["request_id"] = ev.request_id
+        if "conversation_id" not in p:
+            p["conversation_id"] = ev.session_id
+        if "turn_index" not in p:
+            p["turn_index"] = ev.turn_number
+        if "created_at" not in p:
+            p["created_at"] = ev.timestamp_ms
+        return p
+
+    def _build_session_store_event_payload(self, ev: EventEnvelope) -> dict[str, Any]:
+        p = dict(ev.payload or {})
+        if "run_id" not in p:
+            p["run_id"] = ev.run_id
+        if "request_id" not in p:
+            p["request_id"] = ev.request_id
+        if "conversation_id" not in p:
+            p["conversation_id"] = ev.session_id or ""
+        if "turn_index" not in p:
+            p["turn_index"] = ev.turn_number
+        if "created_at" not in p:
+            p["created_at"] = ev.timestamp_ms
+        return p
+
+    def _build_proxy_request_event_payload(self, ev: EventEnvelope) -> dict[str, Any]:
+        p = dict(ev.payload or {})
+        p.setdefault("run_id", ev.run_id or "")
+        p.setdefault("request_id", ev.request_id or "")
+        if "conversation_id" not in p:
+            p["conversation_id"] = ev.session_id
+        if "turn_index" not in p:
+            p["turn_index"] = ev.turn_number
+        if "created_at" not in p:
+            p["created_at"] = ev.timestamp_ms
+        return p
 
     # ------------------------------------------------------------------
     # Single-row writers

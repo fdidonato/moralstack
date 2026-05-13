@@ -22,6 +22,18 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
+from moralstack.observability.conversation_events import (
+    emit_proxy_request_finalized,
+)
+from moralstack.observability.governance_audit import (
+    finalize_governance_audit,
+)
+from moralstack.observability.governance_audit import (
+    posture_of as _posture_of,
+)
+from moralstack.observability.governance_audit import (
+    state_summary_or_none as _state_summary_or_none,
+)
 from moralstack.orchestration.controller import OrchestrationController
 from moralstack.orchestration.types import ProcessedRequest
 from moralstack.sdk.config import GovernanceConfig
@@ -230,6 +242,10 @@ def create_app(
         request_id_for_audit: str = ""
         final_response_text: str = ""
         domain_for_audit: str | None = None
+        result_for_audit: Any | None = None
+        governance_headers_for_audit: dict[str, str] | None = None
+        state_in_for_audit: Any | None = None
+        state_out_for_audit: Any | None = None
         try:
             # Extract governance context from messages
             developer_contract = _extract_developer_contract(messages)
@@ -247,6 +263,7 @@ def create_app(
             # Persists correctly across server restarts and stateless HTTP clients.
             turn_index = _resolve_turn_index(messages)
             conv_state = store.get(conversation_id) if conversation_id else None
+            state_in_for_audit = conv_state
             # Bind the request_id to the observability context so all events
             # emitted by the pipeline (LLM calls, decision traces, orchestration
             # events) are correctly attributed to this request. Without this,
@@ -284,6 +301,7 @@ def create_app(
                     parent_request_id=processed.request_id,
                     conversation_state=conv_state,
                 )
+                result_for_audit = result
             except Exception as exc:
                 logger.exception("Pipeline failure: %s", exc)
                 if cfg.failure_policy == "passthrough":
@@ -301,11 +319,13 @@ def create_app(
             # Note: mypy requires a local variable for type narrowing — the inline
             # `getattr(...) is not None` check does NOT narrow the type of the attribute.
             governance_state_out = getattr(result, "conversation_governance_state_out", None)
+            state_out_for_audit = governance_state_out
             if conversation_id and governance_state_out is not None:
                 store.put(conversation_id, governance_state_out)
 
             final_action = result.response.metadata.final_action
             governance_headers = build_governance_headers(result, conversation_id=conversation_id)
+            governance_headers_for_audit = dict(governance_headers) if governance_headers else None
             domain_for_audit = getattr(result.response.metadata, "domain_overlay", None)
 
             # Routing per design v1.3 section 4.2
@@ -343,8 +363,10 @@ def create_app(
 
         finally:
             lock_manager.release(lock)
-            # Finalize observability: update final_response column + flush async
-            # queue so data is visible to readers immediately after the response.
+            # Finalize observability: update final_response column, populate
+            # meta_json with governance metadata, emit proxy.request_finalized,
+            # and flush async queue so data is visible immediately after the
+            # response.
             _finalize_request(
                 proxy_run_id=proxy_run_id,
                 request_id=request_id_for_audit,
@@ -352,6 +374,10 @@ def create_app(
                 domain=domain_for_audit,
                 conversation_id=conversation_id or None,
                 turn_index=_resolve_turn_index(messages) if isinstance(messages, list) else None,
+                result=result_for_audit,
+                governance_headers=governance_headers_for_audit,
+                state_in=state_in_for_audit,
+                state_out=state_out_for_audit,
             )
 
     return app
@@ -466,44 +492,75 @@ def _finalize_request(
     domain: str | None = None,
     conversation_id: str | None = None,
     turn_index: int | None = None,
+    result: Any | None = None,
+    governance_headers: dict[str, str] | None = None,
+    state_in: Any | None = None,
+    state_out: Any | None = None,
 ) -> None:
     """
     Finalize an HTTP request: update the requests row with final_response and
     flush the observability queue so writes land before the response is sent.
 
-    The requests row is created by _ensure_request_row BEFORE the pipeline
-    runs (necessary to satisfy FK constraints on orchestration_events /
-    llm_calls / decision_traces). Here we only:
-      1. Update final_response column for audit trail.
-      2. Update domain column if known (best-effort).
-      3. Flush the async event queue so the data is visible immediately.
+    Step 13 extension:
+        - Build governance metadata from ``result.response.metadata`` and emit
+          ``request.meta_updated`` so SQLite + JSONL receive the full payload.
+        - Emit ``proxy.request_finalized`` with state in/out, posture in/out,
+          cache hints, X-MoralStack headers and response length.
 
     Best-effort: never raises. Skipped silently when observability is not
     configured (proxy_run_id == "").
     """
-    del conversation_id, turn_index
     if not proxy_run_id or not request_id:
         return
     try:
         from moralstack.observability import obs
-        from moralstack.observability.sinks.sqlite_sink import update_request_domain, update_request_response
 
-        # Update final_response column for audit trail.
+        # Step 13 — shared finalization: writes final_response + domain on the
+        # ``requests`` row, builds the governance meta dict, and emits the
+        # canonical ``request.meta_updated`` envelope so SQLite + JSONL stay
+        # consistent across proxy- and SDK-driven runs.
+        meta = finalize_governance_audit(
+            run_id=proxy_run_id,
+            request_id=request_id,
+            result=result,
+            final_response_text=final_response_text or "",
+            conversation_id=conversation_id,
+            turn_index=turn_index,
+            domain=domain,
+        )
+
+        # Step 13 — emit canonical proxy.request_finalized envelope.
         try:
-            update_request_response(
+            posture_in = _posture_of(state_in)
+            posture_out = _posture_of(state_out)
+            response_len: int | None
+            try:
+                response_len = len(final_response_text or "")
+            except Exception:
+                response_len = None
+            emit_proxy_request_finalized(
                 run_id=proxy_run_id,
                 request_id=request_id,
-                final_response=final_response_text or "",
+                conversation_id=conversation_id,
+                turn_index=turn_index,
+                final_action=(meta.get("final_action") if isinstance(meta, dict) else None),
+                risk_score=(meta.get("risk_score") if isinstance(meta, dict) else None),
+                path=(meta.get("path_taken") or meta.get("path") if isinstance(meta, dict) else None),
+                domain=domain,
+                posture_in=posture_in,
+                posture_out=posture_out,
+                state_provided=state_in is not None,
+                state_updated=state_out is not None,
+                was_cached=(meta.get("was_cached") if isinstance(meta, dict) else None),
+                cached_from_turn=(meta.get("cached_from_turn") if isinstance(meta, dict) else None),
+                final_response_length=response_len,
+                headers=dict(governance_headers) if governance_headers else None,
+                metadata=meta if meta else None,
+                state_in=_state_summary_or_none(state_in),
+                state_out=_state_summary_or_none(state_out),
             )
         except Exception as exc:
-            logger.debug("update_request_response failed (non-fatal): %s", exc)
-
-        # Update domain column if known.
-        if domain:
-            try:
-                update_request_domain(run_id=proxy_run_id, request_id=request_id, domain=domain)
-            except Exception as exc:
-                logger.debug("update_request_domain failed (non-fatal): %s", exc)
+            logger.debug("emit_proxy_request_finalized failed (non-fatal): %s", exc)
 
         # Flush the async queue so the data is visible to readers right away.
         obs.flush(timeout=5.0)

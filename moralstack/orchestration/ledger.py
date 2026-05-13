@@ -210,6 +210,38 @@ class SemanticDecisionLedger:
         Returns:
             LedgerResult with is_hit=True only when a candidate cleared all gates.
         """
+        result = self._lookup_impl(
+            prompt=prompt,
+            contract_hash=contract_hash,
+            posture=posture,
+            domain=domain,
+            intent_clarity=intent_clarity,
+            request_type=request_type,
+            turn_index=turn_index,
+        )
+        self._emit_lookup_event(
+            result=result,
+            contract_hash=contract_hash,
+            posture=posture,
+            domain=domain,
+            intent_clarity=intent_clarity,
+            request_type=request_type,
+            turn_index=turn_index,
+        )
+        return result
+
+    def _lookup_impl(
+        self,
+        *,
+        prompt: str,
+        contract_hash: str,
+        posture: str,
+        domain: str | None,
+        intent_clarity: str,
+        request_type: str,
+        turn_index: int,
+    ) -> LedgerResult:
+        """Pure semantic-lookup logic without observability side-effects."""
         if posture == "ESCALATED":
             return LedgerResult(
                 is_hit=False, cached_decision=None, similarity=0.0, from_turn=None, reason="posture_escalated"
@@ -280,9 +312,31 @@ class SemanticDecisionLedger:
         """
         if posture == "ESCALATED":
             _LOG.debug("SemanticDecisionLedger.store skipped: posture=ESCALATED, turn=%d", turn_index)
+            self._emit_store_event(
+                outcome="skipped",
+                reason="posture_escalated",
+                contract_hash=contract_hash,
+                posture=posture,
+                domain=domain,
+                decision=decision,
+                intent_clarity=intent_clarity,
+                request_type=request_type,
+                turn_index=turn_index,
+            )
             return False
         if turn_index < 1:
             _LOG.debug("SemanticDecisionLedger.store skipped: turn_index=%d < 1", turn_index)
+            self._emit_store_event(
+                outcome="skipped",
+                reason="turn_index_below_one",
+                contract_hash=contract_hash,
+                posture=posture,
+                domain=domain,
+                decision=decision,
+                intent_clarity=intent_clarity,
+                request_type=request_type,
+                turn_index=turn_index,
+            )
             return False
 
         embedding = self._embedder.embed(prompt)
@@ -296,4 +350,87 @@ class SemanticDecisionLedger:
             turn_index=turn_index,
         )
         self._storage.put(key, entry)
+        self._emit_store_event(
+            outcome="stored",
+            reason="stored",
+            contract_hash=contract_hash,
+            posture=posture,
+            domain=domain,
+            decision=decision,
+            intent_clarity=intent_clarity,
+            request_type=request_type,
+            turn_index=turn_index,
+        )
         return True
+
+    # ------------------------------------------------------------------
+    # Step 13 — observability for lookup/store paths
+    # ------------------------------------------------------------------
+
+    def _emit_lookup_event(
+        self,
+        *,
+        result: LedgerResult,
+        contract_hash: str,
+        posture: str,
+        domain: str | None,
+        intent_clarity: str,
+        request_type: str,
+        turn_index: int,
+    ) -> None:
+        """Emit ``ledger.lookup`` on every code path (hit, miss, skip)."""
+        try:
+            # Lazy import keeps the orchestration package importable in
+            # environments where the observability stack is not initialised.
+            from moralstack.observability.conversation_events import emit_ledger_lookup
+
+            cached = result.cached_decision
+            emit_ledger_lookup(
+                turn_index=turn_index,
+                outcome="hit" if result.is_hit else "miss",
+                reason=result.reason or None,
+                similarity=result.similarity if result.similarity > 0 else None,
+                from_turn=result.from_turn,
+                contract_hash=contract_hash or None,
+                posture=posture or None,
+                domain=domain,
+                intent_clarity=intent_clarity or None,
+                request_type=request_type or None,
+                final_action=getattr(cached, "final_action", None) if cached else None,
+                risk_score=getattr(cached, "risk_score", None) if cached else None,
+                threshold=self._threshold,
+            )
+        except Exception:
+            _LOG.debug("ledger emit_ledger_lookup failed", exc_info=True)
+
+    def _emit_store_event(
+        self,
+        *,
+        outcome: str,
+        reason: str,
+        contract_hash: str,
+        posture: str,
+        domain: str | None,
+        decision: CachedDecision | None,
+        intent_clarity: str,
+        request_type: str,
+        turn_index: int,
+    ) -> None:
+        """Emit ``ledger.store`` on every code path (stored/skipped)."""
+        try:
+            from moralstack.observability.conversation_events import emit_ledger_store
+
+            emit_ledger_store(
+                turn_index=turn_index,
+                outcome=outcome,
+                reason=reason,
+                contract_hash=contract_hash or None,
+                posture=posture or None,
+                domain=domain,
+                intent_clarity=intent_clarity or None,
+                request_type=request_type or None,
+                final_action=getattr(decision, "final_action", None) if decision is not None else None,
+                risk_score=getattr(decision, "risk_score", None) if decision is not None else None,
+            )
+        except Exception:
+            _LOG.debug("ledger emit_ledger_store failed", exc_info=True)

@@ -111,6 +111,39 @@ def _messages_to_turns(messages: list[dict[str, Any]]) -> list[Turn]:
     return turns
 
 
+def _extract_text_from_openai_response(openai_response: Any) -> str:
+    """
+    Extract the assistant text from an OpenAI chat completion response.
+
+    Best-effort: returns an empty string when the structure is missing or
+    unexpected. Mirrors the contract used by the FastAPI proxy so audit
+    rows record an identical ``final_response`` regardless of entry point.
+    """
+    if openai_response is None:
+        return ""
+    try:
+        choices = getattr(openai_response, "choices", None) or []
+        if not choices:
+            return ""
+        message = getattr(choices[0], "message", None)
+        if message is None:
+            return ""
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for p in content:
+                if isinstance(p, dict):
+                    text = p.get("text") or p.get("content")
+                    if isinstance(text, str):
+                        parts.append(text)
+            return "".join(parts)
+        return ""
+    except Exception:
+        return ""
+
+
 def _build_safe_complete_user_turn(result: Any) -> dict[str, str]:
     """
     Build a synthetic user turn carrying the SAFE_COMPLETE governance guidance.
@@ -292,6 +325,14 @@ class GovernedCompletions:
 
         # --- Routing ---
         if final_action == "REFUSE":
+            self._finalize_audit(
+                request_id=request.request_id,
+                result=result,
+                final_response_text=getattr(result.response, "content", "") or "",
+                conversation_id=conv_id,
+                turn_index=turn_idx,
+                domain=domain,
+            )
             if is_stream:
                 return GovernedRefusalStream(result)
             return GovernedResponse.from_refusal(result)
@@ -305,16 +346,86 @@ class GovernedCompletions:
             modified_kwargs = {**kwargs, "messages": modified_messages}
             if is_stream:
                 stream = self._governed._client.chat.completions.create(**modified_kwargs)
+                # For streaming, the final body is consumed by the caller; the
+                # audit row records the governance decision without a body.
+                self._finalize_audit(
+                    request_id=request.request_id,
+                    result=result,
+                    final_response_text="",
+                    conversation_id=conv_id,
+                    turn_index=turn_idx,
+                    domain=domain,
+                )
                 return GovernedStreamResponse(stream, result)
             openai_response = self._governed._client.chat.completions.create(**modified_kwargs)
+            self._finalize_audit(
+                request_id=request.request_id,
+                result=result,
+                final_response_text=_extract_text_from_openai_response(openai_response),
+                conversation_id=conv_id,
+                turn_index=turn_idx,
+                domain=domain,
+            )
             return GovernedResponse.from_safe(openai_response, result)
 
         # NORMAL_COMPLETE (or any other value)
         if is_stream:
             stream = self._governed._client.chat.completions.create(**kwargs)
+            self._finalize_audit(
+                request_id=request.request_id,
+                result=result,
+                final_response_text="",
+                conversation_id=conv_id,
+                turn_index=turn_idx,
+                domain=domain,
+            )
             return GovernedStreamResponse(stream, result)
         openai_response = self._governed._client.chat.completions.create(**kwargs)
+        self._finalize_audit(
+            request_id=request.request_id,
+            result=result,
+            final_response_text=_extract_text_from_openai_response(openai_response),
+            conversation_id=conv_id,
+            turn_index=turn_idx,
+            domain=domain,
+        )
         return GovernedResponse.from_normal(openai_response, result)
+
+    def _finalize_audit(
+        self,
+        *,
+        request_id: str,
+        result: Any,
+        final_response_text: str,
+        conversation_id: str | None,
+        turn_index: int | None,
+        domain: str | None,
+    ) -> None:
+        """
+        Populate Step 13 governance audit fields on the ``requests`` row.
+
+        Best-effort: identical contract to the proxy's _finalize_request, so
+        SDK-driven runs share the same audit surface (final_response +
+        meta_json) consumed by ``moralstack-ui`` and the Markdown export.
+        """
+        run_id = getattr(self._governed, "_run_id", "") or ""
+        if not run_id or not request_id:
+            return
+        try:
+            from moralstack.observability.governance_audit import finalize_governance_audit
+
+            finalize_governance_audit(
+                run_id=run_id,
+                request_id=request_id,
+                result=result,
+                final_response_text=final_response_text,
+                conversation_id=conversation_id,
+                turn_index=turn_index,
+                domain=domain,
+            )
+        except Exception:
+            # Observability is a side-effect: never break the SDK contract.
+            pass
 
     def _handle_pipeline_failure(
         self,

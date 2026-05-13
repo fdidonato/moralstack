@@ -93,11 +93,17 @@ class EventEnvelope:
 | `EVENT_REQUEST_UPSERTED` | `request.upserted` | Request lifecycle |
 | `EVENT_REQUEST_DOMAIN_UPDATED` | `request.domain_updated` | Domain update |
 | `EVENT_REQUEST_RESPONSE_UPDATED` | `request.response_updated` | Response update |
+| `EVENT_REQUEST_META_UPDATED` | `request.meta_updated` | Per-request governance metadata merge (Step 13) |
 | `EVENT_LLM_CALL` | `llm.call` | LLM call telemetry |
 | `EVENT_ORCHESTRATION_EVENT` | `orchestration.event` | Orchestration lifecycle |
 | `EVENT_DECISION_TRACE` | `decision.trace` | Decision trace audit |
 | `EVENT_DEBUG_EVENT` | `debug.event` | Diagnostics / debug |
-| `EVENT_CONVERSATION_STATE_UPDATED` | `conversation.state_updated` | Multi-turn state |
+| `EVENT_CONVERSATION_STATE_UPDATED` | `conversation.state_updated` | Multi-turn governance state snapshot (Step 13) |
+| `EVENT_LEDGER_LOOKUP` | `ledger.lookup` | Semantic decision ledger lookup (Step 13) |
+| `EVENT_LEDGER_STORE` | `ledger.store` | Semantic decision ledger store (Step 13) |
+| `EVENT_SESSION_STORE_GET` | `session_store.get` | SessionStore get (Step 13) |
+| `EVENT_SESSION_STORE_PUT` | `session_store.put` | SessionStore put (Step 13) |
+| `EVENT_PROXY_REQUEST_FINALIZED` | `proxy.request.finalized` | Per-request proxy finalisation summary (Step 13) |
 
 ---
 
@@ -238,6 +244,88 @@ from moralstack.observability.context import (
 These are propagated across thread boundaries via `contextvars.copy_context()` inside `ObservabilityWriteQueue.submit()`.
 
 > In the SDK path, `run_id` is set automatically by `GovernedClient._init_run_context()`. Direct calls to `set_current_run_id()` are only needed when using the orchestrator API directly (e.g. CLI or custom integrations).
+
+---
+
+## Multi-turn conversation observability (Step 13)
+
+MoralStack treats every chat as a sequence of governed turns. Step 13 adds
+first-class persistence and read APIs for the **conversation-level** signals
+that previously lived only in transient runtime state.
+
+### New SQLite tables
+
+| Table | Written by | Purpose |
+|---|---|---|
+| `conversation_states` | `EVENT_CONVERSATION_STATE_UPDATED` | Full `state_in` / `state_out` snapshots + summary per turn |
+| `ledger_events` | `EVENT_LEDGER_LOOKUP`, `EVENT_LEDGER_STORE` | Every semantic decision ledger lookup/store with similarity, outcome, reason |
+| `session_store_events` | `EVENT_SESSION_STORE_GET`, `EVENT_SESSION_STORE_PUT` | Every SessionStore access with TTL / eviction metadata |
+| `proxy_request_events` | `EVENT_PROXY_REQUEST_FINALIZED` | Per-request proxy finalisation summary (state_provided, state_updated, postures, was_cached, response length, headers) |
+
+The existing `requests` table is extended with a `meta_json` column merged
+turn-by-turn via `EVENT_REQUEST_META_UPDATED` (final_action, risk_score,
+path, posture, reason codes, triggered principles, …).
+
+### Emitters
+
+```python
+from moralstack.observability.conversation_events import (
+    emit_request_meta_updated,
+    emit_conversation_state_updated,
+    emit_ledger_lookup,
+    emit_ledger_store,
+    emit_session_store_get,
+    emit_session_store_put,
+    emit_proxy_request_finalized,
+)
+```
+
+All emitters are **best-effort**: they swallow failures and never block the
+hot governance path. They write in both `db_only` and `dual` modes; in
+`file_only` mode the same envelopes are appended under
+`logs/observability/<event_type>.jsonl`.
+
+### Read API
+
+```python
+rs = obs.read_store
+rs.get_requests_for_conversation(conversation_id)
+rs.get_conversation_states(conversation_id)
+rs.get_ledger_events_for_conversation(conversation_id)
+rs.get_session_store_events_for_conversation(conversation_id)
+rs.get_proxy_request_events_for_conversation(conversation_id)
+rs.get_conversation_ids_for_run(run_id)
+rs.get_conversation_overview(conversation_id)
+```
+
+`get_conversation_overview()` returns aggregated metrics keyed by
+`turn_count`, `first_created_at`, `last_created_at`, `final_actions`,
+`max_risk_score`, `last_posture`, `ledger_hits`, `ledger_misses`,
+`session_store_hits`, `session_store_misses`, `any_turn_cached`,
+`cached_turn_count`.
+
+### UI surfaces (`moralstack-ui`)
+
+* `GET /conversations/{conversation_id}` — full timeline with per-turn
+  governance decision, state transitions, ledger and session-store activity,
+  and proxy finalisation.
+* `GET /conversations/{conversation_id}/export.md` — Markdown audit trail
+  (`moralstack.reports.conversation_export.export_conversation_to_markdown`).
+* `GET /conversations?q=<id>` — direct lookup redirect.
+* The run detail page now lists every conversation seen in the run; the
+  request detail page surfaces the parent conversation context.
+
+### CLI inspector
+
+```bash
+python scripts/inspect_multiturn_trace.py <conversation_id>          # human summary
+python scripts/inspect_multiturn_trace.py --list-run <run_id>        # list conversations
+python scripts/inspect_multiturn_trace.py <conversation_id> --json   # raw rows
+python scripts/inspect_multiturn_trace.py <conversation_id> --export trace.md
+```
+
+Requires `MORALSTACK_OBSERVABILITY_DB_PATH` (or the legacy
+`MORALSTACK_DB_PATH`) to point at a populated SQLite database.
 
 ---
 
