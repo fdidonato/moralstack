@@ -25,9 +25,7 @@ def render_evaluation_order(registry: SignalRegistry) -> str:
     Signals with effects.priority_resolution_in_prompt=True are listed first.
     Currently only q17_minor_exploitation carries this flag.
     """
-    priority_signals = [
-        sig for sig in registry.signals.values() if sig.effects.priority_resolution_in_prompt
-    ]
+    priority_signals = [sig for sig in registry.signals.values() if sig.effects.priority_resolution_in_prompt]
     if not priority_signals:
         return ""
 
@@ -118,7 +116,7 @@ def get_harm_signal_prompts(registry: SignalRegistry) -> tuple[str, str]:
 
     Callers should use user_template.format(request=...) to produce the final prompt.
     """
-    from moralstack.models.risk.prompts import HARM_SIGNAL_SYSTEM_PROMPT, HARM_SIGNAL_PROMPT_TEMPLATE  # noqa: PLC0415
+    from moralstack.models.risk.prompts import HARM_SIGNAL_PROMPT_TEMPLATE, HARM_SIGNAL_SYSTEM_PROMPT  # noqa: PLC0415
 
     evaluation_order = render_evaluation_order(registry)
     signal_definitions = render_signal_definitions(registry)
@@ -142,6 +140,7 @@ def get_harm_signal_prompts(registry: SignalRegistry) -> tuple[str, str]:
 
 
 # ── Internal helpers ────────────────────────────────────────────────────────
+
 
 def _indent_continuation(text: str, indent: str) -> str:
     """Indent all lines except the first with the given prefix."""

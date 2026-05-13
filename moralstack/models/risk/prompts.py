@@ -19,7 +19,6 @@ Output JSON schema invariato: tutti i campi attesi dal calibrator
 (merge_mini_estimator_results in calibration.py) sono preservati.
 """
 
-
 # =============================================================================
 # MINI-ESTIMATOR 1: Intent & Context Classifier
 # =============================================================================

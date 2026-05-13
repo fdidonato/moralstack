@@ -13,20 +13,22 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from dataclasses import replace as dataclass_replace
 from typing import Any, Literal, Union
 
 # =============================================================================
 # Protocols
 # =============================================================================
-from moralstack.core.types import PolicyLLMProtocol
+from moralstack.core.types import PolicyLLMProtocol, Turn
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
+from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.perspectives_prompt import (
     build_perspectives_system_prompt,
     build_perspectives_user_prompt,
 )
 from moralstack.prompts.retry import RETRY_PERSPECTIVES
-from moralstack.utils.cache import get_global_cache
+from moralstack.utils.cache import build_context_fingerprint, get_global_cache
 from moralstack.utils.json_utils import JSONParseError, extract_json
 
 # =============================================================================
@@ -355,6 +357,19 @@ def _sum_optional_token_field(results: list[PerspectiveResult], field_name: str)
     return sum(values)
 
 
+def _build_history_snippet(conversation_history: list[Turn] | None) -> str:
+    """Build a compact snippet for the last three turns."""
+    if not conversation_history:
+        return ""
+    recent = list(conversation_history)[-3:]
+    lines: list[str] = []
+    for turn in recent:
+        role = getattr(turn, "role", "") or "unknown"
+        content = (getattr(turn, "content", "") or "")[:200]
+        lines.append(f"[{role}]: {content}")
+    return "\n".join(lines)
+
+
 # =============================================================================
 # LLM Perspective Ensemble
 # =============================================================================
@@ -445,6 +460,9 @@ class LLMPerspectiveEnsemble:
         response: str,
         perspectives: list[Perspective] | None = None,
         delib_context: Any = None,
+        *,
+        developer_contract: DeveloperContract | None = None,
+        conversation_history: list[Turn] | None = None,
     ) -> EnsembleResult:
         """
         Valuta la risposta da tutte le prospettive.
@@ -461,9 +479,17 @@ class LLMPerspectiveEnsemble:
             EnsembleResult con risultati e aggregazione
         """
         # FIX PERFORMANCE: Check cache prima di valutare
+        context_fingerprint = build_context_fingerprint(
+            developer_contract=developer_contract,
+            conversation_history=conversation_history,
+        )
         if self.config.enable_caching:
             cache = get_global_cache()
-            cached_result = cache.get_perspective_result(request, response)
+            cached_result = cache.get_perspective_result(
+                request,
+                response,
+                context_fingerprint=context_fingerprint,
+            )
             if isinstance(cached_result, EnsembleResult):
                 return cached_result
 
@@ -478,7 +504,19 @@ class LLMPerspectiveEnsemble:
             active_perspectives = active_perspectives[: self.config.max_perspectives]
 
         # OPT-2: build shared system once (REQUEST+RESPONSE+common instructions)
-        ctx = delib_context or DelibContext(user_prompt=request, draft_text_full=response)
+        history_snippet = _build_history_snippet(conversation_history)
+        if delib_context is None:
+            ctx = DelibContext(
+                user_prompt=request,
+                draft_text_full=response,
+                conversation_history_snippet=history_snippet,
+            )
+        else:
+            current_snippet = getattr(delib_context, "conversation_history_snippet", "") or ""
+            if history_snippet and not current_snippet and isinstance(delib_context, DelibContext):
+                ctx = dataclass_replace(delib_context, conversation_history_snippet=history_snippet)
+            else:
+                ctx = delib_context
         shared_system = PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + build_perspectives_system_prompt(ctx)
 
         if self.config.parallel_evaluation:
@@ -489,7 +527,12 @@ class LLMPerspectiveEnsemble:
         # FIX PERFORMANCE: Salva in cache per usi futuri
         if self.config.enable_caching:
             cache = get_global_cache()
-            cache.set_perspective_result(request, response, result)
+            cache.set_perspective_result(
+                request,
+                response,
+                result,
+                context_fingerprint=context_fingerprint,
+            )
 
         return result
 

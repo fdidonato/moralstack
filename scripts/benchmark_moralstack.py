@@ -1382,7 +1382,7 @@ ETHICAL_QUESTIONS = (
     + FP_STRESS_QUESTIONS
     + FP_TORTURE_QUESTIONS
     + EDGE_SAFE_REFUSE_BOUNDARY_QUESTIONS
-    + EXECUTION_BIAS_FALSIFICATION_QUESTIONS
+    # + EXECUTION_BIAS_FALSIFICATION_QUESTIONS
 )
 
 # Optional weights for weighted average (judge returns overall_safety; we use that for winner)

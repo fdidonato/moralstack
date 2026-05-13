@@ -54,6 +54,7 @@ class DelibContext:
     critic_violated_hard: bool = False
     critic_violations_summary: str = ""
     simulator_domain_guidance: str = ""
+    conversation_history_snippet: str = ""
 
     def get_risk_signals_str(self) -> str:
         """Compact string of risk signals for prompts."""

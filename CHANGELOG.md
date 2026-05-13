@@ -4,9 +4,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.4.0
+## 0.4.0 — 2026-05-13
 
-### Added
+### Added — Multi-turn governance
+
+- **DeveloperContract** (`moralstack.orchestration.contract`): typed representation
+  of deployer system prompt with `mode='opaque' | 'structured'` and `raw_text` /
+  `contract_hash` properties. Used for governance scoping in
+  `classify_refusal_focus` P1.
+- **ConversationGovernanceState** extension (Step 1): added `posture`, `last_domain`,
+  `last_risk_signals`, `last_decision_ledger_keys` fields for cross-turn state.
+- **SemanticDecisionLedger** (Step 4): embedding-based cache for governance
+  decisions, scoped by `(prompt_embedding, contract_hash, posture)`.
+- **SessionState / InMemorySessionStore** (Step 5): SDK-level session management
+  for multi-turn conversations.
+- **ConversationalFastPathRunner** (Step 7): optimized routing for low-risk
+  conversational continuations.
+- **Cache `context_fingerprint`** (Step 9): per-module caches (perspectives /
+  simulator / hindsight) now scope their entries by conversational context,
+  closing the multi-turn governance hole (design v1.3 §6.7).
+- **RefusalContext extended** (Step 10): added `developer_contract_summary` and
+  `conversation_history_snippet` fields for richer refusal context.
+- **`classify_refusal_focus` 7-priority hierarchy** (Step 10): added P0 (hard
+  topical signals, never overridable) and P1 (developer_contract redirection
+  for `mode='structured'`).
+- **Caveat-as-extra-user-turn** (Step 10): SAFE_COMPLETE guidance is now injected
+  as a synthetic user turn appended to messages. The developer-declared system
+  prompt is preserved byte-identical (transparency invariant §1.3).
+- **Server proxy** (`moralstack.server`, Step 11): FastAPI app exposing
+  `POST /v1/chat/completions` for OpenAI-compatible clients. Includes per-conversation
+  concurrency lock, deterministic conversation fingerprinting, and
+  `X-Moralstack-*` governance headers.
+- **Stateless `turn_index` resolution** (Step 12): the proxy now derives the
+  turn index from the messages payload (`count(user_msgs) - 1`) instead of
+  a server-side counter, ensuring correctness across server restarts and with
+  stateless HTTP clients.
+- **Conversation audit export** (`moralstack.reports.conversation_export`,
+  Step 12): markdown export of complete multi-turn audit trail for AI Act
+  art. 12 compliance.
+
+### Added — Benchmark & infrastructure
 
 - **COMPL-AI benchmark path**: `scripts/openai_compatible_server.py` — OpenAI-compatible FastAPI bridge (`/v1/chat/completions`, `/chat/completions`) routing requests through MoralStack governance (env `MORALSTACK_OPENAI_COMPATIBLE_*`).
 - **Objective benchmark runner**: `scripts/benchmark_moralstack.py` — grounded-truth evaluation harness (expected actions/risk, parallel execution, markdown reports, optional judge model); aligns MoralStack scoring with `final_action`-only compliance semantics.
@@ -18,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `cli/report.py`: framework version is now read dynamically from
+  `moralstack.__version__` instead of being hardcoded.
+- `moralstack/__init__.py`: version bumped to `0.4.0`.
+- 4 deliberation modules (Critic, Simulator, Hindsight, Perspectives) accept
+  optional `developer_contract` and `conversation_history` keyword arguments
+  for conversational context injection (Step 9).
 - Minimum `openai` dependency raised to `>=2.24.0` in `pyproject.toml`.
 - README architecture diagram: risk-estimator parallel mini-estimator ordering/labels updated (`intent · signal detection (q1–q17) · operational risk`).
 - **Risk layer**: richer estimation prompts and schema, calibration logic, config-loader/env wiring, estimator behavior (including runtime/normalized domain handling); documentation updates in `docs/modules/risk_estimator.md`.
@@ -30,6 +73,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Domain-detection / refusal end-state specificity issues called out in the COMPL-AI integration work.
 - Lint/format hygiene: Ruff and Black fixes with aligned test updates.
+
+### Benchmark
+
+- 84-question benchmark: compliance preserved at **98.81%** across Steps 8, 9, 10
+  (3 sequential validations). The single off-diagonal question (Q70 healthcare
+  informational) is unchanged from v0.3.
+
+### Migration notes
+
+- **Single-turn callers**: zero migration required. The pipeline is byte-identical
+  when no developer_contract and no conversation_history are provided.
+- **Multi-turn callers**: `govern(client)` now auto-manages conversation_id and
+  applies multi-turn governance transparently. See `examples/multiturn_quickstart.py`.
+- **HTTP clients**: point your OpenAI base_url at the MoralStack proxy
+  (`moralstack-server` or `from moralstack.server import create_app`). See
+  `examples/server_quickstart.py`.
 
 ## 0.3.3
 22/04/2026

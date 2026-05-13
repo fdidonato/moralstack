@@ -86,6 +86,8 @@ class RefusalHandler:
             refusal_redirection=refusal_redirection,
             risk_score=risk_score,
             risk_category=risk_cat_str,
+            developer_contract=getattr(request, "developer_contract", None),
+            conversation_history=getattr(request, "conversation_history", None),
         )
 
         _refusal_t0 = time.time()

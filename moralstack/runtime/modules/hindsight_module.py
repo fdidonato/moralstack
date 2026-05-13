@@ -18,18 +18,51 @@ from typing import Any
 # =============================================================================
 # Protocols
 # =============================================================================
-from moralstack.core.types import PolicyLLMProtocol
+from moralstack.core.types import PolicyLLMProtocol, Turn
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
+from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.retry import RETRY_HINDSIGHT_BATCH, RETRY_HINDSIGHT_SINGLE
 from moralstack.runtime.modules.simulator_module import Consequence
-from moralstack.utils.cache import get_global_cache
+from moralstack.utils.cache import build_context_fingerprint, get_global_cache
 from moralstack.utils.json_utils import JSONParseError
 from moralstack.utils.structured_output import (
     HindsightBatchOutput,
     parse_and_validate_hindsight_batch_output,
     parse_and_validate_hindsight_single_output,
 )
+
+
+def _build_context_block(
+    developer_contract: DeveloperContract | None,
+    conversation_history: list[Turn] | None,
+) -> str:
+    """Build optional context injected into the hindsight user prompt."""
+    if developer_contract is None and not conversation_history:
+        return ""
+
+    sections: list[str] = []
+    if developer_contract is not None and developer_contract.raw_text:
+        sections.append(
+            "DEVELOPER CONTRACT:\n"
+            f"The deployer of this assistant has declared:\n{developer_contract.raw_text}\n"
+            "Evaluate whether the response is coherent with this contract. "
+            "A response that violates the developer's stated scope or role is a violation."
+        )
+    if conversation_history:
+        recent = list(conversation_history)[-3:]
+        lines: list[str] = []
+        for turn in recent:
+            role = getattr(turn, "role", "") or "unknown"
+            content = (getattr(turn, "content", "") or "")[:200]
+            lines.append(f"[{role}]: {content}")
+        sections.append(
+            "CONVERSATION HISTORY (last 3 turns):\n"
+            f"{chr(10).join(lines)}\n"
+            "Evaluate whether the response contradicts or escalates concerning patterns from previous turns."
+        )
+    return "\n\n" + "\n\n".join(sections) + "\n"
+
 
 # =============================================================================
 # Data Models
@@ -614,6 +647,9 @@ class LLMHindsightEvaluator:
         response: str,
         consequences: list[Consequence],
         delib_context: Any = None,
+        *,
+        developer_contract: DeveloperContract | None = None,
+        conversation_history: list[Turn] | None = None,
     ) -> HindsightResult:
         """
         Valuta risposta contro multiple conseguenze simulate.
@@ -633,17 +669,34 @@ class LLMHindsightEvaluator:
         if not consequences:
             return HindsightResult.empty()
 
+        context_fingerprint = build_context_fingerprint(
+            developer_contract=developer_contract,
+            conversation_history=conversation_history,
+        )
+
         # FIX PERFORMANCE: Check cache prima di valutare
         # Usa hash delle conseguenze come parte della chiave
         if self.config.enable_caching:
             cache = get_global_cache()
             consequences_hash = hashlib.md5("|".join(c.scenario_id for c in consequences).encode()).hexdigest()
-            cached_result = cache.get_hindsight_result(request, response, consequences_hash)
+            cached_result = cache.get_hindsight_result(
+                request,
+                response,
+                consequences_hash,
+                context_fingerprint=context_fingerprint,
+            )
             if isinstance(cached_result, HindsightResult):
                 return cached_result
 
         if self.config.use_batch_evaluation and len(consequences) > 1:
-            result = self._evaluate_batch(request, response, consequences, delib_context)
+            result = self._evaluate_batch(
+                request,
+                response,
+                consequences,
+                delib_context,
+                developer_contract=developer_contract,
+                conversation_history=conversation_history,
+            )
         else:
             result = self._evaluate_individual(request, response, consequences)
 
@@ -651,7 +704,13 @@ class LLMHindsightEvaluator:
         if self.config.enable_caching:
             cache = get_global_cache()
             consequences_hash = hashlib.md5("|".join(c.scenario_id for c in consequences).encode()).hexdigest()
-            cache.set_hindsight_result(request, response, result, consequences_hash)
+            cache.set_hindsight_result(
+                request,
+                response,
+                result,
+                consequences_hash,
+                context_fingerprint=context_fingerprint,
+            )
 
         return result
 
@@ -661,6 +720,9 @@ class LLMHindsightEvaluator:
         response: str,
         consequences: list[Consequence],
         delib_context: Any = None,
+        *,
+        developer_contract: DeveloperContract | None = None,
+        conversation_history: list[Turn] | None = None,
     ) -> HindsightResult:
         """
         Valuta tutti gli scenari in una singola chiamata LLM.
@@ -675,6 +737,7 @@ class LLMHindsightEvaluator:
         from moralstack.prompts.hindsight_prompt import build_hindsight_prompt
 
         prompt = build_hindsight_prompt(ctx, consequences_text)
+        prompt = prompt + _build_context_block(developer_contract, conversation_history)
 
         parse_attempts = 0
         last_error: Exception | None = None

@@ -89,11 +89,20 @@ def build_perspectives_system_prompt(
     request = context.user_prompt or ""
     response = context.draft_text_full or ""
     risk_signals = context.get_risk_signals_str() or "none"
-    return PERSPECTIVE_SYSTEM_FULL_BODY.format(
+    prompt = PERSPECTIVE_SYSTEM_FULL_BODY.format(
         request=request,
         response=response,
         risk_signals=risk_signals,
     )
+    history_snippet = context.conversation_history_snippet or ""
+    if history_snippet:
+        prompt = prompt + (
+            "\n\nCONVERSATION HISTORY (last 3 turns):\n"
+            f"{history_snippet}\n"
+            "Evaluate the response taking this conversational context into account "
+            "from the standpoint of your assigned perspective."
+        )
+    return prompt
 
 
 def build_perspectives_user_prompt(

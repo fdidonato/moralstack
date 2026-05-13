@@ -16,9 +16,10 @@ from pydantic import ValidationError as PydanticValidationError
 from moralstack.constitution.prompt_formatter import format_principles_compact
 from moralstack.constitution.schema import Constitution, Principle
 from moralstack.constitution.store import ConstitutionStore
-from moralstack.core.types import PolicyLLMProtocol, Violation
+from moralstack.core.types import PolicyLLMProtocol, Turn, Violation
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
+from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.retry import RETRY_CRITIC
 from moralstack.utils.json_utils import JSONParseError, extract_json
 from moralstack.utils.structured_output import (
@@ -31,6 +32,45 @@ from moralstack.utils.structured_output import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _build_context_block(
+    developer_contract: DeveloperContract | None,
+    conversation_history: list[Turn] | None,
+) -> str:
+    """
+    Build optional context injected into the critic user prompt.
+
+    Returns an empty string for the single-turn legacy path.
+    """
+    if developer_contract is None and not conversation_history:
+        return ""
+
+    sections: list[str] = []
+
+    if developer_contract is not None and developer_contract.raw_text:
+        sections.append(
+            "DEVELOPER CONTRACT:\n"
+            f"The deployer of this assistant has declared:\n{developer_contract.raw_text}\n"
+            "Evaluate whether the response is coherent with this contract. "
+            "A response that violates the developer's stated scope or role is a violation."
+        )
+
+    if conversation_history:
+        recent = list(conversation_history)[-3:]
+        history_lines: list[str] = []
+        for turn in recent:
+            role = getattr(turn, "role", "") or "unknown"
+            content = (getattr(turn, "content", "") or "")[:200]
+            history_lines.append(f"[{role}]: {content}")
+        sections.append(
+            "CONVERSATION HISTORY (last 3 turns):\n"
+            f"{chr(10).join(history_lines)}\n"
+            "Evaluate whether the response contradicts or escalates concerning patterns from previous turns."
+        )
+
+    return "\n\n" + "\n\n".join(sections) + "\n"
+
 
 # =============================================================================
 # Data Models
@@ -326,6 +366,9 @@ class LLMConstitutionalCritic:
         delib_context: Any = None,
         previous_violations: str = "",
         previous_guidance: str = "",
+        *,
+        developer_contract: DeveloperContract | None = None,
+        conversation_history: list[Turn] | None = None,
     ) -> CriticReport:
         """
         Valuta response contro constitution.
@@ -365,6 +408,7 @@ class LLMConstitutionalCritic:
             previous_violations=previous_violations,
             previous_guidance=previous_guidance,
         )
+        prompt = prompt + _build_context_block(developer_contract, conversation_history)
 
         # Genera critica con retry
         raw_response = ""
@@ -565,6 +609,9 @@ class LLMConstitutionalCritic:
         delib_context: Any = None,
         previous_violations: str = "",
         previous_guidance: str = "",
+        *,
+        developer_contract: DeveloperContract | None = None,
+        conversation_history: list[Turn] | None = None,
     ) -> CriticReport:
         """
         Critica usando principi rilevanti per la richiesta.
@@ -607,6 +654,8 @@ class LLMConstitutionalCritic:
             delib_context=delib_context,
             previous_violations=previous_violations,
             previous_guidance=previous_guidance,
+            developer_contract=developer_contract,
+            conversation_history=conversation_history,
         )
 
     def _compute_severity_score(self, violations: list[Violation]) -> float:

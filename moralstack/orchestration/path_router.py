@@ -23,6 +23,7 @@ _HARD_SEMANTIC_SIGNALS: frozenset[str] = frozenset(
         "Q10:weapons_explosives_toxins",
         "Q11:privacy_doxxing_stalking",
         "Q12:medical_harmful",
+        "Q17:minor_exploitation",
     }
 )
 

@@ -279,6 +279,8 @@ class ResponseAssembler:
                     refusal_redirection=refusal_redirection,
                     risk_score=getattr(metadata, "risk_score", None),
                     risk_category=risk_cat_str,
+                    developer_contract=getattr(request, "developer_contract", None),
+                    conversation_history=getattr(request, "conversation_history", None),
                 )
                 _refusal_t0 = time.time()
                 refusal_result = generate_llm_safe_refusal_detailed(

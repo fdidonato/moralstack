@@ -20,8 +20,8 @@ source venv/bin/activate
 python scripts/install.py
 ```
 
-Installs the package in editable mode with all extras (dev, ui). Registers `moralstack` and `moralstack-ui` CLI entry
-points.
+Installs the package in editable mode with all extras (dev, ui). Registers `moralstack`, `moralstack-ui`, and
+`moralstack-server` (stub entrypoint; use `create_app` in your launcher) CLI entry points.
 
 **Manual (equivalent to install.py):**
 
@@ -35,11 +35,21 @@ pip install -e ".[dev,ui]"
 pip install -e .[dev]
 ```
 
-**With Web UI (FastAPI, uvicorn, jinja2):**
+**With Web UI (FastAPI, uvicorn, jinja2, httpx):**
 
 ```bash
 pip install -e .[ui]
 ```
+
+**OpenAI-compatible governance proxy only (FastAPI, uvicorn, httpx — lighter than full UI):**
+
+```bash
+pip install -e .[server]
+```
+
+Use `from moralstack.server import create_app` and pass an upstream OpenAI client plus a configured
+`OrchestrationController`. The `moralstack-server` console script raises `NotImplementedError` until you provide a
+launcher (see design v1.3 and upcoming examples).
 
 **Alternative (legacy):**
 
@@ -58,7 +68,7 @@ The Python SDK (`govern()`) is included in the base package — no extra install
 pip install -e .
 ```
 
-The `[ui]` extra is only needed for the web dashboard (`moralstack-ui`). The `[dev]` extra is only needed for running tests and linting.
+The `[ui]` extra is needed for the web dashboard (`moralstack-ui`) and pulls `httpx` (also used by the server proxy tests). The `[server]` extra installs proxy dependencies without the UI stack. The `[dev]` extra is only needed for running tests and linting.
 
 ### SDK Quickstart
 

@@ -27,6 +27,30 @@ optional keyword-only arguments `conversation_id`, `turn_index`, `parent_request
 (`ConversationGovernanceState`). When provided, metadata is persisted on the request row and echoed on
 `OrchestratorResult`; they do not change routing or `decide_action` when omitted. See `moralstack/orchestration/conversation_state.py`.
 
+When `OrchestrationController` is constructed with a non-`None` `SemanticDecisionLedger` and `process(..., conversation_id=...)`
+is used, the controller consults the ledger after `decide_action` and initial routing. On a semantic cache hit,
+`ConversationalFastPathRunner` (`moralstack/orchestration/conversational_fast_path.py`) may patch `Decision` and the
+string route to skip deliberation only when a conservative gate allows (cached `REFUSE`, or current route already
+non-deliberative). Response text is never read from the ledger (DAF-4); only governance metadata is reused.
+
+`moralstack/orchestration/system_prompt_resolver.py` exposes `effective_system_for_request(...)`, composing the policy system prompt per request from the protected base, optional non-empty `DeveloperContract.raw_text`, and an optional mode suffix (`normal`, `safe_complete`, `constrained`). When no contract text is present, output matches the legacy single-turn byte strings. The suffix modes remain available for other call sites; **`DeliberationRunner` does not use `safe_complete` or `constrained` resolver modes for policy generation** (see below).
+
+**Governance prompt placement (v0.4 Step 10)**:
+
+- **Internal policy (`DeliberationRunner`)**: `SAFE_COMPLETE_GENERATION_INSTRUCTION` and `CONSTRAINED_GENERATION_INSTRUCTION` from `moralstack/orchestration/_policy_helpers.py` are **prefixed onto the user-facing prompt** passed to `policy.generate` / `policy.rewrite`. The system string passed to the policy LLM is still composed with `effective_system_for_request(..., mode="normal")` (contract overlay only, no governance suffix from those constants).
+- **Python SDK (`moralstack/sdk/wrapper.py`)**: when `final_action == "SAFE_COMPLETE"`, governance guidance is sent as an **extra trailing message with `role="user"`** appended to `messages`. Existing system message content is not modified.
+
+**Refusal context** (`moralstack/orchestration/refusal_context.py`):
+
+- `build_refusal_context(...)` produces a frozen `RefusalContext` for refusal LLM calls. Optional keyword arguments `developer_contract` and `conversation_history` populate bounded snippets `developer_contract_summary` and `conversation_history_snippet`.
+- `classify_refusal_focus` implements priority order **P0–P6** (documented in the source docstring): **P0** hard topical signals are never overridden by deployer contract hints; **P1** applies only when `DeveloperContract.mode == "structured"` and redirection keywords appear in `raw_text`; domain overlay redirection continues to integrate via `refusal_redirection` as before.
+
+In v0.4 foundations, `ConversationGovernanceState` includes additive fields for future multi-turn routing:
+`last_developer_contract_hash`, `last_governance_posture`, and `turn_decisions_summary` (tuple of
+`TurnDecisionSummary`). `should_full_refresh(*, current_turn: TurnContext | None = None)` preserves legacy behavior
+(`should_full_refresh()` without arguments remains conservative and returns `True`) and enables forward-compatible
+rule evaluation when `current_turn` is provided.
+
 ---
 
 ## Architecture
@@ -151,8 +175,8 @@ These flags reduce wall-clock latency **without changing routing policy** (`deci
 **`enable_speculative_generation` (default `True`)**
 
 - **When `True`**: `OrchestrationController` starts **risk estimation** and a **speculative policy `generate`** (same base system prompt as normal first-pass generation) in parallel. After risk returns, routing proceeds as usual; the speculative draft is **not** used for policy routing decisions.
-- **Reuse**: On benign fast path, fast path, and deliberative path, the draft is reused when it is still valid (skipping a duplicate first `generate` where implemented). On **REFUSE**, the speculative call is unused (wasted latency/token trade-off). **`SAFE_COMPLETE`** path does not reuse this draft (different system instructions).
-- **Constrained generation** (`CLEARLY_HARMFUL` deliberation): the speculative draft is **not** applied as cycle-1 output; the constrained system prompt is used instead.
+- **Reuse**: On benign fast path, fast path, and deliberative path, the draft is reused when it is still valid (skipping a duplicate first `generate` where implemented). On **REFUSE**, the speculative call is unused (wasted latency/token trade-off). **`SAFE_COMPLETE`** path does not reuse this draft (separate policy call with SAFE_COMPLETE governance prefixed on the user prompt).
+- **Constrained generation** (`CLEARLY_HARMFUL` deliberation): the speculative draft is **not** applied as cycle-1 output; constrained governance text is supplied as a **prompt prefix** (not via `mode="constrained"` on the system resolver).
 - **Note**: Speculative generation uses language resolution **before** the risk estimator’s `detected_language` is available (fallback path). Routing and safety decisions are unchanged; draft wording may differ slightly from a strictly sequential generate-after-risk for the same request.
 
 **`enable_simulator_gating` (default `false`)**
@@ -671,6 +695,7 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
 
 ## See Also
 
+- `moralstack/orchestration/refusal_context.py` — `RefusalContext`, `build_refusal_context`, `classify_refusal_focus` (summarized under **Refusal context** in Overview above)
 - [Risk Estimator](./risk_estimator.md) - Risk classification
 - [Constitutional Critic](./critic.md) - Constitutional validation
 - [Consequence Simulator](./simulator.md) - Consequence simulation

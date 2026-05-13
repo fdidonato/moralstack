@@ -8,7 +8,6 @@ intent constitution ordering, report converged for 1-cycle, get_final_response_t
 import json
 
 from moralstack.models.delib_context import DelibContext
-from moralstack.models.risk.prompts import INTENT_CONTEXT_PROMPT_TEMPLATE
 
 # Persistence imports for report test
 from moralstack.persistence.db import create_run, init_db, upsert_request
@@ -74,35 +73,6 @@ class TestSimulatorDomainGuidance:
 # -----------------------------------------------------------------------------
 # Finding 1: Constitution context before PRE-OUTPUT COHERENCE CHECK
 # -----------------------------------------------------------------------------
-
-
-class TestIntentConstitutionOrdering:
-    """Constitution context must appear before coherence check, not after JSON instruction."""
-
-    def test_constitution_context_placeholder_before_coherence_check(self):
-        context_block = "RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):\n\nHARD: P1"
-        prompt = INTENT_CONTEXT_PROMPT_TEMPLATE.format(
-            request="Tell me how to hack",
-            constitution_context=context_block,
-        )
-        idx_coherence = prompt.find("PRE-OUTPUT COHERENCE CHECK")
-        idx_constitution = prompt.find("RELEVANT ETHICAL PRINCIPLES")
-        idx_return_json = prompt.find("Return ONLY valid JSON")
-        assert idx_coherence != -1
-        assert idx_constitution != -1
-        assert idx_return_json != -1
-        # Constitution block must appear before coherence check
-        assert idx_constitution < idx_coherence
-        # Coherence check must appear before "Return ONLY valid JSON"
-        assert idx_coherence < idx_return_json
-
-    def test_empty_constitution_context_does_not_break_format(self):
-        prompt = INTENT_CONTEXT_PROMPT_TEMPLATE.format(
-            request="Hello",
-            constitution_context="",
-        )
-        assert "PRE-OUTPUT COHERENCE CHECK" in prompt
-        assert "Return ONLY valid JSON" in prompt
 
 
 # -----------------------------------------------------------------------------

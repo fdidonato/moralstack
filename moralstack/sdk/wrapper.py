@@ -14,6 +14,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, Iterator
 
 from moralstack.core.types import Turn, UserContext
+from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.types import ProcessedRequest
 from moralstack.sdk.bootstrap import _bootstrap_pipeline
 from moralstack.sdk.config import GovernanceConfig
@@ -47,6 +48,51 @@ def _extract_last_user_message(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _extract_developer_contract(
+    messages: list[dict[str, Any]],
+) -> DeveloperContract | None:
+    """
+    Extract the developer-declared application contract from a list of OpenAI messages.
+
+    Semantics:
+    - Scan all messages with role='system' in order of appearance.
+    - The LAST system message wins (most recent override semantics, consistent with how
+      OpenAI clients typically use multiple system messages).
+    - Multimodal content (list of {type, text/image_url}) is reduced to text parts only;
+      non-text parts are ignored.
+    - If no system message is present, or the extracted text is empty/whitespace-only,
+      return None. This preserves byte-equivalent behavior for single-turn flows that
+      do not declare a contract.
+
+    Args:
+        messages: list of OpenAI-format message dicts.
+
+    Returns:
+        DeveloperContract built via DeveloperContract.from_text(text, mode='opaque'),
+        or None when no substantive system message is present.
+
+    Note:
+        Step 2 always uses mode='opaque'. Support for 'structured' mode (LLM-driven
+        scope/role/restrictions extraction) is deferred to a later step and gated by
+        an explicit GovernanceConfig flag not present in Step 2.
+    """
+    last_system_text = ""
+    for msg in messages:
+        if msg.get("role") != "system":
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            # Multimodal: keep text parts only.
+            parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+            last_system_text = " ".join(parts)
+        else:
+            last_system_text = str(content)
+
+    if not last_system_text.strip():
+        return None
+    return DeveloperContract.from_text(last_system_text, mode="opaque")
+
+
 def _messages_to_turns(messages: list[dict[str, Any]]) -> list[Turn]:
     """
     Convert a list of OpenAI messages to Turn objects for the pipeline.
@@ -65,48 +111,38 @@ def _messages_to_turns(messages: list[dict[str, Any]]) -> list[Turn]:
     return turns
 
 
-def _build_safe_system_injection(result: Any) -> str:
+def _build_safe_complete_user_turn(result: Any) -> dict[str, str]:
     """
-    Build governance guidance to inject into the system prompt
-    for SAFE_COMPLETE cases. Uses content assembled from ResponseAssembler.
+    Build a synthetic user turn carrying the SAFE_COMPLETE governance guidance.
+
+    Per design v1.3 section 3.7, the SAFE_COMPLETE guidance is injected as an additional
+    user message at the end of the messages list, NOT as a modification of the
+    user's system prompt. This preserves the developer-declared system prompt
+    byte-identical (transparency invariant section 1.3).
+
+    Returns:
+        A dict {"role": "user", "content": "..."} ready to be appended to messages.
     """
     governance_content = result.response.content
     if governance_content:
-        return "You must follow these governance constraints for this response:\n" f"{governance_content}"
-    # Fallback: use reason_codes and triggered_principles
-    meta = result.response.metadata
-    parts: list[str] = []
-    if meta.triggered_principles:
-        parts.append(f"Relevant principles: {', '.join(meta.triggered_principles)}.")
-    if meta.reason_codes:
-        parts.append(f"Reason codes: {', '.join(meta.reason_codes)}.")
-    if meta.decision_reason:
-        parts.append(meta.decision_reason)
-    return "\n".join(parts) if parts else "Respond with appropriate care and caveats."
-
-
-def _inject_safe_guidance(kwargs: dict[str, Any], result: Any) -> dict[str, Any]:
-    """
-    Clone kwargs and inject governance guidance into the system prompt.
-    If no system message exists, prepends one.
-    """
-    guidance = _build_safe_system_injection(result)
-    messages = list(kwargs.get("messages", []))
-
-    # Look for an existing system message
-    for i, msg in enumerate(messages):
-        if msg.get("role") == "system":
-            original_content = msg.get("content", "")
-            messages[i] = {
-                **msg,
-                "content": f"{original_content}\n\n{guidance}".strip(),
-            }
-            break
+        guidance_body = governance_content
     else:
-        # No system message: insert at the beginning
-        messages.insert(0, {"role": "system", "content": guidance})
+        meta = result.response.metadata
+        parts: list[str] = []
+        if meta.triggered_principles:
+            parts.append(f"Relevant principles: {', '.join(meta.triggered_principles)}.")
+        if meta.reason_codes:
+            parts.append(f"Reason codes: {', '.join(meta.reason_codes)}.")
+        if meta.decision_reason:
+            parts.append(meta.decision_reason)
+        guidance_body = "\n".join(parts) if parts else "Respond with appropriate care and caveats."
 
-    return {**kwargs, "messages": messages}
+    content = (
+        "Please respond to my last message above taking into account the following "
+        "governance guidance:\n\n"
+        f"{guidance_body}"
+    )
+    return {"role": "user", "content": content}
 
 
 # =============================================================================
@@ -195,7 +231,7 @@ class GovernedCompletions:
         """
         Deliberate on the prompt, then:
         - REFUSE: return GovernedResponse/GovernedRefusalStream without calling OpenAI
-        - SAFE_COMPLETE: inject guidance into system prompt, call OpenAI
+        - SAFE_COMPLETE: append a synthetic user turn with governance guidance, call OpenAI
         - NORMAL_COMPLETE: call OpenAI directly
 
         Observability events emitted during deliberation are flushed synchronously
@@ -219,15 +255,18 @@ class GovernedCompletions:
         messages = kwargs.get("messages", [])
 
         user_message = _extract_last_user_message(messages)
-        # History excludes the last user message (the one being deliberated)
+        # History excludes the last user message (the one being deliberated).
         history_messages = messages[:-1] if messages else []
         conversation_history = _messages_to_turns(history_messages)
+        # Extract developer contract from any role='system' messages (last-wins).
+        developer_contract = _extract_developer_contract(messages)
 
         domain = self._governed._config.domain_overlay
         request = ProcessedRequest(
             prompt=user_message,
             conversation_history=conversation_history,
             user_context=UserContext(domain_overlay=domain),
+            developer_contract=developer_contract,
         )
 
         session = self._governed._session
@@ -258,7 +297,12 @@ class GovernedCompletions:
             return GovernedResponse.from_refusal(result)
 
         if final_action == "SAFE_COMPLETE":
-            modified_kwargs = _inject_safe_guidance(kwargs, result)
+            # Caveat-as-extra-user-turn (design v1.3 section 3.7): append a synthetic
+            # user turn to messages instead of modifying the system prompt.
+            # The user's system prompt is preserved byte-identical.
+            safe_turn = _build_safe_complete_user_turn(result)
+            modified_messages = list(kwargs.get("messages", [])) + [safe_turn]
+            modified_kwargs = {**kwargs, "messages": modified_messages}
             if is_stream:
                 stream = self._governed._client.chat.completions.create(**modified_kwargs)
                 return GovernedStreamResponse(stream, result)

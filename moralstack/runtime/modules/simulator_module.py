@@ -14,21 +14,54 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, cast
 
-from moralstack.core.types import PolicyLLMProtocol
+from moralstack.core.types import PolicyLLMProtocol, Turn
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
+from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.retry import RETRY_SIMULATOR
 from moralstack.prompts.simulator_prompt import (
     HARM_TYPE_MAPPING_RULE,
     SIMULATOR_ENUMS,
     SIMULATOR_SCHEMA_SKELETON,
 )
-from moralstack.utils.cache import get_global_cache
+from moralstack.utils.cache import build_context_fingerprint, get_global_cache
 from moralstack.utils.json_utils import JSONParseError
 from moralstack.utils.structured_output import (
     SimulatorOutput,
     parse_and_validate_simulator_output,
 )
+
+
+def _build_context_block(
+    developer_contract: DeveloperContract | None,
+    conversation_history: list[Turn] | None,
+) -> str:
+    """Build optional context injected into the simulator user prompt."""
+    if developer_contract is None and not conversation_history:
+        return ""
+
+    sections: list[str] = []
+    if developer_contract is not None and developer_contract.raw_text:
+        sections.append(
+            "DEVELOPER CONTRACT:\n"
+            f"The deployer of this assistant has declared:\n{developer_contract.raw_text}\n"
+            "Evaluate whether the response is coherent with this contract. "
+            "A response that violates the developer's stated scope or role is a violation."
+        )
+    if conversation_history:
+        recent = list(conversation_history)[-3:]
+        lines: list[str] = []
+        for turn in recent:
+            role = getattr(turn, "role", "") or "unknown"
+            content = (getattr(turn, "content", "") or "")[:200]
+            lines.append(f"[{role}]: {content}")
+        sections.append(
+            "CONVERSATION HISTORY (last 3 turns):\n"
+            f"{chr(10).join(lines)}\n"
+            "Evaluate whether the response contradicts or escalates concerning patterns from previous turns."
+        )
+    return "\n\n" + "\n\n".join(sections) + "\n"
+
 
 # =============================================================================
 # Data Models
@@ -305,6 +338,9 @@ class LLMConsequenceSimulator:
         response: str,
         num_scenarios: int | None = None,
         delib_context: Any = None,
+        *,
+        developer_contract: DeveloperContract | None = None,
+        conversation_history: list[Turn] | None = None,
     ) -> SimulationResult:
         """
         Genera k conseguenze future plausibili.
@@ -326,9 +362,17 @@ class LLMConsequenceSimulator:
             SimulationResult con conseguenze e metriche aggregate
         """
         # FIX PERFORMANCE: Check cache prima di simulare
+        context_fingerprint = build_context_fingerprint(
+            developer_contract=developer_contract,
+            conversation_history=conversation_history,
+        )
         if self.config.enable_caching:
             cache = get_global_cache()
-            cached_result = cache.get_simulation_result(request, response)
+            cached_result = cache.get_simulation_result(
+                request,
+                response,
+                context_fingerprint=context_fingerprint,
+            )
             if cached_result is not None:
                 return cast(SimulationResult, cached_result)
 
@@ -336,14 +380,33 @@ class LLMConsequenceSimulator:
         k = max(1, min(k, 10))  # Limita range
 
         if self.config.use_seeded_generation:
-            result = self._simulate_with_seeds(request, response, k, delib_context)
+            result = self._simulate_with_seeds(
+                request,
+                response,
+                k,
+                delib_context,
+                developer_contract=developer_contract,
+                conversation_history=conversation_history,
+            )
         else:
-            result = self._simulate_batch(request, response, k, delib_context)
+            result = self._simulate_batch(
+                request,
+                response,
+                k,
+                delib_context,
+                developer_contract=developer_contract,
+                conversation_history=conversation_history,
+            )
 
         # FIX PERFORMANCE: Salva in cache per usi futuri
         if self.config.enable_caching:
             cache = get_global_cache()
-            cache.set_simulation_result(request, response, result)
+            cache.set_simulation_result(
+                request,
+                response,
+                result,
+                context_fingerprint=context_fingerprint,
+            )
 
         return result
 
@@ -353,6 +416,9 @@ class LLMConsequenceSimulator:
         response: str,
         num_scenarios: int,
         delib_context: Any = None,
+        *,
+        developer_contract: DeveloperContract | None = None,
+        conversation_history: list[Turn] | None = None,
     ) -> SimulationResult:
         """
         Genera tutti gli scenari in un'unica chiamata LLM.
@@ -363,6 +429,7 @@ class LLMConsequenceSimulator:
         from moralstack.prompts.simulator_prompt import build_simulator_prompt
 
         prompt = build_simulator_prompt(ctx, num_scenarios=num_scenarios)
+        prompt = prompt + _build_context_block(developer_contract, conversation_history)
 
         raw_response = ""
         parse_attempts = 0
@@ -439,6 +506,9 @@ class LLMConsequenceSimulator:
         response: str,
         num_scenarios: int,
         delib_context: Any = None,
+        *,
+        developer_contract: DeveloperContract | None = None,
+        conversation_history: list[Turn] | None = None,
     ) -> SimulationResult:
         """
         Genera scenari usando seed separati per maggiore diversità.
@@ -465,6 +535,7 @@ class LLMConsequenceSimulator:
                 request=request,
                 response=response,
             )
+            prompt = prompt + _build_context_block(developer_contract, conversation_history)
 
             for attempt in range(self.config.max_retries):
                 total_attempts += 1

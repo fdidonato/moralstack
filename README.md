@@ -118,6 +118,7 @@ Main packages:
 - `moralstack/constitution/` — constitution schema, loader, store (YAML-driven)
 - `moralstack/persistence/` — DB and file persistence modes
 - `moralstack/ui/` — FastAPI dashboard (`moralstack-ui`)
+- `moralstack/server/` — OpenAI-compatible governance HTTP proxy (`create_app`; install with `.[server]` or `.[ui]`)
 
 ---
 
@@ -233,6 +234,39 @@ More patterns in [`examples/`](./examples/).
 
 ---
 
+## Multi-turn governance (v0.4)
+
+MoralStack v0.4 introduces full support for conversational governance:
+
+- **Same single-line API**: just wrap your OpenAI client with `govern()` —
+  multi-turn conversations are auto-managed.
+- **Jailbreak resistance**: escalation patterns are detected across turns.
+- **Audit trail**: every conversation produces a complete markdown
+  export for AI Act art. 12 compliance.
+- **OpenAI-compatible HTTP proxy**: point any OpenAI-compatible client at
+  `http://localhost:8080/v1` and get governance with `X-Moralstack-*` headers.
+
+### Quick example
+
+```python
+from openai import OpenAI
+from moralstack import govern
+
+client = govern(OpenAI())
+
+# Multi-turn conversation — fully governed.
+messages = []
+for q in ["What is X?", "Tell me more.", "How do I do X?"]:
+    messages.append({"role": "user", "content": q})
+    response = client.chat.completions.create(model="gpt-4o", messages=messages)
+    messages.append({"role": "assistant", "content": response.choices[0].message.content})
+    print(response.governance_metadata.final_action, "—", response.choices[0].message.content[:80])
+```
+
+See [`examples/`](./examples/) for jailbreak resistance, audit export, and the FastAPI proxy.
+
+---
+
 ## SDK Usage
 
 Use MoralStack as a governance wrapper around your existing OpenAI client — no server, no HTTP, no separate process.
@@ -265,7 +299,7 @@ print(response.governance_metadata.risk_score)
 | `final_action` | What happens |
 |---|---|
 | `NORMAL_COMPLETE` | Request passes unchanged to your OpenAI client |
-| `SAFE_COMPLETE` | Governance constraints injected into system prompt, then calls your client |
+| `SAFE_COMPLETE` | A synthetic trailing `user` message is appended to `messages` with governance guidance; existing system prompts are left byte-identical; then your OpenAI client is called |
 | `REFUSE` | OpenAI is **not called** — refusal text returned directly |
 
 ### Governance metadata
@@ -317,7 +351,7 @@ The model passed in `client.chat.completions.create(model="...")` controls only 
 | Stage | Model source |
 |---|---|
 | Final response (`NORMAL_COMPLETE`) | `model=` passed to `chat.completions.create(...)` |
-| Final response (`SAFE_COMPLETE`) | same `model=`, with governance constraints injected into system message |
+| Final response (`SAFE_COMPLETE`) | same `model=`, with governance guidance in an extra trailing `user` message (system messages unchanged) |
 | `REFUSE` response text | internal policy model (`OPENAI_MODEL`) |
 | Speculative overlap draft | internal policy model (`OPENAI_MODEL`) |
 | Policy `rewrite()` (cycle 2+) | `MORALSTACK_POLICY_REWRITE_MODEL` (fallback: `OPENAI_MODEL`) |
@@ -423,6 +457,12 @@ moralstack-ui
 ```
 
 Inspect every decision: LLM calls, critic scores, risk traces, decision explanation, convergence steps, and benchmark comparisons.
+
+---
+
+## Server proxy (OpenAI-compatible)
+
+Install `fastapi`, `uvicorn`, and `httpx` via `pip install -e ".[server]"` (or use `.[ui]`). Import `create_app` from `moralstack.server`, inject an upstream OpenAI client and a configured `OrchestrationController`, and serve the app with uvicorn. The `moralstack-server` entry point is reserved for a future launcher; use `create_app` in your own module until then. See `docs/modules/server_proxy.md`.
 
 ---
 

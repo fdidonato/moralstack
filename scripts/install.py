@@ -3,7 +3,7 @@
 MoralStack - Installation (OpenAI-only)
 ======================================
 Installs the MoralStack package in editable mode with all dependencies
-(core, dev, ui). Registers the moralstack and moralstack-ui CLI entry points.
+(core, dev, ui). Registers the moralstack, moralstack-ui, and moralstack-server CLI entry points.
 
 USAGE:
     python scripts/install.py

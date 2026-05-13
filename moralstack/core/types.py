@@ -90,6 +90,9 @@ class CriticProtocol(Protocol):
         delib_context: Any = None,
         previous_violations: str = "",
         previous_guidance: str = "",
+        *,
+        developer_contract: Any = None,
+        conversation_history: Optional[List[Turn]] = None,
     ) -> Any: ...
     def quick_check(self, request: str, response: str, constitution: Any) -> Any: ...
     def critique_with_relevant_principles(
@@ -101,13 +104,25 @@ class CriticProtocol(Protocol):
         delib_context: Any = None,
         previous_violations: str = "",
         previous_guidance: str = "",
+        *,
+        developer_contract: Any = None,
+        conversation_history: Optional[List[Turn]] = None,
     ) -> Any: ...
 
 
 class SimulatorProtocol(Protocol):
     """Protocollo per il Consequence Simulator."""
 
-    def simulate(self, request: str, response: str, num_scenarios: int = 3, delib_context: Any = None) -> Any: ...
+    def simulate(
+        self,
+        request: str,
+        response: str,
+        num_scenarios: int = 3,
+        delib_context: Any = None,
+        *,
+        developer_contract: Any = None,
+        conversation_history: Optional[List[Turn]] = None,
+    ) -> Any: ...
 
 
 class HindsightProtocol(Protocol):
@@ -120,6 +135,9 @@ class HindsightProtocol(Protocol):
         response: str,
         consequences: List[Any],
         delib_context: Any = None,
+        *,
+        developer_contract: Any = None,
+        conversation_history: Optional[List[Turn]] = None,
     ) -> Any: ...
     def aggregate(self, evaluations: List[Any]) -> Any: ...
 
@@ -133,4 +151,7 @@ class PerspectiveEnsembleProtocol(Protocol):
         response: str,
         perspectives: Optional[List[Any]] = None,
         delib_context: Any = None,
+        *,
+        developer_contract: Any = None,
+        conversation_history: Optional[List[Turn]] = None,
     ) -> Any: ...

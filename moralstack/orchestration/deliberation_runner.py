@@ -48,6 +48,7 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
 from moralstack.orchestration.overlay_policy import get_constitution_safe
 from moralstack.orchestration.persistence_helpers import record_decision_trace, record_llm_call
 from moralstack.orchestration.response_assembler import ResponseAssembler
+from moralstack.orchestration.system_prompt_resolver import effective_system_for_request
 from moralstack.orchestration.types import (
     ConvergenceOutcome,
     Decision,
@@ -535,7 +536,9 @@ class DeliberationRunner:
                     try:
                         result = self.policy.generate(
                             prompt=prompt_text,
-                            system=self._protected_system_prompt,
+                            system=effective_system_for_request(
+                                base=self._protected_system_prompt, request=request, mode="normal"
+                            ),
                         )
                     except TypeError:
                         result = self.policy.generate(prompt_text)
@@ -547,7 +550,7 @@ class DeliberationRunner:
                     )
                     system_used = _policy_system_used(
                         result,
-                        self._protected_system_prompt or "",
+                        effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal"),
                     )
                     record_llm_call(
                         self.logger,
@@ -623,7 +626,10 @@ class DeliberationRunner:
             "H-safe-entry",
             request_id=request.request_id or "",
         )
-        safe_system = (self._protected_system_prompt or "") + "\n\n" + SAFE_COMPLETE_GENERATION_INSTRUCTION
+        # Step 10 / design v1.3 section 3.7: do NOT append SAFE_COMPLETE_GENERATION_INSTRUCTION to system.
+        # The guidance is now injected user-side as a prompt prefix at generation time.
+        safe_system = effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal")
+        safe_caveat = SAFE_COMPLETE_GENERATION_INSTRUCTION
         if self.policy is not None:
             try:
                 start_gen = time.time()
@@ -632,15 +638,16 @@ class DeliberationRunner:
                     risk_estimation.detected_language or "",
                     request.prompt,
                 )
+                safe_prompt = safe_caveat + "\n\n" + prompt_text
                 try:
-                    result = self.policy.generate(prompt=prompt_text, system=safe_system)
+                    result = self.policy.generate(prompt=safe_prompt, system=safe_system)
                 except TypeError:
-                    result = self.policy.generate(prompt_text)
+                    result = self.policy.generate(safe_prompt)
                 elapsed = (time.time() - start_gen) * 1000
                 response_text = _policy_text(result)
                 protection_result = self._output_protector.validate(response_text)
                 content = protection_result.cleaned
-                prompt_used = _policy_prompt_used(result, prompt_text)
+                prompt_used = _policy_prompt_used(result, safe_prompt)
                 system_used = _policy_system_used(result, safe_system)
                 record_llm_call(
                     self.logger,
@@ -768,7 +775,9 @@ class DeliberationRunner:
                     try:
                         result = self.policy.generate(
                             prompt=prompt_text,
-                            system=self._protected_system_prompt,
+                            system=effective_system_for_request(
+                                base=self._protected_system_prompt, request=request, mode="normal"
+                            ),
                         )
                     except TypeError:
                         result = self.policy.generate(prompt_text)
@@ -812,7 +821,7 @@ class DeliberationRunner:
                     )
                     system_used = _policy_system_used(
                         result,
-                        self._protected_system_prompt,
+                        effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal"),
                     )
                     record_llm_call(
                         self.logger,
@@ -2412,7 +2421,7 @@ class DeliberationRunner:
                     user_prompt_with_lang,
                     state.draft_response,
                     guidance,
-                    system=self._protected_system_prompt,
+                    system=effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal"),
                 )
             except TypeError:
                 result = self.policy.rewrite(user_prompt_with_lang, state.draft_response, guidance)
@@ -2423,7 +2432,10 @@ class DeliberationRunner:
             state.soft_revision_applied = True
             state.soft_revision_guidance_used = guidance
             prompt_used = _policy_prompt_used(result, user_prompt_with_lang)
-            system_used = _policy_system_used(result, self._protected_system_prompt)
+            system_used = _policy_system_used(
+                result,
+                effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal"),
+            )
             soft_model = _policy_llm_model_for_action(self.policy, "rewrite")
             record_llm_call(
                 self.logger,
@@ -2529,37 +2541,37 @@ class DeliberationRunner:
                 return state
         try:
             start = time.time()
+            # Step 10 / design v1.3 section 3.7: do NOT append CONSTRAINED_GENERATION_INSTRUCTION to system.
+            # The constraint is now injected user-side as a prompt prefix.
+            system_prompt = effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal")
+            constrained_caveat = CONSTRAINED_GENERATION_INSTRUCTION if constrained_generation else ""
+            policy_user_prompt: str
             if state.cycle == 1 or not state.draft_response:
                 action = "generate"
                 prompt_text = resolve_prompt_with_language(request.prompt, det_iso, request.prompt)
-                system_prompt = self._protected_system_prompt
-                if constrained_generation:
-                    system_prompt = (system_prompt or "") + "\n\n" + CONSTRAINED_GENERATION_INSTRUCTION
+                policy_user_prompt = constrained_caveat + "\n\n" + prompt_text if constrained_caveat else prompt_text
                 try:
-                    result = self.policy.generate(prompt=prompt_text, system=system_prompt)
+                    result = self.policy.generate(prompt=policy_user_prompt, system=system_prompt)
                 except TypeError:
-                    result = self.policy.generate(prompt_text)
+                    result = self.policy.generate(policy_user_prompt)
             else:
                 action = "rewrite"
                 guidance = pre_rewrite_guidance or ""
                 prompt_text = f"REVISIONE\nPrompt originale: {request.prompt}\nGuidance: {guidance}"
                 user_prompt_with_lang = resolve_prompt_with_language(request.prompt, det_iso, request.prompt)
-                # Propagate constrained_generation to rewrite: defense-in-depth.
-                # Fix C (max_cycles cap) prevents reaching this branch when
-                # constrained_generation=True, but this ensures the constraint
-                # is enforced even if that guard is ever relaxed.
-                rewrite_system = self._protected_system_prompt
-                if constrained_generation:
-                    rewrite_system = (rewrite_system or "") + "\n\n" + CONSTRAINED_GENERATION_INSTRUCTION
+                policy_user_prompt = (
+                    constrained_caveat + "\n\n" + user_prompt_with_lang if constrained_caveat else user_prompt_with_lang
+                )
+                rewrite_system = system_prompt
                 try:
                     result = self.policy.rewrite(
-                        user_prompt_with_lang,
+                        policy_user_prompt,
                         state.draft_response,
                         guidance,
                         system=rewrite_system,
                     )
                 except TypeError:
-                    result = self.policy.rewrite(user_prompt_with_lang, state.draft_response, guidance)
+                    result = self.policy.rewrite(policy_user_prompt, state.draft_response, guidance)
             elapsed = (time.time() - start) * 1000
             response_text = _policy_text(result)
             protection_result = self._output_protector.validate(response_text)
@@ -2590,8 +2602,11 @@ class DeliberationRunner:
                     },
                 )
             state.draft_response = sanitize_policy_output(protection_result.cleaned)
-            prompt_used = _policy_prompt_used(result, prompt_text)
-            system_used = _policy_system_used(result, self._protected_system_prompt)
+            prompt_used = _policy_prompt_used(result, policy_user_prompt)
+            system_used = _policy_system_used(
+                result,
+                effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal"),
+            )
             policy_model_label = _policy_llm_model_for_action(self.policy, action)
             record_llm_call(
                 self.logger,

@@ -43,6 +43,7 @@ usage examples.
 | [Benchmark](./benchmark.md)         | `scripts/benchmark_moralstack.py`   | Policy-aware benchmark; judge model config, independence                       |
 | [Persistence](./persistence.md)     | `moralstack/persistence/`           | SQLite storage, run/request context, llm_calls, decision_traces                |
 | Web UI                              | `moralstack/ui/app.py`              | FastAPI dashboard; form login at `/login`, dashboard at `/runs`                |
+| [Server proxy](./server_proxy.md)   | `moralstack/server/`                | OpenAI-compatible `POST /v1/chat/completions`; governance headers and fingerprint |
 | [OpenAI Params](./openai_params.md) | `moralstack/utils/openai_params.py` | Model-specific API params (max_tokens vs max_completion_tokens)                |
 | [env_loader](../../moralstack/utils/env_loader.py) | `moralstack/utils/env_loader.py`    | Loads .env from project root at startup (moralstack, moralstack-ui, benchmark) |
 | [clean_start](../../moralstack/utils/clean_start.py) | `moralstack/utils/clean_start.py`   | Removes reports, benchmark_outputs, logs, debug artifacts (CLI)                |

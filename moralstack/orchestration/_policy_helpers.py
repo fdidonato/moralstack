@@ -42,6 +42,10 @@ RESPONSE GUIDELINES:
 Reply in the same language as the user's request.
 """
 
+# Step 10 / design v1.3 section 3.7: this constant is no longer appended to the
+# system prompt. It is now used as the body of the synthetic user turn
+# (via `_build_safe_complete_user_turn` in sdk/wrapper.py) or as a prompt
+# prefix (in deliberation_runner.py). The constant itself is unchanged.
 SAFE_COMPLETE_GENERATION_INSTRUCTION = """
 SAFE_COMPLETE MODE (language-agnostic policy): Your response MUST follow these rules.
 - Do NOT provide procedural, sequential, step-by-step, or optimizing information.
@@ -81,8 +85,9 @@ def force_language_prefix(
     return "Reply in the same language as the user's request below. " "Do not add translations.\n\n" f"{user_prompt}"
 
 
-# --- Constrained generation mode (clearly_harmful) ---
-
+# Step 10 / design v1.3 section 3.7: this constant is no longer appended to the
+# system prompt. It is now used as a prompt prefix in deliberation_runner.py
+# when constrained_generation=True.
 CONSTRAINED_GENERATION_INSTRUCTION = (
     "CONSTRAINED GENERATION MODE: The request has been classified as clearly harmful.\n"
     "You MUST NOT generate operational or executable content.\n"
