@@ -8,6 +8,7 @@
 #      Environment name: (leave blank unless you create a GitHub environment)
 # 3. Push a tag: git tag v0.2.0 && git push origin v0.2.0
 # 4. The workflow will build, validate, and publish automatically.
+# Manual: GitHub Actions → Publish to PyPI → Run workflow (uses the branch you select).
 name: Publish to PyPI
 
 on:
@@ -42,7 +43,7 @@ jobs:
         run: twine check dist/*
 
   build-and-publish:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
