@@ -166,7 +166,6 @@ def create_app(
     cfg = config or GovernanceConfig()
     store: SessionStoreProtocol = session_store if session_store is not None else InMemorySessionStore()
     lock_manager = ConversationLockManager()
-    turn_counter = TurnCounter()
 
     app = FastAPI(
         title="MoralStack Server Proxy",
@@ -227,8 +226,9 @@ def create_app(
                 conversation_history=conversation_history,
             )
 
-            # Resolve turn_index + conversation state
-            turn_index = turn_counter.next_index(conversation_id)
+            # Resolve turn_index from payload (stateless: count user messages).
+            # Persists correctly across server restarts and stateless HTTP clients.
+            turn_index = _resolve_turn_index(messages)
             conv_state = store.get(conversation_id) if conversation_id else None
 
             # Run governance pipeline
@@ -300,20 +300,22 @@ def create_app(
 # ─── Helpers for FastAPI handler (placed at module level for testability) ───
 
 
-class TurnCounter:
-    """Per-conversation turn counter, thread-safe."""
+def _resolve_turn_index(messages: list[dict[str, Any]]) -> int:
+    """
+    Derive the turn index from the messages payload (stateless).
 
-    def __init__(self) -> None:
-        self._counters: dict[str, int] = {}
-        self._lock = threading.Lock()
+    Per OpenAI Chat Completions API, clients re-send the full conversation
+    history on every request. The turn index is therefore the count of
+    user messages minus 1 (zero-indexed): turn 0 is the first request with
+    one user message, turn 1 has two user messages (one assistant in between),
+    etc.
 
-    def next_index(self, conversation_id: str) -> int:
-        if not conversation_id:
-            return 0
-        with self._lock:
-            idx = self._counters.get(conversation_id, 0)
-            self._counters[conversation_id] = idx + 1
-            return idx
+    This is the correct multi-turn pattern for stateless HTTP proxies. A
+    server-side counter would diverge from the client's view on restart or
+    when multiple clients share a conversation_id.
+    """
+    user_count = sum(1 for m in messages if (m.get("role") or "") == "user")
+    return max(0, user_count - 1)
 
 
 def _build_upstream_kwargs(body: dict[str, Any]) -> dict[str, Any]:

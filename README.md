@@ -234,6 +234,39 @@ More patterns in [`examples/`](./examples/).
 
 ---
 
+## Multi-turn governance (v0.4)
+
+MoralStack v0.4 introduces full support for conversational governance:
+
+- **Same single-line API**: just wrap your OpenAI client with `govern()` —
+  multi-turn conversations are auto-managed.
+- **Jailbreak resistance**: escalation patterns are detected across turns.
+- **Audit trail**: every conversation produces a complete markdown
+  export for AI Act art. 12 compliance.
+- **OpenAI-compatible HTTP proxy**: point any OpenAI-compatible client at
+  `http://localhost:8080/v1` and get governance with `X-Moralstack-*` headers.
+
+### Quick example
+
+```python
+from openai import OpenAI
+from moralstack import govern
+
+client = govern(OpenAI())
+
+# Multi-turn conversation — fully governed.
+messages = []
+for q in ["What is X?", "Tell me more.", "How do I do X?"]:
+    messages.append({"role": "user", "content": q})
+    response = client.chat.completions.create(model="gpt-4o", messages=messages)
+    messages.append({"role": "assistant", "content": response.choices[0].message.content})
+    print(response.governance_metadata.final_action, "—", response.choices[0].message.content[:80])
+```
+
+See [`examples/`](./examples/) for jailbreak resistance, audit export, and the FastAPI proxy.
+
+---
+
 ## SDK Usage
 
 Use MoralStack as a governance wrapper around your existing OpenAI client — no server, no HTTP, no separate process.

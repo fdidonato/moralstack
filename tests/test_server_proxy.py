@@ -282,3 +282,217 @@ class TestConcurrency:
         # Calls must have been serialized — second started at least 40ms after first
         assert len(call_log) == 2
         assert call_log[1] - call_log[0] >= 0.04
+
+
+class TestMultiTurnConversation:
+    """
+    End-to-end multi-turn conversation tests via the proxy (Step 12).
+
+    Verifies that the proxy correctly:
+    - Increments turn_index across sequential requests on the same conversation_id.
+    - Recovers the previous ConversationGovernanceState from the SessionStore.
+    - Persists the new state after each turn for the next turn to use.
+    - Builds conversation_history from the messages payload correctly.
+    """
+
+    def test_turn_index_grows_with_user_messages(self, client_factory):
+        """turn_index must reflect the count of user messages in the payload."""
+        client, _, mock_orchestrator = client_factory("NORMAL_COMPLETE")
+
+        # Turn 1
+        client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q1"}]},
+            headers={"X-Moralstack-Conversation-Id": "multiturn-test-1"},
+        )
+        assert mock_orchestrator.process.call_args[1]["turn_index"] == 0
+        assert mock_orchestrator.process.call_args[1]["conversation_id"] == "multiturn-test-1"
+
+        # Turn 2 (full history)
+        client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "user", "content": "Q1"},
+                    {"role": "assistant", "content": "A1"},
+                    {"role": "user", "content": "Q2"},
+                ],
+            },
+            headers={"X-Moralstack-Conversation-Id": "multiturn-test-1"},
+        )
+        assert mock_orchestrator.process.call_args[1]["turn_index"] == 1
+
+        # Turn 3 (longer history)
+        client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "user", "content": "Q1"},
+                    {"role": "assistant", "content": "A1"},
+                    {"role": "user", "content": "Q2"},
+                    {"role": "assistant", "content": "A2"},
+                    {"role": "user", "content": "Q3"},
+                ],
+            },
+            headers={"X-Moralstack-Conversation-Id": "multiturn-test-1"},
+        )
+        assert mock_orchestrator.process.call_args[1]["turn_index"] == 2
+
+    def test_conversation_history_extracted_from_payload(self, client_factory):
+        """ProcessedRequest.conversation_history must include all messages except the last user prompt."""
+        client, _, mock_orchestrator = client_factory("NORMAL_COMPLETE")
+
+        client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "user", "content": "Q1"},
+                    {"role": "assistant", "content": "A1"},
+                    {"role": "user", "content": "Q2 — current"},
+                ],
+            },
+            headers={"X-Moralstack-Conversation-Id": "multiturn-test-history"},
+        )
+        processed_request = mock_orchestrator.process.call_args[0][0]
+        assert processed_request.prompt == "Q2 — current"
+        assert len(processed_request.conversation_history) == 2
+        assert processed_request.conversation_history[0].role == "user"
+        assert processed_request.conversation_history[0].content == "Q1"
+        assert processed_request.conversation_history[1].role == "assistant"
+        assert processed_request.conversation_history[1].content == "A1"
+
+    def test_state_persisted_and_recovered_across_turns(self, client_factory):
+        """ConversationGovernanceState is stored after turn N and recovered at turn N+1.
+
+        IMPORTANT — discovered during simulation:
+        - ResponseType.NORMAL does NOT exist; use ResponseType.DIRECT for NORMAL_COMPLETE results.
+        - ConversationGovernanceState has `conversation_id` field, NOT `session_id`.
+        """
+        from moralstack.orchestration.conversation_state import ConversationGovernanceState
+
+        client, _, mock_orchestrator = client_factory("NORMAL_COMPLETE")
+
+        def _make_result_with_state(turn_idx: int):
+            metadata = ResponseMetadata()
+            metadata.final_action = "NORMAL_COMPLETE"
+            metadata.risk_score = 0.1 + 0.1 * turn_idx
+            response = FinalResponse(content=f"reply_{turn_idx}", response_type=ResponseType.DIRECT, metadata=metadata)
+            state = ConversationGovernanceState(
+                conversation_id="multiturn-state-test",
+                turn_index=turn_idx,
+            )
+            result = OrchestratorResult(
+                response=response,
+                request_id=f"req-{turn_idx}",
+                path_taken="deliberative",
+                path="DELIBERATIVE_PATH",
+                total_cycles=1,
+                converged=True,
+            )
+            result.conversation_governance_state_out = state
+            return result
+
+        # Turn 1
+        mock_orchestrator.process = MagicMock(return_value=_make_result_with_state(0))
+        client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q1"}]},
+            headers={"X-Moralstack-Conversation-Id": "multiturn-state-test"},
+        )
+        assert mock_orchestrator.process.call_args[1]["conversation_state"] is None
+
+        # Turn 2 — the state from turn 1 should be recovered
+        mock_orchestrator.process = MagicMock(return_value=_make_result_with_state(1))
+        client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "user", "content": "Q1"},
+                    {"role": "assistant", "content": "A1"},
+                    {"role": "user", "content": "Q2"},
+                ],
+            },
+            headers={"X-Moralstack-Conversation-Id": "multiturn-state-test"},
+        )
+        recovered_state = mock_orchestrator.process.call_args[1]["conversation_state"]
+        assert recovered_state is not None
+        assert isinstance(recovered_state, ConversationGovernanceState)
+        assert recovered_state.turn_index == 0  # State saved after turn 1.
+
+    def test_conversation_id_stable_across_turns(self, client_factory):
+        """The conversation_id resolved via fingerprint is stable from turn 2 onwards."""
+        client, _, _ = client_factory("NORMAL_COMPLETE")
+
+        r1 = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": "You are helpful."},
+                    {"role": "user", "content": "First Q"},
+                ],
+            },
+        )
+        conv_id_t1 = r1.headers.get("X-Moralstack-Conversation-Id")
+        assert conv_id_t1 is not None and conv_id_t1.startswith("msf-")
+
+        # Turn 2: now we have 3 messages in the prefix (system + user + assistant) — different fingerprint.
+        r2 = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": "You are helpful."},
+                    {"role": "user", "content": "First Q"},
+                    {"role": "assistant", "content": "First A"},
+                    {"role": "user", "content": "Second Q"},
+                ],
+            },
+        )
+        conv_id_t2 = r2.headers.get("X-Moralstack-Conversation-Id")
+        assert conv_id_t2 is not None and conv_id_t2.startswith("msf-")
+
+        # Turn 3: same prefix (system + user + assistant) — same fingerprint as turn 2.
+        r3 = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": "You are helpful."},
+                    {"role": "user", "content": "First Q"},
+                    {"role": "assistant", "content": "First A"},
+                    {"role": "user", "content": "Second Q"},
+                    {"role": "assistant", "content": "Second A"},
+                    {"role": "user", "content": "Third Q"},
+                ],
+            },
+        )
+        conv_id_t3 = r3.headers.get("X-Moralstack-Conversation-Id")
+        assert conv_id_t3 == conv_id_t2  # Stable from turn 2 onwards.
+
+    def test_separate_conversations_independent(self, client_factory):
+        """Two conversations with different conversation_ids do not share state."""
+        client, _, mock_orchestrator = client_factory("NORMAL_COMPLETE")
+
+        client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q_A1"}]},
+            headers={"X-Moralstack-Conversation-Id": "conv-A"},
+        )
+        client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q_B1"}]},
+            headers={"X-Moralstack-Conversation-Id": "conv-B"},
+        )
+
+        assert mock_orchestrator.process.call_count == 2
+        all_kwargs = [c.kwargs for c in mock_orchestrator.process.call_args_list]
+        assert all_kwargs[0]["conversation_id"] == "conv-A"
+        assert all_kwargs[1]["conversation_id"] == "conv-B"
+        # Both are turn 0 (first turn in each conversation independently).
+        assert all_kwargs[0]["turn_index"] == 0
+        assert all_kwargs[1]["turn_index"] == 0

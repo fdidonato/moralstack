@@ -1411,6 +1411,41 @@ print(f"Cycles: {response.metadata.deliberation_cycles}")
 
 `moralstack.server.create_app(openai_client=..., orchestrator=..., config=..., session_store=...)` returns a FastAPI app exposing `POST /v1/chat/completions` and `GET /healthz`. Request handling mirrors the SDK: messages are converted to `ProcessedRequest`, `OrchestrationController.process` runs with optional `conversation_id` / `turn_index` / `conversation_state`, and REFUSE / SAFE_COMPLETE / NORMAL_COMPLETE routing matches the governed client. Responses include `X-Moralstack-*` audit headers. Contract details: `docs/modules/server_proxy.md`.
 
+`turn_index` is derived statelessly from the messages payload as `count(user_msgs) - 1` (see `_resolve_turn_index` in `moralstack/server/proxy.py`). This avoids the divergence that a server-side counter would produce across restarts or with multiple concurrent clients on the same `conversation_id`.
+
+---
+
+## Multi-turn governance (v0.4)
+
+MoralStack v0.4 introduced support for conversational governance. The
+architecture extends the v0.3 single-turn pipeline with:
+
+- **DeveloperContract**: a typed representation of the deployer's system
+  prompt, used for governance scoping (§3.8 P1 priority).
+- **ConversationGovernanceState**: per-conversation state object carrying
+  posture, last domain, decision ledger keys.
+- **SemanticDecisionLedger**: an embedding-based cache for governance
+  decisions, scoped by `(prompt_embedding, contract_hash, posture)`.
+- **ConversationalFastPathRunner**: optimized fast-path for low-risk
+  conversational continuations.
+- **Cache `context_fingerprint`**: per-module cache keys now include
+  conversational context, closing the multi-turn governance hole (§6.7).
+- **Server proxy**: FastAPI app exposing `POST /v1/chat/completions` for
+  OpenAI-compatible clients (LangChain, AutoGen, etc.).
+- **Audit conversation export**: `moralstack.reports.conversation_export`
+  renders a markdown audit trail for any `conversation_id` for AI Act
+  art. 12 compliance.
+
+See `docs/multiturn_design.md` for the full reference and the
+`MORALSTACK_MULTITURN_DESIGN.md` v1.3 document for the normative design.
+
+### Multi-turn examples
+
+- `examples/multiturn_quickstart.py` — 3-turn conversation.
+- `examples/multiturn_jailbreak_resistance.py` — escalation defense.
+- `examples/multiturn_audit_trail.py` — audit export.
+- `examples/server_quickstart.py` — FastAPI proxy.
+
 ---
 
 ## 11. Changelog

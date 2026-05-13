@@ -204,3 +204,25 @@ hard violations), not by stripping prompt content at refusal assembly time.
 - **DCF**: `moralstack.runtime.decision_correctness.compute_interval` uses the same policy for min/max and reason_codes
 - **Response contract**: `ResponseMetadata.caveat_present`, `safe_alternative_present`, `no_prescriptive_language`
   set in assembler when final_action == SAFE_COMPLETE
+
+## Refusal focus classification (7 priorities, design v1.3 §3.8)
+
+The `classify_refusal_focus` function maps risk signals + intent + developer
+context to a refusal focus + redirection guidance. The 7-priority hierarchy:
+
+| Priority | Source | Overridable? |
+|---|---|---|
+| **P0** | Hard topical signals (Q8 self-harm, Q17 child, Q10 weapons, Q5 physical) | NO |
+| **P1** | Developer contract refusal redirection (`mode='structured'`) | NO (only P0 wins above) |
+| **P2** | Domain overlay refusal_redirection | downstream guidance fallback |
+| **P3** | harm_type-driven (reputational, financial) | yes |
+| **P4** | Reputational cluster signals (Q14, Q15, Q16) | yes |
+| **P5** | Residual harm-signal focuses (Q9 cyber, Q11 privacy, Q12 medical, Q4 fraud) | yes |
+| **P6** | Coarse fallbacks (request_type, operational_risk) | always last |
+
+**P0 invariant (§1.7)**: P0 returns short-circuit the function. No P1+ logic
+can override a P0 signal. This invariant is non-negotiable.
+
+**P1 conditions**: triggers only when the developer contract has `mode='structured'`
+AND its `raw_text` contains a redirection keyword (`"redirect"`, `"refer to"`,
+`"consult"`). Opaque contracts (the default) are not consulted at this stage.

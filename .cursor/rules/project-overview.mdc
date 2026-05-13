@@ -43,9 +43,9 @@ SAFE_COMPLETE is an intentional governance choice, **not an error**.
 | `moralstack/utils/`            | Shared utilities (JSON parsing, `llm_parse_contract` parse metadata for risk/retrieval, etc.) |
 | `moralstack/sdk/`              | Python SDK (`govern()`, `GovernedClient`, `GovernanceConfig`, `GovernedResponse`); `session_store` (`SessionStoreProtocol`, `InMemorySessionStore` for multi-conversation governance state); `session` (`SessionState` wraps a store, optional external `store=`); `GovernedClient.__init__` auto-initialises observability context (`run_id` via `set_current_run_id`, `init_db`/`create_run` for db modes); `GovernedCompletions.create()` flushes the observability write queue (`obs.flush()`) in a `try/finally` before returning; `SAFE_COMPLETE` appends a synthetic trailing `user` turn to `messages` (system prompt unchanged) |
 | `moralstack/cli/`              | CLI entrypoints (run, shell, loader, mocks, report, visualizer) |
-| `moralstack/reports/`          | RequestReport, renderer_markdown, benchmark_report_loader, orchestrator_observability (path-routing explainability from debug events), runtime_decisions (execution strategy / cycle cards / orchestration table view-models) |
+| `moralstack/reports/`          | RequestReport, renderer_markdown, benchmark_report_loader, orchestrator_observability (path-routing explainability from debug events), runtime_decisions (execution strategy / cycle cards / orchestration table view-models); `conversation_export` (Step 12: multi-turn audit trail markdown export for AI Act art. 12) |
 | `moralstack/ui/`               | FastAPI dashboard (moralstack-ui)              |
-| `moralstack/server/`           | OpenAI-compatible HTTP proxy (`create_app`, `POST /v1/chat/completions`); fingerprint, governance headers, per-conversation lock; thin wrapper on `OrchestrationController` + SDK message helpers |
+| `moralstack/server/`           | OpenAI-compatible HTTP proxy (`create_app`, `POST /v1/chat/completions`); fingerprint, governance headers, per-conversation lock; stateless `_resolve_turn_index(messages) = count(user_msgs) - 1` (Step 12); thin wrapper on `OrchestrationController` + SDK message helpers |
 | `scripts/`                     | CLI entrypoints                               |
 | `moralstack/constitution/data/`         | YAML constitution files (core + overlays)     |
 

@@ -38,6 +38,14 @@ class ReadStore(Protocol):
 
     def get_requests_for_run(self, run_id: str) -> list[dict[str, Any]]: ...
 
+    def get_requests_for_conversation(self, conversation_id: str) -> list[dict[str, Any]]:
+        """
+        Return all requests bound to a given conversation_id, ordered by turn_index.
+
+        Step 12 / design v1.3 §7 — audit conversation export.
+        """
+        ...
+
     def get_llm_calls_for_request(self, run_id: str, request_id: str) -> list[dict[str, Any]]: ...
 
     def get_decision_traces_for_request(self, run_id: str, request_id: str) -> list[dict[str, Any]]: ...
@@ -190,6 +198,31 @@ class SqliteReadStore:
             return [dict(r) for r in rows]
         except Exception as e:
             logger.warning("observability[read_store]: get_requests_for_run failed: %s", e)
+            return []
+
+    def get_requests_for_conversation(self, conversation_id: str) -> list[dict[str, Any]]:
+        """
+        Return all requests bound to a given conversation_id, ordered by turn_index.
+
+        Uses the `idx_requests_conversation_turn` index added by the Step 6 migration
+        on the `requests` table. Returns an empty list when conversation_id is not
+        found, or when the db is unavailable.
+        """
+        if not conversation_id:
+            return []
+        path = get_db_path()
+        if not path:
+            return []
+        try:
+            conn = _get_connection(path)
+            rows = conn.execute(
+                "SELECT * FROM requests WHERE conversation_id = ? ORDER BY turn_index ASC, created_at ASC",
+                (conversation_id,),
+            ).fetchall()
+            conn.close()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning("observability[read_store]: get_requests_for_conversation failed: %s", e)
             return []
 
     def get_llm_calls_for_request(self, run_id: str, request_id: str) -> list[dict[str, Any]]:
