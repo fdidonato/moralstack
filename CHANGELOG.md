@@ -4,6 +4,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0 — 2026-05-13
+
+### Fixed
+
+- **Server proxy observability persistence** (`moralstack/server/proxy.py`):
+  the Step 11/12 proxy never initialized the observability context, causing
+  the SQLite DB and JSONL files to remain empty even when
+  `MORALSTACK_OBSERVABILITY_DB_PATH` was set. The audit conversation export
+  (Step 12) consequently returned no data for conversations served by the
+  proxy.
+
+  Root cause: `set_current_run_id()` and `set_current_request_id()` were never
+  called, so all `persist_*` helpers silently no-op'd (they early-return when
+  the context vars are unset). Additionally, the FK constraints from
+  `orchestration_events`, `llm_calls`, `decision_traces` to `requests`
+  rejected events emitted by the pipeline because no `requests` row had been
+  inserted yet.
+
+  Fix: at `create_app()` startup, init DB schema + create a `runs` row of
+  type `"proxy"` + set `run_id` in the context var. Per request, pre-insert
+  the `requests` row BEFORE calling `controller.process()` (to satisfy FK
+  constraints), bind `request_id` in the context, then in the finally block
+  update `final_response` + `domain` columns and flush the async queue so
+  data is visible to downstream readers immediately.
+
+  The `/healthz` endpoint now returns `{"status": "ok", "run_id": "<uuid>"}`
+  so operators can verify observability is configured at deploy time.
+
+- **Audit conversation export now works for proxy-served conversations**
+  (`moralstack.reports.conversation_export.export_conversation_to_markdown`):
+  this is a direct consequence of the persistence fix above. No code change
+  required in the export module itself.
+
+### Migration notes
+
+- No API change. Existing proxy deployments will automatically start
+  persisting data when restarted with `MORALSTACK_OBSERVABILITY_DB_PATH`
+  (or `MORALSTACK_OBSERVABILITY_MODE=file_only`) set.
+- The `/healthz` response shape changed: previously
+  `{"status": "ok"}`, now `{"status": "ok", "run_id": "<uuid-or-empty>"}`.
+  Clients that strictly checked equality on the body must be updated.
+
+### Verification
+
+- 3 new integration tests in `tests/test_server_proxy.py`:
+  `test_proxy_persists_to_sqlite_db`,
+  `test_healthz_reports_run_id_when_persistence_active`,
+  `test_proxy_persists_orchestration_events`.
+- 1442 tests pass on the full repo (1439 baseline + 3 new).
+
 ## 0.4.0 — 2026-05-13
 
 ### Added — Multi-turn governance
