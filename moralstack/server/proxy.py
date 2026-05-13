@@ -166,17 +166,29 @@ def create_app(
     cfg = config or GovernanceConfig()
     store: SessionStoreProtocol = session_store if session_store is not None else InMemorySessionStore()
     lock_manager = ConversationLockManager()
+    # Initialize observability for the proxy lifetime so all governance events
+    # are persisted to DB / JSONL per MORALSTACK_OBSERVABILITY_* env vars.
+    # Pattern parallels cli/shell.py: init_db + create_run + set_current_run_id.
+    # Each HTTP request then sets its own request_id in the context var.
+    proxy_run_id = _initialize_observability_run()
+    if proxy_run_id:
+        logger.info("MoralStack proxy observability run initialized: run_id=%s", proxy_run_id)
+    else:
+        logger.info(
+            "MoralStack proxy observability not configured "
+            "(set MORALSTACK_OBSERVABILITY_DB_PATH or MORALSTACK_OBSERVABILITY_MODE=file_only to enable persistence)."
+        )
 
     app = FastAPI(
         title="MoralStack Server Proxy",
         description="OpenAI-compatible governance proxy. See https://github.com/fdidonato/moralstack",
-        version="0.4.0",
+        version="0.5.0",
     )
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         """Liveness probe."""
-        return {"status": "ok"}
+        return {"status": "ok", "run_id": proxy_run_id or ""}
 
     @app.post("/v1/chat/completions")
     async def chat_completions(
@@ -214,6 +226,10 @@ def create_app(
         conversation_id = moralstack_conversation_id or _resolve_conversation_id(messages, extra_body)
 
         lock = lock_manager.acquire(conversation_id)
+        # State accumulated during request processing for the finalize step.
+        request_id_for_audit: str = ""
+        final_response_text: str = ""
+        domain_for_audit: str | None = None
         try:
             # Extract governance context from messages
             developer_contract = _extract_developer_contract(messages)
@@ -225,11 +241,39 @@ def create_app(
                 developer_contract=developer_contract,
                 conversation_history=conversation_history,
             )
+            request_id_for_audit = processed.request_id
 
             # Resolve turn_index from payload (stateless: count user messages).
             # Persists correctly across server restarts and stateless HTTP clients.
             turn_index = _resolve_turn_index(messages)
             conv_state = store.get(conversation_id) if conversation_id else None
+            # Bind the request_id to the observability context so all events
+            # emitted by the pipeline (LLM calls, decision traces, orchestration
+            # events) are correctly attributed to this request. Without this,
+            # persistence is silently skipped (run_id+request_id are required).
+            try:
+                from moralstack.observability.context import set_current_request_id
+
+                set_current_request_id(processed.request_id)
+            except Exception:
+                # Context binding is best-effort; persistence will no-op if it
+                # fails but governance still proceeds normally.
+                pass
+
+            # Pre-insert the requests row BEFORE the pipeline emits any
+            # orchestration_event / llm_call / decision_trace events. Those
+            # event tables have FK constraints on requests(run_id, request_id),
+            # so without this pre-insert the SQLite sink would reject events
+            # with "FOREIGN KEY constraint failed". The pipeline itself does
+            # NOT call upsert_request for proxy-originated requests (only the
+            # CLI does, via DefaultPersistence).
+            _ensure_request_row(
+                proxy_run_id=proxy_run_id,
+                request_id=processed.request_id,
+                prompt=user_prompt,
+                conversation_id=conversation_id or None,
+                turn_index=turn_index,
+            )
 
             # Run governance pipeline
             try:
@@ -245,6 +289,7 @@ def create_app(
                 if cfg.failure_policy == "passthrough":
                     try:
                         upstream_response = openai_client.chat.completions.create(**_build_upstream_kwargs(body))
+                        final_response_text = _extract_text_from_upstream(upstream_response)
                         return _serialize_upstream_response(
                             upstream_response, headers={"X-Moralstack-Decision": "PASSTHROUGH_ON_ERROR"}
                         )
@@ -261,11 +306,14 @@ def create_app(
 
             final_action = result.response.metadata.final_action
             governance_headers = build_governance_headers(result, conversation_id=conversation_id)
+            domain_for_audit = getattr(result.response.metadata, "domain_overlay", None)
 
             # Routing per design v1.3 section 4.2
             if final_action == "REFUSE":
+                refusal_content = result.response.content or "I cannot help with that request."
+                final_response_text = refusal_content
                 payload = _build_synthetic_chat_completion(
-                    content=result.response.content or "I cannot help with that request.",
+                    content=refusal_content,
                     model=model,
                     finish_reason="content_filter",
                 )
@@ -280,6 +328,7 @@ def create_app(
                 except Exception as exc:
                     logger.exception("Upstream call failed: %s", exc)
                     raise HTTPException(status_code=502, detail=f"Upstream call failed: {exc}")
+                final_response_text = _extract_text_from_upstream(upstream_response)
                 return _serialize_upstream_response(upstream_response, headers=governance_headers)
 
             # NORMAL_COMPLETE (default)
@@ -289,10 +338,21 @@ def create_app(
             except Exception as exc:
                 logger.exception("Upstream call failed: %s", exc)
                 raise HTTPException(status_code=502, detail=f"Upstream call failed: {exc}")
+            final_response_text = _extract_text_from_upstream(upstream_response)
             return _serialize_upstream_response(upstream_response, headers=governance_headers)
 
         finally:
             lock_manager.release(lock)
+            # Finalize observability: update final_response column + flush async
+            # queue so data is visible to readers immediately after the response.
+            _finalize_request(
+                proxy_run_id=proxy_run_id,
+                request_id=request_id_for_audit,
+                final_response_text=final_response_text,
+                domain=domain_for_audit,
+                conversation_id=conversation_id or None,
+                turn_index=_resolve_turn_index(messages) if isinstance(messages, list) else None,
+            )
 
     return app
 
@@ -316,6 +376,162 @@ def _resolve_turn_index(messages: list[dict[str, Any]]) -> int:
     """
     user_count = sum(1 for m in messages if (m.get("role") or "") == "user")
     return max(0, user_count - 1)
+
+
+def _initialize_observability_run() -> str:
+    """
+    Initialize the observability stack for the proxy lifetime.
+
+    Pattern parallels cli/shell.py: when an observability DB path is configured,
+    initialize the schema, create a single `runs` row of type "proxy", and set
+    the run_id in the observability context var. All subsequent governance
+    events (LLM calls, decision traces, orchestration events) emitted by the
+    pipeline will then be persisted under this run_id.
+
+    Returns the run_id string when observability is configured, or "" when
+    persistence is disabled (no DB path set and not in file_only mode).
+    Never raises: persistence is best-effort.
+    """
+    try:
+        from moralstack.observability.config import get_db_path, get_observability_mode
+        from moralstack.observability.context import set_current_run_id
+        from moralstack.observability.sinks.sqlite_sink import create_run, init_db
+
+        mode = get_observability_mode()
+        db_path = get_db_path()
+        # In file_only mode there is no DB to initialize but we still set a run_id
+        # so JSONL envelopes carry a stable identifier across proxy requests.
+        run_id = str(uuid.uuid4())
+        if db_path and mode in ("db_only", "dual"):
+            init_db(db_path)
+            create_run(run_id=run_id, run_type="proxy", meta={"source": "moralstack-server"})
+        elif mode == "file_only":
+            # JSONL-only: nothing to init in DB.
+            pass
+        else:
+            # No persistence configured.
+            return ""
+        set_current_run_id(run_id)
+        return run_id
+    except Exception as exc:
+        logger.warning("Failed to initialize observability run for proxy: %s", exc)
+        return ""
+
+
+def _ensure_request_row(
+    *,
+    proxy_run_id: str,
+    request_id: str,
+    prompt: str,
+    conversation_id: str | None,
+    turn_index: int,
+) -> None:
+    """
+    Pre-insert the requests row before the pipeline runs.
+
+    The `orchestration_events`, `llm_calls`, and `decision_traces` tables in
+    SQLite have FK constraints pointing at `requests(run_id, request_id)`.
+    The pipeline emits events DURING `controller.process()`, so the requests
+    row must exist BEFORE the call to avoid FK failures.
+
+    The CLI relies on `DefaultPersistence.ensure_run_and_upsert_request()`
+    called inside the persistence layer; the proxy bypasses that path, so we
+    upsert the row explicitly here.
+
+    Best-effort: never raises. Skipped silently when observability is not
+    configured (proxy_run_id == "").
+    """
+    if not proxy_run_id or not request_id:
+        return
+    try:
+        from moralstack.observability.sinks.sqlite_sink import upsert_request
+
+        upsert_request(
+            run_id=proxy_run_id,
+            request_id=request_id,
+            prompt=prompt or "",
+            domain=None,  # Domain will be filled later by update_request_domain.
+            conversation_id=conversation_id,
+            turn_index=turn_index,
+        )
+    except Exception as exc:
+        logger.debug("upsert_request (pre-pipeline) failed (non-fatal): %s", exc)
+
+
+def _finalize_request(
+    *,
+    proxy_run_id: str,
+    request_id: str,
+    final_response_text: str,
+    domain: str | None = None,
+    conversation_id: str | None = None,
+    turn_index: int | None = None,
+) -> None:
+    """
+    Finalize an HTTP request: update the requests row with final_response and
+    flush the observability queue so writes land before the response is sent.
+
+    The requests row is created by _ensure_request_row BEFORE the pipeline
+    runs (necessary to satisfy FK constraints on orchestration_events /
+    llm_calls / decision_traces). Here we only:
+      1. Update final_response column for audit trail.
+      2. Update domain column if known (best-effort).
+      3. Flush the async event queue so the data is visible immediately.
+
+    Best-effort: never raises. Skipped silently when observability is not
+    configured (proxy_run_id == "").
+    """
+    del conversation_id, turn_index
+    if not proxy_run_id or not request_id:
+        return
+    try:
+        from moralstack.observability import obs
+        from moralstack.observability.sinks.sqlite_sink import update_request_domain, update_request_response
+
+        # Update final_response column for audit trail.
+        try:
+            update_request_response(
+                run_id=proxy_run_id,
+                request_id=request_id,
+                final_response=final_response_text or "",
+            )
+        except Exception as exc:
+            logger.debug("update_request_response failed (non-fatal): %s", exc)
+
+        # Update domain column if known.
+        if domain:
+            try:
+                update_request_domain(run_id=proxy_run_id, request_id=request_id, domain=domain)
+            except Exception as exc:
+                logger.debug("update_request_domain failed (non-fatal): %s", exc)
+
+        # Flush the async queue so the data is visible to readers right away.
+        obs.flush(timeout=5.0)
+    except Exception as exc:
+        logger.warning("Failed to finalize request observability: %s", exc)
+
+
+def _extract_text_from_upstream(upstream_response: Any) -> str:
+    """
+    Best-effort extraction of the assistant text content from an upstream
+    ChatCompletion response. Used for audit logging only.
+    """
+    try:
+        if hasattr(upstream_response, "model_dump"):
+            payload = upstream_response.model_dump()
+        elif hasattr(upstream_response, "to_dict"):
+            payload = upstream_response.to_dict()
+        elif isinstance(upstream_response, dict):
+            payload = upstream_response
+        else:
+            return ""
+        choices = payload.get("choices") or []
+        if not choices:
+            return ""
+        msg = choices[0].get("message") or {}
+        return str(msg.get("content") or "")
+    except Exception:
+        return ""
 
 
 def _build_upstream_kwargs(body: dict[str, Any]) -> dict[str, Any]:
