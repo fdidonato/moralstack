@@ -580,11 +580,35 @@ class OrchestrationController:
         )
 
         domain = request.get_domain() if hasattr(request, "get_domain") else None
+        # Step 14.3: prefer values captured at lookup time (stored in
+        # _conversation_process_ctx by the lookup block in process()). This
+        # guarantees the store writes the SAME intent fields the lookup used,
+        # so the secondary intent check at the next turn doesn't reject the
+        # cache hit with reason='intent_divergence'. Fallback to metadata
+        # only when the ctx is missing the value (e.g. ledger disabled at
+        # lookup but enabled at store, which shouldn't happen but is safe to
+        # handle).
         intent_clarity = "HIGH"
         request_type = ""
-        if metadata is not None:
-            intent_clarity = getattr(metadata, "intent_clarity", "HIGH") or "HIGH"
-            request_type = getattr(metadata, "request_type", "") or ""
+        if isinstance(ctx, dict):
+            ctx_clarity = ctx.get("_ledger_intent_clarity")
+            ctx_request_type = ctx.get("_ledger_request_type")
+            if isinstance(ctx_clarity, str) and ctx_clarity:
+                intent_clarity = ctx_clarity
+            if isinstance(ctx_request_type, str):
+                request_type = ctx_request_type
+        # Fallback to metadata when ctx didn't carry the lookup-time values.
+        # NB: ResponseMetadata has no `request_type` field today — this branch
+        # exists only for forward compatibility / safety.
+        if not intent_clarity or intent_clarity == "HIGH":
+            if metadata is not None:
+                meta_clarity = getattr(metadata, "intent_clarity", None)
+                if isinstance(meta_clarity, str) and meta_clarity:
+                    intent_clarity = meta_clarity
+        if not request_type and metadata is not None:
+            meta_request_type = getattr(metadata, "request_type", None)
+            if isinstance(meta_request_type, str):
+                request_type = meta_request_type
 
         try:
             self._ledger.store(
@@ -1534,13 +1558,14 @@ class OrchestrationController:
                     hard_signal_refuse=hard_signal_refuse,
                 )
                 _request_type = getattr(risk_proto, "request_type", "") or ""
+                _intent_clarity = getattr(decision, "intent_clarity", "HIGH") or "HIGH"
                 _turn_for_lookup = turn_index if isinstance(turn_index, int) else 0
                 _cached_lookup = self._lookup_cached_decision(
                     prompt=request.prompt,
                     contract_hash=_contract_hash,
                     posture=_posture,
                     domain=request.get_domain() if hasattr(request, "get_domain") else None,
-                    intent_clarity=getattr(decision, "intent_clarity", "HIGH"),
+                    intent_clarity=_intent_clarity,
                     request_type=_request_type,
                     turn_index=_turn_for_lookup,
                 )
@@ -1559,6 +1584,14 @@ class OrchestrationController:
                     )
                 if isinstance(self._conversation_process_ctx, dict):
                     self._conversation_process_ctx["_ledger_lookup"] = _cached_lookup
+                    # Step 14.3: persist lookup-time intent fields so the
+                    # post-pipeline store uses the SAME values the lookup used.
+                    # Without this, store would write request_type="" (because
+                    # ResponseMetadata has no request_type field) and any future
+                    # lookup with the real request_type triggers intent_divergence
+                    # at the secondary check, blocking every cache hit.
+                    self._conversation_process_ctx["_ledger_request_type"] = _request_type
+                    self._conversation_process_ctx["_ledger_intent_clarity"] = _intent_clarity
                 # --- v0.4 Step 7: apply cached decision when hit and safe to do so ---
                 if _cached_lookup is not None and _cached_lookup.is_hit:
                     if self._fast_path_runner.is_safe_to_apply(

@@ -39,6 +39,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tests/test_sdk_bootstrap.py`: four tests for default ledger, env disable,
   config disable, and threshold override.
 
+### Fixed (Step 14.3)
+
+- **SemanticDecisionLedger `request_type` round-trip** (`moralstack/orchestration/controller.py`):
+  `_maybe_store_in_ledger` read `metadata.request_type`, but `ResponseMetadata`
+  has no such field, so `getattr` always yielded `""`. The store wrote
+  `request_type=""` while the next lookup used the real value from the risk
+  estimator (e.g. `"factual_query"`). The ledger’s secondary intent check then
+  rejected the match with `reason='intent_divergence'` even when cosine
+  similarity was above the threshold — so the semantic fast-path produced no
+  cache hits and the UI “cached” badge never appeared.
+
+  **Fix:** the lookup block in `process()` saves `_request_type` and
+  `_intent_clarity` (as used for `lookup`) into `_conversation_process_ctx`;
+  `_maybe_store_in_ledger` reads them back so `store` uses the same key shape as
+  future lookups. Metadata remains a forward-compatible fallback if
+  `request_type` is ever added to `ResponseMetadata`.
+
+### Tests (Step 14.3)
+
+- `tests/test_orchestrator_ledger_integration.py::TestLedgerRequestTypeConsistency`:
+  `_maybe_store_in_ledger` honours ctx vs empty fallback.
+- `tests/test_orchestrator_ledger_integration.py::TestLedgerRoundTripHit`:
+  ledger hit with aligned `request_type`, and `intent_divergence` when store
+  used `""` and lookup used a non-empty type.
+- `tests/test_sdk_bootstrap.py`: `test_bootstrap_creates_ledger_by_default` now
+  clears `MORALSTACK_LEDGER_SIMILARITY_THRESHOLD` so a developer `.env` cannot
+  break the default-threshold assertion.
+
 ### Added
 
 - **SDK emits `proxy.request_finalized` per turn** (`moralstack/sdk/wrapper.py`):

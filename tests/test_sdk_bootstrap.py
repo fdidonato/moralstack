@@ -100,6 +100,7 @@ def test_bootstrap_creates_ledger_by_default(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr("moralstack.sdk.bootstrap.load_env", lambda: None)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy")
     monkeypatch.delenv("MORALSTACK_LEDGER_ENABLED", raising=False)
+    monkeypatch.delenv("MORALSTACK_LEDGER_SIMILARITY_THRESHOLD", raising=False)
 
     from moralstack.orchestration.ledger import SemanticDecisionLedger
 
