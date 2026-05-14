@@ -51,6 +51,7 @@ def _print_turn(idx: int, response, prompt: str) -> None:
     cached = " [CACHED]" if getattr(meta, "was_cached", False) else ""
     print(f"\n--- Turn {idx} ---{cached}")
     print(f"Prompt: {prompt}")
+    print(f"Domain: {meta.domain_overlay}")
     print(f"Decision: {meta.final_action} (risk={meta.risk_score:.3f})")
     print(f"Path: {getattr(meta, 'path', '—')}")
     print(f"Posture: {getattr(meta, 'governance_posture', '—')}")
