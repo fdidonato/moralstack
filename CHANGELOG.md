@@ -6,6 +6,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed (Step 14.2)
+
+- **SemanticDecisionLedger wired into production SDK bootstrap**
+  (`moralstack/sdk/bootstrap.py`, `moralstack/runtime/orchestrator.py`): Steps 4–7
+  implemented the semantic fast-path (ledger, embedder, storage, runner) and Step 13
+  added observability for it, but no production bootstrap ever constructed a ledger
+  instance. As a result, `ledger_events` stayed empty in real runs, semantically
+  equivalent turns always ran full deliberation, and the UI “cached” marker never
+  appeared.
+
+  Changes:
+
+  - `Orchestrator.__init__` accepts optional `ledger` and forwards it to
+    `OrchestrationController`.
+  - `_bootstrap_pipeline` builds a default `SemanticDecisionLedger` with
+    `OpenAIEmbedder` and `InMemoryLedgerStorage`, unless disabled via
+    `MORALSTACK_LEDGER_ENABLED=false`.
+  - New tuning env vars: `MORALSTACK_LEDGER_SIMILARITY_THRESHOLD` (default `0.92`),
+    `MORALSTACK_LEDGER_MAX_ENTRIES` (default `1000`),
+    `MORALSTACK_LEDGER_EMBEDDING_MODEL`.
+  - `GovernanceConfig` adds matching fields for programmatic overrides without env.
+
+  Skip rules from multi-turn design v1.3 (no cache for `ESCALATED`, no cache when
+  `turn_index < 1`, similarity threshold) are unchanged: the fast-path accelerates
+  benign repeated queries, not hard-signal refusals.
+
+### Tests (Step 14.2)
+
+- `tests/test_runtime_orchestrator.py::TestOrchestratorLedgerWiring`: `ledger`
+  is forwarded from `Orchestrator` to the internal controller.
+- `tests/test_sdk_bootstrap.py`: four tests for default ledger, env disable,
+  config disable, and threshold override.
+
 ### Added
 
 - **SDK emits `proxy.request_finalized` per turn** (`moralstack/sdk/wrapper.py`):

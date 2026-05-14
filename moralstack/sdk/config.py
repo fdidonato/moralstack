@@ -85,5 +85,33 @@ class GovernanceConfig:
     If None, no compression is applied (prepares Level 2.2).
     """
 
+    # --- Semantic Decision Ledger (fast-path, Step 14.2) ---
+    enable_ledger: bool = True
+    """
+    Enable ``SemanticDecisionLedger`` fast-path. When False, every turn runs the full
+    deliberative pipeline (no semantic cache short-circuit). Default: True. Override
+    with ``MORALSTACK_LEDGER_ENABLED=false``.
+    """
+
+    ledger_similarity_threshold: float = 0.92
+    """
+    Cosine similarity threshold for a ledger cache hit. Two queries count as
+    semantically equivalent when embedding cosine similarity is at least this value.
+    Default: 0.92. Override with ``MORALSTACK_LEDGER_SIMILARITY_THRESHOLD``.
+    """
+
+    ledger_max_entries: int = 1000
+    """
+    Maximum entries in the in-process in-memory ledger storage (LRU eviction).
+    Default: 1000. Override with ``MORALSTACK_LEDGER_MAX_ENTRIES``.
+    """
+
+    ledger_embedding_model: str | None = None
+    """
+    Override the embedding model for the ledger. None means use ``OPENAI_EMBEDDING_MODEL``
+    or the embedder default (``text-embedding-3-small``). Override with
+    ``MORALSTACK_LEDGER_EMBEDDING_MODEL``.
+    """
+
     # Internal fields — not exposed to users
     _extra: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)

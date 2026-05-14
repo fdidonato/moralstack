@@ -117,6 +117,21 @@ class EventEnvelope:
 | `MORALSTACK_OBSERVABILITY_DB_PATH` | — | Path to SQLite database |
 | `MORALSTACK_OBSERVABILITY_JSONL_DIR` | `logs/observability` | Directory for JSONL output |
 
+### Ledger fast-path (Step 14.2)
+
+| Variable | Default | Description |
+|---|---|---|
+| `MORALSTACK_LEDGER_ENABLED` | `true` | Enable the SemanticDecisionLedger semantic cache. When `false`, every turn runs the full deliberation. |
+| `MORALSTACK_LEDGER_SIMILARITY_THRESHOLD` | `0.92` | Cosine similarity threshold for cache hit. Higher = stricter match. |
+| `MORALSTACK_LEDGER_MAX_ENTRIES` | `1000` | Maximum cached entries per process (LRU eviction beyond this). |
+| `MORALSTACK_LEDGER_EMBEDDING_MODEL` | (uses `OPENAI_EMBEDDING_MODEL` or `text-embedding-3-small`) | Override the embedding model used for similarity. |
+
+**Skip rules (by design, not configurable):**
+
+- The ledger never caches turns with governance posture `ESCALATED` (hard-signal refusals).
+- The ledger never caches the very first turn (`turn_index < 1`).
+- These are safety invariants from the multi-turn design v1.3 section 5.8.
+
 **Deprecated aliases** (still work, emit a `logging.warning`):
 
 | Old variable | New variable |

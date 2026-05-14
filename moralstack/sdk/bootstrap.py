@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from moralstack.pipeline.deliberation_stack import build_deliberation_modules
 from moralstack.sdk.errors import GovernanceConfigError, GovernancePipelineError
@@ -29,13 +29,102 @@ def _resolve_model(config: GovernanceConfig) -> str:
     return (config.model or os.getenv("OPENAI_MODEL") or "gpt-4o").strip()
 
 
+def _resolve_ledger_enabled(config: GovernanceConfig) -> bool:
+    """Resolve ledger enable flag: env var overrides config when set."""
+    env_val = os.getenv("MORALSTACK_LEDGER_ENABLED", "").strip().lower()
+    if env_val:
+        return env_val in ("true", "1", "yes", "on")
+    return bool(config.enable_ledger)
+
+
+def _resolve_ledger_threshold(config: GovernanceConfig) -> float:
+    raw = os.getenv("MORALSTACK_LEDGER_SIMILARITY_THRESHOLD", "").strip()
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return float(config.ledger_similarity_threshold)
+
+
+def _resolve_ledger_max_entries(config: GovernanceConfig) -> int:
+    raw = os.getenv("MORALSTACK_LEDGER_MAX_ENTRIES", "").strip()
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return int(config.ledger_max_entries)
+
+
+def _resolve_ledger_embedding_model(config: GovernanceConfig) -> str | None:
+    raw = (
+        config.ledger_embedding_model
+        or os.getenv("MORALSTACK_LEDGER_EMBEDDING_MODEL")
+        or None
+    )
+    return raw.strip() if raw else None
+
+
+def _build_ledger(config: GovernanceConfig, api_key: str, base_url: str | None) -> Any:
+    """
+    Build ``SemanticDecisionLedger`` with ``OpenAIEmbedder`` and ``InMemoryLedgerStorage``.
+
+    Returns None when disabled or when construction fails (logged at WARNING); the
+    pipeline continues without a fast-path.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    if not _resolve_ledger_enabled(config):
+        logger.info("MoralStack SDK: SemanticDecisionLedger disabled via env/config")
+        return None
+
+    try:
+        from moralstack.orchestration.embedder import OpenAIEmbedder
+        from moralstack.orchestration.ledger import SemanticDecisionLedger
+        from moralstack.orchestration.ledger_storage import InMemoryLedgerStorage
+    except Exception as e:
+        logger.warning(
+            "MoralStack SDK: ledger imports failed (%s); proceeding without fast-path", e
+        )
+        return None
+
+    try:
+        embedder = OpenAIEmbedder(
+            api_key=api_key,
+            model=_resolve_ledger_embedding_model(config),
+            base_url=base_url,
+        )
+        max_entries = _resolve_ledger_max_entries(config)
+        storage = InMemoryLedgerStorage(max_entries=max_entries)
+        threshold = _resolve_ledger_threshold(config)
+        ledger = SemanticDecisionLedger(
+            embedder=embedder,
+            storage=storage,
+            similarity_threshold=threshold,
+        )
+        logger.info(
+            "MoralStack SDK: SemanticDecisionLedger enabled (threshold=%.3f, max_entries=%d)",
+            ledger.similarity_threshold,
+            max_entries,
+        )
+        return ledger
+    except Exception as e:
+        logger.warning(
+            "MoralStack SDK: ledger construction failed (%s); proceeding without fast-path", e
+        )
+        return None
+
+
 def _bootstrap_pipeline(config: GovernanceConfig) -> Orchestrator:
     """Instantiate the full deliberative pipeline for SDK use.
 
-    All runtime tuning (orchestrator cycles, risk thresholds, module
-    temperatures, etc.) is driven by MORALSTACK_* environment variables
-    loaded from .env.  GovernanceConfig only controls provider credentials,
-    constitution path, observability, and failure policy.
+    Runtime tuning (cycles, risk thresholds, module temperatures, etc.) comes from
+    ``MORALSTACK_*`` environment variables loaded from ``.env``. ``GovernanceConfig``
+    covers provider credentials, constitution path, observability, failure policy,
+    and ledger fast-path toggles.
     """
     load_env()
 
@@ -54,6 +143,8 @@ def _bootstrap_pipeline(config: GovernanceConfig) -> Orchestrator:
     except Exception as e:
         raise GovernancePipelineError("Failed to initialize deliberation modules", cause=e) from e
 
+    ledger = _build_ledger(config, api_key=api_key, base_url=base_url)
+
     try:
         from moralstack.orchestration.config_loader import load_orchestrator_config_from_env
         from moralstack.runtime.orchestrator import Orchestrator
@@ -67,6 +158,7 @@ def _bootstrap_pipeline(config: GovernanceConfig) -> Orchestrator:
             hindsight=modules.hindsight,
             perspectives=modules.perspectives,
             constitution_store=modules.constitution_store,
+            ledger=ledger,
         )
     except Exception as e:
         raise GovernancePipelineError("Failed to initialize orchestrator", cause=e) from e

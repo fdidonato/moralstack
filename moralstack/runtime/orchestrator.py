@@ -89,8 +89,9 @@ def create_orchestrator(
     enable_perspectives: bool = True,
     enable_simulation: bool = True,
     enable_hindsight: bool = True,
+    ledger: Any = None,
 ) -> "Orchestrator":
-    """Factory function per creare un Orchestrator."""
+    """Factory that builds an ``Orchestrator`` with the given modules and optional ledger."""
     config = OrchestratorConfig(
         max_deliberation_cycles=max_cycles,
         timeout_ms=timeout_ms,
@@ -107,6 +108,7 @@ def create_orchestrator(
         hindsight=hindsight,
         perspectives=perspectives,
         constitution_store=constitution_store,
+        ledger=ledger,
     )
 
 
@@ -132,6 +134,10 @@ class Orchestrator:
     """
     Facade: delega a OrchestrationController.
     API pubblica invariata (process, set_logger, execution_trace, config, assembler).
+
+    Step 14.2: optional ``ledger`` wires ``SemanticDecisionLedger`` into the controller
+    for the conversational fast-path. When ``ledger`` is ``None`` (default), behaviour
+    matches pre-14.2 (no semantic cache short-circuit).
     """
 
     def __init__(
@@ -144,6 +150,7 @@ class Orchestrator:
         hindsight: HindsightProtocol | None = None,
         perspectives: PerspectiveEnsembleProtocol | None = None,
         constitution_store: ConstitutionStoreProtocol | None = None,
+        ledger: Any = None,
     ) -> None:
         self.config = config or OrchestratorConfig()
         self.policy = policy
@@ -153,6 +160,7 @@ class Orchestrator:
         self.hindsight = hindsight
         self.perspectives = perspectives
         self.constitution_store = constitution_store
+        self.ledger = ledger
         self.logger = None
 
         output_protector = create_protector(enable_canary=True, enable_delimiters=True)
@@ -172,6 +180,7 @@ class Orchestrator:
             logger=self.logger,
             persistence=DefaultPersistence(),
             event_emitter=DefaultEventEmitter(),
+            ledger=ledger,
         )
         self.assembler = self._controller.assembler
         self.execution_trace = self._controller.execution_trace
