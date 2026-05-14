@@ -29,26 +29,32 @@ class TestDeterminism:
         msgs = [{"role": "user", "content": "hi"}]
         fp = compute_conversation_fingerprint(msgs)
         assert fp.startswith("msf-")
-        # msf- + 16 hex chars = 20 chars
         assert len(fp) == 20
 
 
 class TestStabilityAcrossTurns:
-    """Two HTTP calls in the same conversation share the message prefix."""
+    """Stem through first user stays stable as COMPL-AI clients append turns."""
 
-    def test_appending_new_turn_preserves_fingerprint(self):
-        # After turn 1 the assistant replies; turn 2 appends the assistant reply + new user.
+    def test_compl_ai_style_turn0_turn1_same_fingerprint(self):
+        messages_t0 = [
+            {"role": "system", "content": "Scenario rules"},
+            {"role": "user", "content": "First test message"},
+        ]
+        messages_t1 = [
+            {"role": "system", "content": "Scenario rules"},
+            {"role": "user", "content": "First test message"},
+            {"role": "assistant", "content": "Model reply"},
+            {"role": "user", "content": "Second test message"},
+        ]
+        assert compute_conversation_fingerprint(messages_t0) == compute_conversation_fingerprint(messages_t1)
+
+    def test_later_turns_same_stem_same_fingerprint(self):
         turn2 = [
             {"role": "system", "content": "You are helpful."},
             {"role": "user", "content": "First question?"},
             {"role": "assistant", "content": "Answer 1."},
             {"role": "user", "content": "Follow-up?"},
         ]
-        # Fingerprint takes prefix of size 3.
-        # turn1[:3] = full turn1 (only 2 messages).
-        # turn2[:3] = system + first user + first assistant.
-        # These differ — so the fingerprint may differ. The stability claim is
-        # about turns 3+ where the prefix has stabilized.
         turn3 = [
             {"role": "system", "content": "You are helpful."},
             {"role": "user", "content": "First question?"},
@@ -57,10 +63,7 @@ class TestStabilityAcrossTurns:
             {"role": "assistant", "content": "Answer 2."},
             {"role": "user", "content": "Another?"},
         ]
-        fp_turn2 = compute_conversation_fingerprint(turn2)
-        fp_turn3 = compute_conversation_fingerprint(turn3)
-        # Once the prefix (3 messages) is filled, subsequent turns yield the same fingerprint.
-        assert fp_turn2 == fp_turn3
+        assert compute_conversation_fingerprint(turn2) == compute_conversation_fingerprint(turn3)
 
 
 class TestDifferentConversationsDiffer:
@@ -93,5 +96,4 @@ class TestRobustness:
         fp1 = compute_conversation_fingerprint(msgs)
         msgs2 = [{"role": "user", "content": long_text + "DIFFERENT_TAIL"}]
         fp2 = compute_conversation_fingerprint(msgs2)
-        # Both messages share the first 4KB → same fingerprint.
         assert fp1 == fp2

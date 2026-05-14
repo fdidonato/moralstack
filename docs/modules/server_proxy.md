@@ -9,8 +9,14 @@ Normative reference: multiturn design v1.3 section 4.
 ## Public entry points
 
 - `moralstack.server.create_app` — factory: `create_app(openai_client=..., orchestrator=..., config=..., session_store=...)`.
-- `compute_conversation_fingerprint` — deterministic `conversation_id` fallback from message prefix.
+- `moralstack.server.conversation_correlation.ConversationCorrelationStore` — process-local lineage mapping for OpenAI-style full-history replays when no explicit `conversation_id` is provided.
+- `compute_conversation_fingerprint` — deterministic diagnostic hash from the opening message stem (through the first `user` message); not the authoritative `conversation_id` (use `msconv-*` from the correlation store or client headers).
 - `build_governance_headers` — header dict from `OrchestratorResult`.
+
+## Deployment notes
+
+- For multi-turn conversational clients (full history replay per request), run **one** uvicorn worker per process unless you provide a **shared** session store and distributed locking across workers. Each worker has its own `InMemorySessionStore` and `ConversationCorrelationStore`.
+- Blocking orchestrator and upstream OpenAI SDK calls run in a Starlette threadpool so the ASGI loop can accept concurrent requests; per-`conversation_id` locks still serialize same-conversation turns.
 
 ## Configuration / install
 
@@ -21,3 +27,4 @@ Normative reference: multiturn design v1.3 section 4.
 
 - `tests/test_server_proxy.py` — integration tests with `TestClient`.
 - `tests/test_server_fingerprint.py` — fingerprint unit tests.
+- `tests/test_conversation_correlation.py` — lineage hash and `ConversationCorrelationStore` behaviour.

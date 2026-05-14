@@ -4,6 +4,7 @@ Integration tests for the FastAPI server proxy (design v1.3 §4.2).
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from typing import Any
 from unittest.mock import MagicMock
@@ -11,8 +12,11 @@ from unittest.mock import MagicMock
 import pytest
 
 pytest.importorskip("fastapi", reason="fastapi not installed (install with [server] extra)")
+pytest.importorskip("httpx", reason="httpx not installed (install with [server] extra)")
 
+import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from httpx import ASGITransport  # noqa: E402
 
 from moralstack.orchestration.types import (  # noqa: E402
     FinalResponse,
@@ -206,7 +210,7 @@ class TestConversationIdResolution:
             json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
         )
         conv_id = response.headers.get("X-Moralstack-Conversation-Id")
-        assert conv_id is not None and conv_id.startswith("msf-")
+        assert conv_id is not None and conv_id.startswith("msconv-")
 
 
 class TestValidation:
@@ -428,8 +432,8 @@ class TestMultiTurnConversation:
         assert recovered_state.turn_index == 0  # State saved after turn 1.
 
     def test_conversation_id_stable_across_turns(self, client_factory):
-        """The conversation_id resolved via fingerprint is stable from turn 2 onwards."""
-        client, _, _ = client_factory("NORMAL_COMPLETE")
+        """Lineage correlation keeps the same conversation_id across COMPL-AI-style turns."""
+        client, mock_openai, _ = client_factory("NORMAL_COMPLETE")
 
         r1 = client.post(
             "/v1/chat/completions",
@@ -442,9 +446,8 @@ class TestMultiTurnConversation:
             },
         )
         conv_id_t1 = r1.headers.get("X-Moralstack-Conversation-Id")
-        assert conv_id_t1 is not None and conv_id_t1.startswith("msf-")
+        assert conv_id_t1 is not None and conv_id_t1.startswith("msconv-")
 
-        # Turn 2: now we have 3 messages in the prefix (system + user + assistant) — different fingerprint.
         r2 = client.post(
             "/v1/chat/completions",
             json={
@@ -452,15 +455,14 @@ class TestMultiTurnConversation:
                 "messages": [
                     {"role": "system", "content": "You are helpful."},
                     {"role": "user", "content": "First Q"},
-                    {"role": "assistant", "content": "First A"},
+                    {"role": "assistant", "content": "Upstream answer."},
                     {"role": "user", "content": "Second Q"},
                 ],
             },
         )
         conv_id_t2 = r2.headers.get("X-Moralstack-Conversation-Id")
-        assert conv_id_t2 is not None and conv_id_t2.startswith("msf-")
+        assert conv_id_t2 == conv_id_t1
 
-        # Turn 3: same prefix (system + user + assistant) — same fingerprint as turn 2.
         r3 = client.post(
             "/v1/chat/completions",
             json={
@@ -468,16 +470,16 @@ class TestMultiTurnConversation:
                 "messages": [
                     {"role": "system", "content": "You are helpful."},
                     {"role": "user", "content": "First Q"},
-                    {"role": "assistant", "content": "First A"},
+                    {"role": "assistant", "content": "Upstream answer."},
                     {"role": "user", "content": "Second Q"},
-                    {"role": "assistant", "content": "Second A"},
+                    {"role": "assistant", "content": "Upstream answer."},
                     {"role": "user", "content": "Third Q"},
                 ],
             },
         )
         conv_id_t3 = r3.headers.get("X-Moralstack-Conversation-Id")
-        assert conv_id_t3 == conv_id_t2  # Stable from turn 2 onwards.
-
+        assert conv_id_t3 == conv_id_t1
+        assert mock_openai.chat.completions.create.call_count == 3
     def test_separate_conversations_independent(self, client_factory):
         """Two conversations with different conversation_ids do not share state."""
         client, _, mock_orchestrator = client_factory("NORMAL_COMPLETE")
@@ -500,6 +502,123 @@ class TestMultiTurnConversation:
         # Both are turn 0 (first turn in each conversation independently).
         assert all_kwargs[0]["turn_index"] == 0
         assert all_kwargs[1]["turn_index"] == 0
+
+
+class TestAsyncConcurrency:
+    """
+    Concurrent in-flight requests against the ASGI app.
+
+    Starlette ``TestClient`` is not thread-safe for overlapping calls from multiple
+    threads; ``httpx.AsyncClient`` + ``ASGITransport`` matches production async
+    concurrency and exercises ``run_in_threadpool`` + per-conversation locks.
+    """
+
+    @staticmethod
+    def _build_app_for_parallel():
+        from moralstack.sdk.config import GovernanceConfig
+        from moralstack.server.proxy import create_app
+
+        active = threading.Lock()
+        in_flight = [0]
+        max_active = [0]
+
+        def slow_process(*args, **kwargs):
+            del args, kwargs
+            with active:
+                in_flight[0] += 1
+                max_active[0] = max(max_active[0], in_flight[0])
+            import time as _time
+
+            _time.sleep(0.05)
+            with active:
+                in_flight[0] -= 1
+            return _make_result("NORMAL_COMPLETE")
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.process = MagicMock(side_effect=slow_process)
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion())
+        app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+        return app, mock_orchestrator, mock_openai, max_active
+
+    def test_parallel_different_conversation_headers_overlap_orchestrator(self):
+        app, mock_orch, _, max_active = self._build_app_for_parallel()
+
+        async def _run():
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+
+                async def one(i: int):
+                    r = await client.post(
+                        "/v1/chat/completions",
+                        json={"model": "gpt-4o", "messages": [{"role": "user", "content": "q"}]},
+                        headers={"X-Moralstack-Conversation-Id": f"conv-{i}"},
+                    )
+                    assert r.status_code == 200
+
+                await asyncio.gather(*(one(i) for i in range(10)))
+
+        asyncio.run(_run())
+        assert mock_orch.process.call_count == 10
+        assert max_active[0] > 1
+
+    def test_parallel_same_conversation_header_serializes_orchestrator(self):
+        app, mock_orch, _, _ = self._build_app_for_parallel()
+        overlaps: list[int] = []
+        active = threading.Lock()
+        count = [0]
+
+        def tracked_process(*args, **kwargs):
+            del args, kwargs
+            with active:
+                count[0] += 1
+                if count[0] > 1:
+                    overlaps.append(count[0])
+            import time as _time
+
+            _time.sleep(0.05)
+            with active:
+                count[0] -= 1
+            return _make_result("NORMAL_COMPLETE")
+
+        mock_orch.process = MagicMock(side_effect=tracked_process)
+
+        async def _run():
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+
+                async def one():
+                    r = await client.post(
+                        "/v1/chat/completions",
+                        json={"model": "gpt-4o", "messages": [{"role": "user", "content": "q"}]},
+                        headers={"X-Moralstack-Conversation-Id": "same-conv"},
+                    )
+                    assert r.status_code == 200
+
+                await asyncio.gather(*(one() for _ in range(10)))
+
+        asyncio.run(_run())
+        assert mock_orch.process.call_count == 10
+        assert overlaps == []
+
+
+class TestConversationLockTimeout:
+    def test_second_acquire_raises_when_lock_held(self):
+        from moralstack.server.proxy import ConversationLockManager, ConversationLockTimeout
+
+        mgr = ConversationLockManager()
+        first = mgr.acquire("locked-conv")
+        try:
+
+            def try_second():
+                with pytest.raises(ConversationLockTimeout):
+                    mgr.acquire("locked-conv", timeout=0.05)
+
+            t = threading.Thread(target=try_second)
+            t.start()
+            t.join()
+        finally:
+            mgr.release(first)
 
 
 class TestObservabilityPersistence:

@@ -43,7 +43,7 @@ def main() -> None:
     messages.append({"role": "assistant", "content": assistant_reply})
 
     # Turn 3
-    messages.append({"role": "user", "content": "What major museums are there?"})
+    messages.append({"role": "user", "content": "go deeper please"})
     response = client.chat.completions.create(model="gpt-4o", messages=messages)
     assistant_reply = response.choices[0].message.content
     print(f"[Turn 3] Decision: {response.governance_metadata.final_action}")

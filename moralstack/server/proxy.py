@@ -8,7 +8,9 @@ then forwards to the upstream OpenAI client (for NORMAL_COMPLETE / SAFE_COMPLETE
 or returns a synthetic ChatCompletion (for REFUSE).
 
 Concurrency: two concurrent calls with the same conversation_id are serialized
-via per-conversation locks (design v1.3 §4.4).
+via per-conversation locks (design v1.3 §4.4). Blocking orchestrator and upstream
+OpenAI SDK calls run in a thread pool so the ASGI event loop stays responsive
+under parallel COMPL-AI-style samples (single uvicorn worker).
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from moralstack.observability.conversation_events import (
     emit_proxy_request_finalized,
@@ -44,7 +47,7 @@ from moralstack.sdk.wrapper import (
     _extract_last_user_message,
     _messages_to_turns,
 )
-from moralstack.server.fingerprint import compute_conversation_fingerprint
+from moralstack.server.conversation_correlation import ConversationCorrelationStore
 from moralstack.server.headers import build_governance_headers
 
 logger = logging.getLogger("moralstack.server.proxy")
@@ -52,6 +55,15 @@ logger = logging.getLogger("moralstack.server.proxy")
 
 # Per-conversation lock acquisition timeout (design v1.3 §4.4).
 _LOCK_ACQUIRE_TIMEOUT_S = 30.0
+_LOCK_RETRY_AFTER_SECONDS = 10
+
+
+class ConversationLockTimeout(RuntimeError):
+    """Raised when a per-conversation lock cannot be acquired within the deadline."""
+
+    def __init__(self, conversation_id: str) -> None:
+        self.conversation_id = conversation_id
+        super().__init__(conversation_id)
 
 
 class ConversationLockManager:
@@ -60,9 +72,9 @@ class ConversationLockManager:
     same conversation_id (design v1.3 §4.4).
 
     The manager itself is thread-safe. It hands out per-conversation locks
-    keyed by conversation_id. Calls with no conversation_id (single-turn,
-    empty fingerprint) get a no-op pass-through lock — single-turn requests
-    are independent and don't need serialization.
+    keyed by conversation_id. Calls with no conversation_id (empty string after
+    resolution) get a no-op pass-through lock — those requests are independent
+    and do not need serialization.
     """
 
     def __init__(self) -> None:
@@ -74,8 +86,9 @@ class ConversationLockManager:
         Acquire the lock for the given conversation_id.
 
         Returns the acquired lock so the caller can release it. Returns None
-        when conversation_id is empty (no serialization needed) or the lock
-        cannot be acquired within `timeout`.
+        when conversation_id is empty (no serialization needed). Raises
+        :class:`ConversationLockTimeout` when ``conversation_id`` is non-empty
+        and the lock cannot be acquired within ``timeout``.
         """
         if not conversation_id:
             return None
@@ -86,12 +99,11 @@ class ConversationLockManager:
         acquired = lock.acquire(timeout=timeout)
         if not acquired:
             logger.warning(
-                "ConversationLockManager: timeout acquiring lock for conversation_id=%s "
-                "after %.1fs (proceeding with stale state)",
+                "ConversationLockManager: timeout acquiring lock for conversation_id=%s after %.1fs",
                 conversation_id,
                 timeout,
             )
-            return None
+            raise ConversationLockTimeout(conversation_id)
         return lock
 
     def release(self, lock: threading.Lock | None) -> None:
@@ -103,21 +115,45 @@ class ConversationLockManager:
                 pass
 
 
-def _resolve_conversation_id(
+def _resolve_conversation_id_from_body_and_correlation(
     messages: list[dict[str, Any]],
     extra_body: dict[str, Any] | None,
+    correlation_store: ConversationCorrelationStore,
 ) -> str:
     """
-    Resolve the conversation_id from extra_body or via fingerprint.
+    Resolve ``conversation_id`` from ``extra_body`` or lineage correlation.
 
-    Per design v1.3 §4.3: client-provided id wins; otherwise, deterministic
-    fingerprint of the message prefix.
+    The HTTP ``X-Moralstack-Conversation-Id`` header is handled in the route
+    handler and takes precedence over this function.
     """
     if extra_body:
         explicit = extra_body.get("moralstack_conversation_id")
         if explicit:
             return str(explicit)
-    return compute_conversation_fingerprint(messages)
+    return correlation_store.resolve(messages)
+
+
+_SENSITIVE_HEADER_MARKERS = (
+    "authorization",
+    "api-key",
+    "cookie",
+    "set-cookie",
+    "proxy-authorization",
+)
+
+
+def _collect_safe_headers(request: Request) -> dict[str, str]:
+    """Return a whitelist of header names/values safe for debug logs (no secrets)."""
+    out: dict[str, str] = {}
+    for key, value in request.headers.items():
+        lk = key.lower()
+        if any(marker in lk for marker in _SENSITIVE_HEADER_MARKERS):
+            continue
+        if not (lk == "user-agent" or lk.startswith("x-") or lk.startswith("openai-")):
+            continue
+        val = value if len(value) <= 200 else value[:200] + "\u2026"
+        out[str(key)] = val
+    return out
 
 
 def _build_synthetic_chat_completion(
@@ -155,6 +191,175 @@ def _build_synthetic_chat_completion(
     }
 
 
+def _handle_chat_completion_sync(
+    *,
+    body: dict[str, Any],
+    messages: list[dict[str, Any]],
+    model: str,
+    extra_body: dict[str, Any] | None,
+    moralstack_conversation_id_header: str | None,
+    proxy_run_id: str,
+    correlation_store: ConversationCorrelationStore,
+    lock_manager: ConversationLockManager,
+    store: SessionStoreProtocol,
+    openai_client: Any,
+    orchestrator: Any,
+    cfg: GovernanceConfig,
+) -> Response:
+    """
+    Synchronous request handler: governance, session store, upstream OpenAI call.
+
+    Intended to run inside ``run_in_threadpool`` so blocking SDK calls do not stall
+    the ASGI event loop.
+    """
+    hdr = (moralstack_conversation_id_header or "").strip()
+    conversation_id = hdr or _resolve_conversation_id_from_body_and_correlation(
+        messages, extra_body, correlation_store
+    )
+
+    request_id_for_audit: str = ""
+    final_response_text: str = ""
+    domain_for_audit: str | None = None
+    result_for_audit: Any | None = None
+    governance_headers_for_audit: dict[str, str] | None = None
+    state_in_for_audit: Any | None = None
+    state_out_for_audit: Any | None = None
+    lock: threading.Lock | None = None
+    out_response: Response | None = None
+
+    try:
+        try:
+            lock = lock_manager.acquire(conversation_id)
+        except ConversationLockTimeout:
+            raise HTTPException(
+                status_code=503,
+                detail="Conversation busy: per-conversation lock not acquired in time.",
+                headers={"Retry-After": str(_LOCK_RETRY_AFTER_SECONDS)},
+            )
+
+        developer_contract = _extract_developer_contract(messages)
+        conversation_history = _messages_to_turns(messages[:-1]) if len(messages) > 1 else []
+        user_prompt = _extract_last_user_message(messages)
+
+        processed = ProcessedRequest(
+            prompt=user_prompt,
+            developer_contract=developer_contract,
+            conversation_history=conversation_history,
+        )
+        request_id_for_audit = processed.request_id
+
+        turn_index = _resolve_turn_index(messages)
+        conv_state = store.get(conversation_id) if conversation_id else None
+        state_in_for_audit = conv_state
+        try:
+            from moralstack.observability.context import set_current_request_id
+
+            set_current_request_id(processed.request_id)
+        except Exception:
+            pass
+
+        _ensure_request_row(
+            proxy_run_id=proxy_run_id,
+            request_id=processed.request_id,
+            prompt=user_prompt,
+            conversation_id=conversation_id or None,
+            turn_index=turn_index,
+        )
+
+        try:
+            result = orchestrator.process(
+                processed,
+                conversation_id=conversation_id or None,
+                turn_index=turn_index,
+                parent_request_id=processed.request_id,
+                conversation_state=conv_state,
+            )
+            result_for_audit = result
+        except Exception as exc:
+            logger.exception("Pipeline failure: %s", exc)
+            if cfg.failure_policy == "passthrough":
+                try:
+                    upstream_response = openai_client.chat.completions.create(**_build_upstream_kwargs(body))
+                    final_response_text = _extract_text_from_upstream(upstream_response)
+                    out_response = _serialize_upstream_response(
+                        upstream_response, headers={"X-Moralstack-Decision": "PASSTHROUGH_ON_ERROR"}
+                    )
+                except Exception as upstream_exc:
+                    raise HTTPException(status_code=502, detail=f"Upstream failure: {upstream_exc}") from upstream_exc
+            else:
+                raise HTTPException(status_code=500, detail=f"Pipeline failure: {exc}") from exc
+        else:
+            governance_state_out = getattr(result, "conversation_governance_state_out", None)
+            state_out_for_audit = governance_state_out
+            if conversation_id and governance_state_out is not None:
+                store.put(conversation_id, governance_state_out)
+
+            final_action = result.response.metadata.final_action
+            governance_headers = build_governance_headers(result, conversation_id=conversation_id)
+            governance_headers_for_audit = dict(governance_headers) if governance_headers else None
+            domain_for_audit = getattr(result.response.metadata, "domain_overlay", None)
+
+            if final_action == "REFUSE":
+                refusal_content = result.response.content or "I cannot help with that request."
+                final_response_text = refusal_content
+                payload = _build_synthetic_chat_completion(
+                    content=refusal_content,
+                    model=model,
+                    finish_reason="content_filter",
+                )
+                out_response = JSONResponse(content=payload, headers=governance_headers)
+
+            elif final_action == "SAFE_COMPLETE":
+                safe_turn = _build_safe_complete_user_turn(result)
+                upstream_kwargs = _build_upstream_kwargs(body)
+                upstream_kwargs["messages"] = list(upstream_kwargs.get("messages", [])) + [safe_turn]
+                try:
+                    upstream_response = openai_client.chat.completions.create(**upstream_kwargs)
+                except Exception as exc:
+                    logger.exception("Upstream call failed: %s", exc)
+                    raise HTTPException(status_code=502, detail=f"Upstream call failed: {exc}") from exc
+                final_response_text = _extract_text_from_upstream(upstream_response)
+                out_response = _serialize_upstream_response(upstream_response, headers=governance_headers)
+
+            else:
+                upstream_kwargs = _build_upstream_kwargs(body)
+                try:
+                    upstream_response = openai_client.chat.completions.create(**upstream_kwargs)
+                except Exception as exc:
+                    logger.exception("Upstream call failed: %s", exc)
+                    raise HTTPException(status_code=502, detail=f"Upstream call failed: {exc}") from exc
+                final_response_text = _extract_text_from_upstream(upstream_response)
+                out_response = _serialize_upstream_response(upstream_response, headers=governance_headers)
+
+    finally:
+        if conversation_id and final_response_text:
+            try:
+                correlation_store.observe_completed_turn(
+                    messages=messages,
+                    assistant_content=final_response_text,
+                    conversation_id=conversation_id,
+                )
+            except Exception:
+                logger.debug("observe_completed_turn failed (non-fatal)", exc_info=True)
+        lock_manager.release(lock)
+        _finalize_request(
+            proxy_run_id=proxy_run_id,
+            request_id=request_id_for_audit,
+            final_response_text=final_response_text,
+            domain=domain_for_audit,
+            conversation_id=conversation_id or None,
+            turn_index=_resolve_turn_index(messages) if isinstance(messages, list) else None,
+            result=result_for_audit,
+            governance_headers=governance_headers_for_audit,
+            state_in=state_in_for_audit,
+            state_out=state_out_for_audit,
+        )
+
+    if out_response is None:
+        raise HTTPException(status_code=500, detail="Internal error: empty proxy response.")
+    return out_response
+
+
 def create_app(
     *,
     openai_client: Any,
@@ -178,6 +383,7 @@ def create_app(
     cfg = config or GovernanceConfig()
     store: SessionStoreProtocol = session_store if session_store is not None else InMemorySessionStore()
     lock_manager = ConversationLockManager()
+    correlation_store = ConversationCorrelationStore()
     # Initialize observability for the proxy lifetime so all governance events
     # are persisted to DB / JSONL per MORALSTACK_OBSERVABILITY_* env vars.
     # Pattern parallels cli/shell.py: init_db + create_run + set_current_run_id.
@@ -211,7 +417,7 @@ def create_app(
         OpenAI-compatible chat completions endpoint with MoralStack governance.
 
         Per design v1.3 section 4.2:
-        1. Resolve conversation_id (header / extra_body / fingerprint).
+        1. Resolve conversation_id (header / extra_body / lineage correlation).
         2. Acquire conversation lock (section 4.4).
         3. Build ProcessedRequest from messages.
         4. Call controller.process().
@@ -219,7 +425,6 @@ def create_app(
            appended synthetic user turn; NORMAL_COMPLETE -> forward original.
         6. Attach X-Moralstack-* headers.
         """
-        # Parse body
         try:
             body = await request.json()
         except Exception:
@@ -234,151 +439,31 @@ def create_app(
         model = str(body.get("model", "") or "gpt-4o")
         extra_body = body.get("extra_body") if isinstance(body.get("extra_body"), dict) else None
 
-        # Resolve conversation_id (header > extra_body > fingerprint)
-        conversation_id = moralstack_conversation_id or _resolve_conversation_id(messages, extra_body)
+        safe_headers = _collect_safe_headers(request)
+        has_extra_conv = bool(extra_body and extra_body.get("moralstack_conversation_id"))
+        logger.debug(
+            "proxy correlation diagnostics: header_conversation_id=%r "
+            "extra_body_has_moralstack_conversation_id=%s safe_headers=%r",
+            moralstack_conversation_id,
+            has_extra_conv,
+            safe_headers,
+        )
 
-        lock = lock_manager.acquire(conversation_id)
-        # State accumulated during request processing for the finalize step.
-        request_id_for_audit: str = ""
-        final_response_text: str = ""
-        domain_for_audit: str | None = None
-        result_for_audit: Any | None = None
-        governance_headers_for_audit: dict[str, str] | None = None
-        state_in_for_audit: Any | None = None
-        state_out_for_audit: Any | None = None
-        try:
-            # Extract governance context from messages
-            developer_contract = _extract_developer_contract(messages)
-            conversation_history = _messages_to_turns(messages[:-1]) if len(messages) > 1 else []
-            user_prompt = _extract_last_user_message(messages)
-
-            processed = ProcessedRequest(
-                prompt=user_prompt,
-                developer_contract=developer_contract,
-                conversation_history=conversation_history,
-            )
-            request_id_for_audit = processed.request_id
-
-            # Resolve turn_index from payload (stateless: count user messages).
-            # Persists correctly across server restarts and stateless HTTP clients.
-            turn_index = _resolve_turn_index(messages)
-            conv_state = store.get(conversation_id) if conversation_id else None
-            state_in_for_audit = conv_state
-            # Bind the request_id to the observability context so all events
-            # emitted by the pipeline (LLM calls, decision traces, orchestration
-            # events) are correctly attributed to this request. Without this,
-            # persistence is silently skipped (run_id+request_id are required).
-            try:
-                from moralstack.observability.context import set_current_request_id
-
-                set_current_request_id(processed.request_id)
-            except Exception:
-                # Context binding is best-effort; persistence will no-op if it
-                # fails but governance still proceeds normally.
-                pass
-
-            # Pre-insert the requests row BEFORE the pipeline emits any
-            # orchestration_event / llm_call / decision_trace events. Those
-            # event tables have FK constraints on requests(run_id, request_id),
-            # so without this pre-insert the SQLite sink would reject events
-            # with "FOREIGN KEY constraint failed". The pipeline itself does
-            # NOT call upsert_request for proxy-originated requests (only the
-            # CLI does, via DefaultPersistence).
-            _ensure_request_row(
-                proxy_run_id=proxy_run_id,
-                request_id=processed.request_id,
-                prompt=user_prompt,
-                conversation_id=conversation_id or None,
-                turn_index=turn_index,
-            )
-
-            # Run governance pipeline
-            try:
-                result = orchestrator.process(
-                    processed,
-                    conversation_id=conversation_id or None,
-                    turn_index=turn_index,
-                    parent_request_id=processed.request_id,
-                    conversation_state=conv_state,
-                )
-                result_for_audit = result
-            except Exception as exc:
-                logger.exception("Pipeline failure: %s", exc)
-                if cfg.failure_policy == "passthrough":
-                    try:
-                        upstream_response = openai_client.chat.completions.create(**_build_upstream_kwargs(body))
-                        final_response_text = _extract_text_from_upstream(upstream_response)
-                        return _serialize_upstream_response(
-                            upstream_response, headers={"X-Moralstack-Decision": "PASSTHROUGH_ON_ERROR"}
-                        )
-                    except Exception as upstream_exc:
-                        raise HTTPException(status_code=502, detail=f"Upstream failure: {upstream_exc}")
-                raise HTTPException(status_code=500, detail=f"Pipeline failure: {exc}")
-
-            # Persist conversation_governance_state_out for next turn.
-            # Note: mypy requires a local variable for type narrowing — the inline
-            # `getattr(...) is not None` check does NOT narrow the type of the attribute.
-            governance_state_out = getattr(result, "conversation_governance_state_out", None)
-            state_out_for_audit = governance_state_out
-            if conversation_id and governance_state_out is not None:
-                store.put(conversation_id, governance_state_out)
-
-            final_action = result.response.metadata.final_action
-            governance_headers = build_governance_headers(result, conversation_id=conversation_id)
-            governance_headers_for_audit = dict(governance_headers) if governance_headers else None
-            domain_for_audit = getattr(result.response.metadata, "domain_overlay", None)
-
-            # Routing per design v1.3 section 4.2
-            if final_action == "REFUSE":
-                refusal_content = result.response.content or "I cannot help with that request."
-                final_response_text = refusal_content
-                payload = _build_synthetic_chat_completion(
-                    content=refusal_content,
-                    model=model,
-                    finish_reason="content_filter",
-                )
-                return JSONResponse(content=payload, headers=governance_headers)
-
-            if final_action == "SAFE_COMPLETE":
-                safe_turn = _build_safe_complete_user_turn(result)
-                upstream_kwargs = _build_upstream_kwargs(body)
-                upstream_kwargs["messages"] = list(upstream_kwargs.get("messages", [])) + [safe_turn]
-                try:
-                    upstream_response = openai_client.chat.completions.create(**upstream_kwargs)
-                except Exception as exc:
-                    logger.exception("Upstream call failed: %s", exc)
-                    raise HTTPException(status_code=502, detail=f"Upstream call failed: {exc}")
-                final_response_text = _extract_text_from_upstream(upstream_response)
-                return _serialize_upstream_response(upstream_response, headers=governance_headers)
-
-            # NORMAL_COMPLETE (default)
-            upstream_kwargs = _build_upstream_kwargs(body)
-            try:
-                upstream_response = openai_client.chat.completions.create(**upstream_kwargs)
-            except Exception as exc:
-                logger.exception("Upstream call failed: %s", exc)
-                raise HTTPException(status_code=502, detail=f"Upstream call failed: {exc}")
-            final_response_text = _extract_text_from_upstream(upstream_response)
-            return _serialize_upstream_response(upstream_response, headers=governance_headers)
-
-        finally:
-            lock_manager.release(lock)
-            # Finalize observability: update final_response column, populate
-            # meta_json with governance metadata, emit proxy.request_finalized,
-            # and flush async queue so data is visible immediately after the
-            # response.
-            _finalize_request(
-                proxy_run_id=proxy_run_id,
-                request_id=request_id_for_audit,
-                final_response_text=final_response_text,
-                domain=domain_for_audit,
-                conversation_id=conversation_id or None,
-                turn_index=_resolve_turn_index(messages) if isinstance(messages, list) else None,
-                result=result_for_audit,
-                governance_headers=governance_headers_for_audit,
-                state_in=state_in_for_audit,
-                state_out=state_out_for_audit,
-            )
+        return await run_in_threadpool(
+            _handle_chat_completion_sync,
+            body=body,
+            messages=messages,
+            model=model,
+            extra_body=extra_body,
+            moralstack_conversation_id_header=moralstack_conversation_id,
+            proxy_run_id=proxy_run_id,
+            correlation_store=correlation_store,
+            lock_manager=lock_manager,
+            store=store,
+            openai_client=openai_client,
+            orchestrator=orchestrator,
+            cfg=cfg,
+        )
 
     return app
 

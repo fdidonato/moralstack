@@ -28,8 +28,10 @@ def test_get_obs_returns_singleton():
     assert obs1 is obs2
 
 
-def test_obs_module_singleton_is_service():
-    assert isinstance(obs, ObservabilityService)
+def test_obs_module_lazy_proxy_targets_service_singleton():
+    svc = get_obs()
+    assert isinstance(svc, ObservabilityService)
+    assert obs.read_store is svc.read_store
 
 
 def test_obs_has_read_store():
@@ -131,3 +133,22 @@ def test_concurrent_emits_no_deadlock(tmp_path, monkeypatch):
 
     obs.flush(timeout=10.0)
     assert not errors
+
+
+def test_observability_write_queue_flush_respects_timeout(caplog):
+    """Flush must return when the deadline is reached even if work remains."""
+    import logging
+    import time
+
+    from moralstack.observability.write_queue import ObservabilityWriteQueue
+
+    q = ObservabilityWriteQueue()
+
+    def slow_job() -> None:
+        time.sleep(0.2)
+
+    q.submit(slow_job)
+    caplog.set_level(logging.WARNING)
+    q.flush(timeout=0.02)
+    q.shutdown(timeout=5.0)
+    assert any("flush timed out" in r.message for r in caplog.records)

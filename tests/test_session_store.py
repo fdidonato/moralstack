@@ -174,3 +174,31 @@ class TestProtocolConformance:
         assert store.list_active() == ["conv-1"]
         store.delete("conv-1")
         assert store.list_active() == []
+
+
+class TestThreadSafety:
+    def test_concurrent_put_get_list_delete(self):
+        import threading
+
+        store = InMemorySessionStore(max_sessions=1000)
+        errors: list[BaseException] = []
+
+        def worker() -> None:
+            try:
+                for i in range(50):
+                    cid = f"thr-{threading.get_ident()}-{i}"
+                    store.put(cid, _make_state(cid, turn=i))
+                    store.get(cid)
+                    store.list_active()
+                    if i % 10 == 0:
+                        store.delete(cid)
+            except BaseException as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert not errors
+        assert store.size() <= 1000

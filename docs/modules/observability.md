@@ -10,7 +10,7 @@ Unified observability module — single entry point for all telemetry (write + r
 
 ```
 moralstack/observability/
-├── __init__.py          # exposes: obs (singleton), EventEnvelope, factory helpers
+├── __init__.py          # exposes: obs (lazy proxy → get_obs()), EventEnvelope, factory helpers
 ├── events.py            # EventEnvelope dataclass + EVENT_* constants + make_envelope()
 ├── context.py           # run_id / request_id / cycle contextvars
 ├── config.py            # ObservabilityConfig: mode, db_path, jsonl_dir; env loader
@@ -24,12 +24,14 @@ moralstack/observability/
     └── jsonl_sink.py    # Per-event-type JSONL under logs/observability/
 ```
 
+The `obs` export resolves each attribute access on the current `get_obs()` instance (tests and tooling may replace that singleton). Use `get_obs()` when you need the concrete `ObservabilityService` (for example `isinstance` checks).
+
 ### Responsibilities
 
 | Module | Responsibility |
 |---|---|
 | `events.py` | `EventEnvelope` (frozen dataclass), 10 `EVENT_*` constants, `make_envelope()` factory |
-| `service.py` | Singleton `obs`; `emit()` (async via queue), `emit_batch()`, `flush()`, `shutdown()`, `read_store` property |
+| `service.py` | `get_obs()` thread-safe singleton `ObservabilityService`; `emit()` (async via queue), `emit_batch()`, `flush()`, `shutdown()`, `read_store` property |
 | `router.py` | Reads mode from config, dispatches envelope to sqlite_sink and/or jsonl_sink |
 | `sqlite_sink.py` | SQLite schema, `SqliteUnitOfWork`, all lifecycle writes (`create_run`, `end_run`, `upsert_request`, …) + batch insert helpers |
 | `jsonl_sink.py` | Per-event-type JSONL under `logs/observability/`; thread-safe per-file locks |

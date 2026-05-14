@@ -2,7 +2,8 @@
 MoralStack Observability — unified telemetry module.
 
 Provides:
-  obs           — process-wide ObservabilityService singleton (emit, flush, read_store)
+  obs           — lazy view of the process-wide ObservabilityService (emit, flush, read_store;
+                  delegates to ``get_obs()`` on each attribute access)
   EventEnvelope — typed event wrapper
   make_envelope — factory helper
   EVENT_*       — canonical event_type constants
@@ -12,6 +13,8 @@ Quick start:
     from moralstack.observability import obs, make_envelope, EVENT_LLM_CALL
     obs.emit(make_envelope(EVENT_LLM_CALL, run_id=..., request_id=..., payload={...}))
 """
+
+from typing import Any
 
 from moralstack.observability.config import (
     get_db_path,
@@ -73,8 +76,18 @@ from moralstack.observability.sinks.sqlite_sink import (
     upsert_request,
 )
 
-# Process-wide singleton — primary entry point
-obs: ObservabilityService = get_obs()
+
+class _LazyObsProxy:
+    """Delegates attribute access to the current ``get_obs()`` singleton."""
+
+    __slots__ = ()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(get_obs(), name)
+
+
+# Process-wide singleton — primary entry point (always follows ``get_obs()``)
+obs = _LazyObsProxy()
 
 __all__ = [
     # Singleton

@@ -1,5 +1,7 @@
 """Tests for moralstack.sdk.wrapper — govern(), GovernedClient, GovernedCompletions."""
 
+from __future__ import annotations
+
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +19,64 @@ from moralstack.sdk.wrapper import (
     _messages_to_turns,
     govern,
 )
+
+
+@pytest.fixture(autouse=True)
+def disable_observability_for_wrapper_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Session autouse conftest sets MORALSTACK_DB_PATH=:memory:, which makes
+    get_observability_mode() default to db_only and triggers SQLite init on
+    every GovernedClient. Wrapper tests use broad MagicMock orchestrator
+    results; finalize_governance_audit then runs emit_request_meta_updated
+    -> _json_safe (very expensive on MagicMocks), and get_obs().flush() can
+    block on the write queue.
+
+    For this module only: no observability DB path, file_only routing, no-op
+    service emits/flushes, and no-op finalize_governance_audit. Tests that
+    patch get_obs / config / sqlite_sink for specific behaviour still override
+    these bindings inside their own ``with patch(...)`` blocks.
+    """
+    monkeypatch.setattr("moralstack.observability.config.get_db_path", lambda: None)
+    monkeypatch.setattr(
+        "moralstack.observability.config.get_observability_mode",
+        lambda: "file_only",
+    )
+    monkeypatch.setattr("moralstack.observability.sinks.sqlite_sink.get_db_path", lambda: None)
+    monkeypatch.setattr(
+        "moralstack.observability.sinks.sqlite_sink.get_observability_mode",
+        lambda: "file_only",
+    )
+    monkeypatch.setattr(
+        "moralstack.observability.router.get_observability_mode",
+        lambda: "file_only",
+    )
+
+    def _noop_emit(self: object, *_a: object, **_kw: object) -> None:
+        return None
+
+    def _noop_emit_batch(self: object, *_a: object, **_kw: object) -> None:
+        return None
+
+    def _noop_flush(self: object, *_a: object, **_kw: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "moralstack.observability.service.ObservabilityService.emit",
+        _noop_emit,
+    )
+    monkeypatch.setattr(
+        "moralstack.observability.service.ObservabilityService.emit_batch",
+        _noop_emit_batch,
+    )
+    monkeypatch.setattr(
+        "moralstack.observability.service.ObservabilityService.flush",
+        _noop_flush,
+    )
+    monkeypatch.setattr(
+        "moralstack.observability.governance_audit.finalize_governance_audit",
+        lambda **kwargs: {},
+    )
+
 
 # =============================================================================
 # Helpers

@@ -21,8 +21,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from starlette.templating import Jinja2Templates
 
-from moralstack.observability import obs
 from moralstack.observability.config import get_db_path
+from moralstack.observability.service import get_obs
 from moralstack.observability.sinks.sqlite_sink import delete_request, delete_run
 from moralstack.reports.benchmark_report_loader import (
     get_benchmark_result_by_request_id,
@@ -45,7 +45,24 @@ from moralstack.reports.runtime_decisions import (
 )
 from moralstack.utils.env_loader import _purge_empty_env_vars
 
-_rs = obs.read_store
+class _ReadStoreProxy:
+    """
+    Resolve SqliteReadStore accessors at call time via get_obs().
+
+    The observability singleton (and its read_store) can be replaced in tests;
+    module-level aliases must not capture a stale read_store from import time.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, name: str) -> Any:
+        def _forward(*args: Any, **kwargs: Any) -> Any:
+            return getattr(get_obs().read_store, name)(*args, **kwargs)
+
+        return _forward
+
+
+_rs = _ReadStoreProxy()
 get_all_runs = _rs.get_all_runs
 get_request_domains = _rs.get_request_domains
 get_runs_page = _rs.get_runs_page

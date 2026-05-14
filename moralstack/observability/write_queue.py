@@ -12,6 +12,7 @@ import contextvars
 import logging
 import queue
 import threading
+import time
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -49,8 +50,20 @@ class ObservabilityWriteQueue:
             )
 
     def flush(self, timeout: float = 30.0) -> None:
-        """Block until queue is empty or timeout expires."""
-        self._queue.join()
+        """
+        Wait until queued tasks finish or ``timeout`` elapses.
+
+        Never raises. On timeout, logs a warning and returns even if work remains.
+        """
+        deadline = time.monotonic() + max(0.0, timeout)
+        while self._queue.unfinished_tasks:
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    "observability: flush timed out with %d unfinished task(s)",
+                    self._queue.unfinished_tasks,
+                )
+                return
+            time.sleep(0.01)
 
     def shutdown(self, timeout: float = 30.0) -> None:
         """Drain the queue and stop the worker thread."""

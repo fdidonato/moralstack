@@ -19,18 +19,105 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from moralstack.observability import obs  # noqa: E402
 from moralstack.observability.conversation_events import (  # noqa: E402
     emit_conversation_state_updated,
     emit_ledger_lookup,
     emit_proxy_request_finalized,
 )
+from moralstack.observability.service import ObservabilityService, get_obs  # noqa: E402
 from moralstack.observability.sinks.sqlite_sink import (  # noqa: E402
     create_run,
     init_db,
     update_request_meta,
     upsert_request,
 )
+
+
+def _reinstall_observability_service_writes() -> None:
+    """
+    Re-bind ObservabilityService emit/emit_batch/flush to the real queue+router
+    behaviour.
+
+    SDK tests monkeypatch these methods on the class; pytest restores them to
+    whatever was current when those tests *started*, which can leave no-op
+    implementations in place if import/collection order or hook ordering leaves
+    the class in a patched state. Re-applying the original logic here is
+    independent of ObservabilityService.__dict__ contents at import time.
+    """
+    from moralstack.observability import router as _obs_router
+
+    def emit(self: ObservabilityService, envelope):  # type: ignore[no-untyped-def]
+        self._queue.submit(_obs_router.route, envelope)
+
+    def emit_batch(self: ObservabilityService, envelopes):  # type: ignore[no-untyped-def]
+        if not envelopes:
+            return
+        self._queue.submit(_obs_router.route_batch, list(envelopes))
+
+    def flush(self: ObservabilityService, timeout: float = 30.0) -> None:
+        self._queue.flush(timeout=timeout)
+
+    ObservabilityService.emit = emit  # type: ignore[method-assign]
+    ObservabilityService.emit_batch = emit_batch  # type: ignore[method-assign]
+    ObservabilityService.flush = flush  # type: ignore[method-assign]
+
+
+def _bind_observability_db(monkeypatch: pytest.MonkeyPatch, dbp: str) -> None:
+    """
+    Pin observability reads/writes to ``dbp``.
+
+    Other tests monkeypatch ``moralstack.observability.config.get_db_path`` while
+    ``sqlite_sink`` / ``read_store`` keep their import-time bindings; this helper
+    repoints every copy so inserts and UI reads hit the same file.
+    """
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", dbp)
+    monkeypatch.setenv("MORALSTACK_DB_PATH", dbp)
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
+
+    def _path() -> str:
+        return dbp
+
+    def _mode() -> str:
+        return "db_only"
+
+    monkeypatch.setattr("moralstack.observability.config.get_db_path", _path)
+    monkeypatch.setattr("moralstack.observability.config.get_observability_mode", _mode)
+    monkeypatch.setattr("moralstack.observability.sinks.sqlite_sink.get_db_path", _path)
+    monkeypatch.setattr("moralstack.observability.sinks.sqlite_sink.get_observability_mode", _mode)
+    monkeypatch.setattr("moralstack.observability.router.get_observability_mode", _mode)
+    monkeypatch.setattr("moralstack.observability.read_store.get_db_path", _path)
+
+
+def _reset_observability_singleton() -> None:
+    """
+    Replace the process-wide ObservabilityService so its worker queue is empty.
+
+    After hundreds of tests the async queue can hold enough pending ``router.route``
+    calls that ``flush()`` hits the default timeout while unrelated DB paths miss
+    Step-13 tables (``no such table: session_store_events``), leaving later emits
+    undrained and UI reads empty.
+    """
+    import moralstack.observability.router as _rt
+    import moralstack.observability.service as _svc
+
+    with _svc._obs_lock:
+        old = _svc._obs_instance
+        if old is not None:
+            try:
+                old.shutdown(timeout=120.0)
+            except Exception:
+                pass
+            _svc._obs_instance = None
+
+    _rt._sqlite_sink = None
+    _rt._jsonl_sink = None
+
+
+@pytest.fixture(autouse=True)
+def _isolate_process_observability_for_ui_tests() -> None:
+    """Fresh observability singleton + real emitters for every test in this module."""
+    _reinstall_observability_service_writes()
+    _reset_observability_singleton()
 
 
 def _make_session_token(client: TestClient) -> str:
@@ -132,20 +219,16 @@ def _seed_two_turn_conversation(run_id: str = "run-ui-1", conv_id: str = "conv-u
         final_response_length=210,
         headers={"X-MoralStack-Final-Action": "SAFE_COMPLETE"},
     )
-    obs.flush()
+    get_obs().flush()
 
 
 @pytest.fixture()
 def ui_client(tmp_path, monkeypatch):
-    # Import first; `moralstack.ui.app` calls load_dotenv(override=True) which
-    # would otherwise wipe our test env vars set before import.
-    from moralstack.ui.app import create_app
-
     dbp = str(tmp_path / "ui_obs.db")
-    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", dbp)
-    monkeypatch.setenv("MORALSTACK_DB_PATH", dbp)
-    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
+    _bind_observability_db(monkeypatch, dbp)
     init_db(dbp)
+
+    from moralstack.ui.app import create_app
 
     app = create_app()
     client = TestClient(app, follow_redirects=False)
@@ -154,15 +237,12 @@ def ui_client(tmp_path, monkeypatch):
 
 def test_build_conversation_timeline_returns_structured_data(tmp_path, monkeypatch):
     """The helper aggregates requests + state + ledger + proxy snapshots."""
-    # `moralstack.ui.app` calls load_dotenv(override=True) at import time, which
-    # can override test env vars. Import first, then set env vars to win.
+    dbp = str(tmp_path / "obs.db")
+    _bind_observability_db(monkeypatch, dbp)
+    init_db(dbp)
+
     from moralstack.ui.app import _build_conversation_timeline
 
-    dbp = str(tmp_path / "obs.db")
-    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", dbp)
-    monkeypatch.setenv("MORALSTACK_DB_PATH", dbp)
-    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
-    init_db(dbp)
     _seed_two_turn_conversation()
 
     timeline = _build_conversation_timeline("conv-ui-1")
