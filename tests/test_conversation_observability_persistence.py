@@ -356,3 +356,111 @@ def test_read_methods_return_empty_when_tables_missing(tmp_path, monkeypatch):
     assert isinstance(overview, dict)
     if overview:
         assert overview.get("turn_count") in (0, None)
+
+
+# ---------------------------------------------------------------------------
+# Step 14.1 — SDK emission of proxy.request_finalized round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_sdk_emits_proxy_request_finalized_into_readstore(tmp_path, monkeypatch):
+    """
+    End-to-end: a GovernedClient.create() must populate the
+    ``proxy_request_events`` table just like the HTTP proxy does, so that
+    SDK-driven runs share the same audit surface consumed by ``moralstack-ui``.
+
+    The test uses a real SQLite path (via ``_setup_db``) and a mock orchestrator
+    + mock OpenAI client; observability runs end-to-end through the router,
+    sinks, write queue, and read store.
+    """
+    from unittest.mock import MagicMock
+
+    from moralstack.sdk.config import GovernanceConfig
+    from moralstack.sdk.wrapper import GovernedClient
+
+    _setup_db(tmp_path, monkeypatch)
+
+    # Build the mock OpenAI client (chat.completions.create() returns a stub).
+    mock_openai = MagicMock()
+    mock_openai.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content="hello world"))],
+        model="gpt-4o",
+    )
+
+    # Build the mock orchestrator with a controlled OrchestratorResult.
+    orchestrator = MagicMock()
+    result = MagicMock()
+    result.response.content = "hello world"
+    result.response.metadata.final_action = "NORMAL_COMPLETE"
+    result.response.metadata.risk_score = 0.10
+    result.response.metadata.path = "FAST_PATH"
+    result.response.metadata.domain_overlay = None
+    result.response.metadata.reason_codes = []
+    result.response.metadata.triggered_principles = []
+    # finalize_governance_audit reads several metadata accessors and tries
+    # ``.to_dict()`` on decision_explanation; using None avoids a MagicMock
+    # round-trip that produces unstable output.
+    result.response.metadata.decision_explanation = None
+    result.response.metadata.winning_decision_reason = "ok"
+    result.response.metadata.decision_reason = "ok"
+    result.response.metadata.winning_rule = "low_risk"
+    result.response.metadata.governance_posture = "NORMAL"
+    result.conversation_id = "conv-sdk-finalized-1"
+    result.turn_index = 0
+    result.parent_request_id = None
+    result.conversation_state_provided = False
+    result.conversation_state_updated = False
+    result.conversation_governance_state_out = None
+    result.path_taken = "FAST_PATH"
+    # Default MagicMock children are non-None and would leak into meta / SQLite binds.
+    result.was_cached = False
+    result.ledger_hit_applied = None
+    result.cached_from_turn = None
+    result.ledger_from_turn = None
+
+    # Capture the auto-generated request_id from the SDK so we can pre-insert
+    # the ``requests`` row that satisfies the FK on proxy_request_events. The
+    # SDK calls orchestrator.process(request, conversation_id=..., ...) with a
+    # ProcessedRequest whose request_id is a fresh UUID4; the side_effect lets
+    # us read it and pre-insert before the event is emitted.
+    captured: dict[str, Any] = {}
+
+    def _process_side_effect(request, **_kwargs):
+        captured["request_id"] = request.request_id
+        upsert_request(
+            run_id=client._run_id,
+            request_id=request.request_id,
+            prompt=request.prompt,
+            conversation_id="conv-sdk-finalized-1",
+            turn_index=0,
+        )
+        return result
+
+    orchestrator.process.side_effect = _process_side_effect
+
+    client = GovernedClient(mock_openai, orchestrator, GovernanceConfig())
+    # Override the auto-generated UUID with the deterministic conversation id
+    # we assert below.
+    client._session._conversation_id = "conv-sdk-finalized-1"
+
+    client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "Hi"}],
+    )
+    obs.flush(timeout=10.0)
+
+    assert "request_id" in captured
+
+    rs = SqliteReadStore()
+    rows = rs.get_proxy_request_events_for_conversation("conv-sdk-finalized-1")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["request_id"] == captured["request_id"]
+    assert row["final_action"] == "NORMAL_COMPLETE"
+    assert row["risk_score"] == pytest.approx(0.10)
+    # SQLite stores booleans as 0/1.
+    assert row["state_provided"] == 0  # First turn: no incoming state.
+    assert row["state_updated"] == 0  # Mock left conversation_state_updated=False.
+    assert row["final_response_length"] == len("hello world")
+    # The SDK does not produce X-MoralStack-* headers.
+    assert row["headers_json"] is None

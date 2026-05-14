@@ -4,6 +4,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- **SDK emits `proxy.request_finalized` per turn** (`moralstack/sdk/wrapper.py`):
+  `GovernedClient` now fills the `proxy_request_events` table and the
+  `logs/observability/proxy.request_finalized.jsonl` stream with the same
+  per-turn summary envelope as the HTTP proxy, closing the Step 13
+  observability gap between entry points.
+
+  - `GovernedCompletions._create_inner` captures
+    `state_in_snapshot = session.current_state` before deliberation and passes
+    it to all five `_finalize_audit` call sites (REFUSE; SAFE_COMPLETE
+    streaming/non-streaming; NORMAL_COMPLETE streaming/non-streaming).
+  - `_finalize_audit` still calls `finalize_governance_audit`, then emits the
+    canonical envelope via `emit_proxy_request_finalized` with
+    `posture_in` / `posture_out` from `posture_of()`, `state_in` / `state_out`
+    serialized via `state_summary_or_none()`, and `headers=None` because the
+    SDK does not produce `X-MoralStack-*` response headers.
+  - The event name remains `proxy.request_finalized` for backwards
+    compatibility (table, JSONL filename, read store); the docstring notes the
+    name is historic and the event is semantically transport-agnostic.
+
+### Fixed
+
+- **UI `/conversations/<cid>` shows the "Proxy finalization" block for SDK-only
+  conversations** (`moralstack/ui/templates/conversation.html`): the template
+  already gated on `{% if proxy %}`; it now receives data because the SDK
+  emits the same finalized envelope.
+
+### Tests
+
+- Four new unit tests in `tests/test_sdk_wrapper.py` (`TestRequestFinalizedEmission`):
+  NORMAL_COMPLETE, REFUSE, SAFE_COMPLETE, and two-turn state propagation.
+- One new integration test in `tests/test_conversation_observability_persistence.py`
+  (`test_sdk_emits_proxy_request_finalized_into_readstore`): round-trip via
+  `SqliteReadStore.get_proxy_request_events_for_conversation`.
+
 ## 0.5.0 — 2026-05-13
 
 ### Fixed
