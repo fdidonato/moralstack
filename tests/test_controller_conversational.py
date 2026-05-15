@@ -323,7 +323,11 @@ class TestStateOutV04Extension:
         assert extended.turn_decisions_summary[-1].final_action == "SAFE_COMPLETE"
         assert extended.turn_decisions_summary[-1].risk_score == 0.5
 
-    def test_posture_normal_by_default(self):
+    def test_posture_normal_by_default(self, monkeypatch):
+        monkeypatch.setattr(
+            "moralstack.orchestration.controller.is_overlay_sensitive",
+            lambda store, domain: False,
+        )
         orch = _build_controller_minimal()
         request = ProcessedRequest(prompt="hello")
         base_state = ConversationGovernanceState()
@@ -349,9 +353,15 @@ class TestStateOutV04Extension:
         )
         assert extended.last_governance_posture == "ESCALATED"
 
-    def test_posture_elevated_when_overlay_active(self):
+    def test_posture_elevated_when_overlay_sensitive(self, monkeypatch):
+        """Step 14.8: posture follows is_overlay_sensitive(domain), not state.active_overlay."""
+        monkeypatch.setattr(
+            "moralstack.orchestration.controller.is_overlay_sensitive",
+            lambda store, domain: domain == "healthcare",
+        )
         orch = _build_controller_minimal()
         request = ProcessedRequest(prompt="hello")
+        request.user_context.domain_overlay = "healthcare"
         base_state = ConversationGovernanceState(active_overlay="healthcare")
         extended = orch._extend_state_out_v04(
             state=base_state,

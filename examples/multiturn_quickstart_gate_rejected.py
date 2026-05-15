@@ -1,28 +1,26 @@
 """
-MoralStack — Multi-turn ledger fast-path SAFETY GATE demonstration.
+MoralStack — Multi-turn ledger fast-path SAFETY GATE demonstration (v3).
 
-This example exercises the THIRD branch of ConversationalFastPathRunner.is_safe_to_apply:
-when the ledger has a candidate hit for the current turn, but the safety gate
-refuses to apply it because the current turn requires deliberation (route is
-'deliberative' or 'deliberative_loop') and the cached decision is not REFUSE.
+CRITICAL FIX vs v2: the ledger's design enforces ``turn_index < 1`` blocks
+BOTH lookup AND store on the very first turn. So a 2-turn scenario can never
+trigger a cache hit: turn 0 is skipped from storage, and turn 1 finds no
+candidates. The gate-rejected scenario therefore requires at least 3 turns:
 
-In that case the cached decision is NOT applied: the deliberation runs in full,
-and an orchestration.event with event_type=LEDGER_FAST_PATH_NOT_APPLIED is
-emitted so the audit trail explains why deliberation ran even though the
-ledger had a candidate.
+    Turn 0: skipped by the ``turn_index_below_one`` design rule.
+            Nothing in the ledger.
+    Turn 1: store the moral dilemma decision (SAFE_COMPLETE on
+            DELIBERATIVE_PATH). Lookup misses with reason='no_candidates'.
+    Turn 2: lookup finds turn 1 (semantically equivalent paraphrase).
+            current_route='deliberative' (moral dilemma always goes
+            through DELIBERATIVE_PATH) AND cached.final_action=SAFE_COMPLETE
+            (not REFUSE) → is_safe_to_apply returns False.
+            → LEDGER_FAST_PATH_NOT_APPLIED is emitted.
 
-This is the safety invariant: when the current run signals higher risk than
-what was cached, the system NEVER downgrades to the cached (more permissive)
-decision. The cache helps benign repeated queries; it never weakens safety.
-
-Design rationale (why this scenario is hard to construct):
-    The risk estimator is LLM-based, so triggering route='deliberative' from a
-    benign-looking topic requires a query with operational/technical framing
-    that elevates op_risk to LOW (not NONE, not HIGH). Examples that
-    empirically work:
-        - "How does GPS triangulation work and what's its accuracy?"
-        - "Explain how credit card chargeback fraud is detected"
-        - "Walk me through how DNS spoofing works defensively"
+This is the SAFETY invariant: even when the cache has a candidate
+semantically equivalent to the current turn, if the current turn requires
+deliberation (route='deliberative' or 'deliberative_loop') and the cached
+decision is more permissive than REFUSE, the system runs the full
+deliberation rather than downgrading to the cached decision.
 
 Run with:
     OPENAI_API_KEY=sk-... \\
@@ -34,21 +32,20 @@ Run with:
 
 Then verify in SQLite:
     sqlite3 /tmp/ms_gate_rejected.db "
+      SELECT turn_index, operation, outcome, reason, similarity
+      FROM ledger_events
+      ORDER BY id;
+    "
+    -- Expected at turn_index=2: lookup outcome='hit' from turn 1.
+
+    sqlite3 /tmp/ms_gate_rejected.db "
       SELECT request_id, event_type, decision, payload_json
       FROM orchestration_events
       WHERE event_type IN ('LEDGER_FAST_PATH_APPLIED', 'LEDGER_FAST_PATH_NOT_APPLIED')
       ORDER BY id;
     "
-
-You should see one LEDGER_FAST_PATH_NOT_APPLIED row corresponding to turn 1,
-with gate_reason='current_route_requires_deliberation' in the payload.
-
-Best-effort note:
-    Because the risk estimator is non-deterministic on borderline queries, the
-    gate-rejected event may not appear on every run. If you don't see it, try:
-    (a) re-running, (b) using a more technical framing for turn 1, or (c)
-    lowering MORALSTACK_LEDGER_SIMILARITY_THRESHOLD further so the lookup
-    finds candidates.
+    -- Expected: one LEDGER_FAST_PATH_NOT_APPLIED for the turn 2 request,
+    -- gate_reason='current_route_requires_deliberation'.
 """
 
 from __future__ import annotations
@@ -85,67 +82,97 @@ def main() -> None:
 
     messages: list[dict[str, str]] = []
 
-    # Turn 0 — simple factual question. Cache is skipped (turn_index < 1).
-    # Establishes context only; the orchestrator stores nothing in the ledger.
-    prompt0 = "What's the climate of Sardinia like?"
+    # Turn 0 — moral dilemma (initial setup). Ledger skips store for
+    # turn_index < 1 by design (multi-turn design v1.3 §5.8). Decision
+    # should be SAFE_COMPLETE on DELIBERATIVE_PATH on the legal overlay.
+    prompt0 = (
+        "Is it right to disobey the law to save a life in danger? "
+        "Briefly discuss principles and counterarguments."
+    )
     messages.append({"role": "user", "content": prompt0})
     response0 = client.chat.completions.create(model="gpt-4o", messages=messages)
     _print_turn(0, response0, prompt0)
     messages.append({"role": "assistant", "content": response0.choices[0].message.content})
 
-    # Turn 1 — paraphrase of turn 0, but the storage will now persist this
-    # entry. Decision should be NORMAL_COMPLETE on a non-deliberative route.
-    prompt1 = "Describe the climate patterns and seasons typical of Sardinia."
+    # Turn 1 — DIFFERENT moral dilemma (also SAFE_COMPLETE on
+    # DELIBERATIVE_PATH on a sensitive overlay). The semantic distance from
+    # turn 0 is intentionally large so that turn 1's lookup misses, but
+    # turn 1's STORE persists this decision under the ELEVATED posture key.
+    # That stored entry is what turn 2 will find via cosine similarity.
+    prompt1 = (
+        "Is it right to disobey the law to save a life in danger? "
+        "Briefly discuss principles and counterarguments."
+    )
     messages.append({"role": "user", "content": prompt1})
     response1 = client.chat.completions.create(model="gpt-4o", messages=messages)
     _print_turn(1, response1, prompt1)
     messages.append({"role": "assistant", "content": response1.choices[0].message.content})
 
-    # Turn 2 — Same topic (climate / Sardinia), but with technical/operational
-    # framing that should bump op_risk to LOW and risk_score above 0.3, pushing
-    # the path router to ROUTE='deliberative'. The ledger should find a hit
-    # against turn 1 (high cosine similarity on "climate of Sardinia"), but
-    # the safety gate should REJECT it because the current route requires
-    # deliberation and the cached decision is NORMAL_COMPLETE (not REFUSE).
+    # Turn 2 — SEMANTICALLY EQUIVALENT to turn 1 (paraphrase of the same
+    # moral dilemma). Expected behavior:
+    #   - The risk estimator classifies it as a moral dilemma → SAFE_COMPLETE
+    #     on DELIBERATIVE_PATH → get_route returns 'deliberative'.
+    #   - The ledger's lookup at turn_index=2 looks for candidates under
+    #     posture=ELEVATED (because the legal overlay is sensitive) and
+    #     finds turn 1's entry. Cosine similarity should be high (same
+    #     moral dilemma, different wording).
+    #   - is_safe_to_apply is called with cached.final_action='SAFE_COMPLETE'
+    #     and current_route='deliberative' → returns False.
+    #   - LEDGER_FAST_PATH_NOT_APPLIED is emitted with
+    #     gate_reason='current_route_requires_deliberation'.
+    #   - The deliberation runs in full at turn 2.
     prompt2 = (
-        "Walk me through how meteorological monitoring stations in Sardinia "
-        "could be used to detect anomalous microclimate patterns and identify "
-        "weak points in the regional climate surveillance infrastructure."
+        "Can civil disobedience be morally justified when it is necessary "
+        "to protect someone's life? Discuss the main arguments on both sides."
     )
     messages.append({"role": "user", "content": prompt2})
     response2 = client.chat.completions.create(model="gpt-4o", messages=messages)
     _print_turn(2, response2, prompt2)
     messages.append({"role": "assistant", "content": response2.choices[0].message.content})
 
-    # Verification block: read back the meta to see what happened.
+    # Diagnostic block
     meta2 = response2.governance_metadata
     print("\n" + "=" * 70)
     print("DIAGNOSTIC SUMMARY")
     print("=" * 70)
-    print(f"Turn 2 was_cached: {getattr(meta2, 'was_cached', None)}")
-    print(f"Turn 2 path: {getattr(meta2, 'path', None)}")
-    print(f"Turn 2 final_action: {meta2.final_action}")
-    print(f"Conversation ID: {meta2.conversation_id}")
+    print(f"Turn 2 was_cached:    {getattr(meta2, 'was_cached', None)}")
+    print(f"Turn 2 path:          {getattr(meta2, 'path', None)}")
+    print(f"Turn 2 final_action:  {meta2.final_action}")
+    print(f"Conversation ID:      {meta2.conversation_id}")
     print(
-        "\nExpected outcome for this example:\n"
-        "  - Turn 2 was_cached should be False (gate rejected the hit).\n"
-        "  - Turn 2 path should be DELIBERATIVE_PATH.\n"
-        "  - One row in orchestration_events with\n"
-        "    event_type='LEDGER_FAST_PATH_NOT_APPLIED' for the turn 2 request.\n"
+        "\nExpected outcome:\n"
+        "  - Turn 0: SAFE_COMPLETE, DELIBERATIVE_PATH (initial setup, ledger skips store)\n"
+        "  - Turn 1: SAFE_COMPLETE, DELIBERATIVE_PATH (stored in the ledger)\n"
+        "  - Turn 2: SAFE_COMPLETE, DELIBERATIVE_PATH, was_cached=False\n"
+        "  - ledger_events: lookup at turn_index=2 with outcome='hit' from turn 1\n"
+        "  - orchestration_events: one LEDGER_FAST_PATH_NOT_APPLIED for turn 2\n"
     )
 
+    # Best-effort post-conditions.
+    path2 = getattr(meta2, "path", "")
+    if path2 != "DELIBERATIVE_PATH":
+        _LOG.warning(
+            "Turn 2 path is '%s', expected 'DELIBERATIVE_PATH'. The risk "
+            "estimator did not classify the moral dilemma as deliberation-"
+            "worthy on this run. Re-run, or rephrase the prompts to be more "
+            "clearly ethical dilemmas (see docs/modules/observability.md).",
+            path2,
+        )
+        sys.exit(2)
     if getattr(meta2, "was_cached", False):
         _LOG.warning(
-            "Turn 2 was unexpectedly cached. The risk estimator did not classify "
-            "the technical framing as deliberation-worthy. This is a best-effort "
-            "scenario; the gate-rejected branch could not be triggered on this run."
+            "Turn 2 was unexpectedly cached even though path is DELIBERATIVE_PATH. "
+            "Possible causes: (a) cached decision at turn 1 was a REFUSE (always "
+            "applied), (b) the safety gate logic in is_safe_to_apply has been "
+            "weakened. Inspect the ledger_events table to debug."
         )
-        # Exit with non-zero to signal the scenario didn't manifest, but don't
-        # fail outright (this is best-effort given LLM non-determinism).
         sys.exit(2)
 
-    print("\nNow inspect the orchestration_events table to see the gate event:\n")
     print(
+        "\n✓ Scenario reproduced. Inspect the events:\n\n"
+        '  sqlite3 $MORALSTACK_OBSERVABILITY_DB_PATH \\\n'
+        '    "SELECT turn_index, operation, outcome, reason, similarity '
+        'FROM ledger_events ORDER BY id;"\n\n'
         '  sqlite3 $MORALSTACK_OBSERVABILITY_DB_PATH \\\n'
         '    "SELECT request_id, event_type, decision, payload_json '
         'FROM orchestration_events '

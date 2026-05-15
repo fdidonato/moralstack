@@ -482,13 +482,25 @@ class OrchestrationController:
             final_action = getattr(metadata, "final_action", "") or ""
             risk_score = float(getattr(metadata, "risk_score", 0.0) or 0.0)
 
-        # Posture: derive from final_action; ESCALATED if REFUSE on a hard-signal path,
-        # ELEVATED if overlay-sensitive (proxy via active_overlay on the state), else NORMAL.
+        # Step 14.8: derive posture from the SAME signal the lookup uses, namely
+        # `is_overlay_sensitive(constitution_store, domain)`. Previously this
+        # branch read `state.active_overlay`, but that field is never populated
+        # by the controller (update_from_processing_result is called without
+        # `overlay=`), so the elif branch was always False and the store wrote
+        # posture="NORMAL" even for sensitive overlays — while the lookup,
+        # using _compute_governance_posture with the correct overlay_sensitive
+        # flag, wrote posture="ELEVATED". The asymmetry produced a different
+        # LedgerKey for store and lookup, making cache hits structurally
+        # impossible on any sensitive overlay (legal, medical, mental_health,
+        # journalism, financial, healthcare, emergency, cybersecurity,
+        # children, political, environment).
         posture = "NORMAL"
         if final_action == "REFUSE" and len(state.last_hard_constraints_triggered) > 0:
             posture = "ESCALATED"
-        elif state.active_overlay:
-            posture = "ELEVATED"
+        else:
+            domain = request.get_domain() if hasattr(request, "get_domain") else None
+            if is_overlay_sensitive(self.constitution_store, domain):
+                posture = "ELEVATED"
 
         # Append a TurnDecisionSummary for the current turn.
         winning_rule = ""

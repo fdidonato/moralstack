@@ -6,6 +6,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed (Step 14.8)
+
+- **Asimmetria strutturale `posture` tra store e lookup del SemanticDecisionLedger**
+  (`moralstack/orchestration/controller.py`): la formula della posture in
+  `_extend_state_out_v04` (call site del ledger.store) leggeva
+  `state.active_overlay`, ma quel campo non veniva MAI popolato dal
+  controller perché `update_from_processing_result` viene chiamato senza
+  passare `overlay=`. Risultato: lo store usava sempre `posture="NORMAL"`,
+  anche su overlay sensibili (legal, medical, mental_health, political,
+  journalism, financial, healthcare, emergency, cybersecurity, children,
+  environment), mentre il lookup usava `posture="ELEVATED"` (correttamente
+  derivato da `is_overlay_sensitive`).
+
+  Conseguenza: la `LedgerKey(contract_hash, posture, domain)` differiva
+  tra store e lookup per ogni overlay sensibile, rendendo le cache hit
+  **strutturalmente impossibili** su tutti i domini di interesse
+  safety-critical. Il bug era latente — non rilevato dai test perché lo
+  scenario `multiturn_quickstart_fastpath_hit.py` usava un dominio non
+  sensitive (vuoto o environment normalizzato a None), che produceva
+  posture "NORMAL" su entrambi i lati per coincidenza.
+
+  Fix: la formula di `_extend_state_out_v04` ora usa direttamente
+  `is_overlay_sensitive(self.constitution_store, request.get_domain())`,
+  la stessa funzione usata dal lookup side. Byte-coerente per costruzione.
+  Il campo `state.active_overlay` resta disponibile come segnale separato
+  per la UI ma non è più la fonte autoritativa della posture.
+
+### Tests (Step 14.8)
+
+- `tests/test_ledger_posture_symmetry.py`: 5 test che verificano
+  esplicitamente l'invariante store-posture == lookup-posture per tutte
+  le combinazioni di (final_action, overlay_sensitive, hard_constraints).
+  Include una regression guard che imposta `state.active_overlay='legal'`
+  ma forza `is_overlay_sensitive=False` per il domain, e verifica che la
+  posture risulti NORMAL (pre-fix sarebbe stata ELEVATED).
+
 ### Added (Step 14.7)
 
 - **Esempio dimostrabile e test E2E del branch gate-rejected del fast-path**
