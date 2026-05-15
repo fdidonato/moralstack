@@ -336,6 +336,41 @@ relevant to multi-turn observability:
 | `LEDGER_FAST_PATH_APPLIED` | fast_path | ledger_fast_path_runner | The SemanticDecisionLedger returned a hit AND the safety gate accepted it; deliberation was skipped. Payload: `from_turn`, `similarity`, `cached_action`, `forced_route`, `modules_skipped`. |
 | `LEDGER_FAST_PATH_NOT_APPLIED` | fast_path | ledger_fast_path_runner | The SemanticDecisionLedger returned a hit but the safety gate refused to apply it (typically because the current route requires deliberation and the cached decision is not REFUSE). Payload: `from_turn`, `similarity`, `cached_action`, `current_route`, `gate_reason`. |
 
+### Fast-path safety gate
+
+The SemanticDecisionLedger cache is NOT applied unconditionally on a hit. The
+``ConversationalFastPathRunner.is_safe_to_apply`` gate enforces a safety
+invariant: a cached decision is applied only when applying it would not
+weaken safety relative to the current run.
+
+**Rules:**
+
+1. **Cached REFUSE → always applied.** A cached refusal is always safe to
+   reuse: the system already decided to deny on a semantically-equivalent
+   query.
+2. **Non-REFUSE on non-deliberative current route → applied.** When the
+   current run's path router returns one of ``benign``, ``safe_complete``,
+   ``refuse``, or ``fast_path``, the current run has not requested
+   deliberation. Reusing the cached non-REFUSE decision is safe.
+3. **Non-REFUSE on deliberative current route → REJECTED.** When the current
+   run's path router returns ``deliberative`` or ``deliberative_loop``, the
+   current turn has a risk profile that triggers full deliberation. Reusing
+   the cached (less strict) decision would downgrade safety — the gate
+   refuses and the deliberation runs in full.
+
+**Observability:**
+
+- When the gate **applies** the hit, an ``orchestration.event`` with
+  ``event_type='LEDGER_FAST_PATH_APPLIED'`` is emitted.
+- When the gate **rejects** the hit, an ``orchestration.event`` with
+  ``event_type='LEDGER_FAST_PATH_NOT_APPLIED'`` is emitted, with
+  ``reason_codes=['current_route_requires_deliberation']`` and
+  ``payload.gate_reason`` indicating the rejection cause.
+
+**Demo:** ``examples/multiturn_quickstart_gate_rejected.py`` reproduces a
+gate-rejected scenario (best-effort, depends on the risk estimator
+classifying the turn as deliberation-worthy).
+
 ### UI surfaces (`moralstack-ui`)
 
 * `GET /conversations/{conversation_id}` — full timeline with per-turn

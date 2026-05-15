@@ -6,6 +6,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added (Step 14.7)
+
+- **Esempio dimostrabile e test E2E del branch gate-rejected del fast-path**
+  (`examples/multiturn_quickstart_gate_rejected.py`,
+  `tests/test_ledger_fast_path_gate_rejected_e2e.py`):
+  finora i tre branch della `is_safe_to_apply` erano coperti solo da test
+  unitari sintetici (Step 14.4). Mancava sia un esempio Python eseguibile
+  che producesse l'evento `LEDGER_FAST_PATH_NOT_APPLIED` in vita reale, sia
+  un test deterministico che verificasse l'emissione end-to-end della
+  rejection del gate.
+
+  Il nuovo esempio costruisce uno scenario a tre turni: il turno 1 viene
+  cached come `NORMAL_COMPLETE`, e il turno 2 — semanticamente vicino sul
+  topic ma con framing più tecnico-operativo — porta il path router a
+  `route='deliberative'`. Il ledger fa hit dal turno 1 ma il gate rifiuta
+  l'applicazione, emette `LEDGER_FAST_PATH_NOT_APPLIED` con
+  `gate_reason='current_route_requires_deliberation'`, e la deliberazione
+  parte in pieno.
+
+  È un esempio di safety: il cache aiuta solo quando applicarlo non
+  abbassa la garanzia di sicurezza del turno corrente.
+
+### Tests (Step 14.7)
+
+- `tests/test_ledger_fast_path_gate_rejected_e2e.py`: 3 test in 2 classi
+  che coprono (a) l'emit contract della rejection con payload completo
+  via runner reale + emitter mock, (b) la derivazione del `gate_reason`
+  per `deliberative_loop`, (c) la derivazione difensiva per route ignote.
+
+### Docs (Step 14.7)
+
+- `docs/modules/observability.md`: nuova sezione "Fast-path safety gate"
+  che documenta i tre branch della logica e gli eventi associati.
+
 ### Added (Step 14.4)
 
 - **Eventi canonici `LEDGER_FAST_PATH_APPLIED` e `LEDGER_FAST_PATH_NOT_APPLIED`**
