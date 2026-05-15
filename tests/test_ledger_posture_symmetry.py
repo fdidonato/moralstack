@@ -16,9 +16,7 @@ from unittest.mock import MagicMock
 class TestLedgerPostureSymmetry:
     """The posture used at store time must equal the posture used at lookup time."""
 
-    def _build_controller_with_constitution(
-        self, monkeypatch, *, overlay_is_sensitive: bool
-    ):
+    def _build_controller_with_constitution(self, monkeypatch, *, overlay_is_sensitive: bool):
         """
         Build a minimal controller with a mocked constitution_store that
         reports overlay_is_sensitive for any domain query.
@@ -112,9 +110,7 @@ class TestLedgerPostureSymmetry:
 
     def test_normal_case_sensitive_overlay_both_elevated(self, monkeypatch):
         """SAFE_COMPLETE on a sensitive overlay must produce ELEVATED on both sides."""
-        controller = self._build_controller_with_constitution(
-            monkeypatch, overlay_is_sensitive=True
-        )
+        controller = self._build_controller_with_constitution(monkeypatch, overlay_is_sensitive=True)
         store_posture = self._compute_store_posture(
             controller,
             final_action="SAFE_COMPLETE",
@@ -134,9 +130,7 @@ class TestLedgerPostureSymmetry:
 
     def test_normal_case_non_sensitive_both_normal(self, monkeypatch):
         """NORMAL_COMPLETE without sensitive overlay produces NORMAL on both sides."""
-        controller = self._build_controller_with_constitution(
-            monkeypatch, overlay_is_sensitive=False
-        )
+        controller = self._build_controller_with_constitution(monkeypatch, overlay_is_sensitive=False)
         store_posture = self._compute_store_posture(
             controller,
             final_action="NORMAL_COMPLETE",
@@ -153,9 +147,7 @@ class TestLedgerPostureSymmetry:
 
     def test_refuse_with_hard_constraint_both_escalated(self, monkeypatch):
         """REFUSE on a hard-signal path produces ESCALATED on both sides."""
-        controller = self._build_controller_with_constitution(
-            monkeypatch, overlay_is_sensitive=False
-        )
+        controller = self._build_controller_with_constitution(monkeypatch, overlay_is_sensitive=False)
         store_posture = self._compute_store_posture(
             controller,
             final_action="REFUSE",
@@ -177,9 +169,7 @@ class TestLedgerPostureSymmetry:
         sensitive overlay should produce ELEVATED, not ESCALATED. Both formulae
         must agree.
         """
-        controller = self._build_controller_with_constitution(
-            monkeypatch, overlay_is_sensitive=True
-        )
+        controller = self._build_controller_with_constitution(monkeypatch, overlay_is_sensitive=True)
         store_posture = self._compute_store_posture(
             controller,
             final_action="REFUSE",

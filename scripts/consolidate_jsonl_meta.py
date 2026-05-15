@@ -66,9 +66,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Pretty-print the output JSON with 2-space indent (default: compact).",
     )
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="Verbose logging."
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging.")
     return parser.parse_args(argv)
 
 

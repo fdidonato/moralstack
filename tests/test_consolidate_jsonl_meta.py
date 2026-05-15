@@ -11,8 +11,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 
 def _import_module():
     """Load the script as a module via importlib."""
@@ -151,13 +149,15 @@ class TestConsolidateJsonlMeta:
         path = tmp_path / "input.jsonl"
         path.write_text(
             "this is not json\n"
-            + json.dumps({
-                "event_type": "request.meta_updated",
-                "run_id": "r1",
-                "request_id": "req1",
-                "created_at": "2026-05-15T10:00:00",
-                "payload": {"meta": {"x": 1}},
-            })
+            + json.dumps(
+                {
+                    "event_type": "request.meta_updated",
+                    "run_id": "r1",
+                    "request_id": "req1",
+                    "created_at": "2026-05-15T10:00:00",
+                    "payload": {"meta": {"x": 1}},
+                }
+            )
             + "\n",
             encoding="utf-8",
         )
@@ -189,9 +189,7 @@ class TestConsolidateJsonlMeta:
                 },
             ],
         )
-        exit_code = mod.main(
-            ["--input", str(input_path), "--output", str(output_path), "--pretty"]
-        )
+        exit_code = mod.main(["--input", str(input_path), "--output", str(output_path), "--pretty"])
         assert exit_code == 0
         assert output_path.exists()
         loaded = json.loads(output_path.read_text(encoding="utf-8"))
