@@ -681,9 +681,7 @@ class TestRequestFinalizedEmission:
     return a known meta dict so we can assert downstream field propagation.
     """
 
-    def test_emit_proxy_request_finalized_called_normal_complete(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_emit_proxy_request_finalized_called_normal_complete(self, monkeypatch: pytest.MonkeyPatch):
         calls: list[dict[str, Any]] = []
 
         def _capture(**kwargs: Any) -> None:
@@ -738,9 +736,7 @@ class TestRequestFinalizedEmission:
         assert payload["was_cached"] is False
         assert payload["cached_from_turn"] is None
 
-    def test_emit_proxy_request_finalized_called_refuse(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_emit_proxy_request_finalized_called_refuse(self, monkeypatch: pytest.MonkeyPatch):
         """REFUSE path must also emit the canonical envelope (no OpenAI call)."""
         calls: list[dict[str, Any]] = []
 
@@ -769,9 +765,7 @@ class TestRequestFinalizedEmission:
         # refusal text as final_response_text, so length matches that.
         assert calls[0]["final_response_length"] == len("OK")
 
-    def test_emit_proxy_request_finalized_called_safe_complete(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_emit_proxy_request_finalized_called_safe_complete(self, monkeypatch: pytest.MonkeyPatch):
         """SAFE_COMPLETE must emit one envelope with the upstream response length."""
         calls: list[dict[str, Any]] = []
 

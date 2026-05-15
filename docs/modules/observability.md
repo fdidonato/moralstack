@@ -321,6 +321,21 @@ rs.get_conversation_overview(conversation_id)
 `session_store_hits`, `session_store_misses`, `any_turn_cached`,
 `cached_turn_count`.
 
+### Orchestration event sub-types
+
+Each ``orchestration.event`` envelope carries an internal ``event_type`` field
+(distinct from the envelope-level ``event_type``) that identifies the kind of
+orchestration step. The full taxonomy is in
+``moralstack/orchestration/orchestration_event_taxonomy.py``. Notable types
+relevant to multi-turn observability:
+
+| Sub-type | Stage | Component | Meaning |
+|---|---|---|---|
+| `CONVERSATION_CONTEXT_ATTACHED` | orchestration | conversation | Conversation context was attached to the request (session id, turn index, parent request). |
+| `CONVERSATION_STATE_UPDATED` | orchestration | conversation | The ConversationGovernanceState was advanced after this turn. |
+| `LEDGER_FAST_PATH_APPLIED` | fast_path | ledger_fast_path_runner | The SemanticDecisionLedger returned a hit AND the safety gate accepted it; deliberation was skipped. Payload: `from_turn`, `similarity`, `cached_action`, `forced_route`, `modules_skipped`. |
+| `LEDGER_FAST_PATH_NOT_APPLIED` | fast_path | ledger_fast_path_runner | The SemanticDecisionLedger returned a hit but the safety gate refused to apply it (typically because the current route requires deliberation and the cached decision is not REFUSE). Payload: `from_turn`, `similarity`, `cached_action`, `current_route`, `gate_reason`. |
+
 ### UI surfaces (`moralstack-ui`)
 
 * `GET /conversations/{conversation_id}` — full timeline with per-turn

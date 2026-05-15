@@ -213,9 +213,7 @@ def _handle_chat_completion_sync(
     the ASGI event loop.
     """
     hdr = (moralstack_conversation_id_header or "").strip()
-    conversation_id = hdr or _resolve_conversation_id_from_body_and_correlation(
-        messages, extra_body, correlation_store
-    )
+    conversation_id = hdr or _resolve_conversation_id_from_body_and_correlation(messages, extra_body, correlation_store)
 
     request_id_for_audit: str = ""
     final_response_text: str = ""

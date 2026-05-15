@@ -45,6 +45,7 @@ from moralstack.reports.runtime_decisions import (
 )
 from moralstack.utils.env_loader import _purge_empty_env_vars
 
+
 class _ReadStoreProxy:
     """
     Resolve SqliteReadStore accessors at call time via get_obs().

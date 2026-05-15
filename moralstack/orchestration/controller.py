@@ -46,6 +46,8 @@ from moralstack.orchestration.ledger import CachedDecision, LedgerResult, Semant
 from moralstack.orchestration.orchestration_event_taxonomy import (
     CONVERSATION_CONTEXT_ATTACHED,
     CONVERSATION_STATE_UPDATED,
+    LEDGER_FAST_PATH_APPLIED,
+    LEDGER_FAST_PATH_NOT_APPLIED,
     SPECULATIVE_STARTED,
 )
 from moralstack.orchestration.overlay_policy import (
@@ -1594,6 +1596,11 @@ class OrchestrationController:
                     self._conversation_process_ctx["_ledger_intent_clarity"] = _intent_clarity
                 # --- v0.4 Step 7: apply cached decision when hit and safe to do so ---
                 if _cached_lookup is not None and _cached_lookup.is_hit:
+                    cached_action = (
+                        _cached_lookup.cached_decision.final_action
+                        if _cached_lookup.cached_decision
+                        else "unknown"
+                    )
                     if self._fast_path_runner.is_safe_to_apply(
                         ledger_result=_cached_lookup,
                         current_decision=decision,
@@ -1611,6 +1618,38 @@ class OrchestrationController:
                         # Mark the conversation context so _extend_state_out_v04 can flag was_cached=True.
                         if isinstance(self._conversation_process_ctx, dict):
                             self._conversation_process_ctx["_ledger_hit_applied"] = True
+                        # Step 14.4 — canonical orchestration.event emission so the
+                        # cache application is visible in the UI metro map and in
+                        # offline log consumers. The orch_debug_log below is kept
+                        # for low-level debugging through debug_events.
+                        try:
+                            self._events.emit_orchestration_event(
+                                run_id=run_id,
+                                request_id=request_id,
+                                cycle=0,
+                                stage="fast_path",
+                                component="ledger_fast_path_runner",
+                                event_type=LEDGER_FAST_PATH_APPLIED,
+                                decision="applied",
+                                status="ok",
+                                sequence=0,
+                                reason_codes=["cached_decision_reused"],
+                                payload={
+                                    "from_turn": _cached_lookup.from_turn,
+                                    "similarity": _cached_lookup.similarity,
+                                    "cached_action": cached_action,
+                                    "forced_route": route,
+                                    "modules_skipped": [
+                                        "critic",
+                                        "simulator",
+                                        "perspectives",
+                                        "hindsight",
+                                    ],
+                                },
+                            )
+                        except Exception:
+                            # Observability is best-effort; never break the pipeline.
+                            pass
                         orch_debug_log(
                             "orchestrator.py:process",
                             "ledger cache hit APPLIED — deliberation will be skipped",
@@ -1624,15 +1663,49 @@ class OrchestrationController:
                             request_id=request_id,
                         )
                     else:
+                        # Step 14.4 — emit the gate-rejected variant so the audit
+                        # trail explains why deliberation ran even though the
+                        # ledger had a candidate hit. ``gate_reason`` is derived
+                        # from the documented contract of is_safe_to_apply:
+                        # - cached REFUSE is always applied (we never reach
+                        #   this branch when cached_action == "REFUSE");
+                        # - non-deliberative routes are always applied
+                        #   (we never reach this branch in that case);
+                        # - otherwise the current run is in deliberation and
+                        #   the cached non-REFUSE decision is rejected.
+                        gate_reason = (
+                            "current_route_requires_deliberation"
+                            if route in ("deliberative", "deliberative_loop")
+                            else "unknown_gate_rejection"
+                        )
+                        try:
+                            self._events.emit_orchestration_event(
+                                run_id=run_id,
+                                request_id=request_id,
+                                cycle=0,
+                                stage="fast_path",
+                                component="ledger_fast_path_runner",
+                                event_type=LEDGER_FAST_PATH_NOT_APPLIED,
+                                decision="rejected",
+                                status="ok",
+                                sequence=0,
+                                reason_codes=[gate_reason],
+                                payload={
+                                    "from_turn": _cached_lookup.from_turn,
+                                    "similarity": _cached_lookup.similarity,
+                                    "cached_action": cached_action,
+                                    "current_action": decision.final_action,
+                                    "current_route": route,
+                                    "gate_reason": gate_reason,
+                                },
+                            )
+                        except Exception:
+                            pass
                         orch_debug_log(
                             "orchestrator.py:process",
                             "ledger cache hit FOUND but safety gate prevents application",
                             {
-                                "cached_action": (
-                                    _cached_lookup.cached_decision.final_action
-                                    if _cached_lookup.cached_decision
-                                    else "unknown"
-                                ),
+                                "cached_action": cached_action,
                                 "current_action": decision.final_action,
                                 "current_route": route,
                             },

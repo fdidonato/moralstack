@@ -480,6 +480,7 @@ class TestMultiTurnConversation:
         conv_id_t3 = r3.headers.get("X-Moralstack-Conversation-Id")
         assert conv_id_t3 == conv_id_t1
         assert mock_openai.chat.completions.create.call_count == 3
+
     def test_separate_conversations_independent(self, client_factory):
         """Two conversations with different conversation_ids do not share state."""
         client, _, mock_orchestrator = client_factory("NORMAL_COMPLETE")

@@ -466,9 +466,7 @@ class GovernedCompletions:
             #    SDK does not produce X-MoralStack-* headers).
             state_out = getattr(result, "conversation_governance_state_out", None)
             state_provided = state_in is not None
-            state_updated = bool(
-                getattr(result, "conversation_state_updated", False)
-            )
+            state_updated = bool(getattr(result, "conversation_state_updated", False))
             try:
                 response_len: int | None = len(final_response_text or "")
             except Exception:
@@ -480,30 +478,16 @@ class GovernedCompletions:
                     request_id=request_id,
                     conversation_id=conversation_id,
                     turn_index=turn_index,
-                    final_action=(
-                        meta.get("final_action") if isinstance(meta, dict) else None
-                    ),
-                    risk_score=(
-                        meta.get("risk_score") if isinstance(meta, dict) else None
-                    ),
-                    path=(
-                        (meta.get("path_taken") or meta.get("path"))
-                        if isinstance(meta, dict)
-                        else None
-                    ),
+                    final_action=(meta.get("final_action") if isinstance(meta, dict) else None),
+                    risk_score=(meta.get("risk_score") if isinstance(meta, dict) else None),
+                    path=((meta.get("path_taken") or meta.get("path")) if isinstance(meta, dict) else None),
                     domain=domain,
                     posture_in=posture_of(state_in),
                     posture_out=posture_of(state_out),
                     state_provided=state_provided,
                     state_updated=state_updated,
-                    was_cached=(
-                        meta.get("was_cached") if isinstance(meta, dict) else None
-                    ),
-                    cached_from_turn=(
-                        meta.get("cached_from_turn")
-                        if isinstance(meta, dict)
-                        else None
-                    ),
+                    was_cached=(meta.get("was_cached") if isinstance(meta, dict) else None),
+                    cached_from_turn=(meta.get("cached_from_turn") if isinstance(meta, dict) else None),
                     final_response_length=response_len,
                     # The SDK does not produce X-MoralStack-* response headers
                     # (those belong to the HTTP proxy). Use None so the JSONL

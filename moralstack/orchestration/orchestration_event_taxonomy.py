@@ -40,6 +40,23 @@ CONVERGENCE_EVALUATED = "CONVERGENCE_EVALUATED"
 EARLY_CONVERGENCE_ACCEPTED = "EARLY_CONVERGENCE_ACCEPTED"
 EARLY_CONVERGENCE_REJECTED = "EARLY_CONVERGENCE_REJECTED"
 
+# Ledger fast-path (Step 14.4)
+LEDGER_FAST_PATH_APPLIED = "LEDGER_FAST_PATH_APPLIED"
+"""
+Emitted when a SemanticDecisionLedger cache hit is applied: the cached
+decision overrides the current deliberation, and critic / simulator /
+perspectives / hindsight are NOT executed for this turn. Payload includes
+``from_turn``, ``similarity``, ``cached_action``, ``modules_skipped``.
+"""
+
+LEDGER_FAST_PATH_NOT_APPLIED = "LEDGER_FAST_PATH_NOT_APPLIED"
+"""
+Emitted when a SemanticDecisionLedger cache hit is FOUND but the safety gate
+(``ConversationalFastPathRunner.is_safe_to_apply``) refused to apply it. The
+turn proceeds with full deliberation. Payload includes ``from_turn``,
+``similarity``, ``cached_action``, ``current_route``, ``gate_reason``.
+"""
+
 # Conversation (multi-turn foundation; emit only when context is explicitly provided)
 CONVERSATION_CONTEXT_ATTACHED = "CONVERSATION_CONTEXT_ATTACHED"
 CONVERSATION_STATE_UPDATED = "CONVERSATION_STATE_UPDATED"
@@ -70,5 +87,7 @@ ALL_EVENT_TYPES: frozenset[str] = frozenset(
         EARLY_CONVERGENCE_REJECTED,
         CONVERSATION_CONTEXT_ATTACHED,
         CONVERSATION_STATE_UPDATED,
+        LEDGER_FAST_PATH_APPLIED,
+        LEDGER_FAST_PATH_NOT_APPLIED,
     }
 )

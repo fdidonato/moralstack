@@ -58,11 +58,7 @@ def _resolve_ledger_max_entries(config: GovernanceConfig) -> int:
 
 
 def _resolve_ledger_embedding_model(config: GovernanceConfig) -> str | None:
-    raw = (
-        config.ledger_embedding_model
-        or os.getenv("MORALSTACK_LEDGER_EMBEDDING_MODEL")
-        or None
-    )
+    raw = config.ledger_embedding_model or os.getenv("MORALSTACK_LEDGER_EMBEDDING_MODEL") or None
     return raw.strip() if raw else None
 
 
@@ -86,9 +82,7 @@ def _build_ledger(config: GovernanceConfig, api_key: str, base_url: str | None) 
         from moralstack.orchestration.ledger import SemanticDecisionLedger
         from moralstack.orchestration.ledger_storage import InMemoryLedgerStorage
     except Exception as e:
-        logger.warning(
-            "MoralStack SDK: ledger imports failed (%s); proceeding without fast-path", e
-        )
+        logger.warning("MoralStack SDK: ledger imports failed (%s); proceeding without fast-path", e)
         return None
 
     try:
@@ -112,9 +106,7 @@ def _build_ledger(config: GovernanceConfig, api_key: str, base_url: str | None) 
         )
         return ledger
     except Exception as e:
-        logger.warning(
-            "MoralStack SDK: ledger construction failed (%s); proceeding without fast-path", e
-        )
+        logger.warning("MoralStack SDK: ledger construction failed (%s); proceeding without fast-path", e)
         return None
 
 

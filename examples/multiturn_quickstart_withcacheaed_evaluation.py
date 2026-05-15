@@ -86,12 +86,11 @@ def main() -> None:
     for idx, prompt in enumerate(prompts):
         messages.append({"role": "user", "content": prompt})
         response = client.chat.completions.create(
-            model="gpt-4o", messages=messages,
+            model="gpt-4o",
+            messages=messages,
         )
         _print_turn(idx, response, prompt)
-        messages.append(
-            {"role": "assistant", "content": response.choices[0].message.content}
-        )
+        messages.append({"role": "assistant", "content": response.choices[0].message.content})
 
     print(f"\nConversation ID: {response.governance_metadata.conversation_id}")
     print(

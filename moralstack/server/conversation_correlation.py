@@ -48,13 +48,9 @@ def _normalize_content(content: Any) -> str:
             if btype == "text":
                 parts.append(_truncate(str(block.get("text") or "")))
             else:
-                parts.append(
-                    json.dumps(block, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-                )
+                parts.append(json.dumps(block, sort_keys=True, ensure_ascii=False, separators=(",", ":")))
         return _truncate("".join(parts))
-    return _truncate(
-        json.dumps(content, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-    )
+    return _truncate(json.dumps(content, sort_keys=True, ensure_ascii=False, separators=(",", ":")))
 
 
 def _canonical_message_record(msg: dict[str, Any]) -> dict[str, str]:

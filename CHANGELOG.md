@@ -6,6 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added (Step 14.4)
+
+- **Eventi canonici `LEDGER_FAST_PATH_APPLIED` e `LEDGER_FAST_PATH_NOT_APPLIED`**
+  (`moralstack/orchestration/controller.py`,
+  `moralstack/orchestration/orchestration_event_taxonomy.py`):
+  quando il SemanticDecisionLedger fa hit e la safety gate accetta di
+  applicare la decisione cached, il controller emette un evento esplicito
+  nel canale `orchestration.event`. Specularmente, quando il gate rifiuta
+  l'applicazione, emette `LEDGER_FAST_PATH_NOT_APPLIED` con il motivo del
+  rifiuto.
+
+  Risultato: il salto della deliberazione è ora visibile sia nel canale
+  ufficiale degli eventi di orchestrazione (tabella `orchestration_events`,
+  file `orchestration.event.jsonl`) sia automaticamente nella metro map e
+  nella journey list della UI, senza richiedere di joinare manualmente
+  `ledger_events` con `conversation_states`.
+
+  Il `orch_debug_log` interno esistente (`H-ledger-hit-applied`,
+  `H-ledger-hit-skipped`) è mantenuto per il low-level debugging.
+
+### Tests (Step 14.4)
+
+- `tests/test_ledger_fast_path_events.py`: 6 test in 3 classi che verificano
+  la registrazione delle costanti in `ALL_EVENT_TYPES`, il contract del
+  capturing emitter, e ogni branch della safety gate
+  `ConversationalFastPathRunner.is_safe_to_apply`.
+
 ### Fixed (Step 14.2)
 
 - **SemanticDecisionLedger wired into production SDK bootstrap**

@@ -76,9 +76,7 @@ def build_request_meta_from_result(result: Any) -> dict[str, Any]:
                 else:
                     meta["decision_explanation"] = str(explanation)
             meta["domain_overlay"] = getattr(metadata, "domain_overlay", None)
-            meta["governance_posture"] = getattr(metadata, "governance_posture", None) or getattr(
-                metadata, "posture", None
-            )
+            meta["governance_posture"] = getattr(metadata, "governance_posture", None) or getattr(metadata, "posture", None)
         # Conversation linkage
         meta["conversation_id"] = getattr(result, "conversation_id", None)
         meta["turn_index"] = getattr(result, "turn_index", None)
@@ -110,9 +108,10 @@ def state_summary_or_none(state: Any) -> dict[str, Any] | None:
     if not callable(summary_fn):
         return None
     try:
-        return summary_fn()
+        summary = summary_fn()
     except Exception:
         return None
+    return summary if isinstance(summary, dict) else None
 
 
 def posture_of(state: Any) -> str | None:
