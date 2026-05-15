@@ -16,10 +16,17 @@ from unittest.mock import MagicMock
 class TestLedgerPostureSymmetry:
     """The posture used at store time must equal the posture used at lookup time."""
 
-    def _build_controller_with_constitution(self, *, overlay_is_sensitive: bool):
+    def _build_controller_with_constitution(
+        self, monkeypatch, *, overlay_is_sensitive: bool
+    ):
         """
         Build a minimal controller with a mocked constitution_store that
         reports overlay_is_sensitive for any domain query.
+
+        Uses monkeypatch (pytest fixture) so the patches are auto-restored
+        at test teardown — without this, the direct module-attribute
+        assignment leaks across tests and breaks test_orchestrator.py and
+        other tests that depend on the real is_overlay_sensitive function.
         """
         from moralstack.orchestration import controller as controller_module
         from moralstack.orchestration import overlay_policy
@@ -29,8 +36,8 @@ class TestLedgerPostureSymmetry:
         def _sensitive(store, domain):
             return overlay_is_sensitive
 
-        overlay_policy.is_overlay_sensitive = _sensitive
-        controller_module.is_overlay_sensitive = _sensitive
+        monkeypatch.setattr(overlay_policy, "is_overlay_sensitive", _sensitive)
+        monkeypatch.setattr(controller_module, "is_overlay_sensitive", _sensitive)
 
         return OrchestrationController(
             config=OrchestratorConfig(),
@@ -103,9 +110,11 @@ class TestLedgerPostureSymmetry:
             hard_signal_refuse=hard_signal_refuse,
         )
 
-    def test_normal_case_sensitive_overlay_both_elevated(self):
+    def test_normal_case_sensitive_overlay_both_elevated(self, monkeypatch):
         """SAFE_COMPLETE on a sensitive overlay must produce ELEVATED on both sides."""
-        controller = self._build_controller_with_constitution(overlay_is_sensitive=True)
+        controller = self._build_controller_with_constitution(
+            monkeypatch, overlay_is_sensitive=True
+        )
         store_posture = self._compute_store_posture(
             controller,
             final_action="SAFE_COMPLETE",
@@ -123,9 +132,11 @@ class TestLedgerPostureSymmetry:
             f"Before the fix, store would have been 'NORMAL' here."
         )
 
-    def test_normal_case_non_sensitive_both_normal(self):
+    def test_normal_case_non_sensitive_both_normal(self, monkeypatch):
         """NORMAL_COMPLETE without sensitive overlay produces NORMAL on both sides."""
-        controller = self._build_controller_with_constitution(overlay_is_sensitive=False)
+        controller = self._build_controller_with_constitution(
+            monkeypatch, overlay_is_sensitive=False
+        )
         store_posture = self._compute_store_posture(
             controller,
             final_action="NORMAL_COMPLETE",
@@ -140,9 +151,11 @@ class TestLedgerPostureSymmetry:
         )
         assert store_posture == lookup_posture == "NORMAL"
 
-    def test_refuse_with_hard_constraint_both_escalated(self):
+    def test_refuse_with_hard_constraint_both_escalated(self, monkeypatch):
         """REFUSE on a hard-signal path produces ESCALATED on both sides."""
-        controller = self._build_controller_with_constitution(overlay_is_sensitive=False)
+        controller = self._build_controller_with_constitution(
+            monkeypatch, overlay_is_sensitive=False
+        )
         store_posture = self._compute_store_posture(
             controller,
             final_action="REFUSE",
@@ -157,14 +170,16 @@ class TestLedgerPostureSymmetry:
         )
         assert store_posture == lookup_posture == "ESCALATED"
 
-    def test_sensitive_overlay_with_refuse_but_no_hard_constraint(self):
+    def test_sensitive_overlay_with_refuse_but_no_hard_constraint(self, monkeypatch):
         """REFUSE on sensitive overlay without hard constraints → ELEVATED both sides.
 
         This is a subtle case: a soft refusal (no hard signal triggered) on a
         sensitive overlay should produce ELEVATED, not ESCALATED. Both formulae
         must agree.
         """
-        controller = self._build_controller_with_constitution(overlay_is_sensitive=True)
+        controller = self._build_controller_with_constitution(
+            monkeypatch, overlay_is_sensitive=True
+        )
         store_posture = self._compute_store_posture(
             controller,
             final_action="REFUSE",
