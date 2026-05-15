@@ -22,8 +22,6 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
 
 class _CapturingEventEmitter:
     """Minimal event emitter that records every emit_orchestration_event call."""
@@ -134,9 +132,7 @@ class TestLedgerFastPathNotAppliedE2E:
         def _force_deliberative(decision, risk_estimation, risk_score, config, op_risk):
             # Delegate to the original to compute borderline_refuse and
             # risk_policy_action correctly, then override the route.
-            _, borderline, action = original_get_route(
-                decision, risk_estimation, risk_score, config, op_risk
-            )
+            _, borderline, action = original_get_route(decision, risk_estimation, risk_score, config, op_risk)
             return ("deliberative", borderline, action)
 
         monkeypatch.setattr(path_router, "get_route", _force_deliberative)
@@ -191,15 +187,11 @@ class TestLedgerFastPathNotAppliedE2E:
 
         # Assertion 1: exactly one NOT_APPLIED event was emitted.
         not_applied = _events_by_type(emitter, "LEDGER_FAST_PATH_NOT_APPLIED")
-        assert len(not_applied) == 1, (
-            f"Expected exactly 1 LEDGER_FAST_PATH_NOT_APPLIED event, got {len(not_applied)}"
-        )
+        assert len(not_applied) == 1, f"Expected exactly 1 LEDGER_FAST_PATH_NOT_APPLIED event, got {len(not_applied)}"
 
         # Assertion 2: NO APPLIED event was emitted.
         applied = _events_by_type(emitter, LEDGER_FAST_PATH_APPLIED)
-        assert len(applied) == 0, (
-            f"Expected 0 LEDGER_FAST_PATH_APPLIED events, got {len(applied)}"
-        )
+        assert len(applied) == 0, f"Expected 0 LEDGER_FAST_PATH_APPLIED events, got {len(applied)}"
 
         # Assertion 3: payload contains the expected gate_reason.
         ev = not_applied[0]

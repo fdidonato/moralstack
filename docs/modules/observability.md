@@ -418,3 +418,85 @@ Requires `MORALSTACK_OBSERVABILITY_DB_PATH` (or the legacy
 |---|---|
 | `logs/decision_trace.jsonl` | `logs/observability/decision.trace.jsonl` |
 | `.debug/debug.log` | `logs/observability/debug.event.jsonl` |
+
+## JSONL semantics: atomic vs merge vs upsert
+
+The JSONL stream is **append-only**: every envelope produces one new line in
+the matching `<event_type>.jsonl` file. The SQLite sink, in contrast, applies
+different write strategies depending on the `event_type`. Consumers that read
+the JSONL offline must understand which event types are deltas and which are
+self-contained snapshots, otherwise they will misinterpret the data.
+
+### Three categories of event semantics
+
+| Category | Event types | JSONL contains | SQLite write strategy |
+|---|---|---|---|
+| **Atomic insert** | `llm.call`, `orchestration.event`, `decision.trace`, `debug.event`, `ledger.lookup`, `ledger.store`, `session_store.get`, `session_store.put`, `proxy.request_finalized` | one independent record per envelope; never merged with previous entries | one new row per envelope (`INSERT INTO ...`) |
+| **Merge-update** | `request.meta_updated`, `request.domain_updated`, `request.response_updated` | a **delta**: the envelope's `payload.meta` (or `domain`, or `final_response`) is a partial update, not the final state | the existing row is updated with a JSON merge (`update_request_meta(merge=True)`); the SQLite column always holds the consolidated state |
+| **Upsert** | `request.upserted`, `conversation.state_updated`, `run.started`, `run.ended` | a complete snapshot of the entity at envelope time; later snapshots override earlier ones | `INSERT OR REPLACE` keyed by `(run_id, request_id)` or equivalent |
+
+### Concrete consequence for offline consumers
+
+If you read `logs/observability/request.meta_updated.jsonl` with a script that
+takes the last line for a given `(run_id, request_id)` pair, you will see **only
+the last delta** — not the consolidated `meta_json` that SQLite holds. To
+reconstruct the consolidated state from the JSONL alone, you must:
+
+1. read **all** envelopes for the target `(run_id, request_id)`,
+2. apply them in `created_at` order,
+3. merge each `payload.meta` into an accumulator (last-write-wins per key).
+
+Atomic-insert events do not have this problem: every envelope is already
+self-contained.
+
+Upsert events follow the same accumulation pattern as merge-update, but the
+merge unit is the entire payload (last snapshot wins) rather than a per-key
+JSON merge.
+
+### Worked example: `request.meta_updated`
+
+A single request goes through five state transitions, producing five envelopes
+in the JSONL:
+
+```jsonl
+{"event_type":"request.meta_updated","run_id":"r1","request_id":"req1","payload":{"meta":{"final_action":"NORMAL_COMPLETE","path":"FAST_PATH"}}}
+{"event_type":"request.meta_updated","run_id":"r1","request_id":"req1","payload":{"meta":{"risk_score":0.10}}}
+{"event_type":"request.meta_updated","run_id":"r1","request_id":"req1","payload":{"meta":{"intent_clarity":"HIGH"}}}
+{"event_type":"request.meta_updated","run_id":"r1","request_id":"req1","payload":{"meta":{"was_cached":true,"cached_from_turn":1}}}
+{"event_type":"request.meta_updated","run_id":"r1","request_id":"req1","payload":{"meta":{"governance_posture":"ELEVATED"}}}
+```
+
+The SQLite row for that request, after the writer has processed all five:
+
+```json
+{
+  "final_action": "NORMAL_COMPLETE",
+  "path": "FAST_PATH",
+  "risk_score": 0.10,
+  "intent_clarity": "HIGH",
+  "was_cached": true,
+  "cached_from_turn": 1,
+  "governance_posture": "ELEVATED"
+}
+```
+
+That consolidated form is what `obs.read_store.get_request(run_id, request_id)`
+returns and what `moralstack-ui` displays. The five JSONL lines, taken
+individually, never contain the full picture.
+
+### Helper script
+
+`scripts/consolidate_jsonl_meta.py` performs the JSONL→consolidated merge
+offline. Use it when you need the SQLite-equivalent state but only have the
+JSONL files (for example: when copying logs between machines, when auditing
+after the DB has been rotated, or when feeding offline analytics that work
+with self-contained JSON).
+
+```bash
+python scripts/consolidate_jsonl_meta.py \
+    --input logs/observability/request.meta_updated.jsonl \
+    --output requests_meta_consolidated.json
+```
+
+The output is a JSON file mapping `(run_id, request_id)` → consolidated meta
+dict, with the same semantics as `requests.meta_json` in SQLite.

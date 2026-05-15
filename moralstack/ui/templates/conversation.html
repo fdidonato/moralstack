@@ -76,6 +76,65 @@
     </div>
 </div>
 
+{# Step 14.6 — Conversation strip: horizontal visual summary of turns #}
+{% if timeline.requests %}
+<h2>Conversation strip</h2>
+<div class="card">
+    <p class="muted small">
+        Each rectangle is one turn. Height encodes risk score (taller = higher risk).
+        Colour encodes final_action (green = NORMAL_COMPLETE, yellow = SAFE_COMPLETE,
+        red = REFUSE). Orange border = ESCALATED posture. ⚡ = cached from a previous turn.
+        Hover for details, click to open the request.
+    </p>
+    <div class="conv-strip-container">
+        <div class="conv-strip">
+            {% for r in timeline.requests %}
+                {% set meta = r.meta_json__parsed or {} %}
+                {% set state = r.state or {} %}
+                {% set summary = state.get('state_summary_json__parsed') or {} %}
+                {% set risk_score = meta.get('risk_score') %}
+                {% set posture = state.get('posture') or summary.get('last_governance_posture') or meta.get('governance_posture') %}
+                {% set action = meta.get('final_action') or 'unknown' %}
+                {% set was_cached = state.get('was_cached') or meta.get('was_cached') %}
+                {% set cached_from = state.get('cached_from_turn') %}
+                {% set bar_height = (24 + ((risk_score or 0.0) * 56)) | int %}
+                {% set action_class = 'conv-strip-cell-' + (action | lower) %}
+                {% set escalated = (posture == 'ESCALATED') %}
+                <div
+                    class="conv-strip-cell {{ action_class }}{% if escalated %} conv-strip-cell-escalated{% endif %}"
+                    style="height: {{ bar_height }}px;"
+                    data-turn="{{ r.turn_index }}"
+                    {% if cached_from is not none %}data-cached-from="{{ cached_from }}"{% endif %}
+                    title="Turn {{ r.turn_index }}: {{ action }}{% if risk_score is not none %} (risk={{ '%.3f' | format(risk_score) }}){% endif %}{% if posture %} [{{ posture }}]{% endif %}{% if meta.get('domain_overlay') %} domain={{ meta.get('domain_overlay') }}{% endif %}{% if was_cached %} — cached from T{{ cached_from }}{% endif %}"
+                >
+                    <span class="conv-strip-label">T{{ r.turn_index }}</span>
+                    {% if was_cached %}
+                        <span class="conv-strip-cache-icon" aria-label="cached">⚡</span>
+                    {% endif %}
+                    {% if r.run_id and r.request_id %}
+                        <a class="conv-strip-link" href="/runs/{{ r.run_id }}/requests/{{ r.request_id }}" aria-label="Open turn {{ r.turn_index }}"></a>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+        <div class="conv-strip-arrows">
+            {% for r in timeline.requests %}
+                {% set state = r.state or {} %}
+                {% set cached_from = state.get('cached_from_turn') %}
+                {% if cached_from is not none and r.turn_index is not none %}
+                    <span class="conv-strip-arrow"
+                          data-from-turn="{{ cached_from }}"
+                          data-to-turn="{{ r.turn_index }}"
+                          title="Turn {{ r.turn_index }} reused cached decision from turn {{ cached_from }}">
+                        ←
+                    </span>
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <h2>Posture timeline</h2>
 {% if timeline.requests %}
 <div class="card">

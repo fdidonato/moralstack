@@ -6,6 +6,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added (Step 14.5)
+
+- **Documentazione semantica del canale JSONL e script di consolidamento**
+  (`docs/modules/observability.md`, `scripts/consolidate_jsonl_meta.py`):
+  i 16 event_type canonici si dividono in tre categorie semantiche
+  rispetto alla persistenza — atomic insert (una riga per envelope,
+  identico tra JSONL e SQLite), merge-update (JSONL contiene delta
+  successivi, SQLite consolida via JSON merge), upsert (JSONL contiene
+  snapshot successivi, SQLite fa INSERT OR REPLACE). La documentazione
+  spiega la divergenza e le sue conseguenze per consumer offline; il
+  nuovo script `consolidate_jsonl_meta.py` permette di derivare lo
+  stato consolidato dal solo JSONL, replicando la semantica di
+  `update_request_meta(merge=True)` del sink SQLite.
+
+### Tests (Step 14.5)
+
+- `tests/test_consolidate_jsonl_meta.py`: 6 test che coprono passthrough,
+  merge progressivo last-write-wins, isolamento multi-request, skip di
+  envelope senza meta o malformati, CLI end-to-end.
+
+### Added (Step 14.6)
+
+- **Strip orizzontale grafica delle conversazioni nella UI**
+  (`moralstack/ui/templates/conversation.html`,
+  `moralstack/ui/static/css/main.css`): sulla pagina
+  `/conversations/<cid>` viene ora renderizzata, sopra la tabella
+  esistente "Posture timeline", una strip orizzontale di rettangoli
+  colorati. Ogni rettangolo è un turno: altezza proporzionale al
+  risk_score, colore in base al final_action (verde/giallo/rosso),
+  bordo arancione su posture ESCALATED, icona ⚡ sui turni cached,
+  tooltip al hover con tutti i metadati, click → pagina request.
+  Riduce a un'occhiata l'analisi di conversazioni multi-turn lunghe
+  (utile soprattutto per i benchmark COMPL-AI con 12-30 turni).
+  Implementazione 100% CSS, zero JavaScript, zero modifiche al
+  backend o al view-model.
+
+### Tests (Step 14.6)
+
+- `tests/test_ui_conversation_strip.py`: 5 test che verificano
+  presenza della sezione, una cell per turno, classe CSS action-specific,
+  icona+arrow per cached turn, bordo escalated.
+
 ### Fixed (Step 14.8)
 
 - **Asimmetria strutturale `posture` tra store e lookup del SemanticDecisionLedger**

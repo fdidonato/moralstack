@@ -26,7 +26,9 @@ class TestLedgerPostureSymmetry:
         from moralstack.orchestration.controller import OrchestrationController
         from moralstack.orchestration.types import OrchestratorConfig
 
-        _sensitive = lambda store, domain: overlay_is_sensitive
+        def _sensitive(store, domain):
+            return overlay_is_sensitive
+
         overlay_policy.is_overlay_sensitive = _sensitive
         controller_module.is_overlay_sensitive = _sensitive
 
