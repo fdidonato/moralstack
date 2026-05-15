@@ -1597,9 +1597,7 @@ class OrchestrationController:
                 # --- v0.4 Step 7: apply cached decision when hit and safe to do so ---
                 if _cached_lookup is not None and _cached_lookup.is_hit:
                     cached_action = (
-                        _cached_lookup.cached_decision.final_action
-                        if _cached_lookup.cached_decision
-                        else "unknown"
+                        _cached_lookup.cached_decision.final_action if _cached_lookup.cached_decision else "unknown"
                     )
                     if self._fast_path_runner.is_safe_to_apply(
                         ledger_result=_cached_lookup,
@@ -1624,7 +1622,6 @@ class OrchestrationController:
                         # for low-level debugging through debug_events.
                         try:
                             self._events.emit_orchestration_event(
-                                run_id=run_id,
                                 request_id=request_id,
                                 cycle=0,
                                 stage="fast_path",
@@ -1680,7 +1677,6 @@ class OrchestrationController:
                         )
                         try:
                             self._events.emit_orchestration_event(
-                                run_id=run_id,
                                 request_id=request_id,
                                 cycle=0,
                                 stage="fast_path",

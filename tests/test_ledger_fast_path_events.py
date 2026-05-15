@@ -141,11 +141,14 @@ class TestFastPathRunnerIntegration:
         runner = ConversationalFastPathRunner()
         current = _make_decision("NORMAL_COMPLETE")
         # REFUSE cached should always be applied, even on a deliberative route.
-        assert runner.is_safe_to_apply(
-            ledger_result=result,
-            current_decision=current,
-            current_route="deliberative",
-        ) is True
+        assert (
+            runner.is_safe_to_apply(
+                ledger_result=result,
+                current_decision=current,
+                current_route="deliberative",
+            )
+            is True
+        )
 
     def test_cached_normal_on_deliberative_route_rejected(self):
         """The gate rejects a non-REFUSE cached decision on a deliberative route."""
@@ -173,11 +176,14 @@ class TestFastPathRunnerIntegration:
         runner = ConversationalFastPathRunner()
         current = _make_decision("NORMAL_COMPLETE")
         # Non-REFUSE on a deliberative route → rejected.
-        assert runner.is_safe_to_apply(
-            ledger_result=result,
-            current_decision=current,
-            current_route="deliberative",
-        ) is False
+        assert (
+            runner.is_safe_to_apply(
+                ledger_result=result,
+                current_decision=current,
+                current_route="deliberative",
+            )
+            is False
+        )
 
     def test_cached_normal_on_fast_path_route_applied(self):
         """The gate accepts a non-REFUSE cached decision on a non-deliberative route."""
@@ -204,8 +210,11 @@ class TestFastPathRunnerIntegration:
         )
         runner = ConversationalFastPathRunner()
         current = _make_decision("NORMAL_COMPLETE")
-        assert runner.is_safe_to_apply(
-            ledger_result=result,
-            current_decision=current,
-            current_route="fast_path",
-        ) is True
+        assert (
+            runner.is_safe_to_apply(
+                ledger_result=result,
+                current_decision=current,
+                current_route="fast_path",
+            )
+            is True
+        )
