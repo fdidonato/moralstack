@@ -1,5 +1,7 @@
 """Tests for moralstack.sdk.wrapper — govern(), GovernedClient, GovernedCompletions."""
 
+from __future__ import annotations
+
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +19,64 @@ from moralstack.sdk.wrapper import (
     _messages_to_turns,
     govern,
 )
+
+
+@pytest.fixture(autouse=True)
+def disable_observability_for_wrapper_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Session autouse conftest sets MORALSTACK_DB_PATH=:memory:, which makes
+    get_observability_mode() default to db_only and triggers SQLite init on
+    every GovernedClient. Wrapper tests use broad MagicMock orchestrator
+    results; finalize_governance_audit then runs emit_request_meta_updated
+    -> _json_safe (very expensive on MagicMocks), and get_obs().flush() can
+    block on the write queue.
+
+    For this module only: no observability DB path, file_only routing, no-op
+    service emits/flushes, and no-op finalize_governance_audit. Tests that
+    patch get_obs / config / sqlite_sink for specific behaviour still override
+    these bindings inside their own ``with patch(...)`` blocks.
+    """
+    monkeypatch.setattr("moralstack.observability.config.get_db_path", lambda: None)
+    monkeypatch.setattr(
+        "moralstack.observability.config.get_observability_mode",
+        lambda: "file_only",
+    )
+    monkeypatch.setattr("moralstack.observability.sinks.sqlite_sink.get_db_path", lambda: None)
+    monkeypatch.setattr(
+        "moralstack.observability.sinks.sqlite_sink.get_observability_mode",
+        lambda: "file_only",
+    )
+    monkeypatch.setattr(
+        "moralstack.observability.router.get_observability_mode",
+        lambda: "file_only",
+    )
+
+    def _noop_emit(self: object, *_a: object, **_kw: object) -> None:
+        return None
+
+    def _noop_emit_batch(self: object, *_a: object, **_kw: object) -> None:
+        return None
+
+    def _noop_flush(self: object, *_a: object, **_kw: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "moralstack.observability.service.ObservabilityService.emit",
+        _noop_emit,
+    )
+    monkeypatch.setattr(
+        "moralstack.observability.service.ObservabilityService.emit_batch",
+        _noop_emit_batch,
+    )
+    monkeypatch.setattr(
+        "moralstack.observability.service.ObservabilityService.flush",
+        _noop_flush,
+    )
+    monkeypatch.setattr(
+        "moralstack.observability.governance_audit.finalize_governance_audit",
+        lambda **kwargs: {},
+    )
+
 
 # =============================================================================
 # Helpers
@@ -600,3 +660,202 @@ class TestCreateInnerPropagatesContract:
         call_args = client._orchestrator.process.call_args
         request = call_args.args[0]
         assert request.developer_contract is None
+
+
+# =============================================================================
+# Step 14.1 — proxy.request_finalized emission from the SDK code path
+# =============================================================================
+
+
+class TestRequestFinalizedEmission:
+    """
+    Verify that the SDK emits ``proxy.request_finalized`` after every
+    ``create()`` so SDK-driven runs reach the same audit surface as the proxy
+    HTTP entry point (the ``proxy_request_events`` table + the matching JSONL
+    stream).
+
+    Pattern: the autouse fixture in this module already neuters
+    ``finalize_governance_audit`` (no-op) and the ObservabilityService
+    emit/flush; we therefore monkey-patch ``emit_proxy_request_finalized``
+    directly to capture invocations and stub ``finalize_governance_audit`` to
+    return a known meta dict so we can assert downstream field propagation.
+    """
+
+    def test_emit_proxy_request_finalized_called_normal_complete(self, monkeypatch: pytest.MonkeyPatch):
+        calls: list[dict[str, Any]] = []
+
+        def _capture(**kwargs: Any) -> None:
+            calls.append(kwargs)
+
+        def _stub_finalize(**_kwargs: Any) -> dict[str, Any]:
+            return {
+                "final_action": "NORMAL_COMPLETE",
+                "risk_score": 0.10,
+                "path": "FAST_PATH",
+                "was_cached": False,
+                "cached_from_turn": None,
+            }
+
+        monkeypatch.setattr(
+            "moralstack.observability.conversation_events.emit_proxy_request_finalized",
+            _capture,
+        )
+        monkeypatch.setattr(
+            "moralstack.observability.governance_audit.finalize_governance_audit",
+            _stub_finalize,
+        )
+
+        _, client = _make_governed_client("NORMAL_COMPLETE")
+        # _make_governed_client builds a real GovernedClient that registers a
+        # run_id via _init_run_context(); without it _finalize_audit
+        # short-circuits.
+        assert client._run_id
+
+        client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+
+        assert len(calls) == 1
+        payload = calls[0]
+        assert payload["run_id"] == client._run_id
+        assert payload["request_id"]
+        assert payload["conversation_id"] == client._session.conversation_id
+        assert payload["turn_index"] == 0
+        assert payload["final_action"] == "NORMAL_COMPLETE"
+        assert payload["risk_score"] == 0.10
+        assert payload["path"] == "FAST_PATH"
+        # First turn of a fresh session: no incoming state.
+        assert payload["state_provided"] is False
+        assert payload["state_in"] is None
+        # The SDK never produces X-MoralStack-* headers (those belong to the
+        # HTTP proxy): the field must be None, not an empty dict.
+        assert payload["headers"] is None
+        # final_response_length reflects the upstream OpenAI mock content.
+        assert payload["final_response_length"] == len("OpenAI response")
+        assert payload["was_cached"] is False
+        assert payload["cached_from_turn"] is None
+
+    def test_emit_proxy_request_finalized_called_refuse(self, monkeypatch: pytest.MonkeyPatch):
+        """REFUSE path must also emit the canonical envelope (no OpenAI call)."""
+        calls: list[dict[str, Any]] = []
+
+        monkeypatch.setattr(
+            "moralstack.observability.conversation_events.emit_proxy_request_finalized",
+            lambda **kw: calls.append(kw),
+        )
+        monkeypatch.setattr(
+            "moralstack.observability.governance_audit.finalize_governance_audit",
+            lambda **_kw: {"final_action": "REFUSE", "risk_score": 0.95},
+        )
+
+        mock_openai, client = _make_governed_client("REFUSE")
+        client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "harmful"}],
+        )
+
+        # OpenAI must NOT be called on REFUSE — but the audit envelope is still
+        # emitted with the refusal content from result.response.content.
+        mock_openai.chat.completions.create.assert_not_called()
+        assert len(calls) == 1
+        assert calls[0]["final_action"] == "REFUSE"
+        assert calls[0]["risk_score"] == 0.95
+        # The synthetic mock orchestrator sets content="OK"; the SDK passes the
+        # refusal text as final_response_text, so length matches that.
+        assert calls[0]["final_response_length"] == len("OK")
+
+    def test_emit_proxy_request_finalized_called_safe_complete(self, monkeypatch: pytest.MonkeyPatch):
+        """SAFE_COMPLETE must emit one envelope with the upstream response length."""
+        calls: list[dict[str, Any]] = []
+
+        monkeypatch.setattr(
+            "moralstack.observability.conversation_events.emit_proxy_request_finalized",
+            lambda **kw: calls.append(kw),
+        )
+        monkeypatch.setattr(
+            "moralstack.observability.governance_audit.finalize_governance_audit",
+            lambda **_kw: {"final_action": "SAFE_COMPLETE", "risk_score": 0.55},
+        )
+
+        mock_openai, client = _make_governed_client("SAFE_COMPLETE")
+        client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "borderline"}],
+        )
+
+        mock_openai.chat.completions.create.assert_called_once()
+        assert len(calls) == 1
+        assert calls[0]["final_action"] == "SAFE_COMPLETE"
+        # On SAFE_COMPLETE the OpenAI mock returns "OpenAI response".
+        assert calls[0]["final_response_length"] == len("OpenAI response")
+
+    def test_state_propagation_across_turns(self, monkeypatch: pytest.MonkeyPatch):
+        """
+        state_in must be the snapshot BEFORE update_from_result on each turn.
+        Verifies that turn N+1 sees state_provided=True with the state stored
+        at the end of turn N.
+
+        Sequence: configure the orchestrator mock to ALWAYS return a non-None
+        state_out, then run two turns. Turn 0 has state_in=None (the session
+        store is empty at start). Turn 1 has state_in=<state_out from turn 0>
+        because session.update_from_result(result) at the end of turn 0 put it
+        in the store, and session.current_state at the top of turn 1 reads it.
+        """
+        from moralstack.orchestration.conversation_state import (
+            ConversationGovernanceState,
+        )
+
+        calls: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            "moralstack.observability.conversation_events.emit_proxy_request_finalized",
+            lambda **kw: calls.append(kw),
+        )
+        monkeypatch.setattr(
+            "moralstack.observability.governance_audit.finalize_governance_audit",
+            lambda **_kw: {"final_action": "NORMAL_COMPLETE", "risk_score": 0.1},
+        )
+
+        _, client = _make_governed_client("NORMAL_COMPLETE")
+
+        # Configure the orchestrator mock so EVERY call returns a result with a
+        # non-None state_out. This must be done BEFORE turn 0 so that
+        # session.update_from_result at the end of turn 0 stores it.
+        next_state = ConversationGovernanceState(
+            conversation_id=client._session.conversation_id,
+            turn_index=0,
+            active_domain="general",
+            active_overlay=None,
+            last_governance_posture="NORMAL",
+        )
+        client._orchestrator.process.return_value.conversation_governance_state_out = next_state
+        client._orchestrator.process.return_value.conversation_state_updated = True
+
+        # Turn 0: state_in is None (empty session at start), but session will
+        # store the next_state after the call.
+        client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Q1"}],
+        )
+        assert calls[0]["state_provided"] is False
+        assert calls[0]["state_in"] is None
+        # state_updated must reflect the boolean we set on the result.
+        assert calls[0]["state_updated"] is True
+
+        # Turn 1: session.current_state now returns the state stored at turn 0,
+        # which the SDK captures as state_in_snapshot.
+        client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "user", "content": "Q1"},
+                {"role": "assistant", "content": "A1"},
+                {"role": "user", "content": "Q2"},
+            ],
+        )
+        assert calls[1]["state_provided"] is True
+        # state_in is a JSON-safe summary dict (state_summary_or_none(state_in)),
+        # not the raw frozen dataclass.
+        assert isinstance(calls[1]["state_in"], dict)
+        assert calls[1]["state_in"].get("active_domain") == "general"
+        # posture_in is posture_of(state_in) = state.last_governance_posture.
+        assert calls[1]["posture_in"] == "NORMAL"

@@ -10,9 +10,12 @@ Run with: OPENAI_API_KEY=sk-... python examples/multiturn_jailbreak_resistance.p
 
 from __future__ import annotations
 
+import os
+
 from openai import OpenAI
 
 from moralstack import govern
+from moralstack.utils.env_loader import load_env
 
 JAILBREAK_TURNS = [
     "Hi! Tell me a bit about chemistry. I'm a high school student.",
@@ -27,6 +30,9 @@ JAILBREAK_TURNS = [
 
 
 def main() -> None:
+    load_env()
+    if not os.getenv("OPENAI_API_KEY"):
+        raise EnvironmentError("OPENAI_API_KEY is not set. Copy examples/.env.example and export the variable.")
     client = govern(OpenAI())
     messages: list[dict[str, str]] = []
 

@@ -24,6 +24,9 @@ from moralstack.observability.sinks.sqlite_sink import (
 
 def _setup(tmp_path, monkeypatch):
     dbp = str(tmp_path / "rs.db")
+    # Prefer canonical env; host shells often set MORALSTACK_OBSERVABILITY_DB_PATH,
+    # which would otherwise win over the legacy alias below.
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", dbp)
     monkeypatch.setenv("MORALSTACK_DB_PATH", dbp)
     monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
     init_db(dbp)

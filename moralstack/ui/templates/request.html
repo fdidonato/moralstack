@@ -23,7 +23,9 @@
     <div class="meta-item span-2">
         <span class="meta-label">Conversation</span>
         <span class="meta-value">
-            {% if req.get('conversation_id') %}<span class="mono">id={{ req.get('conversation_id') }}</span>{% endif %}
+            {% if req.get('conversation_id') %}
+            <a href="/conversations/{{ req.get('conversation_id') }}" class="mono">id={{ req.get('conversation_id') }}</a>
+            {% endif %}
             {% if req.get('turn_index') is not none %}<span class="muted">turn={{ req.get('turn_index') }}</span>{% endif %}
             {% if req.get('parent_request_id') %}
             <a href="/runs/{{ run_id }}/requests/{{ req.get('parent_request_id') }}" class="mono">parent={{ req.get('parent_request_id')[:12] }}…</a>
@@ -32,6 +34,121 @@
     </div>
     {% endif %}
 </div>
+
+{% if conversation_context %}
+{% set state = conversation_context.state or {} %}
+{% set summary = state.get('state_summary_json__parsed') or {} %}
+{% set meta = conversation_context.meta_json__parsed or {} %}
+{% set proxy = conversation_context.proxy_event or {} %}
+{% set state_cft = state.get('cached_from_turn') %}
+{% set meta_cft = meta.get('cached_from_turn') %}
+<h2>Conversation context</h2>
+<div class="card">
+    <div class="meta-grid">
+        <div class="meta-item">
+            <span class="meta-label">Conversation ID</span>
+            <span class="meta-value mono">
+                <a href="/conversations/{{ conversation_context.conversation_id }}">
+                    {{ conversation_context.conversation_id[:16] }}…
+                </a>
+            </span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Turn</span>
+            <span class="meta-value">
+                {{ conversation_context.turn_index if conversation_context.turn_index is not none else '—' }}
+                / {{ conversation_context.turn_count }}
+            </span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Posture (out)</span>
+            <span class="meta-value">
+                {% set posture = state.get('posture') or summary.get('last_governance_posture') or meta.get('governance_posture') %}
+                {% if posture %}<span class="badge">{{ posture }}</span>{% else %}—{% endif %}
+            </span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Cached</span>
+            <span class="meta-value">
+                {% if state.get('was_cached') or meta.get('was_cached') %}
+                <span class="badge badge-ok">yes</span>
+                {% set cft = state_cft if state_cft is not none else meta_cft %}
+                {% if cft is not none %}<span class="muted"> from turn {{ cft }}</span>{% endif %}
+                {% else %}no{% endif %}
+            </span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Refresh required</span>
+            <span class="meta-value">{% if state.get('refresh_required') %}yes{% else %}no{% endif %}</span>
+        </div>
+        {% if state.get('refresh_reason') %}
+        <div class="meta-item">
+            <span class="meta-label">Refresh reason</span>
+            <span class="meta-value">{{ state.get('refresh_reason') }}</span>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if conversation_context.siblings and conversation_context.siblings | length > 1 %}
+    <h4 style="margin-top:1rem;">All turns in conversation</h4>
+    <table class="table">
+        <thead>
+        <tr><th>Turn</th><th>Request</th><th>Domain</th></tr>
+        </thead>
+        <tbody>
+        {% for s in conversation_context.siblings %}
+        <tr {% if s.is_current %}style="background: var(--blue-bg);"{% endif %}>
+            <td>{{ s.turn_index if s.turn_index is not none else '—' }}</td>
+            <td class="mono">
+                {% if s.is_current %}<strong>{{ (s.request_id or '')[:12] }} (current)</strong>
+                {% else %}<a href="/runs/{{ run_id }}/requests/{{ s.request_id }}">{{ (s.request_id or '')[:12] }}</a>{% endif %}
+            </td>
+            <td>{{ s.domain or '—' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if conversation_context.ledger_events %}
+    <h4 style="margin-top:1rem;">Ledger activity (this turn)</h4>
+    <table class="table">
+        <thead><tr><th>Op</th><th>Outcome</th><th>Similarity</th><th>Reason</th><th>From turn</th></tr></thead>
+        <tbody>
+        {% for ev in conversation_context.ledger_events %}
+        <tr>
+            <td>{{ ev.operation or '—' }}</td>
+            <td><span class="badge">{{ ev.outcome or '—' }}</span></td>
+            <td>{% if ev.similarity is not none %}{{ "%.3f" | format(ev.similarity) }}{% else %}—{% endif %}</td>
+            <td>{{ ev.reason or '—' }}</td>
+            <td>{{ ev.from_turn if ev.from_turn is not none else '—' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if conversation_context.session_events %}
+    <h4 style="margin-top:1rem;">Session store activity (this turn)</h4>
+    <table class="table">
+        <thead><tr><th>Op</th><th>Outcome</th></tr></thead>
+        <tbody>
+        {% for ev in conversation_context.session_events %}
+        <tr>
+            <td>{{ ev.operation or '—' }}</td>
+            <td><span class="badge">{{ ev.outcome or '—' }}</span></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    <div class="actions-bar" style="margin-top:1rem;">
+        <a href="/conversations/{{ conversation_context.conversation_id }}" class="btn btn-sm">View full conversation</a>
+        <a href="/conversations/{{ conversation_context.conversation_id }}/export.md" download class="btn btn-sm btn-outline">Export conversation</a>
+    </div>
+</div>
+{% endif %}
 
 {% if execution_summary %}
 <h2>Execution summary</h2>

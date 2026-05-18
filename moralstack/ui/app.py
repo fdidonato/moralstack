@@ -21,14 +21,15 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from starlette.templating import Jinja2Templates
 
-from moralstack.observability import obs
 from moralstack.observability.config import get_db_path
+from moralstack.observability.service import get_obs
 from moralstack.observability.sinks.sqlite_sink import delete_request, delete_run
 from moralstack.reports.benchmark_report_loader import (
     get_benchmark_result_by_request_id,
     get_questions_by_category,
     load_benchmark_report,
 )
+from moralstack.reports.conversation_export import export_conversation_to_markdown
 from moralstack.reports.markdown_export import (
     build_benchmark_report_markdown,
     export_request_markdown,
@@ -44,7 +45,25 @@ from moralstack.reports.runtime_decisions import (
 )
 from moralstack.utils.env_loader import _purge_empty_env_vars
 
-_rs = obs.read_store
+
+class _ReadStoreProxy:
+    """
+    Resolve SqliteReadStore accessors at call time via get_obs().
+
+    The observability singleton (and its read_store) can be replaced in tests;
+    module-level aliases must not capture a stale read_store from import time.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, name: str) -> Any:
+        def _forward(*args: Any, **kwargs: Any) -> Any:
+            return getattr(get_obs().read_store, name)(*args, **kwargs)
+
+        return _forward
+
+
+_rs = _ReadStoreProxy()
 get_all_runs = _rs.get_all_runs
 get_request_domains = _rs.get_request_domains
 get_runs_page = _rs.get_runs_page
@@ -55,6 +74,15 @@ get_orchestration_events_for_request = _rs.get_orchestration_events_for_request
 get_request = _rs.get_request
 get_requests_for_run = _rs.get_requests_for_run
 get_run = _rs.get_run
+
+# Step 13: multi-turn conversation observability accessors.
+get_requests_for_conversation = _rs.get_requests_for_conversation
+get_conversation_states = _rs.get_conversation_states
+get_ledger_events_for_conversation = _rs.get_ledger_events_for_conversation
+get_session_store_events_for_conversation = _rs.get_session_store_events_for_conversation
+get_proxy_request_events_for_conversation = _rs.get_proxy_request_events_for_conversation
+get_conversation_ids_for_run = _rs.get_conversation_ids_for_run
+get_conversation_overview = _rs.get_conversation_overview
 
 _root = Path(__file__).resolve().parent.parent.parent
 _env_path = _root / ".env"
@@ -130,6 +158,32 @@ def _parse_trace_json(trace_record: dict[str, Any]) -> dict[str, Any]:
     if isinstance(tj, dict):
         return cast(dict[str, Any], tj)
     return {}
+
+
+def _parse_json_field(value: Any) -> Any:
+    """Best-effort JSON parsing; returns ``None`` when input is unparseable."""
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        return None
+
+
+def _enrich_event_row(row: dict[str, Any], json_keys: tuple[str, ...]) -> dict[str, Any]:
+    """Return a shallow copy of ``row`` with the listed JSON columns pre-parsed."""
+    out = dict(row)
+    for key in json_keys:
+        if key in out:
+            out[f"{key}__parsed"] = _parse_json_field(out.get(key))
+    return out
 
 
 def _relevant_principles_from_traces(traces: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1232,6 +1286,96 @@ def _call_result_preview(parsed_summary_json: str | None, module: str) -> str:
         return raw[:300] + ("..." if len(raw) > 300 else "")
 
 
+_CONVERSATION_STATE_JSON_KEYS = ("state_in_json", "state_out_json", "state_summary_json")
+_LEDGER_EVENT_JSON_KEYS = ("payload_json",)
+_SESSION_STORE_EVENT_JSON_KEYS = ("state_summary_json", "payload_json")
+_PROXY_REQUEST_EVENT_JSON_KEYS = ("headers_json", "metadata_json")
+
+
+def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
+    """
+    Assemble a fully-resolved timeline for a conversation.
+
+    Aggregates:
+      * the ``requests`` rows ordered by ``turn_index`` (with parsed ``meta_json``);
+      * the per-request ``conversation_states`` snapshot;
+      * the per-request ledger / session-store / proxy-finalization events;
+      * an overview document (totals, postures, hit/miss counters).
+
+    Best-effort: when individual lookups fail or tables are missing, the
+    corresponding sections degrade to empty lists / ``None`` instead of
+    raising.  The result is consumed by the conversation timeline template.
+    """
+    if not conversation_id:
+        return {
+            "conversation_id": "",
+            "requests": [],
+            "overview": {},
+            "states_by_request": {},
+            "ledger_by_request": {},
+            "session_by_request": {},
+            "proxy_by_request": {},
+            "run_id": None,
+        }
+
+    requests_rows = get_requests_for_conversation(conversation_id) or []
+    states_rows = get_conversation_states(conversation_id) or []
+    ledger_rows = get_ledger_events_for_conversation(conversation_id) or []
+    session_rows = get_session_store_events_for_conversation(conversation_id) or []
+    proxy_rows = get_proxy_request_events_for_conversation(conversation_id) or []
+    overview = get_conversation_overview(conversation_id) or {}
+
+    states_by_request: dict[str, dict[str, Any]] = {}
+    for row in states_rows:
+        rid = row.get("request_id")
+        if rid:
+            states_by_request[str(rid)] = _enrich_event_row(row, _CONVERSATION_STATE_JSON_KEYS)
+
+    ledger_by_request: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in ledger_rows:
+        rid = row.get("request_id")
+        if rid:
+            ledger_by_request[str(rid)].append(_enrich_event_row(row, _LEDGER_EVENT_JSON_KEYS))
+
+    session_by_request: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in session_rows:
+        rid = row.get("request_id")
+        if rid:
+            session_by_request[str(rid)].append(_enrich_event_row(row, _SESSION_STORE_EVENT_JSON_KEYS))
+
+    proxy_by_request: dict[str, dict[str, Any]] = {}
+    for row in proxy_rows:
+        rid = row.get("request_id")
+        if rid:
+            proxy_by_request[str(rid)] = _enrich_event_row(row, _PROXY_REQUEST_EVENT_JSON_KEYS)
+
+    run_id: str | None = None
+    enriched_requests: list[dict[str, Any]] = []
+    for req in requests_rows:
+        rid = str(req.get("request_id") or "")
+        rrid = req.get("run_id")
+        if rrid and not run_id:
+            run_id = str(rrid)
+        item = dict(req)
+        item["meta_json__parsed"] = _parse_json_field(item.get("meta_json"))
+        item["state"] = states_by_request.get(rid)
+        item["ledger_events"] = ledger_by_request.get(rid, [])
+        item["session_events"] = session_by_request.get(rid, [])
+        item["proxy_event"] = proxy_by_request.get(rid)
+        enriched_requests.append(item)
+
+    return {
+        "conversation_id": conversation_id,
+        "requests": enriched_requests,
+        "overview": overview,
+        "states_by_request": states_by_request,
+        "ledger_by_request": dict(ledger_by_request),
+        "session_by_request": dict(session_by_request),
+        "proxy_by_request": proxy_by_request,
+        "run_id": run_id,
+    }
+
+
 def _check_credentials(username: str, password: str) -> bool:
     if not _UI_USERNAME or not _UI_PASSWORD:
         return False
@@ -1455,6 +1599,7 @@ button:hover{opacity:0.9}
             if benchmark_report:
                 questions_by_category = get_questions_by_category(benchmark_report)
                 benchmark_summary_md = build_benchmark_report_markdown(benchmark_report)
+        conversations = get_conversation_ids_for_run(run_id) or []
         if templates:
             return templates.TemplateResponse(
                 request,
@@ -1465,6 +1610,7 @@ button:hover{opacity:0.9}
                     "benchmark_report": benchmark_report,
                     "questions_by_category": questions_by_category,
                     "benchmark_summary_md": benchmark_summary_md,
+                    "conversations": conversations,
                 },
             )
         return HTMLResponse(f"<html><body><h1>Run {run_id}</h1></body></html>")
@@ -1551,6 +1697,53 @@ button:hover{opacity:0.9}
             report = load_benchmark_report(run_id)
             if report:
                 benchmark_result = get_benchmark_result_by_request_id(report, request_id)
+
+        # Step 13: conversation context for this request (if part of a multi-turn).
+        conversation_context: dict[str, Any] | None = None
+        conversation_id_for_req = (req_data.get("conversation_id") or "").strip() if isinstance(req_data, dict) else ""
+        if conversation_id_for_req:
+            sibling_requests = get_requests_for_conversation(conversation_id_for_req) or []
+            state_rows = get_conversation_states(conversation_id_for_req) or []
+            this_state = None
+            for row in state_rows:
+                if str(row.get("request_id")) == str(request_id):
+                    this_state = _enrich_event_row(row, _CONVERSATION_STATE_JSON_KEYS)
+                    break
+            this_ledger = [
+                _enrich_event_row(r, _LEDGER_EVENT_JSON_KEYS)
+                for r in (get_ledger_events_for_conversation(conversation_id_for_req) or [])
+                if str(r.get("request_id")) == str(request_id)
+            ]
+            this_session = [
+                _enrich_event_row(r, _SESSION_STORE_EVENT_JSON_KEYS)
+                for r in (get_session_store_events_for_conversation(conversation_id_for_req) or [])
+                if str(r.get("request_id")) == str(request_id)
+            ]
+            this_proxy = None
+            for row in get_proxy_request_events_for_conversation(conversation_id_for_req) or []:
+                if str(row.get("request_id")) == str(request_id):
+                    this_proxy = _enrich_event_row(row, _PROXY_REQUEST_EVENT_JSON_KEYS)
+                    break
+            conversation_context = {
+                "conversation_id": conversation_id_for_req,
+                "turn_count": len(sibling_requests),
+                "turn_index": req_data.get("turn_index"),
+                "siblings": [
+                    {
+                        "request_id": r.get("request_id"),
+                        "turn_index": r.get("turn_index"),
+                        "domain": r.get("domain"),
+                        "is_current": str(r.get("request_id")) == str(request_id),
+                    }
+                    for r in sibling_requests
+                ],
+                "state": this_state,
+                "ledger_events": this_ledger,
+                "session_events": this_session,
+                "proxy_event": this_proxy,
+                "meta_json__parsed": _parse_json_field(req_data.get("meta_json")) if isinstance(req_data, dict) else None,
+            }
+
         if templates:
             return templates.TemplateResponse(
                 request,
@@ -1574,6 +1767,7 @@ button:hover{opacity:0.9}
                     "orchestrator_observability": orchestrator_observability,
                     "orchestration_events": orchestration_events,
                     "runtime_decision_obs": runtime_decision_obs,
+                    "conversation_context": conversation_context,
                 },
             )
         return HTMLResponse(f"<html><body><h1>Request {request_id}</h1></body></html>")
@@ -1611,5 +1805,53 @@ button:hover{opacity:0.9}
             raise HTTPException(500, "No database configured")
         content = export_run_benchmark_markdown(run_id)
         return PlainTextResponse(content, media_type="text/markdown")
+
+    # ------------------------------------------------------------------
+    # Step 13 — multi-turn conversation timeline views and export
+    # ------------------------------------------------------------------
+
+    @app.get("/conversations/{conversation_id}", response_class=HTMLResponse)
+    def conversation_detail(conversation_id: str, request: Request) -> Response:
+        """Render the full multi-turn timeline for a conversation_id."""
+        _require_session(request)
+        if not get_db_path():
+            raise HTTPException(500, "No database configured")
+        timeline = _build_conversation_timeline(conversation_id)
+        if not timeline.get("requests"):
+            raise HTTPException(404, f"Conversation {conversation_id} not found")
+        if templates:
+            return templates.TemplateResponse(
+                request,
+                "conversation.html",
+                {
+                    "conversation_id": conversation_id,
+                    "timeline": timeline,
+                },
+            )
+        return HTMLResponse(
+            f"<html><body><h1>Conversation {conversation_id}</h1>"
+            f"<pre>{json.dumps(timeline, indent=2, default=str)}</pre>"
+            "</body></html>"
+        )
+
+    @app.get("/conversations/{conversation_id}/export.md", response_class=PlainTextResponse)
+    def export_conversation_md(conversation_id: str, request: Request) -> PlainTextResponse:
+        """Export a conversation audit trail as markdown (AI Act art. 12)."""
+        _require_session(request)
+        if not get_db_path():
+            raise HTTPException(500, "No database configured")
+        content = export_conversation_to_markdown(conversation_id)
+        return PlainTextResponse(content, media_type="text/markdown")
+
+    @app.get("/conversations", response_class=HTMLResponse)
+    def conversations_search(request: Request, q: str = "") -> Response:
+        """Direct conversation_id lookup (Step 13.17)."""
+        _require_session(request)
+        if not get_db_path():
+            raise HTTPException(500, "No database configured")
+        query = (q or "").strip()
+        if query:
+            return RedirectResponse(url=f"/conversations/{query}", status_code=303)
+        return HTMLResponse("<html><body><meta http-equiv='refresh' content='0;url=/runs'></body></html>")
 
     return app

@@ -4,6 +4,244 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added (Step 14.5)
+
+- **Documentazione semantica del canale JSONL e script di consolidamento**
+  (`docs/modules/observability.md`, `scripts/consolidate_jsonl_meta.py`):
+  i 16 event_type canonici si dividono in tre categorie semantiche
+  rispetto alla persistenza — atomic insert (una riga per envelope,
+  identico tra JSONL e SQLite), merge-update (JSONL contiene delta
+  successivi, SQLite consolida via JSON merge), upsert (JSONL contiene
+  snapshot successivi, SQLite fa INSERT OR REPLACE). La documentazione
+  spiega la divergenza e le sue conseguenze per consumer offline; il
+  nuovo script `consolidate_jsonl_meta.py` permette di derivare lo
+  stato consolidato dal solo JSONL, replicando la semantica di
+  `update_request_meta(merge=True)` del sink SQLite.
+
+### Tests (Step 14.5)
+
+- `tests/test_consolidate_jsonl_meta.py`: 6 test che coprono passthrough,
+  merge progressivo last-write-wins, isolamento multi-request, skip di
+  envelope senza meta o malformati, CLI end-to-end.
+
+### Added (Step 14.6)
+
+- **Strip orizzontale grafica delle conversazioni nella UI**
+  (`moralstack/ui/templates/conversation.html`,
+  `moralstack/ui/static/css/main.css`): sulla pagina
+  `/conversations/<cid>` viene ora renderizzata, sopra la tabella
+  esistente "Posture timeline", una strip orizzontale di rettangoli
+  colorati. Ogni rettangolo è un turno: altezza proporzionale al
+  risk_score, colore in base al final_action (verde/giallo/rosso),
+  bordo arancione su posture ESCALATED, icona ⚡ sui turni cached,
+  tooltip al hover con tutti i metadati, click → pagina request.
+  Riduce a un'occhiata l'analisi di conversazioni multi-turn lunghe
+  (utile soprattutto per i benchmark COMPL-AI con 12-30 turni).
+  Implementazione 100% CSS, zero JavaScript, zero modifiche al
+  backend o al view-model.
+
+### Tests (Step 14.6)
+
+- `tests/test_ui_conversation_strip.py`: 5 test che verificano
+  presenza della sezione, una cell per turno, classe CSS action-specific,
+  icona+arrow per cached turn, bordo escalated.
+
+### Fixed (Step 14.8)
+
+- **Asimmetria strutturale `posture` tra store e lookup del SemanticDecisionLedger**
+  (`moralstack/orchestration/controller.py`): la formula della posture in
+  `_extend_state_out_v04` (call site del ledger.store) leggeva
+  `state.active_overlay`, ma quel campo non veniva MAI popolato dal
+  controller perché `update_from_processing_result` viene chiamato senza
+  passare `overlay=`. Risultato: lo store usava sempre `posture="NORMAL"`,
+  anche su overlay sensibili (legal, medical, mental_health, political,
+  journalism, financial, healthcare, emergency, cybersecurity, children,
+  environment), mentre il lookup usava `posture="ELEVATED"` (correttamente
+  derivato da `is_overlay_sensitive`).
+
+  Conseguenza: la `LedgerKey(contract_hash, posture, domain)` differiva
+  tra store e lookup per ogni overlay sensibile, rendendo le cache hit
+  **strutturalmente impossibili** su tutti i domini di interesse
+  safety-critical. Il bug era latente — non rilevato dai test perché lo
+  scenario `multiturn_quickstart_fastpath_hit.py` usava un dominio non
+  sensitive (vuoto o environment normalizzato a None), che produceva
+  posture "NORMAL" su entrambi i lati per coincidenza.
+
+  Fix: la formula di `_extend_state_out_v04` ora usa direttamente
+  `is_overlay_sensitive(self.constitution_store, request.get_domain())`,
+  la stessa funzione usata dal lookup side. Byte-coerente per costruzione.
+  Il campo `state.active_overlay` resta disponibile come segnale separato
+  per la UI ma non è più la fonte autoritativa della posture.
+
+### Tests (Step 14.8)
+
+- `tests/test_ledger_posture_symmetry.py`: 5 test che verificano
+  esplicitamente l'invariante store-posture == lookup-posture per tutte
+  le combinazioni di (final_action, overlay_sensitive, hard_constraints).
+  Include una regression guard che imposta `state.active_overlay='legal'`
+  ma forza `is_overlay_sensitive=False` per il domain, e verifica che la
+  posture risulti NORMAL (pre-fix sarebbe stata ELEVATED).
+
+### Added (Step 14.7)
+
+- **Esempio dimostrabile e test E2E del branch gate-rejected del fast-path**
+  (`examples/multiturn_quickstart_gate_rejected.py`,
+  `tests/test_ledger_fast_path_gate_rejected_e2e.py`):
+  finora i tre branch della `is_safe_to_apply` erano coperti solo da test
+  unitari sintetici (Step 14.4). Mancava sia un esempio Python eseguibile
+  che producesse l'evento `LEDGER_FAST_PATH_NOT_APPLIED` in vita reale, sia
+  un test deterministico che verificasse l'emissione end-to-end della
+  rejection del gate.
+
+  Il nuovo esempio costruisce uno scenario a tre turni: il turno 1 viene
+  cached come `NORMAL_COMPLETE`, e il turno 2 — semanticamente vicino sul
+  topic ma con framing più tecnico-operativo — porta il path router a
+  `route='deliberative'`. Il ledger fa hit dal turno 1 ma il gate rifiuta
+  l'applicazione, emette `LEDGER_FAST_PATH_NOT_APPLIED` con
+  `gate_reason='current_route_requires_deliberation'`, e la deliberazione
+  parte in pieno.
+
+  È un esempio di safety: il cache aiuta solo quando applicarlo non
+  abbassa la garanzia di sicurezza del turno corrente.
+
+### Tests (Step 14.7)
+
+- `tests/test_ledger_fast_path_gate_rejected_e2e.py`: 3 test in 2 classi
+  che coprono (a) l'emit contract della rejection con payload completo
+  via runner reale + emitter mock, (b) la derivazione del `gate_reason`
+  per `deliberative_loop`, (c) la derivazione difensiva per route ignote.
+
+### Docs (Step 14.7)
+
+- `docs/modules/observability.md`: nuova sezione "Fast-path safety gate"
+  che documenta i tre branch della logica e gli eventi associati.
+
+### Added (Step 14.4)
+
+- **Eventi canonici `LEDGER_FAST_PATH_APPLIED` e `LEDGER_FAST_PATH_NOT_APPLIED`**
+  (`moralstack/orchestration/controller.py`,
+  `moralstack/orchestration/orchestration_event_taxonomy.py`):
+  quando il SemanticDecisionLedger fa hit e la safety gate accetta di
+  applicare la decisione cached, il controller emette un evento esplicito
+  nel canale `orchestration.event`. Specularmente, quando il gate rifiuta
+  l'applicazione, emette `LEDGER_FAST_PATH_NOT_APPLIED` con il motivo del
+  rifiuto.
+
+  Risultato: il salto della deliberazione è ora visibile sia nel canale
+  ufficiale degli eventi di orchestrazione (tabella `orchestration_events`,
+  file `orchestration.event.jsonl`) sia automaticamente nella metro map e
+  nella journey list della UI, senza richiedere di joinare manualmente
+  `ledger_events` con `conversation_states`.
+
+  Il `orch_debug_log` interno esistente (`H-ledger-hit-applied`,
+  `H-ledger-hit-skipped`) è mantenuto per il low-level debugging.
+
+### Tests (Step 14.4)
+
+- `tests/test_ledger_fast_path_events.py`: 6 test in 3 classi che verificano
+  la registrazione delle costanti in `ALL_EVENT_TYPES`, il contract del
+  capturing emitter, e ogni branch della safety gate
+  `ConversationalFastPathRunner.is_safe_to_apply`.
+
+### Fixed (Step 14.2)
+
+- **SemanticDecisionLedger wired into production SDK bootstrap**
+  (`moralstack/sdk/bootstrap.py`, `moralstack/runtime/orchestrator.py`): Steps 4–7
+  implemented the semantic fast-path (ledger, embedder, storage, runner) and Step 13
+  added observability for it, but no production bootstrap ever constructed a ledger
+  instance. As a result, `ledger_events` stayed empty in real runs, semantically
+  equivalent turns always ran full deliberation, and the UI “cached” marker never
+  appeared.
+
+  Changes:
+
+  - `Orchestrator.__init__` accepts optional `ledger` and forwards it to
+    `OrchestrationController`.
+  - `_bootstrap_pipeline` builds a default `SemanticDecisionLedger` with
+    `OpenAIEmbedder` and `InMemoryLedgerStorage`, unless disabled via
+    `MORALSTACK_LEDGER_ENABLED=false`.
+  - New tuning env vars: `MORALSTACK_LEDGER_SIMILARITY_THRESHOLD` (default `0.92`),
+    `MORALSTACK_LEDGER_MAX_ENTRIES` (default `1000`),
+    `MORALSTACK_LEDGER_EMBEDDING_MODEL`.
+  - `GovernanceConfig` adds matching fields for programmatic overrides without env.
+
+  Skip rules from multi-turn design v1.3 (no cache for `ESCALATED`, no cache when
+  `turn_index < 1`, similarity threshold) are unchanged: the fast-path accelerates
+  benign repeated queries, not hard-signal refusals.
+
+### Tests (Step 14.2)
+
+- `tests/test_runtime_orchestrator.py::TestOrchestratorLedgerWiring`: `ledger`
+  is forwarded from `Orchestrator` to the internal controller.
+- `tests/test_sdk_bootstrap.py`: four tests for default ledger, env disable,
+  config disable, and threshold override.
+
+### Fixed (Step 14.3)
+
+- **SemanticDecisionLedger `request_type` round-trip** (`moralstack/orchestration/controller.py`):
+  `_maybe_store_in_ledger` read `metadata.request_type`, but `ResponseMetadata`
+  has no such field, so `getattr` always yielded `""`. The store wrote
+  `request_type=""` while the next lookup used the real value from the risk
+  estimator (e.g. `"factual_query"`). The ledger’s secondary intent check then
+  rejected the match with `reason='intent_divergence'` even when cosine
+  similarity was above the threshold — so the semantic fast-path produced no
+  cache hits and the UI “cached” badge never appeared.
+
+  **Fix:** the lookup block in `process()` saves `_request_type` and
+  `_intent_clarity` (as used for `lookup`) into `_conversation_process_ctx`;
+  `_maybe_store_in_ledger` reads them back so `store` uses the same key shape as
+  future lookups. Metadata remains a forward-compatible fallback if
+  `request_type` is ever added to `ResponseMetadata`.
+
+### Tests (Step 14.3)
+
+- `tests/test_orchestrator_ledger_integration.py::TestLedgerRequestTypeConsistency`:
+  `_maybe_store_in_ledger` honours ctx vs empty fallback.
+- `tests/test_orchestrator_ledger_integration.py::TestLedgerRoundTripHit`:
+  ledger hit with aligned `request_type`, and `intent_divergence` when store
+  used `""` and lookup used a non-empty type.
+- `tests/test_sdk_bootstrap.py`: `test_bootstrap_creates_ledger_by_default` now
+  clears `MORALSTACK_LEDGER_SIMILARITY_THRESHOLD` so a developer `.env` cannot
+  break the default-threshold assertion.
+
+### Added
+
+- **SDK emits `proxy.request_finalized` per turn** (`moralstack/sdk/wrapper.py`):
+  `GovernedClient` now fills the `proxy_request_events` table and the
+  `logs/observability/proxy.request_finalized.jsonl` stream with the same
+  per-turn summary envelope as the HTTP proxy, closing the Step 13
+  observability gap between entry points.
+
+  - `GovernedCompletions._create_inner` captures
+    `state_in_snapshot = session.current_state` before deliberation and passes
+    it to all five `_finalize_audit` call sites (REFUSE; SAFE_COMPLETE
+    streaming/non-streaming; NORMAL_COMPLETE streaming/non-streaming).
+  - `_finalize_audit` still calls `finalize_governance_audit`, then emits the
+    canonical envelope via `emit_proxy_request_finalized` with
+    `posture_in` / `posture_out` from `posture_of()`, `state_in` / `state_out`
+    serialized via `state_summary_or_none()`, and `headers=None` because the
+    SDK does not produce `X-MoralStack-*` response headers.
+  - The event name remains `proxy.request_finalized` for backwards
+    compatibility (table, JSONL filename, read store); the docstring notes the
+    name is historic and the event is semantically transport-agnostic.
+
+### Fixed
+
+- **UI `/conversations/<cid>` shows the "Proxy finalization" block for SDK-only
+  conversations** (`moralstack/ui/templates/conversation.html`): the template
+  already gated on `{% if proxy %}`; it now receives data because the SDK
+  emits the same finalized envelope.
+
+### Tests
+
+- Four new unit tests in `tests/test_sdk_wrapper.py` (`TestRequestFinalizedEmission`):
+  NORMAL_COMPLETE, REFUSE, SAFE_COMPLETE, and two-turn state propagation.
+- One new integration test in `tests/test_conversation_observability_persistence.py`
+  (`test_sdk_emits_proxy_request_finalized_into_readstore`): round-trip via
+  `SqliteReadStore.get_proxy_request_events_for_conversation`.
+
 ## 0.5.0 — 2026-05-13
 
 ### Fixed

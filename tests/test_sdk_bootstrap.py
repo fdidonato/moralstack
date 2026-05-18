@@ -93,3 +93,50 @@ class TestBootstrapPipeline:
         with patch("moralstack.sdk.bootstrap.build_deliberation_modules", return_value=(fake_modules, fake_meta)):
             with patch("moralstack.runtime.orchestrator.Orchestrator", return_value=MagicMock()):
                 _bootstrap_pipeline(cfg)
+
+
+def test_bootstrap_creates_ledger_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_bootstrap_pipeline must wire a SemanticDecisionLedger by default."""
+    monkeypatch.setattr("moralstack.sdk.bootstrap.load_env", lambda: None)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy")
+    monkeypatch.delenv("MORALSTACK_LEDGER_ENABLED", raising=False)
+    monkeypatch.delenv("MORALSTACK_LEDGER_SIMILARITY_THRESHOLD", raising=False)
+
+    from moralstack.orchestration.ledger import SemanticDecisionLedger
+
+    orch = _bootstrap_pipeline(GovernanceConfig())
+    assert orch.ledger is not None
+    assert isinstance(orch.ledger, SemanticDecisionLedger)
+    assert orch.ledger.similarity_threshold == 0.92
+
+
+def test_bootstrap_disables_ledger_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MORALSTACK_LEDGER_ENABLED=false must disable the ledger."""
+    monkeypatch.setattr("moralstack.sdk.bootstrap.load_env", lambda: None)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy")
+    monkeypatch.setenv("MORALSTACK_LEDGER_ENABLED", "false")
+
+    orch = _bootstrap_pipeline(GovernanceConfig())
+    assert orch.ledger is None
+
+
+def test_bootstrap_disables_ledger_via_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GovernanceConfig.enable_ledger=False disables the ledger when env is unset."""
+    monkeypatch.setattr("moralstack.sdk.bootstrap.load_env", lambda: None)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy")
+    monkeypatch.delenv("MORALSTACK_LEDGER_ENABLED", raising=False)
+
+    orch = _bootstrap_pipeline(GovernanceConfig(enable_ledger=False))
+    assert orch.ledger is None
+
+
+def test_bootstrap_respects_threshold_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MORALSTACK_LEDGER_SIMILARITY_THRESHOLD must override the default."""
+    monkeypatch.setattr("moralstack.sdk.bootstrap.load_env", lambda: None)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy")
+    monkeypatch.delenv("MORALSTACK_LEDGER_ENABLED", raising=False)
+    monkeypatch.setenv("MORALSTACK_LEDGER_SIMILARITY_THRESHOLD", "0.85")
+
+    orch = _bootstrap_pipeline(GovernanceConfig())
+    assert orch.ledger is not None
+    assert orch.ledger.similarity_threshold == 0.85

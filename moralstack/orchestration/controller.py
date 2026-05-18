@@ -26,6 +26,7 @@ from moralstack.observability.context import (
     set_current_session_id,
     set_current_turn_number,
 )
+from moralstack.observability.conversation_events import emit_conversation_state_updated
 from moralstack.orchestration.conversation_state import ConversationGovernanceState, TurnDecisionSummary
 from moralstack.orchestration.conversational_fast_path import ConversationalFastPathRunner
 from moralstack.orchestration.decision_logger import log_decision_explanation
@@ -45,6 +46,8 @@ from moralstack.orchestration.ledger import CachedDecision, LedgerResult, Semant
 from moralstack.orchestration.orchestration_event_taxonomy import (
     CONVERSATION_CONTEXT_ATTACHED,
     CONVERSATION_STATE_UPDATED,
+    LEDGER_FAST_PATH_APPLIED,
+    LEDGER_FAST_PATH_NOT_APPLIED,
     SPECULATIVE_STARTED,
 )
 from moralstack.orchestration.overlay_policy import (
@@ -298,7 +301,18 @@ class OrchestrationController:
         return out
 
     def _apply_conversation_metadata_to_result(self, result: OrchestratorResult, request: ProcessedRequest) -> None:
-        """Stamp optional conversation linkage and updated governance state (no routing impact)."""
+        """Stamp optional conversation linkage and updated governance state (no routing impact).
+
+        Step 13: when the caller provides a ``conversation_id`` (even without
+        an inbound ``state_in`` — e.g. turn 0 of a brand-new conversation),
+        the controller now produces a ``conversation_governance_state_out``
+        seeded from an empty :class:`ConversationGovernanceState`. This is a
+        pure observability widening: it ensures the canonical
+        ``conversation.state_updated`` envelope is emitted for every turn of
+        a tracked conversation, so the audit timeline never skips turn 0.
+        ``conversation_state_provided`` still reflects the input contract
+        accurately (True only when a real state_in was supplied).
+        """
         ctx = getattr(self, "_conversation_process_ctx", None)
         if not isinstance(ctx, dict):
             return
@@ -312,8 +326,9 @@ class OrchestrationController:
             result.turn_index = tid
         if pid is not None:
             result.parent_request_id = pid
-        if state_in is not None:
-            result.conversation_state_provided = True
+        should_build_state_out = state_in is not None or cid is not None
+        if should_build_state_out:
+            result.conversation_state_provided = state_in is not None
             base = state_in if isinstance(state_in, ConversationGovernanceState) else ConversationGovernanceState()
             merged = base.with_turn_metadata(
                 conversation_id=cid if cid is not None else base.conversation_id,
@@ -367,10 +382,78 @@ class OrchestrationController:
                     "summary": result.conversation_governance_state_out.to_summary_dict(),
                 },
             )
+            # Step 13 — also emit the canonical conversation.state_updated event so
+            # JSONL captures the full snapshot and SQLite persists a queryable row
+            # in conversation_states. The orchestration_event above is kept for
+            # backward compatibility (it carries only a summary payload).
+            self._emit_canonical_conversation_state_updated(result=result, request=request, ctx=ctx)
         # --- v0.4 multi-turn: persist decision into the ledger for next turn ---
         # Done at the very end so any exception during routing already aborted the flow.
         self._maybe_store_in_ledger(request=request, result=result, ctx=ctx)
         # --- end v0.4 multi-turn ---
+
+    def _emit_canonical_conversation_state_updated(
+        self,
+        *,
+        result: OrchestratorResult,
+        request: ProcessedRequest,
+        ctx: dict[str, Any],
+    ) -> None:
+        """
+        Emit the canonical ``conversation.state_updated`` event so JSONL and
+        SQLite capture the full state transition for the current turn.
+
+        Step 13 multi-turn observability: complements the orchestration_event
+        emitted above (which only carries a summary), giving us a queryable
+        ``conversation_states`` row plus a complete JSONL envelope. Best-effort:
+        any failure is debug-logged and never breaks the response flow.
+        """
+        try:
+            state_out = result.conversation_governance_state_out
+            state_in = ctx.get("conversation_state")
+            cid = ctx.get("conversation_id")
+            tid = ctx.get("turn_index")
+            request_id = getattr(request, "request_id", "") or ""
+
+            # Risk score and final action from the produced metadata.
+            metadata = getattr(getattr(result, "response", None), "metadata", None)
+            final_action = getattr(metadata, "final_action", None) if metadata is not None else None
+            risk_score: float | None = None
+            if metadata is not None:
+                rs = getattr(metadata, "risk_score", None)
+                try:
+                    risk_score = float(rs) if rs is not None else None
+                except (ValueError, TypeError):
+                    risk_score = None
+
+            posture = state_out.last_governance_posture if isinstance(state_out, ConversationGovernanceState) else None
+
+            ledger_lookup = ctx.get("_ledger_lookup")
+            was_cached = bool(ctx.get("_ledger_hit_applied", False))
+            cached_from_turn: int | None = None
+            if ledger_lookup is not None and getattr(ledger_lookup, "is_hit", False):
+                cached_from_turn = getattr(ledger_lookup, "from_turn", None)
+
+            refresh_required = ctx.get("_refresh_required")
+            refresh_reason = ctx.get("_refresh_reason")
+
+            emit_conversation_state_updated(
+                run_id=None,  # falls back to current run_id from context
+                request_id=request_id,
+                conversation_id=cid if isinstance(cid, str) and cid else None,
+                turn_index=tid if isinstance(tid, int) else None,
+                state_in=state_in,
+                state_out=state_out,
+                final_action=final_action,
+                risk_score=risk_score,
+                posture=posture,
+                was_cached=was_cached if was_cached else None,
+                cached_from_turn=cached_from_turn,
+                refresh_required=refresh_required if isinstance(refresh_required, bool) else None,
+                refresh_reason=refresh_reason if isinstance(refresh_reason, str) and refresh_reason else None,
+            )
+        except Exception:
+            _LOG.debug("_emit_canonical_conversation_state_updated failed", exc_info=True)
 
     def _extend_state_out_v04(
         self,
@@ -399,13 +482,25 @@ class OrchestrationController:
             final_action = getattr(metadata, "final_action", "") or ""
             risk_score = float(getattr(metadata, "risk_score", 0.0) or 0.0)
 
-        # Posture: derive from final_action; ESCALATED if REFUSE on a hard-signal path,
-        # ELEVATED if overlay-sensitive (proxy via active_overlay on the state), else NORMAL.
+        # Step 14.8: derive posture from the SAME signal the lookup uses, namely
+        # `is_overlay_sensitive(constitution_store, domain)`. Previously this
+        # branch read `state.active_overlay`, but that field is never populated
+        # by the controller (update_from_processing_result is called without
+        # `overlay=`), so the elif branch was always False and the store wrote
+        # posture="NORMAL" even for sensitive overlays — while the lookup,
+        # using _compute_governance_posture with the correct overlay_sensitive
+        # flag, wrote posture="ELEVATED". The asymmetry produced a different
+        # LedgerKey for store and lookup, making cache hits structurally
+        # impossible on any sensitive overlay (legal, medical, mental_health,
+        # journalism, financial, healthcare, emergency, cybersecurity,
+        # children, political, environment).
         posture = "NORMAL"
         if final_action == "REFUSE" and len(state.last_hard_constraints_triggered) > 0:
             posture = "ESCALATED"
-        elif state.active_overlay:
-            posture = "ELEVATED"
+        else:
+            domain = request.get_domain() if hasattr(request, "get_domain") else None
+            if is_overlay_sensitive(self.constitution_store, domain):
+                posture = "ELEVATED"
 
         # Append a TurnDecisionSummary for the current turn.
         winning_rule = ""
@@ -499,11 +594,35 @@ class OrchestrationController:
         )
 
         domain = request.get_domain() if hasattr(request, "get_domain") else None
+        # Step 14.3: prefer values captured at lookup time (stored in
+        # _conversation_process_ctx by the lookup block in process()). This
+        # guarantees the store writes the SAME intent fields the lookup used,
+        # so the secondary intent check at the next turn doesn't reject the
+        # cache hit with reason='intent_divergence'. Fallback to metadata
+        # only when the ctx is missing the value (e.g. ledger disabled at
+        # lookup but enabled at store, which shouldn't happen but is safe to
+        # handle).
         intent_clarity = "HIGH"
         request_type = ""
-        if metadata is not None:
-            intent_clarity = getattr(metadata, "intent_clarity", "HIGH") or "HIGH"
-            request_type = getattr(metadata, "request_type", "") or ""
+        if isinstance(ctx, dict):
+            ctx_clarity = ctx.get("_ledger_intent_clarity")
+            ctx_request_type = ctx.get("_ledger_request_type")
+            if isinstance(ctx_clarity, str) and ctx_clarity:
+                intent_clarity = ctx_clarity
+            if isinstance(ctx_request_type, str):
+                request_type = ctx_request_type
+        # Fallback to metadata when ctx didn't carry the lookup-time values.
+        # NB: ResponseMetadata has no `request_type` field today — this branch
+        # exists only for forward compatibility / safety.
+        if not intent_clarity or intent_clarity == "HIGH":
+            if metadata is not None:
+                meta_clarity = getattr(metadata, "intent_clarity", None)
+                if isinstance(meta_clarity, str) and meta_clarity:
+                    intent_clarity = meta_clarity
+        if not request_type and metadata is not None:
+            meta_request_type = getattr(metadata, "request_type", None)
+            if isinstance(meta_request_type, str):
+                request_type = meta_request_type
 
         try:
             self._ledger.store(
@@ -1453,13 +1572,14 @@ class OrchestrationController:
                     hard_signal_refuse=hard_signal_refuse,
                 )
                 _request_type = getattr(risk_proto, "request_type", "") or ""
+                _intent_clarity = getattr(decision, "intent_clarity", "HIGH") or "HIGH"
                 _turn_for_lookup = turn_index if isinstance(turn_index, int) else 0
                 _cached_lookup = self._lookup_cached_decision(
                     prompt=request.prompt,
                     contract_hash=_contract_hash,
                     posture=_posture,
                     domain=request.get_domain() if hasattr(request, "get_domain") else None,
-                    intent_clarity=getattr(decision, "intent_clarity", "HIGH"),
+                    intent_clarity=_intent_clarity,
                     request_type=_request_type,
                     turn_index=_turn_for_lookup,
                 )
@@ -1478,8 +1598,19 @@ class OrchestrationController:
                     )
                 if isinstance(self._conversation_process_ctx, dict):
                     self._conversation_process_ctx["_ledger_lookup"] = _cached_lookup
+                    # Step 14.3: persist lookup-time intent fields so the
+                    # post-pipeline store uses the SAME values the lookup used.
+                    # Without this, store would write request_type="" (because
+                    # ResponseMetadata has no request_type field) and any future
+                    # lookup with the real request_type triggers intent_divergence
+                    # at the secondary check, blocking every cache hit.
+                    self._conversation_process_ctx["_ledger_request_type"] = _request_type
+                    self._conversation_process_ctx["_ledger_intent_clarity"] = _intent_clarity
                 # --- v0.4 Step 7: apply cached decision when hit and safe to do so ---
                 if _cached_lookup is not None and _cached_lookup.is_hit:
+                    cached_action = (
+                        _cached_lookup.cached_decision.final_action if _cached_lookup.cached_decision else "unknown"
+                    )
                     if self._fast_path_runner.is_safe_to_apply(
                         ledger_result=_cached_lookup,
                         current_decision=decision,
@@ -1497,6 +1628,37 @@ class OrchestrationController:
                         # Mark the conversation context so _extend_state_out_v04 can flag was_cached=True.
                         if isinstance(self._conversation_process_ctx, dict):
                             self._conversation_process_ctx["_ledger_hit_applied"] = True
+                        # Step 14.4 — canonical orchestration.event emission so the
+                        # cache application is visible in the UI metro map and in
+                        # offline log consumers. The orch_debug_log below is kept
+                        # for low-level debugging through debug_events.
+                        try:
+                            self._events.emit_orchestration_event(
+                                request_id=request_id,
+                                cycle=0,
+                                stage="fast_path",
+                                component="ledger_fast_path_runner",
+                                event_type=LEDGER_FAST_PATH_APPLIED,
+                                decision="applied",
+                                status="ok",
+                                sequence=0,
+                                reason_codes=["cached_decision_reused"],
+                                payload={
+                                    "from_turn": _cached_lookup.from_turn,
+                                    "similarity": _cached_lookup.similarity,
+                                    "cached_action": cached_action,
+                                    "forced_route": route,
+                                    "modules_skipped": [
+                                        "critic",
+                                        "simulator",
+                                        "perspectives",
+                                        "hindsight",
+                                    ],
+                                },
+                            )
+                        except Exception:
+                            # Observability is best-effort; never break the pipeline.
+                            pass
                         orch_debug_log(
                             "orchestrator.py:process",
                             "ledger cache hit APPLIED — deliberation will be skipped",
@@ -1510,15 +1672,48 @@ class OrchestrationController:
                             request_id=request_id,
                         )
                     else:
+                        # Step 14.4 — emit the gate-rejected variant so the audit
+                        # trail explains why deliberation ran even though the
+                        # ledger had a candidate hit. ``gate_reason`` is derived
+                        # from the documented contract of is_safe_to_apply:
+                        # - cached REFUSE is always applied (we never reach
+                        #   this branch when cached_action == "REFUSE");
+                        # - non-deliberative routes are always applied
+                        #   (we never reach this branch in that case);
+                        # - otherwise the current run is in deliberation and
+                        #   the cached non-REFUSE decision is rejected.
+                        gate_reason = (
+                            "current_route_requires_deliberation"
+                            if route in ("deliberative", "deliberative_loop")
+                            else "unknown_gate_rejection"
+                        )
+                        try:
+                            self._events.emit_orchestration_event(
+                                request_id=request_id,
+                                cycle=0,
+                                stage="fast_path",
+                                component="ledger_fast_path_runner",
+                                event_type=LEDGER_FAST_PATH_NOT_APPLIED,
+                                decision="rejected",
+                                status="ok",
+                                sequence=0,
+                                reason_codes=[gate_reason],
+                                payload={
+                                    "from_turn": _cached_lookup.from_turn,
+                                    "similarity": _cached_lookup.similarity,
+                                    "cached_action": cached_action,
+                                    "current_action": decision.final_action,
+                                    "current_route": route,
+                                    "gate_reason": gate_reason,
+                                },
+                            )
+                        except Exception:
+                            pass
                         orch_debug_log(
                             "orchestrator.py:process",
                             "ledger cache hit FOUND but safety gate prevents application",
                             {
-                                "cached_action": (
-                                    _cached_lookup.cached_decision.final_action
-                                    if _cached_lookup.cached_decision
-                                    else "unknown"
-                                ),
+                                "cached_action": cached_action,
                                 "current_action": decision.final_action,
                                 "current_route": route,
                             },

@@ -105,7 +105,8 @@ def test_all_event_types_is_frozenset():
     assert EVENT_LLM_CALL in ALL_EVENT_TYPES
     assert EVENT_DECISION_TRACE in ALL_EVENT_TYPES
     assert EVENT_RUN_STARTED in ALL_EVENT_TYPES
-    assert len(ALL_EVENT_TYPES) == 10
+    # 10 legacy + 6 Step 13 multi-turn observability event types
+    assert len(ALL_EVENT_TYPES) == 16
 
 
 def test_envelope_audit_level_default():

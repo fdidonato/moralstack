@@ -1,7 +1,11 @@
 """Tests for SDK streaming — GovernedStreamResponse, GovernedRefusalStream."""
 
+from __future__ import annotations
+
 from typing import Any
 from unittest.mock import MagicMock
+
+import pytest
 
 from moralstack.sdk.response import GovernanceMetadata
 from moralstack.sdk.wrapper import (
@@ -10,6 +14,66 @@ from moralstack.sdk.wrapper import (
     GovernedStreamResponse,
     _SyntheticStreamChunk,
 )
+
+
+@pytest.fixture(autouse=True)
+def disable_observability_for_stream_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Session autouse conftest sets MORALSTACK_DB_PATH=:memory:, which makes
+    get_observability_mode() default to db_only and triggers SQLite init on
+    every GovernedClient. Streaming tests use broad MagicMock orchestrator
+    results; finalize_governance_audit then builds meta and runs
+    emit_request_meta_updated -> _json_safe, which is extremely expensive on
+    MagicMocks, and get_obs().flush() can block on the write queue.
+
+    For this module only: no DB path for observability, file_only routing,
+    no-op observability emits/flushes, and no-op finalize_governance_audit so
+    SDK create() stays a pure unit test.
+    """
+    monkeypatch.setattr("moralstack.observability.config.get_db_path", lambda: None)
+    monkeypatch.setattr(
+        "moralstack.observability.config.get_observability_mode",
+        lambda: "file_only",
+    )
+    # sqlite_sink and router bind config helpers at import time; patch those names too.
+    monkeypatch.setattr("moralstack.observability.sinks.sqlite_sink.get_db_path", lambda: None)
+    monkeypatch.setattr(
+        "moralstack.observability.sinks.sqlite_sink.get_observability_mode",
+        lambda: "file_only",
+    )
+    monkeypatch.setattr(
+        "moralstack.observability.router.get_observability_mode",
+        lambda: "file_only",
+    )
+
+    def _noop_emit(self: object, *_a: object, **_kw: object) -> None:
+        return None
+
+    def _noop_emit_batch(self: object, *_a: object, **_kw: object) -> None:
+        return None
+
+    def _noop_flush(self: object, *_a: object, **_kw: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "moralstack.observability.service.ObservabilityService.emit",
+        _noop_emit,
+    )
+    monkeypatch.setattr(
+        "moralstack.observability.service.ObservabilityService.emit_batch",
+        _noop_emit_batch,
+    )
+    monkeypatch.setattr(
+        "moralstack.observability.service.ObservabilityService.flush",
+        _noop_flush,
+    )
+
+    # finalize_governance_audit runs build_request_meta + emit_request_meta_updated;
+    # the latter calls _json_safe on meta built from broad MagicMocks (very expensive).
+    monkeypatch.setattr(
+        "moralstack.observability.governance_audit.finalize_governance_audit",
+        lambda **kwargs: {},
+    )
 
 
 def _make_result(final_action: str = "NORMAL_COMPLETE") -> Any:

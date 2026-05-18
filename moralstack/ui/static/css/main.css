@@ -1368,3 +1368,108 @@ h3 {
     border: 1px solid rgba(251, 191, 36, 0.35);
     font-size: 0.65rem;
 }
+
+/* ===================================================================== */
+/* Step 14.6 — Conversation strip                                        */
+/* ===================================================================== */
+
+.conv-strip-container {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+.conv-strip {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    min-height: 96px;
+    padding: 0.75rem 0.5rem 0.5rem;
+}
+
+.conv-strip-cell {
+    position: relative;
+    flex: 0 0 36px;
+    min-width: 36px;
+    min-height: 24px;
+    border-radius: 4px;
+    background: var(--blue-bg);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    cursor: pointer;
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.conv-strip-cell:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.conv-strip-cell-normal_complete {
+    background: var(--green-bg);
+    border-color: var(--green);
+}
+
+.conv-strip-cell-safe_complete {
+    background: var(--yellow-bg);
+    border-color: var(--yellow);
+}
+
+.conv-strip-cell-refuse {
+    background: var(--red-bg);
+    border-color: var(--red);
+}
+
+.conv-strip-cell-escalated {
+    box-shadow: 0 0 0 2px #fb923c inset;
+}
+
+.conv-strip-label {
+    position: absolute;
+    top: -1.1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.7rem;
+    color: var(--muted, #9ca3af);
+    font-family: ui-monospace, monospace;
+    white-space: nowrap;
+}
+
+.conv-strip-cache-icon {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    font-size: 0.85rem;
+    line-height: 1;
+    color: var(--yellow, #fbbf24);
+    text-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+}
+
+.conv-strip-link {
+    position: absolute;
+    inset: 0;
+    display: block;
+    text-decoration: none;
+}
+
+.conv-strip-arrows {
+    display: flex;
+    gap: 6px;
+    padding: 0 0.5rem;
+    margin-top: 0.25rem;
+    min-height: 1.2rem;
+}
+
+.conv-strip-arrow {
+    flex: 0 0 36px;
+    min-width: 36px;
+    text-align: center;
+    font-size: 0.95rem;
+    color: var(--accent, #60a5fa);
+    cursor: help;
+    font-family: ui-monospace, monospace;
+}
+
+.small {
+    font-size: 0.85rem;
+}

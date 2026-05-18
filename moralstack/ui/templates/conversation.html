@@ -1,0 +1,391 @@
+{% extends "base.html" %}
+{% block title %}Conversation {{ conversation_id[:12] }} - MoralStack{% endblock %}
+{% block content %}
+<div class="page-header">
+    <nav class="breadcrumb">
+        <a href="/runs">Dashboard</a>
+        {% if timeline.run_id %}
+        &rsaquo; <a href="/runs/{{ timeline.run_id }}">Run {{ timeline.run_id[:12] }}</a>
+        {% endif %}
+        &rsaquo; <span>Conversation</span>
+    </nav>
+    <h1>Conversation <span class="mono">{{ conversation_id[:24] }}</span></h1>
+    <p class="subtitle">Multi-turn governance timeline (Step 13 observability)</p>
+</div>
+
+<div class="actions-bar">
+    <a href="/conversations/{{ conversation_id }}/export.md" download class="btn btn-outline">Export Markdown</a>
+    {% if timeline.run_id %}
+    <a href="/runs/{{ timeline.run_id }}" class="btn btn-outline">Back to Run</a>
+    {% endif %}
+</div>
+
+{% set ov = timeline.overview or {} %}
+{% set ov_max_risk = ov.get('max_risk_score') %}
+<div class="card meta-grid">
+    <div class="meta-item">
+        <span class="meta-label">Total turns</span>
+        <span class="meta-value">{{ timeline.requests | length }}</span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Final actions</span>
+        <span class="meta-value">
+            {% if ov.get('final_actions') %}
+            {% for action, count in ov.get('final_actions').items() %}
+            <span class="badge">{{ action }}: {{ count }}</span>
+            {% endfor %}
+            {% else %}—{% endif %}
+        </span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Max risk score</span>
+        <span class="meta-value">
+            {% if ov_max_risk is not none %}{{ "%.3f" | format(ov_max_risk) }}{% else %}—{% endif %}
+        </span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Last posture</span>
+        <span class="meta-value">
+            {% if ov.get('last_posture') %}<span class="badge">{{ ov.get('last_posture') }}</span>{% else %}—{% endif %}
+        </span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Ledger hits / misses</span>
+        <span class="meta-value">
+            {% set lh = ov.get('ledger_hits') or 0 %}
+            {% set lm = ov.get('ledger_misses') or 0 %}
+            {{ lh }} / {{ lm }}
+            {% if lh == 0 and lm == 0 %}<span class="muted"> (ledger not configured)</span>{% endif %}
+        </span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Session store hits / misses</span>
+        <span class="meta-value">{{ ov.get('session_store_hits') or 0 }} / {{ ov.get('session_store_misses') or 0 }}</span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Any turn cached</span>
+        <span class="meta-value">
+            {% if ov.get('any_turn_cached') %}<span class="badge badge-ok">yes</span>{% else %}<span class="badge">no</span>{% endif %}
+        </span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">First / last turn</span>
+        <span class="meta-value ts">
+            {{ ov.get('first_created_at') | fmtdate }} → {{ ov.get('last_created_at') | fmtdate }}
+        </span>
+    </div>
+</div>
+
+{# Step 14.6 — Conversation strip: horizontal visual summary of turns #}
+{% if timeline.requests %}
+<h2>Conversation strip</h2>
+<div class="card">
+    <p class="muted small">
+        Each rectangle is one turn. Height encodes risk score (taller = higher risk).
+        Colour encodes final_action (green = NORMAL_COMPLETE, yellow = SAFE_COMPLETE,
+        red = REFUSE). Orange border = ESCALATED posture. ⚡ = cached from a previous turn.
+        Hover for details, click to open the request.
+    </p>
+    <div class="conv-strip-container">
+        <div class="conv-strip">
+            {% for r in timeline.requests %}
+                {% set meta = r.meta_json__parsed or {} %}
+                {% set state = r.state or {} %}
+                {% set summary = state.get('state_summary_json__parsed') or {} %}
+                {% set risk_score = meta.get('risk_score') %}
+                {% set posture = state.get('posture') or summary.get('last_governance_posture') or meta.get('governance_posture') %}
+                {% set action = meta.get('final_action') or 'unknown' %}
+                {% set was_cached = state.get('was_cached') or meta.get('was_cached') %}
+                {% set cached_from = state.get('cached_from_turn') %}
+                {% set bar_height = (24 + ((risk_score or 0.0) * 56)) | int %}
+                {% set action_class = 'conv-strip-cell-' + (action | lower) %}
+                {% set escalated = (posture == 'ESCALATED') %}
+                <div
+                    class="conv-strip-cell {{ action_class }}{% if escalated %} conv-strip-cell-escalated{% endif %}"
+                    style="height: {{ bar_height }}px;"
+                    data-turn="{{ r.turn_index }}"
+                    {% if cached_from is not none %}data-cached-from="{{ cached_from }}"{% endif %}
+                    title="Turn {{ r.turn_index }}: {{ action }}{% if risk_score is not none %} (risk={{ '%.3f' | format(risk_score) }}){% endif %}{% if posture %} [{{ posture }}]{% endif %}{% if meta.get('domain_overlay') %} domain={{ meta.get('domain_overlay') }}{% endif %}{% if was_cached %} — cached from T{{ cached_from }}{% endif %}"
+                >
+                    <span class="conv-strip-label">T{{ r.turn_index }}</span>
+                    {% if was_cached %}
+                        <span class="conv-strip-cache-icon" aria-label="cached">⚡</span>
+                    {% endif %}
+                    {% if r.run_id and r.request_id %}
+                        <a class="conv-strip-link" href="/runs/{{ r.run_id }}/requests/{{ r.request_id }}" aria-label="Open turn {{ r.turn_index }}"></a>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+        <div class="conv-strip-arrows">
+            {% for r in timeline.requests %}
+                {% set state = r.state or {} %}
+                {% set cached_from = state.get('cached_from_turn') %}
+                {% if cached_from is not none and r.turn_index is not none %}
+                    <span class="conv-strip-arrow"
+                          data-from-turn="{{ cached_from }}"
+                          data-to-turn="{{ r.turn_index }}"
+                          title="Turn {{ r.turn_index }} reused cached decision from turn {{ cached_from }}">
+                        ←
+                    </span>
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<h2>Posture timeline</h2>
+{% if timeline.requests %}
+<div class="card">
+    <table class="table">
+        <thead>
+        <tr>
+            <th>Turn</th>
+            <th>Request</th>
+            <th>Action</th>
+            <th>Risk</th>
+            <th>Posture (out)</th>
+            <th>Cached</th>
+            <th>Created</th>
+            <th class="col-actions">Actions</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for r in timeline.requests %}
+        {% set meta = r.meta_json__parsed or {} %}
+        {% set state = r.state or {} %}
+        {% set summary = state.get('state_summary_json__parsed') or {} %}
+        {% set risk_score = meta.get('risk_score') %}
+        {% set state_cached_from = state.get('cached_from_turn') %}
+        <tr>
+            <td>{{ r.turn_index if r.turn_index is not none else '—' }}</td>
+            <td class="mono">
+                {% if r.run_id and r.request_id %}
+                <a href="/runs/{{ r.run_id }}/requests/{{ r.request_id }}">{{ r.request_id[:12] }}</a>
+                {% else %}{{ (r.request_id or '')[:12] }}{% endif %}
+            </td>
+            <td>
+                <span class="badge">{{ meta.get('final_action') or '—' }}</span>
+            </td>
+            <td>
+                {% if risk_score is not none %}
+                {{ "%.3f" | format(risk_score) }}
+                {% else %}—{% endif %}
+            </td>
+            <td>
+                {% set posture = state.get('posture') or summary.get('last_governance_posture') or meta.get('governance_posture') %}
+                {% if posture %}<span class="badge">{{ posture }}</span>{% else %}—{% endif %}
+            </td>
+            <td>
+                {% if state.get('was_cached') or meta.get('was_cached') %}
+                <span class="badge badge-ok">cached</span>
+                {% if state_cached_from is not none %}
+                <span class="muted">from turn {{ state_cached_from }}</span>
+                {% endif %}
+                {% else %}—{% endif %}
+            </td>
+            <td class="ts">{{ r.created_at | fmtdate }}</td>
+            <td class="col-actions">
+                {% if r.run_id and r.request_id %}
+                <a href="/runs/{{ r.run_id }}/requests/{{ r.request_id }}" class="btn btn-sm">View</a>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="empty-state">
+    <p>No turns recorded for this conversation.</p>
+</div>
+{% endif %}
+
+<h2>Per-turn detail</h2>
+{% for r in timeline.requests %}
+{% set meta = r.meta_json__parsed or {} %}
+{% set state = r.state or {} %}
+{% set summary = state.get('state_summary_json__parsed') or {} %}
+{% set state_in_full = state.get('state_in_json__parsed') or {} %}
+{% set state_out_full = state.get('state_out_json__parsed') or {} %}
+{% set proxy = r.proxy_event or {} %}
+{% set proxy_meta = proxy.get('metadata_json__parsed') or {} %}
+{% set proxy_headers = proxy.get('headers_json__parsed') or {} %}
+{% set risk_score = meta.get('risk_score') %}
+{% set meta_cached_from = meta.get('cached_from_turn') %}
+{% set state_cached_from = state.get('cached_from_turn') %}
+<div class="card conversation-turn-card">
+    <div class="conversation-turn-header">
+        <h3>Turn {{ r.turn_index if r.turn_index is not none else '?' }}
+            <span class="muted mono">· {{ (r.request_id or '')[:12] }}</span>
+        </h3>
+        <div class="conversation-turn-badges">
+            <span class="badge">{{ meta.get('final_action') or '—' }}</span>
+            {% if risk_score is not none %}
+            <span class="badge">risk {{ "%.3f" | format(risk_score) }}</span>
+            {% endif %}
+            {% set posture = state.get('posture') or summary.get('last_governance_posture') or meta.get('governance_posture') %}
+            {% if posture %}<span class="badge">{{ posture }}</span>{% endif %}
+            {% if state.get('was_cached') or meta.get('was_cached') %}
+            <span class="badge badge-ok">cached</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="conversation-turn-grid">
+        <div>
+            <h4>Prompt</h4>
+            <pre class="conversation-pre">{{ (r.prompt or '—') }}</pre>
+        </div>
+        <div>
+            <h4>Final response</h4>
+            <pre class="conversation-pre">{{ (r.final_response or '—') }}</pre>
+        </div>
+    </div>
+
+    <div class="conversation-turn-grid">
+        <div>
+            <h4>Governance decision</h4>
+            <table class="table">
+                <tbody>
+                <tr><td>Final action</td><td><span class="badge">{{ meta.get('final_action') or '—' }}</span></td></tr>
+                <tr><td>Risk score</td><td>{% if risk_score is not none %}{{ "%.4f" | format(risk_score) }}{% else %}—{% endif %}</td></tr>
+                <tr><td>Path</td><td>{{ meta.get('path') or '—' }}</td></tr>
+                <tr><td>Domain overlay</td><td>{{ meta.get('domain_overlay') or '—' }}</td></tr>
+                <tr><td>Reason codes</td><td>{{ (meta.get('reason_codes') or []) | join(', ') or '—' }}</td></tr>
+                <tr><td>Triggered principles</td><td>{{ (meta.get('triggered_principles') or []) | join(', ') or '—' }}</td></tr>
+                <tr><td>Posture (final)</td><td>{{ meta.get('governance_posture') or summary.get('last_governance_posture') or '—' }}</td></tr>
+                <tr><td>Was cached</td><td>{% if meta.get('was_cached') or state.get('was_cached') %}yes{% else %}no{% endif %}</td></tr>
+                {% if meta_cached_from is not none or state_cached_from is not none %}
+                <tr><td>Cached from turn</td><td>{{ meta_cached_from if meta_cached_from is not none else state_cached_from }}</td></tr>
+                {% endif %}
+                </tbody>
+            </table>
+            {% if meta.get('decision_reason') %}
+            <h4>Decision rationale</h4>
+            <pre class="conversation-pre">{{ meta.get('decision_reason') }}</pre>
+            {% endif %}
+            {% if meta.get('decision_explanation') %}
+            <details>
+                <summary>Decision explanation (structured)</summary>
+                <pre class="conversation-pre conversation-pre-json">{{ meta.get('decision_explanation') | tojson(indent=2) }}</pre>
+            </details>
+            {% endif %}
+            {% if meta %}
+            <details>
+                <summary>Raw governance meta (JSON)</summary>
+                <pre class="conversation-pre conversation-pre-json">{{ meta | tojson(indent=2) }}</pre>
+            </details>
+            {% endif %}
+        </div>
+        <div>
+            <h4>Conversation state</h4>
+            <table class="table">
+                <tbody>
+                <tr><td>Active domain</td><td>{{ summary.get('active_domain') or '—' }}</td></tr>
+                <tr><td>Active overlay</td><td>{{ summary.get('active_overlay') or '—' }}</td></tr>
+                <tr><td>Hard constraints triggered</td><td>{{ (summary.get('last_hard_constraints_triggered') or []) | join(', ') or '—' }}</td></tr>
+                <tr><td>Principle shortlist</td><td>{{ (summary.get('principle_shortlist') or []) | join(', ') or '—' }}</td></tr>
+                <tr><td>Refresh required</td><td>{% if state.get('refresh_required') %}yes{% else %}no{% endif %}</td></tr>
+                {% if state.get('refresh_reason') %}
+                <tr><td>Refresh reason</td><td>{{ state.get('refresh_reason') }}</td></tr>
+                {% endif %}
+                </tbody>
+            </table>
+            {% if state_in_full or state_out_full %}
+            <details>
+                <summary>Full state snapshots (JSON)</summary>
+                {% if state_in_full %}
+                <h5>State (in)</h5>
+                <pre class="conversation-pre conversation-pre-json">{{ state_in_full | tojson(indent=2) }}</pre>
+                {% endif %}
+                {% if state_out_full %}
+                <h5>State (out)</h5>
+                <pre class="conversation-pre conversation-pre-json">{{ state_out_full | tojson(indent=2) }}</pre>
+                {% endif %}
+            </details>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if r.ledger_events %}
+    <h4>Ledger activity</h4>
+    <table class="table">
+        <thead>
+        <tr><th>Op</th><th>Outcome</th><th>Similarity</th><th>Reason</th><th>From turn</th><th>Posture</th><th>Final action</th></tr>
+        </thead>
+        <tbody>
+        {% for ev in r.ledger_events %}
+        <tr>
+            <td>{{ ev.operation or '—' }}</td>
+            <td><span class="badge">{{ ev.outcome or '—' }}</span></td>
+            <td>{% if ev.similarity is not none %}{{ "%.3f" | format(ev.similarity) }}{% else %}—{% endif %}</td>
+            <td>{{ ev.reason or '—' }}</td>
+            <td>{{ ev.from_turn if ev.from_turn is not none else '—' }}</td>
+            <td>{{ ev.posture or '—' }}</td>
+            <td>{{ ev.final_action or '—' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if r.session_events %}
+    <h4>Session store activity</h4>
+    <table class="table">
+        <thead>
+        <tr><th>Op</th><th>Outcome</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+        {% for ev in r.session_events %}
+        {% set payload = ev.get('payload_json__parsed') or {} %}
+        {% set state_sum = ev.get('state_summary_json__parsed') or {} %}
+        {% set ttl_age = payload.get('ttl_age_ms') %}
+        {% set evicted_ids = payload.get('evicted_ids') %}
+        <tr>
+            <td>{{ ev.operation or '—' }}</td>
+            <td><span class="badge">{{ ev.outcome or '—' }}</span></td>
+            <td>
+                {% if state_sum.get('last_governance_posture') %}posture={{ state_sum.get('last_governance_posture') }}{% endif %}
+                {% if ttl_age is not none %} · ttl_age={{ ttl_age }}ms{% endif %}
+                {% if evicted_ids %} · evicted={{ evicted_ids | length }}{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if proxy %}
+    <h4>Proxy finalization</h4>
+    <table class="table">
+        <tbody>
+        <tr><td>State provided</td><td>{% if proxy.state_provided %}yes{% else %}no{% endif %}</td></tr>
+        <tr><td>State updated</td><td>{% if proxy.state_updated %}yes{% else %}no{% endif %}</td></tr>
+        <tr><td>Posture in → out</td><td>{{ proxy.posture_in or '—' }} → {{ proxy.posture_out or '—' }}</td></tr>
+        <tr><td>Was cached</td><td>{% if proxy.was_cached %}yes{% else %}no{% endif %}</td></tr>
+        <tr><td>Final response length</td><td>{{ proxy.final_response_length if proxy.final_response_length is not none else '—' }}</td></tr>
+        </tbody>
+    </table>
+    {% if proxy_headers %}
+    <details>
+        <summary>X-MoralStack headers</summary>
+        <pre class="conversation-pre conversation-pre-json">{{ proxy_headers | tojson(indent=2) }}</pre>
+    </details>
+    {% endif %}
+    {% endif %}
+</div>
+{% endfor %}
+
+<style>
+.conversation-turn-card { margin-top: 1rem; }
+.conversation-turn-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
+.conversation-turn-header h3 { margin: 0; }
+.conversation-turn-badges { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.conversation-turn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+@media (max-width: 900px) { .conversation-turn-grid { grid-template-columns: 1fr; } }
+.conversation-pre { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.75rem; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; }
+.conversation-pre-json { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.78rem; }
+</style>
+{% endblock %}

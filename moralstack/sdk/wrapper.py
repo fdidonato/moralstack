@@ -111,6 +111,39 @@ def _messages_to_turns(messages: list[dict[str, Any]]) -> list[Turn]:
     return turns
 
 
+def _extract_text_from_openai_response(openai_response: Any) -> str:
+    """
+    Extract the assistant text from an OpenAI chat completion response.
+
+    Best-effort: returns an empty string when the structure is missing or
+    unexpected. Mirrors the contract used by the FastAPI proxy so audit
+    rows record an identical ``final_response`` regardless of entry point.
+    """
+    if openai_response is None:
+        return ""
+    try:
+        choices = getattr(openai_response, "choices", None) or []
+        if not choices:
+            return ""
+        message = getattr(choices[0], "message", None)
+        if message is None:
+            return ""
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for p in content:
+                if isinstance(p, dict):
+                    text = p.get("text") or p.get("content")
+                    if isinstance(text, str):
+                        parts.append(text)
+            return "".join(parts)
+        return ""
+    except Exception:
+        return ""
+
+
 def _build_safe_complete_user_turn(result: Any) -> dict[str, str]:
     """
     Build a synthetic user turn carrying the SAFE_COMPLETE governance guidance.
@@ -273,6 +306,12 @@ class GovernedCompletions:
         conv_id = session.conversation_id
         turn_idx = session.next_turn_index()
         conv_state = session.current_state
+        # Snapshot of the incoming ConversationGovernanceState BEFORE the
+        # controller runs and before ``session.update_from_result`` overwrites
+        # the store entry. Required for the canonical ``proxy.request_finalized``
+        # envelope (state_in / posture_in fields). At turn 0 of a fresh session
+        # this is ``None`` — the proxy and the SDK behave identically here.
+        state_in_snapshot = conv_state
 
         # --- Deliberation ---
         try:
@@ -292,6 +331,15 @@ class GovernedCompletions:
 
         # --- Routing ---
         if final_action == "REFUSE":
+            self._finalize_audit(
+                request_id=request.request_id,
+                result=result,
+                final_response_text=getattr(result.response, "content", "") or "",
+                conversation_id=conv_id,
+                turn_index=turn_idx,
+                domain=domain,
+                state_in=state_in_snapshot,
+            )
             if is_stream:
                 return GovernedRefusalStream(result)
             return GovernedResponse.from_refusal(result)
@@ -305,16 +353,159 @@ class GovernedCompletions:
             modified_kwargs = {**kwargs, "messages": modified_messages}
             if is_stream:
                 stream = self._governed._client.chat.completions.create(**modified_kwargs)
+                # For streaming, the final body is consumed by the caller; the
+                # audit row records the governance decision without a body.
+                self._finalize_audit(
+                    request_id=request.request_id,
+                    result=result,
+                    final_response_text="",
+                    conversation_id=conv_id,
+                    turn_index=turn_idx,
+                    domain=domain,
+                    state_in=state_in_snapshot,
+                )
                 return GovernedStreamResponse(stream, result)
             openai_response = self._governed._client.chat.completions.create(**modified_kwargs)
+            self._finalize_audit(
+                request_id=request.request_id,
+                result=result,
+                final_response_text=_extract_text_from_openai_response(openai_response),
+                conversation_id=conv_id,
+                turn_index=turn_idx,
+                domain=domain,
+                state_in=state_in_snapshot,
+            )
             return GovernedResponse.from_safe(openai_response, result)
 
         # NORMAL_COMPLETE (or any other value)
         if is_stream:
             stream = self._governed._client.chat.completions.create(**kwargs)
+            self._finalize_audit(
+                request_id=request.request_id,
+                result=result,
+                final_response_text="",
+                conversation_id=conv_id,
+                turn_index=turn_idx,
+                domain=domain,
+                state_in=state_in_snapshot,
+            )
             return GovernedStreamResponse(stream, result)
         openai_response = self._governed._client.chat.completions.create(**kwargs)
+        self._finalize_audit(
+            request_id=request.request_id,
+            result=result,
+            final_response_text=_extract_text_from_openai_response(openai_response),
+            conversation_id=conv_id,
+            turn_index=turn_idx,
+            domain=domain,
+            state_in=state_in_snapshot,
+        )
         return GovernedResponse.from_normal(openai_response, result)
+
+    def _finalize_audit(
+        self,
+        *,
+        request_id: str,
+        result: Any,
+        final_response_text: str,
+        conversation_id: str | None,
+        turn_index: int | None,
+        domain: str | None,
+        state_in: Any | None = None,
+    ) -> None:
+        """
+        Populate Step 13 governance audit fields on the ``requests`` row AND
+        emit the canonical ``proxy.request_finalized`` envelope so the
+        ``proxy_request_events`` table (and the matching JSONL stream) carry a
+        per-turn summary for SDK-driven runs as well.
+
+        Best-effort: identical contract to the proxy's ``_finalize_request``,
+        so SDK-driven runs share the same audit surface (``final_response`` +
+        ``meta_json`` + ``proxy_request_events`` row) consumed by
+        ``moralstack-ui`` and the Markdown export. Any failure is swallowed —
+        observability never breaks the SDK contract.
+
+        The event name remains ``proxy.request_finalized`` for backwards
+        compatibility with the Step 13 schema (the table, the JSONL file, and
+        the read-store helpers all use that name); semantically it is
+        transport-agnostic and now also covers the SDK code path.
+
+        Args:
+            state_in: snapshot of ``session.current_state`` captured BEFORE
+                ``session.update_from_result(result)`` overwrote it. ``None``
+                at the very first turn of a fresh GovernedClient session.
+        """
+        run_id = getattr(self._governed, "_run_id", "") or ""
+        if not run_id or not request_id:
+            return
+        try:
+            from moralstack.observability.conversation_events import (
+                emit_proxy_request_finalized,
+            )
+            from moralstack.observability.governance_audit import (
+                finalize_governance_audit,
+                posture_of,
+                state_summary_or_none,
+            )
+
+            # 1) Update requests.final_response, requests.domain, and merge
+            #    requests.meta_json; return the consolidated meta dict.
+            meta = finalize_governance_audit(
+                run_id=run_id,
+                request_id=request_id,
+                result=result,
+                final_response_text=final_response_text,
+                conversation_id=conversation_id,
+                turn_index=turn_index,
+                domain=domain,
+            )
+
+            # 2) Emit the canonical proxy.request_finalized envelope. Mirrors
+            #    the proxy's _finalize_request behaviour (server/proxy.py:626)
+            #    but with SDK-appropriate values for ``headers`` (None: the
+            #    SDK does not produce X-MoralStack-* headers).
+            state_out = getattr(result, "conversation_governance_state_out", None)
+            state_provided = state_in is not None
+            state_updated = bool(getattr(result, "conversation_state_updated", False))
+            try:
+                response_len: int | None = len(final_response_text or "")
+            except Exception:
+                response_len = None
+
+            try:
+                emit_proxy_request_finalized(
+                    run_id=run_id,
+                    request_id=request_id,
+                    conversation_id=conversation_id,
+                    turn_index=turn_index,
+                    final_action=(meta.get("final_action") if isinstance(meta, dict) else None),
+                    risk_score=(meta.get("risk_score") if isinstance(meta, dict) else None),
+                    path=((meta.get("path_taken") or meta.get("path")) if isinstance(meta, dict) else None),
+                    domain=domain,
+                    posture_in=posture_of(state_in),
+                    posture_out=posture_of(state_out),
+                    state_provided=state_provided,
+                    state_updated=state_updated,
+                    was_cached=(meta.get("was_cached") if isinstance(meta, dict) else None),
+                    cached_from_turn=(meta.get("cached_from_turn") if isinstance(meta, dict) else None),
+                    final_response_length=response_len,
+                    # The SDK does not produce X-MoralStack-* response headers
+                    # (those belong to the HTTP proxy). Use None so the JSONL
+                    # records ``headers: null`` and SQLite stores headers_json
+                    # as NULL — unambiguous semantics for "no headers".
+                    headers=None,
+                    metadata=meta if meta else None,
+                    state_in=state_summary_or_none(state_in),
+                    state_out=state_summary_or_none(state_out),
+                )
+            except Exception:
+                # Inner try keeps the meta merge from being undone if the emit
+                # path itself raises (e.g. JSON-safety failure on an unusual
+                # object). Outer try below covers import failures.
+                pass
+        except Exception:
+            # Observability is a side-effect: never break the SDK contract.
+            pass
 
     def _handle_pipeline_failure(
         self,

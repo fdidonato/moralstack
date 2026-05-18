@@ -29,6 +29,18 @@
     </form>
 </div>
 
+<div class="card filters-card" style="margin-top:0.5rem;">
+    <form method="get" action="/conversations" class="runs-filters-form">
+        <div class="runs-filter-group runs-filter-text">
+            <label for="conv_q">Open conversation by ID</label>
+            <input id="conv_q" name="q" type="text" placeholder="conversation_id"/>
+        </div>
+        <div class="runs-filter-actions">
+            <button type="submit" class="btn btn-sm">Open</button>
+        </div>
+    </form>
+</div>
+
 <div class="runs-summary">
     Showing {{ runs|length }} of {{ total_runs }} runs · page {{ page }} / {{ total_pages }}
 </div>

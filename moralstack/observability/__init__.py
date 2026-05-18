@@ -2,7 +2,8 @@
 MoralStack Observability — unified telemetry module.
 
 Provides:
-  obs           — process-wide ObservabilityService singleton (emit, flush, read_store)
+  obs           — lazy view of the process-wide ObservabilityService (emit, flush, read_store;
+                  delegates to ``get_obs()`` on each attribute access)
   EventEnvelope — typed event wrapper
   make_envelope — factory helper
   EVENT_*       — canonical event_type constants
@@ -12,6 +13,8 @@ Quick start:
     from moralstack.observability import obs, make_envelope, EVENT_LLM_CALL
     obs.emit(make_envelope(EVENT_LLM_CALL, run_id=..., request_id=..., payload={...}))
 """
+
+from typing import Any
 
 from moralstack.observability.config import (
     get_db_path,
@@ -33,13 +36,19 @@ from moralstack.observability.events import (
     EVENT_CONVERSATION_STATE_UPDATED,
     EVENT_DEBUG_EVENT,
     EVENT_DECISION_TRACE,
+    EVENT_LEDGER_LOOKUP,
+    EVENT_LEDGER_STORE,
     EVENT_LLM_CALL,
     EVENT_ORCHESTRATION_EVENT,
+    EVENT_PROXY_REQUEST_FINALIZED,
     EVENT_REQUEST_DOMAIN_UPDATED,
+    EVENT_REQUEST_META_UPDATED,
     EVENT_REQUEST_RESPONSE_UPDATED,
     EVENT_REQUEST_UPSERTED,
     EVENT_RUN_ENDED,
     EVENT_RUN_STARTED,
+    EVENT_SESSION_STORE_GET,
+    EVENT_SESSION_STORE_PUT,
     EventEnvelope,
     make_envelope,
 )
@@ -52,18 +61,33 @@ from moralstack.observability.sinks.sqlite_sink import (
     delete_run,
     end_run,
     init_db,
+    insert_conversation_state_event,
     insert_debug_events_batch,
     insert_decision_traces_batch,
+    insert_ledger_event,
     insert_llm_calls_batch,
     insert_orchestration_events_batch,
+    insert_proxy_request_event,
+    insert_session_store_event,
     invalidate_exports_cache,
     update_request_domain,
+    update_request_meta,
     update_request_response,
     upsert_request,
 )
 
-# Process-wide singleton — primary entry point
-obs: ObservabilityService = get_obs()
+
+class _LazyObsProxy:
+    """Delegates attribute access to the current ``get_obs()`` singleton."""
+
+    __slots__ = ()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(get_obs(), name)
+
+
+# Process-wide singleton — primary entry point (always follows ``get_obs()``)
+obs = _LazyObsProxy()
 
 __all__ = [
     # Singleton
@@ -97,6 +121,13 @@ __all__ = [
     "EVENT_DECISION_TRACE",
     "EVENT_DEBUG_EVENT",
     "EVENT_CONVERSATION_STATE_UPDATED",
+    # Step 13 multi-turn observability
+    "EVENT_REQUEST_META_UPDATED",
+    "EVENT_LEDGER_LOOKUP",
+    "EVENT_LEDGER_STORE",
+    "EVENT_SESSION_STORE_GET",
+    "EVENT_SESSION_STORE_PUT",
+    "EVENT_PROXY_REQUEST_FINALIZED",
     # Read store
     "ReadStore",
     "SqliteReadStore",
@@ -115,4 +146,10 @@ __all__ = [
     "insert_decision_traces_batch",
     "insert_orchestration_events_batch",
     "insert_debug_events_batch",
+    # Step 13 multi-turn observability writers
+    "update_request_meta",
+    "insert_conversation_state_event",
+    "insert_ledger_event",
+    "insert_session_store_event",
+    "insert_proxy_request_event",
 ]

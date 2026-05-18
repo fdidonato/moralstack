@@ -10,7 +10,7 @@ Unified observability module — single entry point for all telemetry (write + r
 
 ```
 moralstack/observability/
-├── __init__.py          # exposes: obs (singleton), EventEnvelope, factory helpers
+├── __init__.py          # exposes: obs (lazy proxy → get_obs()), EventEnvelope, factory helpers
 ├── events.py            # EventEnvelope dataclass + EVENT_* constants + make_envelope()
 ├── context.py           # run_id / request_id / cycle contextvars
 ├── config.py            # ObservabilityConfig: mode, db_path, jsonl_dir; env loader
@@ -24,12 +24,14 @@ moralstack/observability/
     └── jsonl_sink.py    # Per-event-type JSONL under logs/observability/
 ```
 
+The `obs` export resolves each attribute access on the current `get_obs()` instance (tests and tooling may replace that singleton). Use `get_obs()` when you need the concrete `ObservabilityService` (for example `isinstance` checks).
+
 ### Responsibilities
 
 | Module | Responsibility |
 |---|---|
 | `events.py` | `EventEnvelope` (frozen dataclass), 10 `EVENT_*` constants, `make_envelope()` factory |
-| `service.py` | Singleton `obs`; `emit()` (async via queue), `emit_batch()`, `flush()`, `shutdown()`, `read_store` property |
+| `service.py` | `get_obs()` thread-safe singleton `ObservabilityService`; `emit()` (async via queue), `emit_batch()`, `flush()`, `shutdown()`, `read_store` property |
 | `router.py` | Reads mode from config, dispatches envelope to sqlite_sink and/or jsonl_sink |
 | `sqlite_sink.py` | SQLite schema, `SqliteUnitOfWork`, all lifecycle writes (`create_run`, `end_run`, `upsert_request`, …) + batch insert helpers |
 | `jsonl_sink.py` | Per-event-type JSONL under `logs/observability/`; thread-safe per-file locks |
@@ -93,11 +95,17 @@ class EventEnvelope:
 | `EVENT_REQUEST_UPSERTED` | `request.upserted` | Request lifecycle |
 | `EVENT_REQUEST_DOMAIN_UPDATED` | `request.domain_updated` | Domain update |
 | `EVENT_REQUEST_RESPONSE_UPDATED` | `request.response_updated` | Response update |
+| `EVENT_REQUEST_META_UPDATED` | `request.meta_updated` | Per-request governance metadata merge (Step 13) |
 | `EVENT_LLM_CALL` | `llm.call` | LLM call telemetry |
 | `EVENT_ORCHESTRATION_EVENT` | `orchestration.event` | Orchestration lifecycle |
 | `EVENT_DECISION_TRACE` | `decision.trace` | Decision trace audit |
 | `EVENT_DEBUG_EVENT` | `debug.event` | Diagnostics / debug |
-| `EVENT_CONVERSATION_STATE_UPDATED` | `conversation.state_updated` | Multi-turn state |
+| `EVENT_CONVERSATION_STATE_UPDATED` | `conversation.state_updated` | Multi-turn governance state snapshot (Step 13) |
+| `EVENT_LEDGER_LOOKUP` | `ledger.lookup` | Semantic decision ledger lookup (Step 13) |
+| `EVENT_LEDGER_STORE` | `ledger.store` | Semantic decision ledger store (Step 13) |
+| `EVENT_SESSION_STORE_GET` | `session_store.get` | SessionStore get (Step 13) |
+| `EVENT_SESSION_STORE_PUT` | `session_store.put` | SessionStore put (Step 13) |
+| `EVENT_PROXY_REQUEST_FINALIZED` | `proxy.request.finalized` | Per-request proxy finalisation summary (Step 13) |
 
 ---
 
@@ -108,6 +116,21 @@ class EventEnvelope:
 | `MORALSTACK_OBSERVABILITY_MODE` | `db_only` if DB_PATH set, else `file_only` | `db_only` \| `dual` \| `file_only` |
 | `MORALSTACK_OBSERVABILITY_DB_PATH` | — | Path to SQLite database |
 | `MORALSTACK_OBSERVABILITY_JSONL_DIR` | `logs/observability` | Directory for JSONL output |
+
+### Ledger fast-path (Step 14.2)
+
+| Variable | Default | Description |
+|---|---|---|
+| `MORALSTACK_LEDGER_ENABLED` | `true` | Enable the SemanticDecisionLedger semantic cache. When `false`, every turn runs the full deliberation. |
+| `MORALSTACK_LEDGER_SIMILARITY_THRESHOLD` | `0.92` | Cosine similarity threshold for cache hit. Higher = stricter match. |
+| `MORALSTACK_LEDGER_MAX_ENTRIES` | `1000` | Maximum cached entries per process (LRU eviction beyond this). |
+| `MORALSTACK_LEDGER_EMBEDDING_MODEL` | (uses `OPENAI_EMBEDDING_MODEL` or `text-embedding-3-small`) | Override the embedding model used for similarity. |
+
+**Skip rules (by design, not configurable):**
+
+- The ledger never caches turns with governance posture `ESCALATED` (hard-signal refusals).
+- The ledger never caches the very first turn (`turn_index < 1`).
+- These are safety invariants from the multi-turn design v1.3 section 5.8.
 
 **Deprecated aliases** (still work, emit a `logging.warning`):
 
@@ -241,6 +264,138 @@ These are propagated across thread boundaries via `contextvars.copy_context()` i
 
 ---
 
+## Multi-turn conversation observability (Step 13)
+
+MoralStack treats every chat as a sequence of governed turns. Step 13 adds
+first-class persistence and read APIs for the **conversation-level** signals
+that previously lived only in transient runtime state.
+
+### New SQLite tables
+
+| Table | Written by | Purpose |
+|---|---|---|
+| `conversation_states` | `EVENT_CONVERSATION_STATE_UPDATED` | Full `state_in` / `state_out` snapshots + summary per turn |
+| `ledger_events` | `EVENT_LEDGER_LOOKUP`, `EVENT_LEDGER_STORE` | Every semantic decision ledger lookup/store with similarity, outcome, reason |
+| `session_store_events` | `EVENT_SESSION_STORE_GET`, `EVENT_SESSION_STORE_PUT` | Every SessionStore access with TTL / eviction metadata |
+| `proxy_request_events` | `EVENT_PROXY_REQUEST_FINALIZED` | Per-request proxy finalisation summary (state_provided, state_updated, postures, was_cached, response length, headers) |
+
+The existing `requests` table is extended with a `meta_json` column merged
+turn-by-turn via `EVENT_REQUEST_META_UPDATED` (final_action, risk_score,
+path, posture, reason codes, triggered principles, …).
+
+### Emitters
+
+```python
+from moralstack.observability.conversation_events import (
+    emit_request_meta_updated,
+    emit_conversation_state_updated,
+    emit_ledger_lookup,
+    emit_ledger_store,
+    emit_session_store_get,
+    emit_session_store_put,
+    emit_proxy_request_finalized,
+)
+```
+
+All emitters are **best-effort**: they swallow failures and never block the
+hot governance path. They write in both `db_only` and `dual` modes; in
+`file_only` mode the same envelopes are appended under
+`logs/observability/<event_type>.jsonl`.
+
+### Read API
+
+```python
+rs = obs.read_store
+rs.get_requests_for_conversation(conversation_id)
+rs.get_conversation_states(conversation_id)
+rs.get_ledger_events_for_conversation(conversation_id)
+rs.get_session_store_events_for_conversation(conversation_id)
+rs.get_proxy_request_events_for_conversation(conversation_id)
+rs.get_conversation_ids_for_run(run_id)
+rs.get_conversation_overview(conversation_id)
+```
+
+`get_conversation_overview()` returns aggregated metrics keyed by
+`turn_count`, `first_created_at`, `last_created_at`, `final_actions`,
+`max_risk_score`, `last_posture`, `ledger_hits`, `ledger_misses`,
+`session_store_hits`, `session_store_misses`, `any_turn_cached`,
+`cached_turn_count`.
+
+### Orchestration event sub-types
+
+Each ``orchestration.event`` envelope carries an internal ``event_type`` field
+(distinct from the envelope-level ``event_type``) that identifies the kind of
+orchestration step. The full taxonomy is in
+``moralstack/orchestration/orchestration_event_taxonomy.py``. Notable types
+relevant to multi-turn observability:
+
+| Sub-type | Stage | Component | Meaning |
+|---|---|---|---|
+| `CONVERSATION_CONTEXT_ATTACHED` | orchestration | conversation | Conversation context was attached to the request (session id, turn index, parent request). |
+| `CONVERSATION_STATE_UPDATED` | orchestration | conversation | The ConversationGovernanceState was advanced after this turn. |
+| `LEDGER_FAST_PATH_APPLIED` | fast_path | ledger_fast_path_runner | The SemanticDecisionLedger returned a hit AND the safety gate accepted it; deliberation was skipped. Payload: `from_turn`, `similarity`, `cached_action`, `forced_route`, `modules_skipped`. |
+| `LEDGER_FAST_PATH_NOT_APPLIED` | fast_path | ledger_fast_path_runner | The SemanticDecisionLedger returned a hit but the safety gate refused to apply it (typically because the current route requires deliberation and the cached decision is not REFUSE). Payload: `from_turn`, `similarity`, `cached_action`, `current_route`, `gate_reason`. |
+
+### Fast-path safety gate
+
+The SemanticDecisionLedger cache is NOT applied unconditionally on a hit. The
+``ConversationalFastPathRunner.is_safe_to_apply`` gate enforces a safety
+invariant: a cached decision is applied only when applying it would not
+weaken safety relative to the current run.
+
+**Rules:**
+
+1. **Cached REFUSE → always applied.** A cached refusal is always safe to
+   reuse: the system already decided to deny on a semantically-equivalent
+   query.
+2. **Non-REFUSE on non-deliberative current route → applied.** When the
+   current run's path router returns one of ``benign``, ``safe_complete``,
+   ``refuse``, or ``fast_path``, the current run has not requested
+   deliberation. Reusing the cached non-REFUSE decision is safe.
+3. **Non-REFUSE on deliberative current route → REJECTED.** When the current
+   run's path router returns ``deliberative`` or ``deliberative_loop``, the
+   current turn has a risk profile that triggers full deliberation. Reusing
+   the cached (less strict) decision would downgrade safety — the gate
+   refuses and the deliberation runs in full.
+
+**Observability:**
+
+- When the gate **applies** the hit, an ``orchestration.event`` with
+  ``event_type='LEDGER_FAST_PATH_APPLIED'`` is emitted.
+- When the gate **rejects** the hit, an ``orchestration.event`` with
+  ``event_type='LEDGER_FAST_PATH_NOT_APPLIED'`` is emitted, with
+  ``reason_codes=['current_route_requires_deliberation']`` and
+  ``payload.gate_reason`` indicating the rejection cause.
+
+**Demo:** ``examples/multiturn_quickstart_gate_rejected.py`` reproduces a
+gate-rejected scenario (best-effort, depends on the risk estimator
+classifying the turn as deliberation-worthy).
+
+### UI surfaces (`moralstack-ui`)
+
+* `GET /conversations/{conversation_id}` — full timeline with per-turn
+  governance decision, state transitions, ledger and session-store activity,
+  and proxy finalisation.
+* `GET /conversations/{conversation_id}/export.md` — Markdown audit trail
+  (`moralstack.reports.conversation_export.export_conversation_to_markdown`).
+* `GET /conversations?q=<id>` — direct lookup redirect.
+* The run detail page now lists every conversation seen in the run; the
+  request detail page surfaces the parent conversation context.
+
+### CLI inspector
+
+```bash
+python scripts/inspect_multiturn_trace.py <conversation_id>          # human summary
+python scripts/inspect_multiturn_trace.py --list-run <run_id>        # list conversations
+python scripts/inspect_multiturn_trace.py <conversation_id> --json   # raw rows
+python scripts/inspect_multiturn_trace.py <conversation_id> --export trace.md
+```
+
+Requires `MORALSTACK_OBSERVABILITY_DB_PATH` (or the legacy
+`MORALSTACK_DB_PATH`) to point at a populated SQLite database.
+
+---
+
 ## Migration from persistence
 
 `moralstack.persistence` is kept as a backwards-compatible alias. All symbols re-export from `moralstack.observability`. It will emit a `DeprecationWarning` on first import.
@@ -263,3 +418,85 @@ These are propagated across thread boundaries via `contextvars.copy_context()` i
 |---|---|
 | `logs/decision_trace.jsonl` | `logs/observability/decision.trace.jsonl` |
 | `.debug/debug.log` | `logs/observability/debug.event.jsonl` |
+
+## JSONL semantics: atomic vs merge vs upsert
+
+The JSONL stream is **append-only**: every envelope produces one new line in
+the matching `<event_type>.jsonl` file. The SQLite sink, in contrast, applies
+different write strategies depending on the `event_type`. Consumers that read
+the JSONL offline must understand which event types are deltas and which are
+self-contained snapshots, otherwise they will misinterpret the data.
+
+### Three categories of event semantics
+
+| Category | Event types | JSONL contains | SQLite write strategy |
+|---|---|---|---|
+| **Atomic insert** | `llm.call`, `orchestration.event`, `decision.trace`, `debug.event`, `ledger.lookup`, `ledger.store`, `session_store.get`, `session_store.put`, `proxy.request_finalized` | one independent record per envelope; never merged with previous entries | one new row per envelope (`INSERT INTO ...`) |
+| **Merge-update** | `request.meta_updated`, `request.domain_updated`, `request.response_updated` | a **delta**: the envelope's `payload.meta` (or `domain`, or `final_response`) is a partial update, not the final state | the existing row is updated with a JSON merge (`update_request_meta(merge=True)`); the SQLite column always holds the consolidated state |
+| **Upsert** | `request.upserted`, `conversation.state_updated`, `run.started`, `run.ended` | a complete snapshot of the entity at envelope time; later snapshots override earlier ones | `INSERT OR REPLACE` keyed by `(run_id, request_id)` or equivalent |
+
+### Concrete consequence for offline consumers
+
+If you read `logs/observability/request.meta_updated.jsonl` with a script that
+takes the last line for a given `(run_id, request_id)` pair, you will see **only
+the last delta** — not the consolidated `meta_json` that SQLite holds. To
+reconstruct the consolidated state from the JSONL alone, you must:
+
+1. read **all** envelopes for the target `(run_id, request_id)`,
+2. apply them in `created_at` order,
+3. merge each `payload.meta` into an accumulator (last-write-wins per key).
+
+Atomic-insert events do not have this problem: every envelope is already
+self-contained.
+
+Upsert events follow the same accumulation pattern as merge-update, but the
+merge unit is the entire payload (last snapshot wins) rather than a per-key
+JSON merge.
+
+### Worked example: `request.meta_updated`
+
+A single request goes through five state transitions, producing five envelopes
+in the JSONL:
+
+```jsonl
+{"event_type":"request.meta_updated","run_id":"r1","request_id":"req1","payload":{"meta":{"final_action":"NORMAL_COMPLETE","path":"FAST_PATH"}}}
+{"event_type":"request.meta_updated","run_id":"r1","request_id":"req1","payload":{"meta":{"risk_score":0.10}}}
+{"event_type":"request.meta_updated","run_id":"r1","request_id":"req1","payload":{"meta":{"intent_clarity":"HIGH"}}}
+{"event_type":"request.meta_updated","run_id":"r1","request_id":"req1","payload":{"meta":{"was_cached":true,"cached_from_turn":1}}}
+{"event_type":"request.meta_updated","run_id":"r1","request_id":"req1","payload":{"meta":{"governance_posture":"ELEVATED"}}}
+```
+
+The SQLite row for that request, after the writer has processed all five:
+
+```json
+{
+  "final_action": "NORMAL_COMPLETE",
+  "path": "FAST_PATH",
+  "risk_score": 0.10,
+  "intent_clarity": "HIGH",
+  "was_cached": true,
+  "cached_from_turn": 1,
+  "governance_posture": "ELEVATED"
+}
+```
+
+That consolidated form is what `obs.read_store.get_request(run_id, request_id)`
+returns and what `moralstack-ui` displays. The five JSONL lines, taken
+individually, never contain the full picture.
+
+### Helper script
+
+`scripts/consolidate_jsonl_meta.py` performs the JSONL→consolidated merge
+offline. Use it when you need the SQLite-equivalent state but only have the
+JSONL files (for example: when copying logs between machines, when auditing
+after the DB has been rotated, or when feeding offline analytics that work
+with self-contained JSON).
+
+```bash
+python scripts/consolidate_jsonl_meta.py \
+    --input logs/observability/request.meta_updated.jsonl \
+    --output requests_meta_consolidated.json
+```
+
+The output is a JSON file mapping `(run_id, request_id)` → consolidated meta
+dict, with the same semantics as `requests.meta_json` in SQLite.

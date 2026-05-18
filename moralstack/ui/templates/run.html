@@ -266,6 +266,45 @@
 </div>
 {% endif %}
 {% else %}
+{% if conversations and conversations | length > 0 %}
+<h2>Conversations <span class="muted">({{ conversations | length }})</span></h2>
+<p class="muted" style="margin-bottom:0.5rem;">Multi-turn governance conversations recorded in this run (Step 13 observability).</p>
+<div class="card">
+    <table class="table">
+        <thead>
+        <tr>
+            <th>Conversation ID</th>
+            <th>Turns</th>
+            <th>Max risk</th>
+            <th>Last posture</th>
+            <th>Cached turns</th>
+            <th>Last activity</th>
+            <th class="col-actions">Actions</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for c in conversations %}
+        {% set c_max_risk = c.get('max_risk_score') %}
+        <tr>
+            <td class="mono">
+                <a href="/conversations/{{ c.conversation_id }}">{{ c.conversation_id[:24] }}{% if c.conversation_id | length > 24 %}…{% endif %}</a>
+            </td>
+            <td>{{ c.turn_count }}</td>
+            <td>{% if c_max_risk is not none %}{{ "%.3f" | format(c_max_risk) }}{% else %}—{% endif %}</td>
+            <td>{% if c.get('last_posture') %}<span class="badge">{{ c.get('last_posture') }}</span>{% else %}—{% endif %}</td>
+            <td>{{ c.get('cached_turn_count') or 0 }}</td>
+            <td class="ts">{{ c.get('last_created_at') | fmtdate }}</td>
+            <td class="col-actions">
+                <a href="/conversations/{{ c.conversation_id }}" class="btn btn-sm">View</a>
+                <a href="/conversations/{{ c.conversation_id }}/export.md" download class="btn btn-sm btn-outline">Export</a>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
 <h2>Requests <span class="muted">({{ requests | length }})</span></h2>
 
 {% if requests %}

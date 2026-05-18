@@ -162,6 +162,10 @@ See [docs/modules/openai_params.md](docs/modules/openai_params.md) for details a
 | MORALSTACK_OBSERVABILITY_DB_PATH    | -                      | SQLite DB path (enables persistence)                           |
 | MORALSTACK_OBSERVABILITY_MODE       | db_only if DB set      | db_only \| dual \| file_only                                   |
 | MORALSTACK_OBSERVABILITY_JSONL_DIR  | logs/observability     | JSONL output directory (file_only and dual modes)              |
+| MORALSTACK_LEDGER_ENABLED          | true                   | Enable SemanticDecisionLedger fast-path (`false` disables)    |
+| MORALSTACK_LEDGER_SIMILARITY_THRESHOLD | 0.92              | Cosine similarity threshold for ledger cache hit              |
+| MORALSTACK_LEDGER_MAX_ENTRIES      | 1000                   | Max in-memory ledger entries (LRU)                             |
+| MORALSTACK_LEDGER_EMBEDDING_MODEL  | (embedder default)     | Override embedding model; else `OPENAI_EMBEDDING_MODEL` / small |
 | MORALSTACK_DB_PATH             | -                         | Deprecated alias for MORALSTACK_OBSERVABILITY_DB_PATH          |
 | MORALSTACK_PERSIST_MODE        | -                         | Deprecated alias for MORALSTACK_OBSERVABILITY_MODE             |
 | MORALSTACK_UI_PORT             | 8765                      | Web UI port                                                    |
