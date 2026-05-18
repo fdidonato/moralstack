@@ -94,6 +94,30 @@ def client_factory():
     return _build
 
 
+class TestUpstreamModelOverride:
+    def test_upstream_model_overrides_request_body(self, client_factory, monkeypatch):
+        monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-env-override")
+        client, mock_openai, _ = client_factory("NORMAL_COMPLETE")
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "mstackcli", "messages": [{"role": "user", "content": "Q"}]},
+        )
+        assert response.status_code == 200
+        mock_openai.chat.completions.create.assert_called_once()
+        assert mock_openai.chat.completions.create.call_args[1]["model"] == "gpt-4o-env-override"
+
+    def test_refuse_synthetic_uses_upstream_model(self, client_factory, monkeypatch):
+        monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-env-override")
+        client, mock_openai, _ = client_factory("REFUSE")
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "mstackcli", "messages": [{"role": "user", "content": "Q"}]},
+        )
+        assert response.status_code == 200
+        assert response.json()["model"] == "gpt-4o-env-override"
+        mock_openai.chat.completions.create.assert_not_called()
+
+
 class TestHealthz:
     def test_healthz_ok(self, client_factory):
         client, _, _ = client_factory("NORMAL_COMPLETE")

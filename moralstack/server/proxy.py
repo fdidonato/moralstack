@@ -39,6 +39,7 @@ from moralstack.observability.governance_audit import (
 )
 from moralstack.orchestration.controller import OrchestrationController
 from moralstack.orchestration.types import ProcessedRequest
+from moralstack.sdk.bootstrap import _resolve_model
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.session_store import InMemorySessionStore, SessionStoreProtocol
 from moralstack.sdk.wrapper import (
@@ -195,7 +196,7 @@ def _handle_chat_completion_sync(
     *,
     body: dict[str, Any],
     messages: list[dict[str, Any]],
-    model: str,
+    upstream_model: str,
     extra_body: dict[str, Any] | None,
     moralstack_conversation_id_header: str | None,
     proxy_run_id: str,
@@ -277,7 +278,9 @@ def _handle_chat_completion_sync(
             logger.exception("Pipeline failure: %s", exc)
             if cfg.failure_policy == "passthrough":
                 try:
-                    upstream_response = openai_client.chat.completions.create(**_build_upstream_kwargs(body))
+                    upstream_response = openai_client.chat.completions.create(
+                        **_build_upstream_kwargs(body, upstream_model=upstream_model)
+                    )
                     final_response_text = _extract_text_from_upstream(upstream_response)
                     out_response = _serialize_upstream_response(
                         upstream_response, headers={"X-Moralstack-Decision": "PASSTHROUGH_ON_ERROR"}
@@ -302,14 +305,14 @@ def _handle_chat_completion_sync(
                 final_response_text = refusal_content
                 payload = _build_synthetic_chat_completion(
                     content=refusal_content,
-                    model=model,
+                    model=upstream_model,
                     finish_reason="content_filter",
                 )
                 out_response = JSONResponse(content=payload, headers=governance_headers)
 
             elif final_action == "SAFE_COMPLETE":
                 safe_turn = _build_safe_complete_user_turn(result)
-                upstream_kwargs = _build_upstream_kwargs(body)
+                upstream_kwargs = _build_upstream_kwargs(body, upstream_model=upstream_model)
                 upstream_kwargs["messages"] = list(upstream_kwargs.get("messages", [])) + [safe_turn]
                 try:
                     upstream_response = openai_client.chat.completions.create(**upstream_kwargs)
@@ -320,7 +323,7 @@ def _handle_chat_completion_sync(
                 out_response = _serialize_upstream_response(upstream_response, headers=governance_headers)
 
             else:
-                upstream_kwargs = _build_upstream_kwargs(body)
+                upstream_kwargs = _build_upstream_kwargs(body, upstream_model=upstream_model)
                 try:
                     upstream_response = openai_client.chat.completions.create(**upstream_kwargs)
                 except Exception as exc:
@@ -379,6 +382,8 @@ def create_app(
         A FastAPI app ready to be served by uvicorn.
     """
     cfg = config or GovernanceConfig()
+    upstream_generation_model = _resolve_model(cfg)
+    logger.info("MoralStack proxy upstream generation model: %s", upstream_generation_model)
     store: SessionStoreProtocol = session_store if session_store is not None else InMemorySessionStore()
     lock_manager = ConversationLockManager()
     correlation_store = ConversationCorrelationStore()
@@ -435,7 +440,6 @@ def create_app(
         if not messages:
             raise HTTPException(status_code=400, detail="`messages` must not be empty")
 
-        model = str(body.get("model", "") or "gpt-4o")
         extra_body = body.get("extra_body") if isinstance(body.get("extra_body"), dict) else None
 
         safe_headers = _collect_safe_headers(request)
@@ -452,7 +456,7 @@ def create_app(
             _handle_chat_completion_sync,
             body=body,
             messages=messages,
-            model=model,
+            upstream_model=upstream_generation_model,
             extra_body=extra_body,
             moralstack_conversation_id_header=moralstack_conversation_id,
             proxy_run_id=proxy_run_id,
@@ -675,10 +679,11 @@ def _extract_text_from_upstream(upstream_response: Any) -> str:
         return ""
 
 
-def _build_upstream_kwargs(body: dict[str, Any]) -> dict[str, Any]:
-    """Strip MoralStack-specific fields from the body before passing to OpenAI."""
+def _build_upstream_kwargs(body: dict[str, Any], *, upstream_model: str) -> dict[str, Any]:
+    """Strip MoralStack-specific fields and force the upstream OpenAI model."""
     kwargs = dict(body)
     kwargs.pop("extra_body", None)
+    kwargs["model"] = upstream_model
     return kwargs
 
 

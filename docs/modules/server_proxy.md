@@ -19,6 +19,18 @@ Normative reference: multiturn design v1.3 section 4.
 - Blocking orchestrator and upstream OpenAI SDK calls run in a Starlette threadpool so the ASGI loop can accept concurrent requests; per-`conversation_id` locks still serialize same-conversation turns.
 - **Per-request controller state:** `OrchestrationController` is typically a process-wide singleton (for example one instance per `create_app`). Multi-turn linkage and ledger intent fields for a single `process()` call are held in a stack-local `ProcessCallContext` (`moralstack/orchestration/process_context.py`) passed through internal helpers — not on the controller instance — so concurrent proxy requests on different `conversation_id` values cannot cross-contaminate observability metadata.
 
+## Upstream generation model
+
+The `model` field in the client JSON body is **not** forwarded to OpenAI for final
+generation. The proxy always uses the resolved upstream model:
+
+`GovernanceConfig.model` → `OPENAI_MODEL` → `gpt-4o` (same precedence as the SDK bootstrap).
+
+Clients may send a virtual alias (for example a COMPL-AI benchmark model id); only
+`OPENAI_MODEL` (or `GovernanceConfig.model`) is passed to `chat.completions.create`.
+Synthetic REFUSE responses echo the same resolved model in the `model` field of the
+JSON payload.
+
 ## Configuration / install
 
 - Optional extras: `[ui]` includes proxy-related deps; `[server]` is a lighter subset (`fastapi`, `uvicorn`, `httpx`).
