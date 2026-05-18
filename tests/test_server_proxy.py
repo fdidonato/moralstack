@@ -5,7 +5,10 @@ Integration tests for the FastAPI server proxy (design v1.3 §4.2).
 from __future__ import annotations
 
 import asyncio
+import json
+import random
 import threading
+import time
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -24,6 +27,10 @@ from moralstack.orchestration.types import (  # noqa: E402
     ResponseMetadata,
     ResponseType,
 )
+from moralstack.runtime.orchestrator import create_minimal_orchestrator  # noqa: E402
+from moralstack.sdk.config import GovernanceConfig  # noqa: E402
+from moralstack.server.proxy import create_app  # noqa: E402
+from tests.test_orchestrator import MockPolicyLLM, MockRiskEstimator  # noqa: E402
 
 
 def _make_result(final_action: str, content: str = "Test content.") -> OrchestratorResult:
@@ -601,6 +608,81 @@ class TestAsyncConcurrency:
         asyncio.run(_run())
         assert mock_orch.process.call_count == 10
         assert overlaps == []
+
+    def test_concurrent_distinct_conversations_jsonl_metadata_matches_session(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """
+        End-to-end: with a real Orchestrator behind the proxy, concurrent POSTs with
+        distinct X-Moralstack-Conversation-Id must emit proxy.request_finalized JSONL
+        lines where envelope session_id matches payload.metadata.conversation_id.
+        """
+
+        class SlowRisk(MockRiskEstimator):
+            def estimate(self, prompt: str):  # type: ignore[override]
+                time.sleep(random.uniform(0.02, 0.06))
+                return super().estimate(prompt)
+
+        obs_dir = tmp_path / "obs"
+        obs_dir.mkdir()
+        monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "file_only")
+        monkeypatch.setenv("MORALSTACK_OBSERVABILITY_JSONL_DIR", str(obs_dir))
+
+        real_orch = create_minimal_orchestrator(
+            policy=MockPolicyLLM(),
+            risk_estimator=SlowRisk(),
+        )
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion())
+        app = create_app(openai_client=mock_openai, orchestrator=real_orch, config=GovernanceConfig())
+
+        n = 8
+
+        async def _run() -> None:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+
+                async def one(i: int) -> None:
+                    r = await client.post(
+                        "/v1/chat/completions",
+                        json={
+                            "model": "gpt-4o",
+                            "messages": [{"role": "user", "content": f"hello weather {i}"}],
+                        },
+                        headers={"X-Moralstack-Conversation-Id": f"conv-{i:03d}"},
+                    )
+                    assert r.status_code == 200
+
+                await asyncio.gather(*(one(i) for i in range(n)))
+
+        asyncio.run(_run())
+
+        proxy_jsonl = obs_dir / "proxy.request_finalized.jsonl"
+        assert proxy_jsonl.is_file()
+        events = [json.loads(line) for line in proxy_jsonl.read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert len(events) == n
+        for e in events:
+            top_sid = e.get("session_id")
+            payload = e.get("payload") or {}
+            meta = payload.get("metadata") or {}
+            meta_cid = meta.get("conversation_id")
+            headers = payload.get("headers") or {}
+            hdr_cid = headers.get("X-Moralstack-Conversation-Id")
+            assert top_sid and hdr_cid, (top_sid, hdr_cid)
+            assert top_sid == hdr_cid, f"session_id {top_sid!r} != header {hdr_cid!r}"
+            if meta_cid is not None:
+                assert meta_cid == top_sid, f"metadata.conversation_id {meta_cid!r} != session_id {top_sid!r}"
+
+        ss_path = obs_dir / "session_store.put.jsonl"
+        if ss_path.is_file():
+            ss_events = [json.loads(line) for line in ss_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            for e in ss_events:
+                top_sid = e.get("session_id")
+                payload = e.get("payload") or {}
+                summary = payload.get("state_summary") or {}
+                inner = summary.get("conversation_id") if isinstance(summary, dict) else None
+                if inner is not None:
+                    assert inner == top_sid, f"session_store.put mismatch {inner!r} vs {top_sid!r}"
 
 
 class TestConversationLockTimeout:

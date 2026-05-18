@@ -17,6 +17,7 @@ Normative reference: multiturn design v1.3 section 4.
 
 - For multi-turn conversational clients (full history replay per request), run **one** uvicorn worker per process unless you provide a **shared** session store and distributed locking across workers. Each worker has its own `InMemorySessionStore` and `ConversationCorrelationStore`.
 - Blocking orchestrator and upstream OpenAI SDK calls run in a Starlette threadpool so the ASGI loop can accept concurrent requests; per-`conversation_id` locks still serialize same-conversation turns.
+- **Per-request controller state:** `OrchestrationController` is typically a process-wide singleton (for example one instance per `create_app`). Multi-turn linkage and ledger intent fields for a single `process()` call are held in a stack-local `ProcessCallContext` (`moralstack/orchestration/process_context.py`) passed through internal helpers — not on the controller instance — so concurrent proxy requests on different `conversation_id` values cannot cross-contaminate observability metadata.
 
 ## Configuration / install
 
@@ -25,6 +26,6 @@ Normative reference: multiturn design v1.3 section 4.
 
 ## Tests
 
-- `tests/test_server_proxy.py` — integration tests with `TestClient`.
+- `tests/test_server_proxy.py` — integration tests with `TestClient`; async overlap tests (`httpx.AsyncClient` + `ASGITransport`); JSONL alignment under concurrent distinct `conversation_id` with a real orchestrator.
 - `tests/test_server_fingerprint.py` — fingerprint unit tests.
 - `tests/test_conversation_correlation.py` — lineage hash and `ConversationCorrelationStore` behaviour.

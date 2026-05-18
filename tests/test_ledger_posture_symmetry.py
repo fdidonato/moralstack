@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from moralstack.orchestration.process_context import ProcessCallContext
+
 
 class TestLedgerPostureSymmetry:
     """The posture used at store time must equal the posture used at lookup time."""
@@ -84,7 +86,7 @@ class TestLedgerPostureSymmetry:
             state=state,
             request=request,
             result=result,
-            ctx={},
+            call_ctx=ProcessCallContext(),
         )
         return new_state.last_governance_posture
 
@@ -249,6 +251,6 @@ class TestActiveOverlayFieldNotRelied:
             state=state,
             request=request,
             result=result,
-            ctx={},
+            call_ctx=ProcessCallContext(),
         )
         assert new_state.last_governance_posture == "NORMAL"

@@ -28,9 +28,10 @@ Then in another terminal:
 
 from __future__ import annotations
 
+import os
+
 import uvicorn
 from openai import OpenAI
-import os
 
 from moralstack.sdk.bootstrap import _bootstrap_pipeline
 from moralstack.sdk.config import GovernanceConfig

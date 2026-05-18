@@ -9,6 +9,7 @@ import logging
 import threading
 import time
 from dataclasses import replace as _dc_replace
+from functools import partial
 from typing import Any, cast
 
 from moralstack.core.types import (
@@ -58,6 +59,7 @@ from moralstack.orchestration.overlay_policy import (
     is_overlay_sensitive,
 )
 from moralstack.orchestration.path_router import get_route, is_hard_signal_refuse
+from moralstack.orchestration.process_context import ProcessCallContext
 from moralstack.orchestration.refusal_handler import RefusalHandler
 from moralstack.orchestration.response_assembler import ResponseAssembler
 from moralstack.orchestration.safe_complete_gating import apply_safe_complete_gating
@@ -183,7 +185,6 @@ class OrchestrationController:
             self.execution_trace,
             self._parser_diagnostic_handlers,
         )
-        self._conversation_process_ctx: dict[str, Any] | None = None
         self._refusal_handler = RefusalHandler(
             policy=policy,
             constitution_store=constitution_store,
@@ -295,12 +296,22 @@ class OrchestrationController:
             return "ELEVATED"
         return "NORMAL"
 
-    def _attach_trace_and_return(self, result: OrchestratorResult, request: ProcessedRequest) -> OrchestratorResult:
+    def _attach_trace_and_return(
+        self,
+        result: OrchestratorResult,
+        request: ProcessedRequest,
+        call_ctx: ProcessCallContext,
+    ) -> OrchestratorResult:
         out = self._diagnostics.attach_trace_and_return(result, request, self.execution_trace)
-        self._apply_conversation_metadata_to_result(out, request)
+        self._apply_conversation_metadata_to_result(out, request, call_ctx)
         return out
 
-    def _apply_conversation_metadata_to_result(self, result: OrchestratorResult, request: ProcessedRequest) -> None:
+    def _apply_conversation_metadata_to_result(
+        self,
+        result: OrchestratorResult,
+        request: ProcessedRequest,
+        call_ctx: ProcessCallContext,
+    ) -> None:
         """Stamp optional conversation linkage and updated governance state (no routing impact).
 
         Step 13: when the caller provides a ``conversation_id`` (even without
@@ -313,13 +324,10 @@ class OrchestrationController:
         ``conversation_state_provided`` still reflects the input contract
         accurately (True only when a real state_in was supplied).
         """
-        ctx = getattr(self, "_conversation_process_ctx", None)
-        if not isinstance(ctx, dict):
-            return
-        cid = ctx.get("conversation_id")
-        tid = ctx.get("turn_index")
-        pid = ctx.get("parent_request_id")
-        state_in = ctx.get("conversation_state")
+        cid = call_ctx.conversation_id
+        tid = call_ctx.turn_index
+        pid = call_ctx.parent_request_id
+        state_in = call_ctx.conversation_state
         if cid is not None:
             result.conversation_id = cid
         if tid is not None:
@@ -344,14 +352,14 @@ class OrchestrationController:
                 state=updated,
                 request=request,
                 result=result,
-                ctx=ctx,
+                call_ctx=call_ctx,
             )
             # --- end v0.4 multi-turn ---
             result.conversation_governance_state_out = updated
             result.conversation_state_updated = True
-        if ctx.get("_conversation_events_emitted"):
+        if call_ctx.conversation_events_emitted:
             return
-        ctx["_conversation_events_emitted"] = True
+        call_ctx.conversation_events_emitted = True
         has_link = cid is not None or tid is not None or pid is not None or state_in is not None
         if has_link:
             self._events.emit_orchestration_event(
@@ -386,10 +394,10 @@ class OrchestrationController:
             # JSONL captures the full snapshot and SQLite persists a queryable row
             # in conversation_states. The orchestration_event above is kept for
             # backward compatibility (it carries only a summary payload).
-            self._emit_canonical_conversation_state_updated(result=result, request=request, ctx=ctx)
+            self._emit_canonical_conversation_state_updated(result=result, request=request, call_ctx=call_ctx)
         # --- v0.4 multi-turn: persist decision into the ledger for next turn ---
         # Done at the very end so any exception during routing already aborted the flow.
-        self._maybe_store_in_ledger(request=request, result=result, ctx=ctx)
+        self._maybe_store_in_ledger(request=request, result=result, call_ctx=call_ctx)
         # --- end v0.4 multi-turn ---
 
     def _emit_canonical_conversation_state_updated(
@@ -397,7 +405,7 @@ class OrchestrationController:
         *,
         result: OrchestratorResult,
         request: ProcessedRequest,
-        ctx: dict[str, Any],
+        call_ctx: ProcessCallContext,
     ) -> None:
         """
         Emit the canonical ``conversation.state_updated`` event so JSONL and
@@ -410,9 +418,9 @@ class OrchestrationController:
         """
         try:
             state_out = result.conversation_governance_state_out
-            state_in = ctx.get("conversation_state")
-            cid = ctx.get("conversation_id")
-            tid = ctx.get("turn_index")
+            state_in = call_ctx.conversation_state
+            cid = call_ctx.conversation_id
+            tid = call_ctx.turn_index
             request_id = getattr(request, "request_id", "") or ""
 
             # Risk score and final action from the produced metadata.
@@ -428,14 +436,14 @@ class OrchestrationController:
 
             posture = state_out.last_governance_posture if isinstance(state_out, ConversationGovernanceState) else None
 
-            ledger_lookup = ctx.get("_ledger_lookup")
-            was_cached = bool(ctx.get("_ledger_hit_applied", False))
+            ledger_lookup = call_ctx.ledger_lookup
+            was_cached = bool(call_ctx.ledger_hit_applied)
             cached_from_turn: int | None = None
             if ledger_lookup is not None and getattr(ledger_lookup, "is_hit", False):
                 cached_from_turn = getattr(ledger_lookup, "from_turn", None)
 
-            refresh_required = ctx.get("_refresh_required")
-            refresh_reason = ctx.get("_refresh_reason")
+            refresh_required = call_ctx.refresh_required
+            refresh_reason = call_ctx.refresh_reason
 
             emit_conversation_state_updated(
                 run_id=None,  # falls back to current run_id from context
@@ -461,7 +469,7 @@ class OrchestrationController:
         state: ConversationGovernanceState,
         request: ProcessedRequest,
         result: OrchestratorResult,
-        ctx: dict[str, Any],
+        call_ctx: ProcessCallContext,
     ) -> ConversationGovernanceState:
         """
         Extend the outbound governance state with v0.4 multi-turn fields:
@@ -469,7 +477,7 @@ class OrchestrationController:
         - last_governance_posture (derived from the produced decision)
         - turn_decisions_summary (append a TurnDecisionSummary for this turn)
         """
-        was_cached = bool(ctx.get("_ledger_hit_applied", False))
+        was_cached = bool(call_ctx.ledger_hit_applied)
         contract_hash = ""
         developer_contract = getattr(request, "developer_contract", None)
         if developer_contract is not None:
@@ -527,7 +535,7 @@ class OrchestrationController:
         *,
         request: ProcessedRequest,
         result: OrchestratorResult,
-        ctx: dict[str, Any],
+        call_ctx: ProcessCallContext,
     ) -> None:
         """
         Persist the produced decision into the ledger when the runtime has one
@@ -538,9 +546,9 @@ class OrchestrationController:
         """
         if self._ledger is None:
             return
-        if ctx.get("conversation_id") is None:
+        if call_ctx.conversation_id is None:
             return
-        turn_index = ctx.get("turn_index")
+        turn_index = call_ctx.turn_index
         if not isinstance(turn_index, int):
             return
 
@@ -595,7 +603,7 @@ class OrchestrationController:
 
         domain = request.get_domain() if hasattr(request, "get_domain") else None
         # Step 14.3: prefer values captured at lookup time (stored in
-        # _conversation_process_ctx by the lookup block in process()). This
+        # ProcessCallContext by the lookup block in process()). This
         # guarantees the store writes the SAME intent fields the lookup used,
         # so the secondary intent check at the next turn doesn't reject the
         # cache hit with reason='intent_divergence'. Fallback to metadata
@@ -604,13 +612,12 @@ class OrchestrationController:
         # handle).
         intent_clarity = "HIGH"
         request_type = ""
-        if isinstance(ctx, dict):
-            ctx_clarity = ctx.get("_ledger_intent_clarity")
-            ctx_request_type = ctx.get("_ledger_request_type")
-            if isinstance(ctx_clarity, str) and ctx_clarity:
-                intent_clarity = ctx_clarity
-            if isinstance(ctx_request_type, str):
-                request_type = ctx_request_type
+        ctx_clarity = call_ctx.ledger_intent_clarity
+        ctx_request_type = call_ctx.ledger_request_type
+        if isinstance(ctx_clarity, str) and ctx_clarity:
+            intent_clarity = ctx_clarity
+        if isinstance(ctx_request_type, str):
+            request_type = ctx_request_type
         # Fallback to metadata when ctx didn't carry the lookup-time values.
         # NB: ResponseMetadata has no `request_type` field today — this branch
         # exists only for forward compatibility / safety.
@@ -958,6 +965,8 @@ class OrchestrationController:
         risk_score: float,
         start_time: float,
         trace: Trace,
+        *,
+        call_ctx: ProcessCallContext,
     ) -> OrchestratorResult:
         result = self._refusal_handler.handle(
             request,
@@ -973,7 +982,7 @@ class OrchestrationController:
             request,
             start_time,
             "REFUSE",
-            lambda r, req: self._attach_trace_and_return(r, req),
+            partial(self._attach_trace_and_return, call_ctx=call_ctx),
         )
 
     def _route_domain_excluded(
@@ -982,6 +991,8 @@ class OrchestrationController:
         excluded_domain: str,
         start_time: float,
         trace: Trace,
+        *,
+        call_ctx: ProcessCallContext,
     ) -> OrchestratorResult:
         """Early exit when the detected domain has excluded=true. One LLM call for message."""
         content = generate_domain_exclusion_response(
@@ -1022,7 +1033,7 @@ class OrchestrationController:
             request,
             start_time,
             "REFUSE",
-            lambda r, req: self._attach_trace_and_return(r, req),
+            partial(self._attach_trace_and_return, call_ctx=call_ctx),
         )
 
     def _route_benign(
@@ -1034,6 +1045,8 @@ class OrchestrationController:
         start_time: float,
         trace: Trace,
         speculative_draft: str | None = None,
+        *,
+        call_ctx: ProcessCallContext,
     ) -> OrchestratorResult:
         request_id = request.request_id
         orch_debug_log(
@@ -1058,7 +1071,7 @@ class OrchestrationController:
             request,
             start_time,
             "benign_fast_path",
-            lambda r, req: self._attach_trace_and_return(r, req),
+            partial(self._attach_trace_and_return, call_ctx=call_ctx),
         )
 
     def _route_safe_complete(
@@ -1069,6 +1082,8 @@ class OrchestrationController:
         risk_estimation: RiskEstimationProtocol,
         start_time: float,
         trace: Trace,
+        *,
+        call_ctx: ProcessCallContext,
     ) -> OrchestratorResult:
         request_id = request.request_id
         orch_debug_log(
@@ -1092,7 +1107,7 @@ class OrchestrationController:
             request,
             start_time,
             "safe_complete_path",
-            lambda r, req: self._attach_trace_and_return(r, req),
+            partial(self._attach_trace_and_return, call_ctx=call_ctx),
         )
 
     def _route_fast_path(
@@ -1104,6 +1119,8 @@ class OrchestrationController:
         start_time: float,
         trace: Trace,
         speculative_draft: str | None = None,
+        *,
+        call_ctx: ProcessCallContext,
     ) -> OrchestratorResult:
         request_id = request.request_id
         orch_debug_log(
@@ -1136,7 +1153,7 @@ class OrchestrationController:
             request,
             start_time,
             "fast_path",
-            lambda r, req: self._attach_trace_and_return(r, req),
+            partial(self._attach_trace_and_return, call_ctx=call_ctx),
         )
 
     def _route_deliberative(
@@ -1150,6 +1167,8 @@ class OrchestrationController:
         trace: Trace,
         pre_decision: Decision | None = None,
         speculative_draft: str | None = None,
+        *,
+        call_ctx: ProcessCallContext,
     ) -> OrchestratorResult:
         request_id = request.request_id
         orch_debug_log(
@@ -1401,7 +1420,7 @@ class OrchestrationController:
             request,
             start_time,
             "deliberative_path",
-            lambda r, req: self._attach_trace_and_return(r, req),
+            partial(self._attach_trace_and_return, call_ctx=call_ctx),
         )
 
     def process(
@@ -1424,13 +1443,12 @@ class OrchestrationController:
             request = ProcessedRequest(prompt=request)
         request_id = request.request_id
 
-        self._conversation_process_ctx = {
-            "conversation_id": conversation_id,
-            "turn_index": turn_index,
-            "parent_request_id": parent_request_id,
-            "conversation_state": conversation_state,
-            "_conversation_events_emitted": False,
-        }
+        call_ctx = ProcessCallContext(
+            conversation_id=conversation_id,
+            turn_index=turn_index,
+            parent_request_id=parent_request_id,
+            conversation_state=conversation_state,
+        )
 
         set_current_session_id(conversation_id)
         set_current_turn_number(turn_index)
@@ -1493,7 +1511,7 @@ class OrchestrationController:
                 if _detected and is_domain_excluded(self.constitution_store, _detected):
                     if spec_handle is not None:
                         spec_handle.abandon("domain_excluded", "DOMAIN_EXCLUDED")
-                    return self._route_domain_excluded(request, _detected, start_time, trace)
+                    return self._route_domain_excluded(request, _detected, start_time, trace, call_ctx=call_ctx)
 
             # --- Overlay sensitivity: risk_score floor ---
             overlay_sensitive = is_overlay_sensitive(self.constitution_store, request.get_domain())
@@ -1596,16 +1614,15 @@ class OrchestrationController:
                         "H-ledger-lookup",
                         request_id=request_id,
                     )
-                if isinstance(self._conversation_process_ctx, dict):
-                    self._conversation_process_ctx["_ledger_lookup"] = _cached_lookup
-                    # Step 14.3: persist lookup-time intent fields so the
-                    # post-pipeline store uses the SAME values the lookup used.
-                    # Without this, store would write request_type="" (because
-                    # ResponseMetadata has no request_type field) and any future
-                    # lookup with the real request_type triggers intent_divergence
-                    # at the secondary check, blocking every cache hit.
-                    self._conversation_process_ctx["_ledger_request_type"] = _request_type
-                    self._conversation_process_ctx["_ledger_intent_clarity"] = _intent_clarity
+                call_ctx.ledger_lookup = _cached_lookup
+                # Step 14.3: persist lookup-time intent fields so the
+                # post-pipeline store uses the SAME values the lookup used.
+                # Without this, store would write request_type="" (because
+                # ResponseMetadata has no request_type field) and any future
+                # lookup with the real request_type triggers intent_divergence
+                # at the secondary check, blocking every cache hit.
+                call_ctx.ledger_request_type = _request_type
+                call_ctx.ledger_intent_clarity = _intent_clarity
                 # --- v0.4 Step 7: apply cached decision when hit and safe to do so ---
                 if _cached_lookup is not None and _cached_lookup.is_hit:
                     cached_action = (
@@ -1626,8 +1643,7 @@ class OrchestrationController:
                         trace.decision_path = decision.path
                         trace.final_action = decision.final_action
                         # Mark the conversation context so _extend_state_out_v04 can flag was_cached=True.
-                        if isinstance(self._conversation_process_ctx, dict):
-                            self._conversation_process_ctx["_ledger_hit_applied"] = True
+                        call_ctx.ledger_hit_applied = True
                         # Step 14.4 — canonical orchestration.event emission so the
                         # cache application is visible in the UI metro map and in
                         # offline log consumers. The orch_debug_log below is kept
@@ -1770,6 +1786,7 @@ class OrchestrationController:
                     risk_score,
                     start_time,
                     trace,
+                    call_ctx=call_ctx,
                 )
             if route == "benign":
                 speculative_draft = spec_handle.join_for_consumer("benign", "benign_fast_path") if spec_handle else None
@@ -1781,6 +1798,7 @@ class OrchestrationController:
                     start_time,
                     trace,
                     speculative_draft=speculative_draft,
+                    call_ctx=call_ctx,
                 )
             if route == "safe_complete":
                 if spec_handle is not None:
@@ -1792,6 +1810,7 @@ class OrchestrationController:
                     risk_proto,
                     start_time,
                     trace,
+                    call_ctx=call_ctx,
                 )
 
             if route in ("fast_path", "deliberative"):
@@ -1818,6 +1837,7 @@ class OrchestrationController:
                     start_time,
                     trace,
                     speculative_draft=speculative_draft_fp,
+                    call_ctx=call_ctx,
                 )
 
             speculative_draft_delib: str | None = None
@@ -1839,12 +1859,13 @@ class OrchestrationController:
                 trace,
                 pre_decision=decision,
                 speculative_draft=speculative_draft_delib,
+                call_ctx=call_ctx,
             )
 
         except OrchestratorTimeoutError as e:
-            return self._attach_trace_and_return(self._handle_timeout(request, str(e), start_time), request)
+            return self._attach_trace_and_return(self._handle_timeout(request, str(e), start_time), request, call_ctx)
         except MoralStackError as e:
-            return self._attach_trace_and_return(self._handle_error(request, e, start_time), request)
+            return self._attach_trace_and_return(self._handle_error(request, e, start_time), request, call_ctx)
         except FailSafeException:
             orch_debug_log(
                 "orchestrator.py:process",
@@ -1872,6 +1893,7 @@ class OrchestrationController:
                     error="FailSafeException",
                 ),
                 request,
+                call_ctx,
             )
         except (AssertionError, Exception) as e:
             orch_debug_log(
@@ -1900,9 +1922,9 @@ class OrchestrationController:
                     error=str(e) if e else "unknown",
                 ),
                 request,
+                call_ctx,
             )
         finally:
-            self._conversation_process_ctx = None
             if spec_handle is not None:
                 spec_handle.shutdown_executor()
             self._trace_lifecycle.remove_parser_diagnostic_handler(request_id)

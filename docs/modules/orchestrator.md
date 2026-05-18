@@ -27,6 +27,8 @@ optional keyword-only arguments `conversation_id`, `turn_index`, `parent_request
 (`ConversationGovernanceState`). When provided, metadata is persisted on the request row and echoed on
 `OrchestratorResult`; they do not change routing or `decide_action` when omitted. See `moralstack/orchestration/conversation_state.py`.
 
+**Per-call context under concurrency:** `OrchestrationController.process()` constructs a stack-local `ProcessCallContext` (`moralstack/orchestration/process_context.py`) and passes it to internal helpers (`_apply_conversation_metadata_to_result`, ledger follow-up, canonical conversation events). A single controller instance may handle overlapping `process()` calls (for example from the HTTP proxy threadpool); conversation linkage and ledger intent scratch fields must never live on `self` for that reason.
+
 When `OrchestrationController` is constructed with a non-`None` `SemanticDecisionLedger` and `process(..., conversation_id=...)`
 is used, the controller consults the ledger after `decide_action` and initial routing. On a semantic cache hit,
 `ConversationalFastPathRunner` (`moralstack/orchestration/conversational_fast_path.py`) may patch `Decision` and the

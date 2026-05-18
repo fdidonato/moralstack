@@ -29,7 +29,22 @@ from moralstack.orchestration.ledger import (
     SemanticDecisionLedger,
 )
 from moralstack.orchestration.ledger_storage import InMemoryLedgerStorage
+from moralstack.orchestration.process_context import ProcessCallContext
 from moralstack.orchestration.types import ProcessedRequest
+
+
+def _call_ctx_from_dict(d: dict[str, Any]) -> ProcessCallContext:
+    """Build ProcessCallContext from legacy test dict keys (underscore ledger fields)."""
+    return ProcessCallContext(
+        conversation_id=d.get("conversation_id"),
+        turn_index=d.get("turn_index"),
+        parent_request_id=d.get("parent_request_id"),
+        conversation_state=d.get("conversation_state"),
+        ledger_lookup=d.get("_ledger_lookup"),
+        ledger_request_type=d.get("_ledger_request_type"),
+        ledger_intent_clarity=d.get("_ledger_intent_clarity"),
+        ledger_hit_applied=bool(d.get("_ledger_hit_applied")),
+    )
 
 
 class StubEmbedder:
@@ -236,14 +251,14 @@ class TestStoreInLedgerHelper:
         request = ProcessedRequest(prompt="x")
         ctx = {"conversation_id": "c1", "turn_index": 1}
         # Should not raise.
-        orch._maybe_store_in_ledger(request=request, result=self._build_result(), ctx=ctx)
+        orch._maybe_store_in_ledger(request=request, result=self._build_result(), call_ctx=_call_ctx_from_dict(ctx))
 
     def test_no_op_when_no_conversation_id(self):
         ledger = SemanticDecisionLedger(StubEmbedder(), InMemoryLedgerStorage())
         orch = _build_controller_minimal(ledger=ledger)
         request = ProcessedRequest(prompt="x")
         ctx = {"conversation_id": None, "turn_index": 1}
-        orch._maybe_store_in_ledger(request=request, result=self._build_result(), ctx=ctx)
+        orch._maybe_store_in_ledger(request=request, result=self._build_result(), call_ctx=_call_ctx_from_dict(ctx))
         # Ledger storage stays empty.
         assert ledger._storage.size() == 0
 
@@ -253,7 +268,7 @@ class TestStoreInLedgerHelper:
         contract = DeveloperContract.from_text("you are an assistant")
         request = ProcessedRequest(prompt="hello", developer_contract=contract)
         ctx = {"conversation_id": "c1", "turn_index": 2}
-        orch._maybe_store_in_ledger(request=request, result=self._build_result(), ctx=ctx)
+        orch._maybe_store_in_ledger(request=request, result=self._build_result(), call_ctx=_call_ctx_from_dict(ctx))
         assert ledger._storage.size() == 1
 
     def test_skip_when_turn_zero(self):
@@ -262,7 +277,7 @@ class TestStoreInLedgerHelper:
         orch = _build_controller_minimal(ledger=ledger)
         request = ProcessedRequest(prompt="hello")
         ctx = {"conversation_id": "c1", "turn_index": 0}
-        orch._maybe_store_in_ledger(request=request, result=self._build_result(), ctx=ctx)
+        orch._maybe_store_in_ledger(request=request, result=self._build_result(), call_ctx=_call_ctx_from_dict(ctx))
         assert ledger._storage.size() == 0
 
     def test_no_crash_when_metadata_missing(self):
@@ -275,7 +290,7 @@ class TestStoreInLedgerHelper:
         bad_result = MagicMock()
         bad_result.response = None
         # Should not raise.
-        orch._maybe_store_in_ledger(request=request, result=bad_result, ctx=ctx)
+        orch._maybe_store_in_ledger(request=request, result=bad_result, call_ctx=_call_ctx_from_dict(ctx))
         # Nothing stored (final_action was empty).
         assert ledger._storage.size() == 0
 
@@ -304,7 +319,7 @@ class TestStateOutV04Extension:
             state=base_state,
             request=request,
             result=self._build_result_for_state(),
-            ctx={},
+            call_ctx=ProcessCallContext(),
         )
         assert extended.last_developer_contract_hash == contract.contract_hash
 
@@ -317,7 +332,7 @@ class TestStateOutV04Extension:
             state=base_state,
             request=request,
             result=self._build_result_for_state(final_action="SAFE_COMPLETE", risk=0.5),
-            ctx={},
+            call_ctx=ProcessCallContext(),
         )
         assert len(extended.turn_decisions_summary) == 2
         assert extended.turn_decisions_summary[-1].final_action == "SAFE_COMPLETE"
@@ -335,7 +350,7 @@ class TestStateOutV04Extension:
             state=base_state,
             request=request,
             result=self._build_result_for_state(),
-            ctx={},
+            call_ctx=ProcessCallContext(),
         )
         assert extended.last_governance_posture == "NORMAL"
 
@@ -349,7 +364,7 @@ class TestStateOutV04Extension:
             state=base_state,
             request=request,
             result=self._build_result_for_state(final_action="REFUSE"),
-            ctx={},
+            call_ctx=ProcessCallContext(),
         )
         assert extended.last_governance_posture == "ESCALATED"
 
@@ -367,7 +382,7 @@ class TestStateOutV04Extension:
             state=base_state,
             request=request,
             result=self._build_result_for_state(),
-            ctx={},
+            call_ctx=ProcessCallContext(),
         )
         assert extended.last_governance_posture == "ELEVATED"
 
@@ -384,7 +399,7 @@ class TestStep7Integration:
         assert isinstance(orch._fast_path_runner, ConversationalFastPathRunner)
 
     def test_extend_state_out_marks_cached_when_flag_set(self):
-        """_extend_state_out_v04 reads _ledger_hit_applied from ctx and marks was_cached."""
+        """_extend_state_out_v04 reads ledger_hit_applied from call_ctx and marks was_cached."""
         orch = _build_controller_minimal()
         request = ProcessedRequest(prompt="hello")
         base_state = ConversationGovernanceState()
@@ -400,11 +415,16 @@ class TestStep7Integration:
         result.response = response
 
         # Without the flag: was_cached is False (Step 6 baseline).
-        extended_no_flag = orch._extend_state_out_v04(state=base_state, request=request, result=result, ctx={})
+        extended_no_flag = orch._extend_state_out_v04(
+            state=base_state, request=request, result=result, call_ctx=ProcessCallContext()
+        )
         assert extended_no_flag.turn_decisions_summary[-1].was_cached is False
 
         # With the flag: was_cached is True.
         extended_with_flag = orch._extend_state_out_v04(
-            state=base_state, request=request, result=result, ctx={"_ledger_hit_applied": True}
+            state=base_state,
+            request=request,
+            result=result,
+            call_ctx=_call_ctx_from_dict({"_ledger_hit_applied": True}),
         )
         assert extended_with_flag.turn_decisions_summary[-1].was_cached is True

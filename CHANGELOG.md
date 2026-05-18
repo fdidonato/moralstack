@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- **Concurrent `conversation_id` observability leak (HTTP proxy + threadpool):**
+  `OrchestrationController` no longer stores per-request multi-turn / ledger scratch
+  state on a shared instance attribute. A stack-local `ProcessCallContext`
+  (`moralstack/orchestration/process_context.py`) is passed through `process()` and
+  internal helpers, eliminating cross-request contamination when multiple
+  `conversation_id` values run in parallel. Regression coverage:
+  `tests/test_orchestrator_concurrent_ctx.py`,
+  `tests/test_server_proxy.py::TestAsyncConcurrency::test_concurrent_distinct_conversations_jsonl_metadata_matches_session`.
+
 ### Added (Step 14.5)
 
 - **Documentazione semantica del canale JSONL e script di consolidamento**

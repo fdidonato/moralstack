@@ -12,6 +12,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from moralstack.orchestration.controller import OrchestrationController
+from moralstack.orchestration.process_context import ProcessCallContext
 from moralstack.orchestration.types import (
     FinalResponse,
     OrchestratorConfig,
@@ -70,7 +71,14 @@ class TestLedgerRequestTypeConsistency:
             "_ledger_intent_clarity": "HIGH",
         }
 
-        controller._maybe_store_in_ledger(request=request, result=result, ctx=ctx)
+        call_ctx = ProcessCallContext(
+            conversation_id=ctx["conversation_id"],
+            turn_index=ctx["turn_index"],
+            ledger_request_type=ctx.get("_ledger_request_type"),
+            ledger_intent_clarity=ctx.get("_ledger_intent_clarity"),
+        )
+
+        controller._maybe_store_in_ledger(request=request, result=result, call_ctx=call_ctx)
 
         assert controller._ledger.store.call_count == 1
         kwargs = controller._ledger.store.call_args.kwargs
@@ -100,7 +108,14 @@ class TestLedgerRequestTypeConsistency:
             "turn_index": 1,
         }
 
-        controller._maybe_store_in_ledger(request=request, result=result, ctx=ctx)
+        call_ctx = ProcessCallContext(
+            conversation_id=ctx["conversation_id"],
+            turn_index=ctx["turn_index"],
+            ledger_request_type=ctx.get("_ledger_request_type"),
+            ledger_intent_clarity=ctx.get("_ledger_intent_clarity"),
+        )
+
+        controller._maybe_store_in_ledger(request=request, result=result, call_ctx=call_ctx)
 
         assert controller._ledger.store.call_count == 1
         kwargs = controller._ledger.store.call_args.kwargs
