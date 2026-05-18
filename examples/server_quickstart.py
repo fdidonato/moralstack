@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import uvicorn
 from openai import OpenAI
+import os
 
 from moralstack.sdk.bootstrap import _bootstrap_pipeline
 from moralstack.sdk.config import GovernanceConfig
@@ -61,10 +62,12 @@ app = build_app()
 
 
 def main() -> None:
+    host = os.getenv("MORALSTACK_OPENAI_COMPATIBLE_API_HOST", "localhost")
+    port = os.getenv("MORALSTACK_OPENAI_COMPATIBLE_API_PORT", "8787")
     """Convenience single-process launcher (same constraints as uvicorn with one worker)."""
-    print("Starting MoralStack server on http://0.0.0.0:8080")
-    print("Try: curl http://localhost:8080/healthz")
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    print(f"Starting MoralStack server on http://{host}:{port}")
+    print(f"Try: curl http://{host}:{port}/healthz")
+    uvicorn.run(app, host=host, port=int(port))
 
 
 if __name__ == "__main__":

@@ -407,6 +407,7 @@ def create_app(
         return {"status": "ok", "run_id": proxy_run_id or ""}
 
     @app.post("/v1/chat/completions")
+    @app.post("/chat/completions")
     async def chat_completions(
         request: Request,
         moralstack_conversation_id: str | None = Header(default=None, alias="X-Moralstack-Conversation-Id"),
