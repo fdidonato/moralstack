@@ -643,9 +643,9 @@ class TestAsyncConcurrency:
         """
 
         class SlowRisk(MockRiskEstimator):
-            def estimate(self, prompt: str):  # type: ignore[override]
+            def estimate(self, prompt: str, **kwargs):  # type: ignore[override]
                 time.sleep(random.uniform(0.02, 0.06))
-                return super().estimate(prompt)
+                return super().estimate(prompt, **kwargs)
 
         obs_dir = tmp_path / "obs"
         obs_dir.mkdir()

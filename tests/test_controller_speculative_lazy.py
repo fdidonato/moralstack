@@ -65,7 +65,7 @@ def test_refuse_route_returns_before_speculative_worker_finishes(
     )
 
     class _FastRisk:
-        def estimate(self, prompt: str) -> RiskEstimation:
+        def estimate(self, prompt: str, **kwargs) -> RiskEstimation:
             return risk_result
 
     config = OrchestratorConfig(enable_speculative_generation=True)

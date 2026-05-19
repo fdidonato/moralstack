@@ -119,6 +119,37 @@ def persist_llm_call(
         return False
 
 
+def _format_context_block(
+    contract_text: str | None,
+    history: list[dict[str, str]] | None,
+) -> str:
+    """Build optional DEVELOPER CONTRACT + RECENT HISTORY block.
+
+    Returns empty string when no context is provided (byte-equivalent fast path).
+    """
+    if not contract_text and not history:
+        return ""
+    sections: list[str] = []
+    if contract_text and contract_text.strip():
+        sections.append(
+            "DEVELOPER CONTRACT (system prompt declared by the deployer of this assistant; "
+            "the request below must be evaluated in light of these rules):\n"
+            f"{contract_text.strip()}"
+        )
+    if history:
+        recent = list(history)[-3:]
+        history_lines: list[str] = []
+        for turn in recent:
+            role = (turn.get("role") or "unknown").strip()
+            content = (turn.get("content") or "")[:200]
+            history_lines.append(f"[{role}]: {content}")
+        sections.append(
+            "RECENT CONVERSATION HISTORY (last up to 3 turns; the request below is a "
+            "continuation of this dialogue):\n" + "\n".join(history_lines)
+        )
+    return "\n".join(sections) + "\n\n"
+
+
 class LLMBasedRiskEstimator:
     """
     Giudice Semantico per la classificazione del rischio etico.
@@ -215,7 +246,13 @@ class LLMBasedRiskEstimator:
             self._mini_policy_pool[key] = pol
             return pol
 
-    def estimate(self, prompt: str) -> RiskEstimation:
+    def estimate(
+        self,
+        prompt: str,
+        *,
+        developer_contract_text: str | None = None,
+        conversation_history: list[dict[str, str]] | None = None,
+    ) -> RiskEstimation:
         """
         Stima il rischio etico di un prompt usando analisi semantica pura.
 
@@ -228,8 +265,15 @@ class LLMBasedRiskEstimator:
         - Presenza di parole specifiche (no keyword matching)
         - Pattern lessicali superficiali
 
+        Optional context (``developer_contract_text``, ``conversation_history``), when
+        provided, is prepended to the request body sent to the three mini-estimators
+        (intent, signals, operational) to disambiguate payloads whose meaning depends
+        on the system prompt or prior turns.
+
         Args:
             prompt: Richiesta utente da valutare
+            developer_contract_text: Deployer system prompt / developer contract text
+            conversation_history: Prior turns as ``{"role", "content"}`` dicts
 
         Returns:
             RiskEstimation con score, categoria e ragionamento semantico
@@ -242,7 +286,11 @@ class LLMBasedRiskEstimator:
             return self._fallback_estimate(prompt)
 
         # Analisi semantica via LLM (unica strategia)
-        return self._semantic_analysis(prompt)
+        return self._semantic_analysis(
+            prompt,
+            developer_contract_text=developer_contract_text,
+            conversation_history=conversation_history,
+        )
 
     def _fallback_estimate(self, prompt: str) -> RiskEstimation:
         """
@@ -488,7 +536,13 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         except Exception as e:
             _RISK_LOG.debug("persist_mini_llm_call failed: %s", e)
 
-    def _parallel_mini_analysis(self, prompt: str) -> RiskEstimation:
+    def _parallel_mini_analysis(
+        self,
+        prompt: str,
+        *,
+        developer_contract_text: str | None = None,
+        conversation_history: list[dict[str, str]] | None = None,
+    ) -> RiskEstimation:
         """
         Esegue 3 mini-chiamate LLM in parallelo via ThreadPoolExecutor.
 
@@ -510,13 +564,16 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         gen_config = self._build_generation_config()
         context, detected_domain = self._get_principles_context(prompt)
 
+        context_block = _format_context_block(developer_contract_text, conversation_history)
+        contextualized_request = f"{context_block}{prompt}" if context_block else prompt
+
         intent_prompt = INTENT_CONTEXT_PROMPT_TEMPLATE.format(
-            request=prompt,
+            request=contextualized_request,
             constitution_context=context,
         )
         _, harm_signal_user_template = get_harm_signal_prompts(signal_registry)
-        signal_prompt = harm_signal_user_template.format(request=prompt)
-        operational_prompt = OPERATIONAL_RISK_PROMPT_TEMPLATE.format(request=prompt)
+        signal_prompt = harm_signal_user_template.format(request=contextualized_request)
+        operational_prompt = OPERATIONAL_RISK_PROMPT_TEMPLATE.format(request=contextualized_request)
 
         _RISK_LOG.info(
             "risk_estimator parallel mini-models (config): intent=%s signals=%s operational=%s; "
@@ -764,12 +821,22 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             estimation_mode="parallel",
         )
 
-    def _semantic_analysis(self, prompt: str) -> RiskEstimation:
+    def _semantic_analysis(
+        self,
+        prompt: str,
+        *,
+        developer_contract_text: str | None = None,
+        conversation_history: list[dict[str, str]] | None = None,
+    ) -> RiskEstimation:
         """
         Execute focused parallel mini-analysis.
         """
         try:
-            return self._parallel_mini_analysis(prompt)
+            return self._parallel_mini_analysis(
+                prompt,
+                developer_contract_text=developer_contract_text,
+                conversation_history=conversation_history,
+            )
         except Exception as e:
             _RISK_LOG.warning("parallel mini-analysis failed, using safe fallback estimate: %s", e)
             return RiskEstimation.from_error(str(e))
@@ -838,52 +905,15 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         conversation_history: list[dict[str, str]] | None = None,
         user_context: dict[str, Any] | None = None,
     ) -> RiskEstimation:
-        """
-        Stima rischio con contesto aggiuntivo.
-
-        Versione estesa di estimate() che considera:
-        - Storia della conversazione
-        - Contesto utente (locale, permessi, dominio)
-
-        Args:
-            prompt: Richiesta utente
-            conversation_history: Lista di turni precedenti
-            user_context: Metadata utente (es. {"locale": "it-IT", "domain": "medical"})
-
-        Returns:
-            RiskEstimation con analisi contestualizzata
-        """
-        # Il contesto viene usato per arricchire l'analisi semantica dell'LLM
-        # In futuro può influenzare soglie e pesi delle diverse categorie
-
-        # Costruisci contesto testuale
-        context_parts = []
-
-        if conversation_history:
-            history_summary = []
-            for turn in conversation_history[-3:]:  # Ultimi 3 turni
-                role = turn.get("role", "unknown")
-                content = turn.get("content", "")[:200]  # Tronca
-                history_summary.append(f"{role}: {content}")
-            if history_summary:
-                context_parts.append("RECENT HISTORY:\n" + "\n".join(history_summary))
-
+        """Legacy façade — see estimate() for the canonical entry point."""
+        contract_text: str | None = None
         if user_context:
-            context_info = []
-            if "domain" in user_context:
-                context_info.append(f"Domain: {user_context['domain']}")
-            if "locale" in user_context:
-                context_info.append(f"Locale: {user_context['locale']}")
-            if context_info:
-                context_parts.append("CONTEXT: " + ", ".join(context_info))
-
-        # Arricchisci prompt se c'è contesto
-        if context_parts:
-            enriched_prompt = "\n".join(context_parts) + f"\n\nCURRENT REQUEST: {prompt}"
-        else:
-            enriched_prompt = prompt
-
-        return self.estimate(enriched_prompt)
+            contract_text = user_context.get("developer_contract")
+        return self.estimate(
+            prompt,
+            developer_contract_text=contract_text,
+            conversation_history=conversation_history,
+        )
 
 
 # =============================================================================

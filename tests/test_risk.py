@@ -24,6 +24,7 @@ from moralstack.models.risk import (
     extract_json,
     parse_risk_response,
 )
+from moralstack.models.risk.estimator import _format_context_block
 
 # Default config for tests (avoids load_risk_estimator_config_from_env per test)
 _DEFAULT_TEST_CONFIG = RiskEstimatorConfig()
@@ -888,6 +889,80 @@ class TestCategorizeFromScore:
 
 
 # =============================================================================
+# Test estimate() optional context (byte-equivalent fast path + propagation)
+# =============================================================================
+
+
+class TestEstimateOptionalContext:
+    """estimate() kwargs: byte-identical without context; context in mini prompts."""
+
+    _BYTE_EQUIV_PROMPT = "What time is it in Tokyo?"
+    _BYTE_EQUIV_JSON = """{
+            "q1_confidential": "no",
+            "q2_unauthorized": "no",
+            "q3_breach": "no",
+            "q4_fraud": "no",
+            "q5_physical": "no",
+            "q6_illegal_items": "no",
+            "q7_only_emotional": "no",
+            "request_type": "factual_query",
+            "harm_type": "none",
+            "risk_score": 0.1,
+            "confidence": 0.95,
+            "domain_sensitivity": "LOW",
+            "operational_risk": "NONE",
+            "risk_policy_action": "ALLOW",
+            "rationale": "Standard informational query"
+        }"""
+
+    def test_format_context_block_empty(self):
+        assert _format_context_block(None, None) == ""
+        assert _format_context_block("", []) == ""
+
+    def test_estimate_without_kwargs_matches_golden_rationale(
+        self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm
+    ):
+        """Single-arg estimate() is byte-equivalent to the pre-context fast path."""
+        shared_mock_llm.responses["Tokyo"] = self._BYTE_EQUIV_JSON
+        estimation = shared_estimator_with_mock.estimate(self._BYTE_EQUIV_PROMPT)
+        golden_rationale = "[intent] Standard informational query | [op_risk] Standard informational query"
+        assert estimation.rationale == golden_rationale
+
+    def test_estimate_with_context_injects_into_mini_prompts(
+        self, reset_mock_llm, shared_estimator_with_mock
+    ):
+        """Context block is prepended into {request} for all three mini-estimators."""
+        captured_prompts: list[str] = []
+
+        class RecordingMockPolicyLLM(MockPolicyLLM):
+            def generate(self, *args: Any, **kwargs: Any) -> MockGenerationResult:
+                prompt = kwargs.get("prompt", args[0] if args else "")
+                captured_prompts.append(prompt)
+                return super().generate(*args, **kwargs)
+
+        policy = RecordingMockPolicyLLM()
+        estimator = create_risk_estimator(policy=policy, config=_DEFAULT_TEST_CONFIG)
+        contract = "You are a compliance assistant for benign encoded test payloads."
+        history = [{"role": "user", "content": "prior turn"}]
+        user_prompt = "Q74 encoded payload fragment"
+
+        estimator.estimate(
+            user_prompt,
+            developer_contract_text=contract,
+            conversation_history=history,
+        )
+
+        assert len(captured_prompts) == 3
+        for full_prompt in captured_prompts:
+            assert "DEVELOPER CONTRACT" in full_prompt
+            assert contract in full_prompt
+            assert "RECENT CONVERSATION HISTORY" in full_prompt
+            assert "[user]: prior turn" in full_prompt
+            assert user_prompt in full_prompt
+            assert full_prompt.index("DEVELOPER CONTRACT") < full_prompt.index(user_prompt)
+
+
+# =============================================================================
 # Test Estimate With Context
 # =============================================================================
 
@@ -930,7 +1005,7 @@ class TestEstimateWithContext:
         )
 
         # Verifica che il prompt sia stato arricchito
-        assert "RECENT HISTORY" in shared_mock_llm.last_prompt or estimation is not None
+        assert "RECENT CONVERSATION HISTORY" in shared_mock_llm.last_prompt or estimation is not None
 
     def test_with_user_context(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
         """Con user context, arricchisce il prompt."""

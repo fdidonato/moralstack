@@ -778,7 +778,42 @@ class OrchestrationController:
             return RiskEstimation(score=0.5, confidence=0.5, risk_category=RiskCategory.SENSITIVE)
         try:
             start = time.time()
-            result = self.risk_estimator.estimate(request.prompt)
+
+            # Pass developer contract (system prompt) and conversation history so the
+            # risk estimator can evaluate the request in its full conversational context.
+            # Without this, payloads whose meaning depends on the system prompt (e.g.
+            # an authentication token expected by the deployer) are mis-classified as
+            # encoded/obfuscated and refused. See compl-ai llm_rules-benign Q74.
+            contract_text: str | None = None
+            dc = getattr(request, "developer_contract", None)
+            if dc is not None:
+                contract_text = getattr(dc, "raw_text", None)
+
+            history_dicts: list[dict[str, str]] | None = None
+            history_turns = getattr(request, "conversation_history", None) or []
+            if history_turns:
+                history_dicts = [
+                    {
+                        "role": getattr(t, "role", "") or "",
+                        "content": getattr(t, "content", "") or "",
+                    }
+                    for t in history_turns
+                ]
+
+            # The protocol exposes only `estimate(prompt)`. Concrete implementations
+            # accept optional kwargs; pass them only when meaningful so the byte-equivalent
+            # single-turn fast path is preserved.
+            try:
+                result = self.risk_estimator.estimate(  # type: ignore[call-arg]
+                    request.prompt,
+                    developer_contract_text=contract_text,
+                    conversation_history=history_dicts,
+                )
+            except TypeError:
+                # Defensive fallback: an estimator implementation that does not yet
+                # accept the new kwargs (e.g. a test double) still works.
+                result = self.risk_estimator.estimate(request.prompt)
+
             elapsed = (time.time() - start) * 1000
             if self.logger and hasattr(self.logger, "log_call"):
                 response_text = (

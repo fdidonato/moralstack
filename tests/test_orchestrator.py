@@ -191,7 +191,7 @@ class MockRiskEstimator:
         self.call_count = 0
         self.custom_responses: dict[str, float] = {}
 
-    def estimate(self, prompt: str) -> MockRiskEstimation:
+    def estimate(self, prompt: str, **kwargs: Any) -> MockRiskEstimation:
         self.call_count += 1
 
         # Check custom responses
@@ -846,7 +846,7 @@ class TestOrchestratorErrorHandling:
         """Errore risk estimation gestito."""
 
         class FailingRiskEstimator:
-            def estimate(self, prompt: str):
+            def estimate(self, prompt: str, **kwargs: Any):
                 raise RuntimeError("Risk estimation failed")
 
         orchestrator = create_orchestrator(

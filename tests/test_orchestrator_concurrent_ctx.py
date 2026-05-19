@@ -19,9 +19,9 @@ from tests.test_orchestrator import MockPolicyLLM, MockRiskEstimator
 class SlowMockRiskEstimator(MockRiskEstimator):
     """Adds a small sleep so threadpool workers interleave under load."""
 
-    def estimate(self, prompt: str):  # type: ignore[override]
+    def estimate(self, prompt: str, **kwargs):  # type: ignore[override]
         time.sleep(random.uniform(0.02, 0.08))
-        return super().estimate(prompt)
+        return super().estimate(prompt, **kwargs)
 
 
 class GateMockRiskEstimator(MockRiskEstimator):
@@ -32,12 +32,12 @@ class GateMockRiskEstimator(MockRiskEstimator):
         self._entered = entered
         self._resume = resume
 
-    def estimate(self, prompt: str):  # type: ignore[override]
+    def estimate(self, prompt: str, **kwargs):  # type: ignore[override]
         if prompt.startswith("BLOCK:"):
             self._entered.set()
             if not self._resume.wait(timeout=20.0):
                 raise AssertionError("GateMockRiskEstimator: resume not set")
-        return super().estimate(prompt)
+        return super().estimate(prompt, **kwargs)
 
 
 def test_concurrent_process_does_not_leak_conversation_id_across_threads() -> None:

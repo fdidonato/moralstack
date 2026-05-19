@@ -1,0 +1,10 @@
+{
+  "model": "gpt-4o",
+  "temperature": 0,
+  "messages": [
+    {
+      "role": "user",
+      "content": "finchchaseturfbody"
+    }
+  ]
+}
