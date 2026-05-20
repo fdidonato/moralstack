@@ -35,6 +35,7 @@ from moralstack.orchestration.language_resolver import resolve_prompt_with_langu
 from moralstack.orchestration.orchestration_event_taxonomy import (
     AGGREGATED_GUIDANCE_EVALUATED,
     CONVERGENCE_EVALUATED,
+    CRITIC_SKIPPED,
     CRITIC_SHORT_CIRCUIT_TRIGGERED,
     EARLY_CONVERGENCE_ACCEPTED,
     EARLY_CONVERGENCE_REJECTED,
@@ -176,6 +177,56 @@ _SCHEDULER_REASON_ORDER: tuple[str, ...] = (
     "HIGH_RISK_POSTURE",
     "REQUESTED_INSTRUCTIONS_SENSITIVE_POSTURE",
 )
+
+# Constants for retrieval query enrichment.
+# These bound the size of the enriched query passed to the domain prefilter.
+_RETRIEVAL_QUERY_MAX_CONTRACT_CHARS = 1500
+_RETRIEVAL_QUERY_MAX_HISTORY_TURNS = 3
+_RETRIEVAL_QUERY_MAX_HISTORY_CHARS_PER_TURN = 200
+
+
+def _build_enriched_retrieval_query(request: ProcessedRequest) -> str:
+    """
+    Build a semantically-complete query for the constitution retriever.
+
+    When the user prompt is a short payload (e.g. a password or a short command)
+    invoked under a developer contract, the prompt alone is not enough for the
+    domain prefilter to classify the request. This helper composes a query that
+    includes:
+      1. The developer_contract text (truncated to ~1500 chars)
+      2. The last 3 turns of conversation history (truncated per-turn)
+      3. The user prompt
+
+    Resulting query is what the LLM-based domain prefilter sees.
+    """
+    parts: list[str] = []
+
+    contract = getattr(request, "developer_contract", None)
+    if contract is not None:
+        contract_text = (getattr(contract, "raw_text", "") or "").strip()
+        if contract_text:
+            if len(contract_text) > _RETRIEVAL_QUERY_MAX_CONTRACT_CHARS:
+                contract_text = contract_text[:_RETRIEVAL_QUERY_MAX_CONTRACT_CHARS] + "..."
+            parts.append(f"CONTRACT:\n{contract_text}")
+
+    history = getattr(request, "conversation_history", None) or []
+    if history:
+        recent = list(history)[-_RETRIEVAL_QUERY_MAX_HISTORY_TURNS:]
+        history_lines: list[str] = []
+        for turn in recent:
+            role = (getattr(turn, "role", None) or "").strip() or "user"
+            content = (getattr(turn, "content", None) or "").strip()
+            if not content:
+                continue
+            if len(content) > _RETRIEVAL_QUERY_MAX_HISTORY_CHARS_PER_TURN:
+                content = content[:_RETRIEVAL_QUERY_MAX_HISTORY_CHARS_PER_TURN] + "..."
+            history_lines.append(f"[{role}]: {content}")
+        if history_lines:
+            parts.append("HISTORY:\n" + "\n".join(history_lines))
+
+    parts.append(f"REQUEST:\n{request.prompt}")
+
+    return "\n\n".join(parts)
 
 
 @dataclass(frozen=True)
@@ -355,8 +406,9 @@ class DeliberationRunner:
         try:
             t0 = time.time()
             started_ms = int(t0 * 1000)
+            enriched_query = _build_enriched_retrieval_query(request)
             relevant = self.constitution_store.get_relevant_principles(
-                query=request.prompt,
+                query=enriched_query,
                 top_k=top_k,
                 domain=request.get_domain(),
             )
@@ -2748,6 +2800,24 @@ class DeliberationRunner:
             nv = len(critique.violations)
             rg = (critique.revision_guidance[:100]) if critique.revision_guidance else "N/A"
             response_text = f"Violations: {nv}, Guidance: {rg}"
+            is_skipped = bool(getattr(critique, "skipped", False))
+            skip_reason = getattr(critique, "skip_reason", "") or ""
+            if is_skipped:
+                try:
+                    persist_orchestration_event(
+                        cycle=state.cycle,
+                        stage="deliberation",
+                        component="critic",
+                        event_type=CRITIC_SKIPPED,
+                        decision="skipped",
+                        status="ok",
+                        payload={
+                            "reason": skip_reason,
+                            "cycle": state.cycle,
+                        },
+                    )
+                except Exception:
+                    _LOG.debug("emit CRITIC_SKIPPED failed", exc_info=True)
             critic_model = _module_model(self.critic)
             record_llm_call(
                 self.logger,
@@ -2766,13 +2836,24 @@ class DeliberationRunner:
                     "model": critic_model,
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
-                    "prompt": getattr(critique, "prompt", None) or prompt_text,
+                    "prompt": (
+                        f"[SKIPPED] {skip_reason}" if is_skipped
+                        else (getattr(critique, "prompt", None) or prompt_text)
+                    ),
                     "system_prompt": getattr(critique, "system_prompt", ""),
-                    "raw_response": getattr(critique, "raw_response", ""),
-                    "parsed_summary_json": response_text,
+                    "raw_response": getattr(critique, "raw_response", "") or "",
+                    "parsed_json": None,
+                    "parsed_summary_json": (
+                        f"SKIPPED: {skip_reason}" if is_skipped
+                        else response_text
+                    ),
                     "attempts": getattr(critique, "parse_attempts", 1),
                     "sequence_in_cycle": SEQ_CRITIC,
                     "token_usage_json": _token_usage_json_from_result(critique),
+                    "call_kind": "skipped" if is_skipped else None,
+                    "call_outcome": "skipped" if is_skipped else None,
+                    "cache_status": "not_invoked" if is_skipped else None,
+                    "related_event_id": None,
                 },
             )
             state.critiques.append(critique)

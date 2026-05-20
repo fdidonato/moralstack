@@ -109,6 +109,10 @@ class CriticReport:
     tokens_used: int = 0
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    skipped: bool = False
+    """True when critique returned without invoking the LLM (e.g. no relevant principles)."""
+    skip_reason: str = ""
+    """Human-readable reason for skipping, used in logs and UI."""
 
     @classmethod
     def empty(cls) -> CriticReport:
@@ -120,6 +124,25 @@ class CriticReport:
             violated_hard=False,
             decision="PROCEED",
             revision_guidance="",
+        )
+
+    @classmethod
+    def empty_skipped(cls, reason: str = "") -> CriticReport:
+        """
+        Create an empty report that explicitly marks the critic as skipped.
+
+        Used when the critic did not invoke the LLM (e.g. zero relevant principles).
+        Distinct from empty() which represents a real LLM call that found no violations.
+        """
+        return cls(
+            violations=[],
+            severity_score=0.0,
+            has_critical_violations=False,
+            violated_hard=False,
+            decision="PROCEED",
+            revision_guidance="",
+            skipped=True,
+            skip_reason=reason or "no relevant principles",
         )
 
     @classmethod
@@ -390,7 +413,9 @@ class LLMConstitutionalCritic:
             active_principles = constitution.principles[: self.config.top_k_principles]
 
         if not active_principles:
-            return CriticReport.empty()
+            return CriticReport.empty_skipped(
+                reason="no relevant principles retrieved from constitution"
+            )
 
         # Costruisci mappa per lookup
         principles_map = {p.id: p for p in active_principles}

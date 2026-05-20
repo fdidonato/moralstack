@@ -148,19 +148,66 @@ def _iso_to_language_name(iso: str | None) -> str:
     return _ISO_TO_LANGUAGE.get(code, "English")
 
 
+# Minimum confidence required to accept langdetect's verdict.
+# Below this threshold, fall back to English to avoid mis-detection on
+# short prompts containing proper nouns (e.g. "Samuel: Who paid?" -> 'es' @ 0.857).
+_LANGDETECT_MIN_CONFIDENCE = 0.95
+
+# Minimum prompt length (in characters AND in words) to even attempt detection.
+# langdetect is unreliable on short inputs and tends to mis-classify based on
+# statistical priors over proper nouns rather than actual lexical content.
+_LANGDETECT_MIN_CHARS = 50
+_LANGDETECT_MIN_WORDS = 5
+
+
 def _detect_language_fallback(prompt: str | None) -> str:
     """
-    Fallback quando Risk Estimator non restituisce detected_language.
-    Usa langdetect (locale, zero token) solo in quel caso.
+    Fallback when Risk Estimator does not provide detected_language.
+
+    Uses langdetect (local, zero-token) but with conservative thresholds to
+    avoid mis-detection on short inputs. The detection layer is the LLM-based
+    intent estimator; this fallback exists only for the policy speculative
+    path that runs before the intent estimator.
+
+    Heuristics:
+    - Prompt must be >= 50 chars AND >= 5 words to even attempt detection.
+    - Detection must reach >= 0.95 confidence to be accepted.
+    - Any failure path falls back to "English" (safe default).
     """
-    if not prompt or not str(prompt).strip() or len(str(prompt).strip()) < 10:
+    if not prompt or not str(prompt).strip():
         return "English"
+
+    text = str(prompt).strip()
+    if len(text) < _LANGDETECT_MIN_CHARS:
+        return "English"
+
+    words = [w for w in text.split() if w.strip()]
+    if len(words) < _LANGDETECT_MIN_WORDS:
+        return "English"
+
     try:
-        from langdetect import DetectorFactory, detect
+        from langdetect import DetectorFactory, detect_langs
 
         DetectorFactory.seed = 42
-        iso = detect(str(prompt).strip())
-        return _ISO_TO_LANGUAGE.get(iso, "English")
+        candidates = detect_langs(text)
+        if not candidates:
+            return "English"
+
+        # detect_langs returns a list sorted by probability descending.
+        top = candidates[0]
+        top_iso = str(top.lang).strip().lower()
+        top_prob = float(top.prob)
+
+        if top_prob < _LANGDETECT_MIN_CONFIDENCE:
+            logger.debug(
+                "_detect_language_fallback: low confidence %s=%.3f for text len=%d, falling back to English",
+                top_iso,
+                top_prob,
+                len(text),
+            )
+            return "English"
+
+        return _ISO_TO_LANGUAGE.get(top_iso, "English")
     except Exception as e:
         logger.debug("_detect_language_fallback failed, using English: %s", e)
         return "English"

@@ -27,6 +27,8 @@ class PhaseInfo:
     output_summary: str = ""
     full_input: str = ""
     full_output: str = ""
+    call_outcome: str | None = None
+    parsed_summary_json: str | None = None
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -51,6 +53,8 @@ class CallLogEntry:
     duration_ms: float
     full_prompt: str
     full_response: str
+    call_outcome: str | None = None
+    parsed_summary_json: str | None = None
 
 
 @dataclass
@@ -347,6 +351,8 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
                     system_prompt=c.get("system_prompt") or "",
                     full_input=c.get("prompt") or "",
                     full_output=c.get("raw_response") or "",
+                    call_outcome=c.get("call_outcome"),
+                    parsed_summary_json=c.get("parsed_summary_json"),
                 )
             )
         phases_by_cycle.append((cycle_num, phase_infos))
@@ -391,6 +397,8 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
             duration_ms=float(c.get("duration_ms") or 0),
             full_prompt=c.get("prompt") or "",
             full_response=c.get("raw_response") or "",
+            call_outcome=c.get("call_outcome"),
+            parsed_summary_json=c.get("parsed_summary_json"),
         )
         for i, c in enumerate(llm_calls, 1)
     ]

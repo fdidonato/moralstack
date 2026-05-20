@@ -108,6 +108,44 @@ def _markdown_guidance_builder_section(
     return "\n".join(parts) + "\n"
 
 
+def _markdown_critic_skipped_section(llm_calls: list[dict[str, Any]] | None) -> str:
+    """Render critic-skipped LLM calls with an explicit block (not a truncated synthetic prompt)."""
+    calls = llm_calls or []
+    skipped = [
+        c
+        for c in calls
+        if (c.get("module") or "").strip().lower() == "critic"
+        and (c.get("call_outcome") or "").strip().lower() == "skipped"
+    ]
+    if not skipped:
+        return ""
+    parts: list[str] = [
+        "#### ● Critic / Critic ⏭️ SKIPPED",
+        "",
+        "> Critic was not invoked by the deliberation runner.",
+        "",
+    ]
+    for c in skipped:
+        reason = (c.get("parsed_summary_json") or "").replace("SKIPPED: ", "").strip()
+        if not reason:
+            prompt = (c.get("prompt") or "").strip()
+            if prompt.startswith("[SKIPPED]"):
+                reason = prompt[len("[SKIPPED]") :].strip()
+        parts.append(f"> **Reason**: {reason or 'unknown'}")
+        parts.append(
+            f"> Cycle `{c.get('cycle')}` · duration_ms `{c.get('duration_ms')}` · "
+            f"cache_status `{c.get('cache_status') or '—'}`"
+        )
+        parts.append("")
+    parts.append(
+        "When the constitution retriever returns zero relevant principles, "
+        "the critic returns an empty report without calling the LLM. "
+        "This typically indicates the domain prefilter could not classify the request."
+    )
+    parts.append("")
+    return "\n".join(parts)
+
+
 def _benchmark_question_observability_block(r: dict[str, Any], run_id: str) -> str:
     """Benchmark per-question: in-memory convergence fields + optional DB replay for guidance events."""
     if r.get("error"):
@@ -170,13 +208,16 @@ def _deliberation_observability_markdown_from_db(run_id: str, request_id: str) -
             vm.get("runtime_decisions"),
             calls,
         )
-        if not early and not guid:
+        critic_skip = _markdown_critic_skipped_section(calls)
+        if not early and not guid and not critic_skip:
             return ""
         out: list[str] = []
         if early:
             out.append("### Early convergence (cycle 1)\n\n" + early)
         if guid:
             out.append("### Guidance filter & rewrite\n\n" + guid)
+        if critic_skip:
+            out.append("### Critic skip visibility\n\n" + critic_skip)
         return "\n".join(out)
     except Exception:
         return ""
@@ -418,16 +459,20 @@ def export_request_markdown(run_id: str, request_id: str) -> str:
             vm.get("runtime_decisions"),
             calls,
         )
-        if early_md or guidance_md:
+        critic_skip_md = _markdown_critic_skipped_section(calls)
+        if early_md or guidance_md or critic_skip_md:
             md += "\n\n---\n\n## Deliberation observability\n\n"
             md += (
-                "> Cycle-1 early convergence diagnostics, guidance filter, and rewrite-skip evidence "
+                "> Cycle-1 early convergence diagnostics, guidance filter, rewrite-skip evidence, "
+                "and critic-skip visibility "
                 "(from decision traces + orchestration events + persisted LLM calls).\n\n"
             )
             if early_md:
                 md += "### Early convergence (cycle 1)\n\n" + early_md + "\n"
             if guidance_md:
                 md += "### Guidance filter & rewrite\n\n" + guidance_md + "\n"
+            if critic_skip_md:
+                md += "### Critic skip visibility\n\n" + critic_skip_md + "\n"
         if es.get("risk_assessment") or orch or vm.get("cycle_cards"):
             contract = build_runtime_observability_contract(
                 traces=report.decision_traces or [],

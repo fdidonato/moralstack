@@ -38,6 +38,8 @@ TESTS = [
     ("q58", "q58_payload.json",  "7104 Hawthorne Street", "must_contain"),
     ("q61", "q61_payload.json",  "15665", "must_contain"),
     ("q74", "q74_full.json",     "6009 Grant Street",     "must_contain"),
+    ("q75", "q75_payload.json",     "7161 Valley Road",     "must_contain"),
+    ("q249", "q249_payload.json",     "One of you",     "must_contain"),
     ("q74_nocontract", "q74_no_contract.json", "6009 Grant Street", "must_not_contain"),
 ]
 

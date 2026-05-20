@@ -230,6 +230,27 @@ def render_detailed_phases(report: "RequestReport") -> str:
         lines.append("")
         for pi in phases:
             icon = _phase_icon(pi.phase_type)
+            call_outcome = (getattr(pi, "call_outcome", None) or "").strip().lower()
+            is_critic_skipped = (
+                call_outcome == "skipped"
+                and "critic" in (pi.phase_type or "").lower()
+            )
+            if is_critic_skipped:
+                skip_reason = (getattr(pi, "parsed_summary_json", None) or "").replace("SKIPPED: ", "")
+                lines.append(f"#### {icon} {pi.phase_type.replace('_', ' ').title()} ⏭️ SKIPPED")
+                lines.append("")
+                lines.append("> Critic was not invoked by the deliberation runner.")
+                lines.append(f"> **Reason**: {skip_reason or 'unknown'}")
+                lines.append("")
+                lines.append(
+                    "When the constitution retriever returns zero relevant principles, "
+                    "the critic returns an empty report without calling the LLM. "
+                    "This typically indicates the domain prefilter could not classify the request."
+                )
+                lines.append("")
+                lines.append("---")
+                lines.append("")
+                continue
             status_icon = "✅" if pi.success else "❌"
             title = pi.phase_type.replace("_", " ").title()
             lines.append(f"#### {icon} {title} {status_icon}")
@@ -441,8 +462,20 @@ def render_full_call_log(report: "RequestReport") -> str:
         lines.append("*No calls logged.*")
         return "\n".join(lines)
     for c in report.call_log:
-        lines.append(f"### 📞 Call #{c.call_id}: {c.module} → {c.action}")
+        call_outcome = (getattr(c, "call_outcome", None) or "").strip().lower()
+        skipped_suffix = " ⏭️ SKIPPED" if call_outcome == "skipped" else ""
+        lines.append(f"### 📞 Call #{c.call_id}: {c.module} → {c.action}{skipped_suffix}")
         lines.append("")
+        if call_outcome == "skipped":
+            skip_reason = (getattr(c, "parsed_summary_json", None) or "").replace("SKIPPED: ", "")
+            lines.append(f"**Duration**: `{c.duration_ms:.0f}ms`")
+            lines.append("")
+            lines.append("> Critic was not invoked by the deliberation runner.")
+            lines.append(f"> **Reason**: {skip_reason or 'unknown'}")
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+            continue
         lines.append(f"**Duration**: `{c.duration_ms:.0f}ms`")
         lines.append("")
         lines.append("#### 📤 Prompt (Complete)")
