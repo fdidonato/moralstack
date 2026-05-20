@@ -928,9 +928,7 @@ class TestEstimateOptionalContext:
         golden_rationale = "[intent] Standard informational query | [op_risk] Standard informational query"
         assert estimation.rationale == golden_rationale
 
-    def test_estimate_with_context_injects_into_mini_prompts(
-        self, reset_mock_llm, shared_estimator_with_mock
-    ):
+    def test_estimate_with_context_injects_into_mini_prompts(self, reset_mock_llm, shared_estimator_with_mock):
         """Context block is prepended into {request} for all three mini-estimators."""
         captured_prompts: list[str] = []
 

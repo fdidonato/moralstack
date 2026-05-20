@@ -66,9 +66,7 @@ def recording_estimator() -> _RecordingRiskEstimator:
 
 
 class TestControllerRiskContextPropagation:
-    def test_estimate_risk_passes_contract_and_history(
-        self, recording_estimator: _RecordingRiskEstimator
-    ) -> None:
+    def test_estimate_risk_passes_contract_and_history(self, recording_estimator: _RecordingRiskEstimator) -> None:
         controller = _minimal_controller(recording_estimator)
         request = ProcessedRequest(
             prompt="Q74 encoded payload fragment",
@@ -91,9 +89,7 @@ class TestControllerRiskContextPropagation:
             {"role": "assistant", "content": "prior assistant reply"},
         ]
 
-    def test_estimate_risk_empty_history_passes_none_for_history(
-        self, recording_estimator: _RecordingRiskEstimator
-    ) -> None:
+    def test_estimate_risk_empty_history_passes_none_for_history(self, recording_estimator: _RecordingRiskEstimator) -> None:
         controller = _minimal_controller(recording_estimator)
         request = ProcessedRequest(
             prompt="standalone question",

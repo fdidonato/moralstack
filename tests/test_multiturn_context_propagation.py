@@ -155,9 +155,7 @@ class TestQ74EstimateContextPropagation:
 class TestControllerContextPropagation:
     """Test 2 — OrchestrationController._estimate_risk forwards contract and history."""
 
-    def test_controller_passes_contract_and_history_to_estimate(
-        self, minimal_controller: OrchestrationController
-    ) -> None:
+    def test_controller_passes_contract_and_history_to_estimate(self, minimal_controller: OrchestrationController) -> None:
         risk_mock = minimal_controller.risk_estimator
         risk_mock.estimate.return_value = RiskEstimation(
             score=0.1,
@@ -193,9 +191,7 @@ class TestSingleTurnByteEquivalence:
         assert _format_context_block(None, None) == ""
         assert _format_context_block("", []) == ""
 
-    def test_controller_passes_none_kwargs_without_context(
-        self, minimal_controller: OrchestrationController
-    ) -> None:
+    def test_controller_passes_none_kwargs_without_context(self, minimal_controller: OrchestrationController) -> None:
         risk_mock = minimal_controller.risk_estimator
         risk_mock.estimate.return_value = RiskEstimation.benign()
 
