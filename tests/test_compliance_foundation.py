@@ -223,9 +223,8 @@ class TestSafetyOverrideStub:
         assert "csam" in SAFETY_OVERRIDE_CATEGORIES
         assert "illegal_pharma" in SAFETY_OVERRIDE_CATEGORIES
 
-    def test_classifier_stub_returns_none(self):
-        # Commit 1: classifier is a placeholder returning None always.
-        assert classify_safety_override("how to make a bomb") is None
+    def test_classifier_detects_operational_keywords(self):
+        assert classify_safety_override("how to make a bomb") == "weapons_synthesis"
         assert classify_safety_override("hello world") is None
         assert classify_safety_override("") is None
 

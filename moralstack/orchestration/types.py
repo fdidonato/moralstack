@@ -12,6 +12,7 @@ from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Any, Literal, Protocol
 
+from moralstack.compliance.types import ComplianceVerdict
 from moralstack.core.types import (
     CriticProtocol,
     HindsightProtocol,
@@ -458,6 +459,12 @@ class OrchestratorResult:
     conversation_state_provided: bool = False
     conversation_governance_state_out: Any | None = None  # ConversationGovernanceState when set
     conversation_state_updated: bool = False
+    compliance_verdict: ComplianceVerdict | None = None
+    """
+    DCCL verdict from this turn, if the DCCL was invoked.
+    None for backward-compatible scenarios (DCCL disabled or pre-Commit 2 call sites).
+    Populated by Commit 2; consumed by downstream modules in Commit 3.
+    """
 
     @property
     def cycles(self) -> int:

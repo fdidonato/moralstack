@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from moralstack.compliance.types import ComplianceVerdict
 from moralstack.orchestration.conversation_state import ConversationGovernanceState
 
 
@@ -42,6 +43,8 @@ class ProcessCallContext:
     # Reserved for future refresh signalling (previously read from ctx dict).
     refresh_required: bool | None = None
     refresh_reason: str | None = None
+
+    compliance_verdict: ComplianceVerdict | None = None
 
 
 __all__ = ["ProcessCallContext"]

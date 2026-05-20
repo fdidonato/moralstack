@@ -183,6 +183,16 @@ class DeliberationState:
     decision: DecisionType | None
 ```
 
+#### Developer Contract Compliance Layer (DCCL)
+
+Inserted between policy speculative overlap and risk-based routing. The DCCL evaluates
+whether a request invokes a deployer-authorized behavior; in Commit 2 it
+emits its verdict for observability (`COMPLIANCE_LAYER_*` events,
+`OrchestratorResult.compliance_verdict`) but does not yet alter pipeline decisions.
+Pipeline integration with cooperative early-return ships in Commit 3.
+
+Reference: `docs/modules/compliance_layer.md`, `dccl_specification_v0.3.md`.
+
 **Interfaccia**:
 
 ```python

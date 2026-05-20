@@ -45,6 +45,11 @@ from moralstack.orchestration.event_emitter import EventEmitter
 from moralstack.orchestration.language_resolver import resolve_prompt_with_language
 from moralstack.orchestration.ledger import CachedDecision, LedgerResult, SemanticDecisionLedger
 from moralstack.orchestration.orchestration_event_taxonomy import (
+    COMPLIANCE_LAYER_STARTED,
+    COMPLIANCE_LAYER_VERDICT_MATCH,
+    COMPLIANCE_LAYER_VERDICT_NO_CONTRACT,
+    COMPLIANCE_LAYER_VERDICT_NO_MATCH,
+    COMPLIANCE_LAYER_VERDICT_SAFETY_OVERRIDE,
     CONVERSATION_CONTEXT_ATTACHED,
     CONVERSATION_STATE_UPDATED,
     LEDGER_FAST_PATH_APPLIED,
@@ -334,6 +339,8 @@ class OrchestrationController:
             result.turn_index = tid
         if pid is not None:
             result.parent_request_id = pid
+        if call_ctx.compliance_verdict is not None:
+            result.compliance_verdict = call_ctx.compliance_verdict
         should_build_state_out = state_in is not None or cid is not None
         if should_build_state_out:
             result.conversation_state_provided = state_in is not None
@@ -951,6 +958,100 @@ class OrchestrationController:
             event_emitter=self._events,
         )
 
+    @staticmethod
+    def _nonblocking_speculative_draft(spec_handle: SpeculativeOverlapHandle | None) -> str:
+        """Return speculative draft text only if the background future already completed."""
+        if spec_handle is None:
+            return ""
+        spec_future = spec_handle._spec_future  # noqa: SLF001 — orchestration-internal join handle
+        if not spec_future.done():
+            return ""
+        try:
+            draft, _meta = spec_future.result(timeout=0)
+        except Exception:
+            return ""
+        return draft or ""
+
+    def _run_dccl_evaluation(
+        self,
+        request: ProcessedRequest,
+        speculative_draft: str,
+        call_ctx: ProcessCallContext,
+    ) -> None:
+        """
+        Invoke DCCL after speculative overlap risk wait; verdict is logged only (Commit 2).
+
+        Does not alter pipeline routing or final_action.
+        """
+        compliance_verdict = None
+        try:
+            from moralstack.compliance.dccl import DeveloperContractComplianceLayer
+            from moralstack.compliance.types import ComplianceDecision
+            from moralstack.persistence.sink import persist_orchestration_event
+
+            compliance_layer = DeveloperContractComplianceLayer(policy=self.policy)
+
+            persist_orchestration_event(
+                request_id=request.request_id,
+                stage="compliance_layer",
+                component="dccl",
+                event_type=COMPLIANCE_LAYER_STARTED,
+                decision="started",
+                status="ok",
+                payload={
+                    "has_contract": getattr(request, "developer_contract", None) is not None,
+                    "has_structured_rules": bool(
+                        getattr(getattr(request, "developer_contract", None), "structured_rules", ()) or ()
+                    ),
+                    "evaluation_path_preference": compliance_layer._evaluation_path,
+                },
+            )
+
+            compliance_verdict = compliance_layer.evaluate(
+                request=request,
+                speculative_draft=speculative_draft or "",
+                risk_estimation=None,
+            )
+
+            event_map = {
+                ComplianceDecision.MATCH: COMPLIANCE_LAYER_VERDICT_MATCH,
+                ComplianceDecision.NO_MATCH: COMPLIANCE_LAYER_VERDICT_NO_MATCH,
+                ComplianceDecision.SAFETY_OVERRIDE: COMPLIANCE_LAYER_VERDICT_SAFETY_OVERRIDE,
+                ComplianceDecision.NO_CONTRACT: COMPLIANCE_LAYER_VERDICT_NO_CONTRACT,
+            }
+            event_type = event_map.get(compliance_verdict.decision, COMPLIANCE_LAYER_VERDICT_NO_MATCH)
+
+            persist_orchestration_event(
+                request_id=request.request_id,
+                stage="compliance_layer",
+                component="dccl",
+                event_type=event_type,
+                decision=compliance_verdict.decision.value,
+                status="ok",
+                duration_ms=compliance_verdict.duration_ms,
+                payload={
+                    "matched_rule_id": (
+                        compliance_verdict.matched_rule.rule_id if compliance_verdict.matched_rule else None
+                    ),
+                    "matched_rule_summary": (
+                        compliance_verdict.matched_rule.rule_summary if compliance_verdict.matched_rule else None
+                    ),
+                    "safety_override_reason": compliance_verdict.safety_override_reason,
+                    "confidence": compliance_verdict.confidence,
+                    "evaluation_path": compliance_verdict.evaluation_path.value,
+                    "speculative_draft_validated": compliance_verdict.speculative_draft_validated,
+                    "rationale_excerpt": (
+                        compliance_verdict.rationale[:300] if compliance_verdict.rationale else ""
+                    ),
+                    "contract_hash": compliance_verdict.contract_hash,
+                },
+            )
+        except Exception as e:
+            _LOG.warning("DCCL evaluation failed (non-fatal): %s", e, exc_info=True)
+            compliance_verdict = None
+
+        call_ctx.compliance_verdict = compliance_verdict
+
     def _handle_timeout(self, request: ProcessedRequest, error_msg: str, start_time: float) -> OrchestratorResult:
         processing_time = int((time.time() - start_time) * 1000)
         response = FinalResponse(
@@ -1507,6 +1608,10 @@ class OrchestrationController:
                 risk_estimation = spec_handle.risk_estimation
             else:
                 risk_estimation = self._estimate_risk(request)
+
+            speculative_draft_for_dccl = self._nonblocking_speculative_draft(spec_handle)
+            self._run_dccl_evaluation(request, speculative_draft_for_dccl, call_ctx)
+
             risk_score = risk_estimation.score if hasattr(risk_estimation, "score") else 0.5
             risk_category = getattr(risk_estimation, "risk_category", None)
             constrained_generation = risk_category == RiskCategory.CLEARLY_HARMFUL

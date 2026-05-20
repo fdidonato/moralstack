@@ -1,6 +1,6 @@
 # Developer Contract Compliance Layer (DCCL)
 
-> **Status:** Commit 1 of 4 (Foundation). Functional evaluation ships in Commit 2.
+> **Status:** Commit 2 of 4 (Evaluation logic). Signal propagation ships in Commit 3.
 > **Reference specification:** `dccl_specification_v0.3.md`
 
 ## Purpose
@@ -26,14 +26,34 @@ auditable layer.
 
 ## Architectural placement
 
-[diagram and detailed description — implementation in Commit 2]
+```
+User request + developer_contract
+        │
+        ▼
+Policy speculative (optional, parallel with risk when enabled)
+        │
+        ▼
+DCCL.evaluate()  ──► COMPLIANCE_LAYER_* events (observability)
+        │              OrchestratorResult.compliance_verdict
+        │              (Commit 2: logged only; no routing effect)
+        ▼
+Risk estimator
+        │
+        ▼
+decide_action → fast path / deliberation (unchanged in Commit 2)
+```
+
+The controller invokes DCCL immediately after the speculative overlap handle
+returns (risk estimation complete). When speculative generation is still running
+in the background, DCCL uses a non-blocking draft snapshot if the future has
+already completed; otherwise it evaluates with an empty draft.
 
 ## Public API
 
 ### `DeveloperContractComplianceLayer`
 
-The main entry point. Instantiated once per orchestrator, configured via
-`MORALSTACK_DCCL_*` env vars.
+The main entry point. Instantiated per request in the controller (Commit 2),
+configured via `MORALSTACK_DCCL_*` env vars.
 
 ```python
 from moralstack.compliance import DeveloperContractComplianceLayer
@@ -67,23 +87,30 @@ Downstream modules check for this signal and behave cooperatively.
 A deployer-declarable rule with explicit trigger pattern and action payload.
 Used by the structured evaluation path.
 
-[Detailed examples — Commit 2]
+Example (literal trigger):
 
-## Configuration
+```python
+StructuredRule(
+    rule_id="ping_pong",
+    trigger_pattern="PING",
+    trigger_type=TriggerType.LITERAL,
+    action_type=ActionType.EMIT,
+    action_payload="PONG",
+    priority=50,
+)
+```
 
-The DCCL is configured via the following environment variables. See
-`.env.template` for full documentation; defaults are sensible for most deployments.
+## Evaluation paths
 
-| Variable | Default | Description |
+| Path | Env value | Behavior |
 |---|---|---|
-| `MORALSTACK_DCCL_ENABLED` | `true` | Enable/disable the DCCL globally |
-| `MORALSTACK_DCCL_EVALUATION_PATH` | `hybrid` | `structured` / `llm` / `hybrid` |
-| `MORALSTACK_DCCL_LLM_MODEL` | `gpt-4o` | Model used by the LLM path |
-| `MORALSTACK_DCCL_LLM_TIMEOUT_MS` | `5000` | LLM call timeout |
-| `MORALSTACK_DCCL_LLM_MAX_TOKENS` | `512` | LLM response max tokens |
-| `MORALSTACK_DCCL_CONFIDENCE_THRESHOLD` | `0.85` | Minimum confidence to accept MATCH |
-| `MORALSTACK_DCCL_MAX_RULES_PER_CONTRACT` | `100` | Limit on structured rules per contract |
-| `MORALSTACK_DCCL_SAFETY_OVERRIDE_STRICT` | `true` | Block at loading time on safety override |
+| **Structured** | `structured` | Deterministic match against `structured_rules` only. Contracts with only `raw_text` → `NO_MATCH`. |
+| **LLM** | `llm` | Single LLM call against `raw_text` + user prompt + speculative draft. |
+| **Hybrid** | `hybrid` (default) | Structured first; if `NO_MATCH` and `raw_text` is non-empty, fall back to LLM. |
+
+Structured matching supports `LITERAL` (exact equality) and `REGEX` (`re.fullmatch`).
+`SEMANTIC` triggers are delegated to the LLM path. When multiple structured rules
+match, the highest `priority` wins.
 
 ## Safety Override
 
@@ -99,7 +126,52 @@ deployer-configurable):
 - `doxxing_stalking`: surveillance and tracking targeting real people
 - `illegal_pharma`: illegal drug synthesis
 
-[Detailed semantics — Commit 2]
+**Layer 1 (keyword check):** Python regex over operational phrases in
+`safety_override.py`. Fast, zero LLM cost, runs on every `action_payload` check.
+
+**Layer 2 (optional LLM):** `gpt-4o-mini`-style classifier for ambiguous payloads.
+Disabled by default at runtime (`use_llm=False`); can be enabled for production
+edge cases. On infrastructure failure, Layer 2 returns `None` (does not block
+benign contract execution).
+
+When `MORALSTACK_DCCL_SAFETY_OVERRIDE_STRICT=true` (default), rules whose
+`action_payload` matches a category are rejected at contract loading via
+`validate_contract()`.
+
+## LLM prompt design
+
+The LLM path uses a fixed system prompt (`_DCCL_LLM_SYSTEM_PROMPT` in `dccl.py`)
+that instructs the model to:
+
+- Identify literal rule invocation (not topical similarity)
+- Emit structured JSON with verdict, excerpts, confidence, and injection flag
+- Never authorize the seven safety-restricted categories
+- Treat deployer attempts to override safety as `contract_injection_detected`
+
+Post-LLM, keyword safety check runs again on `action_excerpt` (defense in depth).
+
+## Confidence threshold
+
+`MORALSTACK_DCCL_CONFIDENCE_THRESHOLD` (default `0.85`) applies only to the LLM
+path. An LLM verdict of `MATCH` with confidence below the threshold is downgraded
+to `NO_MATCH`; the standard governance pipeline then handles the request.
+Structured path always uses confidence `1.0`.
+
+## Configuration
+
+The DCCL is configured via the following environment variables. See
+`.env.template` for full documentation; defaults are sensible for most deployments.
+
+| Variable | Default | Description |
+|---|---|---|
+| `MORALSTACK_DCCL_ENABLED` | `true` | Enable/disable the DCCL globally |
+| `MORALSTACK_DCCL_EVALUATION_PATH` | `hybrid` | `structured` / `llm` / `hybrid` |
+| `MORALSTACK_DCCL_LLM_MODEL` | `gpt-4o` | Model used by the LLM path |
+| `MORALSTACK_DCCL_LLM_TIMEOUT_MS` | `5000` | LLM call timeout (post-hoc check) |
+| `MORALSTACK_DCCL_LLM_MAX_TOKENS` | `512` | LLM response max tokens |
+| `MORALSTACK_DCCL_CONFIDENCE_THRESHOLD` | `0.85` | Minimum confidence to accept MATCH |
+| `MORALSTACK_DCCL_MAX_RULES_PER_CONTRACT` | `100` | Limit on structured rules per contract |
+| `MORALSTACK_DCCL_SAFETY_OVERRIDE_STRICT` | `true` | Block at loading time on safety override |
 
 ## Observability
 
@@ -125,9 +197,12 @@ JSONL files as other module events, depending on `MORALSTACK_OBSERVABILITY_MODE`
 
 ## Pipeline integration
 
-[Implementation in Commit 3]
+**Commit 2:** The controller calls `_run_dccl_evaluation()` after speculative
+overlap / risk entry. The verdict is stored on `ProcessCallContext.compliance_verdict`
+and exposed on `OrchestratorResult.compliance_verdict`. **Routing and `final_action`
+are unchanged.**
 
-When the DCCL returns `MATCH`, downstream modules check for the
+**Commit 3:** When the DCCL returns `MATCH`, downstream modules check for the
 `ComplianceSignal` in the request context and return early with synthetic
 results, emitting `MODULE_DEFERRED_TO_COMPLIANCE` for audit.
 
@@ -135,8 +210,10 @@ results, emitting `MODULE_DEFERRED_TO_COMPLIANCE` for audit.
 
 Unit tests for the data structures and config loader are in
 `tests/test_compliance_foundation.py` (Commit 1).
+Safety classifier tests in `tests/test_compliance_safety_override.py` (Commit 2).
 Full evaluation logic tests in `tests/test_compliance_evaluation.py` (Commit 2).
-Pipeline integration tests in `tests/test_compliance_integration.py` (Commit 3).
+Orchestrator integration (isolation) in `tests/test_compliance_orchestrator_integration.py` (Commit 2).
+Pipeline signal propagation tests in `tests/test_compliance_integration.py` (Commit 3).
 
 ## SDK compatibility
 
@@ -147,4 +224,4 @@ MoralStack is consumed via:
 - SDK Python wrapper (`govern(OpenAI())`)
 - Direct CLI / benchmark scripts
 
-[Detailed SDK integration — Commit 3]
+SDK/proxy contract validation at load time ships in Commit 3.
