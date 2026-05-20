@@ -379,8 +379,8 @@ class TestSafetyPreservation:
 
     def test_misuse_plausibility_medium_still_triggers_dual_use(self):
         """
-        misuse_plausibility=MEDIUM attiva has_ambiguity indipendentemente
-        dal fix su harm_type.
+        misuse_plausibility=MEDIUM + operational signal activates has_ambiguity
+        (MEDIUM alone without operational signal must not escalate).
         """
         request = ProcessedRequest(prompt="Borderline dual-use query")
         risk = _risk(
@@ -391,7 +391,7 @@ class TestSafetyPreservation:
             actionability_risk=ActionabilityRisk.LOW,
             risk_policy_action=RiskPolicyAction.ALLOW,
             harm_type="none",
-            intent_operational=False,
+            intent_operational=True,
         )
         risk = replace(risk, intent_type="factual")
 
@@ -400,7 +400,7 @@ class TestSafetyPreservation:
         assert decision.final_action == "SAFE_COMPLETE"
 
     def test_actionability_risk_medium_still_triggers_dual_use(self):
-        """actionability_risk=MEDIUM attiva dual-use indipendentemente dal fix."""
+        """actionability_risk=MEDIUM + operational signal activates dual-use."""
         request = ProcessedRequest(prompt="High-actionability query")
         risk = _risk(
             score=0.40,
@@ -410,7 +410,7 @@ class TestSafetyPreservation:
             actionability_risk=ActionabilityRisk.MEDIUM,
             risk_policy_action=RiskPolicyAction.ALLOW,
             harm_type="none",
-            intent_operational=False,
+            intent_operational=True,
         )
         risk = replace(risk, intent_type="factual")
 

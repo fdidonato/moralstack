@@ -198,17 +198,43 @@ def _normalize_risk_category(rc: str | None) -> str | None:
 
 
 def _signals_to_policy_context(signals: DecisionSignals) -> PolicyContext:
-    """Build PolicyContext from DCF DecisionSignals."""
+    """Build PolicyContext from DCF DecisionSignals.
+
+    Pre-computes ``has_ambiguity_or_dual_use`` using the same logic as
+    ``decision_service._build_policy_context_pre``. This keeps the DCF
+    diagnostic verdict aligned with the runtime decision under the post-Fix-B
+    contract that ``_has_ambiguity_or_dual_use`` in safe_complete_policy now
+    respects the pre-computed flag.
+    """
+    mp = (signals.misuse_plausibility or "LOW").strip().upper() or "LOW"
+    ar = (signals.actionability_risk or "LOW").strip().upper() or "LOW"
+    intent_clarity = (signals.intent_clarity or "HIGH").strip().upper() or "HIGH"
+    intent_operational = bool(signals.intent_operational)
+
+    requested_instructions = bool(getattr(signals, "requested_instructions", False))
+    harm_type = str(getattr(signals, "harm_type", "none") or "none").strip().lower()
+
+    _has_operational_signal = intent_operational or requested_instructions
+    _harm_type_present = harm_type not in ("", "none", "emotional_relational")
+
+    has_ambiguity_or_dual_use = (
+        (mp == "HIGH" and ar == "HIGH")
+        or (mp in ("MEDIUM", "HIGH") and _has_operational_signal)
+        or (ar in ("MEDIUM", "HIGH") and _has_operational_signal)
+        or (_harm_type_present and _has_operational_signal)
+    )
+
     return PolicyContext(
         domain=signals.domain_overlay,
         risk_category=signals.risk_category,
         op_risk=(signals.operational_risk or None),
         hard_violations_count=len(signals.hard_violations or []),
-        misuse_plausibility=(signals.misuse_plausibility or "LOW").strip().upper() or "LOW",
-        actionability_risk=(signals.actionability_risk or "LOW").strip().upper() or "LOW",
-        intent_clarity=(signals.intent_clarity or "HIGH").strip().upper() or "HIGH",
+        misuse_plausibility=mp,
+        actionability_risk=ar,
+        intent_clarity=intent_clarity,
         intent_type=signals.intent_type,
-        intent_operational=bool(signals.intent_operational),
+        intent_operational=intent_operational,
+        has_ambiguity_or_dual_use=has_ambiguity_or_dual_use,
     )
 
 

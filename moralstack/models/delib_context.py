@@ -55,6 +55,7 @@ class DelibContext:
     critic_violations_summary: str = ""
     simulator_domain_guidance: str = ""
     conversation_history_snippet: str = ""
+    developer_contract_text: str = ""
 
     def get_risk_signals_str(self) -> str:
         """Compact string of risk signals for prompts."""

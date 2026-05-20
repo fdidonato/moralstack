@@ -286,7 +286,7 @@ def test_sensitive_factual_intent_normal_complete():
 
 
 def test_sensitive_factual_with_ambiguity_safe_complete():
-    """SENSITIVE + intent_type=factual + ambiguity signal → SAFE_COMPLETE (safety preserved)."""
+    """SENSITIVE + factual + operational ambiguity (MEDIUM misuse) → SAFE_COMPLETE."""
     request = ProcessedRequest(prompt="Tema borderline con ambiguità")
     risk = _risk(
         score=0.4,
@@ -296,7 +296,7 @@ def test_sensitive_factual_with_ambiguity_safe_complete():
         misuse_plausibility=MisusePlausibility.MEDIUM,
         actionability_risk=ActionabilityRisk.LOW,
         risk_policy_action=RiskPolicyAction.ALLOW,
-        intent_operational=False,
+        intent_operational=True,
     )
     risk = replace(risk, intent_type="factual")
     decision, explanation = decide_action(request, risk)

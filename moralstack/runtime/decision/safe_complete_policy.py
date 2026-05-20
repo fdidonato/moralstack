@@ -130,11 +130,29 @@ def _op_risk_actionable_harm(op_risk: Any) -> bool:
 
 
 def _has_ambiguity_or_dual_use(ctx: PolicyContext) -> bool:
-    if ctx.has_ambiguity_or_dual_use:
-        return True
-    mp = _norm_axis(ctx.misuse_plausibility)
-    ar = _norm_axis(ctx.actionability_risk)
-    return mp in ("MEDIUM", "HIGH") or ar in ("MEDIUM", "HIGH")
+    """
+    Single source of truth: respect the value pre-computed by
+    ``_build_policy_context_pre``. That upstream computation already considers
+    the full picture (misuse_plausibility, actionability_risk, intent_operational,
+    requested_instructions, harm_type) and produces a coherent boolean.
+
+    The fallback "MEDIUM on either axis ⇒ True" was a defensive heuristic for
+    legacy paths where the flag was not pre-computed. Today the flag is always
+    set by ``_build_policy_context_pre``, so trusting it eliminates the
+    inconsistency where a single MEDIUM axis without an operational signal
+    triggered an over-governance escalation that the upstream computation
+    had explicitly ruled out.
+
+    Note: the safety implications of this change are bounded. When the user's
+    intent is genuinely operational or requested_instructions=yes, the upstream
+    computation correctly sets the flag to True (via the
+    ``(misuse_plausibility in MEDIUM/HIGH and _has_operational_signal)`` clause
+    in ``_build_policy_context_pre``). The cases that fall through to this
+    relaxed False are exactly those where the intent estimator confirmed
+    non-operational, non-harmful intent with no requested instructions —
+    cases where forcing SAFE_COMPLETE only on a MEDIUM axis is over-governance.
+    """
+    return bool(ctx.has_ambiguity_or_dual_use)
 
 
 def compute_action_bounds(ctx: PolicyContext) -> PolicyBounds:

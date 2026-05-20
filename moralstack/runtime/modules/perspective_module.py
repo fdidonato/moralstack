@@ -503,18 +503,29 @@ class LLMPerspectiveEnsemble:
             # Prendi le prime N prospettive (priorità alle più importanti)
             active_perspectives = active_perspectives[: self.config.max_perspectives]
 
-        # OPT-2: build shared system once (REQUEST+RESPONSE+common instructions)
+        # OPT-2: build shared system once (REQUEST+RESPONSE+CONTRACT+HISTORY+common instructions)
         history_snippet = _build_history_snippet(conversation_history)
+        contract_text = ""
+        if developer_contract is not None:
+            contract_text = (getattr(developer_contract, "raw_text", "") or "").strip()
+
         if delib_context is None:
             ctx = DelibContext(
                 user_prompt=request,
                 draft_text_full=response,
                 conversation_history_snippet=history_snippet,
+                developer_contract_text=contract_text,
             )
         else:
+            updates: dict[str, Any] = {}
             current_snippet = getattr(delib_context, "conversation_history_snippet", "") or ""
             if history_snippet and not current_snippet and isinstance(delib_context, DelibContext):
-                ctx = dataclass_replace(delib_context, conversation_history_snippet=history_snippet)
+                updates["conversation_history_snippet"] = history_snippet
+            current_contract = getattr(delib_context, "developer_contract_text", "") or ""
+            if contract_text and not current_contract and isinstance(delib_context, DelibContext):
+                updates["developer_contract_text"] = contract_text
+            if updates and isinstance(delib_context, DelibContext):
+                ctx = dataclass_replace(delib_context, **updates)
             else:
                 ctx = delib_context
         shared_system = PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + build_perspectives_system_prompt(ctx)
