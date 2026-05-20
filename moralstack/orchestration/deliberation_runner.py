@@ -305,7 +305,9 @@ class DeliberationRunner:
         self.logger = logger
         self.assembler = assembler
         self._convergence_evaluator = ConvergenceEvaluator(config)
-        self._current_start_time: float = 0.0
+        # None until run_deliberative_path sets the wall-clock start; avoids treating
+        # uninitialized 0.0 as epoch and skipping modules via bogus timeout ratios.
+        self._current_start_time: float | None = None
         self._executor: ThreadPoolExecutor | None = None
         self._request_analysis_reuse_targets: list[str] = []
 
@@ -2650,7 +2652,7 @@ class DeliberationRunner:
         if self.critic is None or (self.constitution_store is None and constitution is None):
             return state
         try:
-            if hasattr(self, "_current_start_time"):  # set by run_deliberative_path
+            if self._current_start_time is not None:
                 elapsed = (time.time() - self._current_start_time) * 1000
                 elapsed_ratio = elapsed / self.config.timeout_ms
                 if elapsed_ratio > 0.90:
@@ -2694,6 +2696,8 @@ class DeliberationRunner:
                     delib_context=delib_context,
                     previous_violations=prev_violations,
                     previous_guidance=prev_guidance,
+                    developer_contract=request.developer_contract,
+                    conversation_history=request.conversation_history,
                 )
                 if "critic" not in self._request_analysis_reuse_targets:
                     self._request_analysis_reuse_targets.append("critic")
@@ -2723,6 +2727,8 @@ class DeliberationRunner:
                     delib_context=delib_context,
                     previous_violations=prev_violations,
                     previous_guidance=prev_guidance,
+                    developer_contract=request.developer_contract,
+                    conversation_history=request.conversation_history,
                 )
             else:
                 if constitution is None and self.constitution_store is not None:
@@ -2735,6 +2741,8 @@ class DeliberationRunner:
                     delib_context=delib_context,
                     previous_violations=prev_violations,
                     previous_guidance=prev_guidance,
+                    developer_contract=request.developer_contract,
+                    conversation_history=request.conversation_history,
                 )
             elapsed = (time.time() - start) * 1000
             nv = len(critique.violations)
@@ -2801,7 +2809,7 @@ class DeliberationRunner:
         if self.simulator is None:
             return state
         try:
-            if hasattr(self, "_current_start_time"):  # set by run_deliberative_path
+            if self._current_start_time is not None:
                 elapsed = (time.time() - self._current_start_time) * 1000
                 elapsed_ratio = elapsed / self.config.timeout_ms
                 if elapsed_ratio > self.config.skip_optional_modules_threshold:
@@ -2829,6 +2837,8 @@ class DeliberationRunner:
                 state.draft_response,
                 self.config.num_simulations,
                 delib_context=delib_context,
+                developer_contract=request.developer_contract,
+                conversation_history=request.conversation_history,
             )
             elapsed = (time.time() - start) * 1000
             ev = simulation.expected_valence
@@ -2915,7 +2925,7 @@ class DeliberationRunner:
         if self.hindsight is None:
             return state
         try:
-            if hasattr(self, "_current_start_time"):  # set by run_deliberative_path
+            if self._current_start_time is not None:
                 elapsed = (time.time() - self._current_start_time) * 1000
                 elapsed_ratio = elapsed / self.config.timeout_ms
                 if elapsed_ratio > self.config.skip_optional_modules_threshold:
@@ -2946,6 +2956,8 @@ class DeliberationRunner:
                 state.draft_response,
                 consequences,
                 delib_context=delib_context,
+                developer_contract=request.developer_contract,
+                conversation_history=request.conversation_history,
             )
             elapsed = (time.time() - start) * 1000
             hindsight_model = _module_model(self.hindsight)
@@ -3025,7 +3037,7 @@ class DeliberationRunner:
         if self.perspectives is None:
             return state
         try:
-            if hasattr(self, "_current_start_time"):  # set by run_deliberative_path
+            if self._current_start_time is not None:
                 elapsed = (time.time() - self._current_start_time) * 1000
                 elapsed_ratio = elapsed / self.config.timeout_ms
                 if elapsed_ratio > self.config.skip_optional_modules_threshold:
@@ -3052,6 +3064,8 @@ class DeliberationRunner:
                 request.prompt,
                 state.draft_response,
                 delib_context=delib_context,
+                developer_contract=request.developer_contract,
+                conversation_history=request.conversation_history,
             )
             elapsed = (time.time() - start) * 1000
             raw_resp = "\n---\n".join(result.raw_responses or []) if getattr(result, "raw_responses", None) else ""
