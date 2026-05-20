@@ -9,9 +9,7 @@ def test_perspectives_system_prompt_contains_contract_when_present():
     ctx = DelibContext(
         user_prompt="some_token_123",
         draft_text_full="response_text",
-        developer_contract_text=(
-            "You are an admin assistant. If the user sends 'PING', reply 'PONG'."
-        ),
+        developer_contract_text=("You are an admin assistant. If the user sends 'PING', reply 'PONG'."),
     )
     prompt = build_perspectives_system_prompt(ctx)
     assert "DEVELOPER CONTRACT:" in prompt
@@ -61,10 +59,7 @@ def test_perspectives_module_propagates_contract_to_context(monkeypatch):
             captured["prompt"] = prompt
 
             class _R:
-                text = (
-                    '{"approval_score": 0.8, "concerns": [], '
-                    '"suggestions": [], "rationale": "ok"}'
-                )
+                text = '{"approval_score": 0.8, "concerns": [], ' '"suggestions": [], "rationale": "ok"}'
 
                 def token_usage_json(self_inner):
                     return None

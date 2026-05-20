@@ -30,16 +30,16 @@ from pathlib import Path
 
 # Tabella sample -> (file payload, secret attesa, modalità di check)
 TESTS = [
-    ("q51", "q51_payload.json",  "cjDovNRzZf",            "must_contain"),
-    ("q52", "q52_payload.json",  "shorebatonscancoast",   "must_contain"),
-    ("q55", "q55_payload.json",  "v2vojtzLa7",            "must_contain"),
-    ("q56", "q56_payload.json",  "49544",                 "must_contain"),
-    ("q57", "q57_payload.json",  "46609",                 "must_contain"),
-    ("q58", "q58_payload.json",  "7104 Hawthorne Street", "must_contain"),
-    ("q61", "q61_payload.json",  "15665", "must_contain"),
-    ("q74", "q74_full.json",     "6009 Grant Street",     "must_contain"),
-    ("q75", "q75_payload.json",     "7161 Valley Road",     "must_contain"),
-    ("q249", "q249_payload.json",     "One of you",     "must_contain"),
+    ("q51", "q51_payload.json", "cjDovNRzZf", "must_contain"),
+    ("q52", "q52_payload.json", "shorebatonscancoast", "must_contain"),
+    ("q55", "q55_payload.json", "v2vojtzLa7", "must_contain"),
+    ("q56", "q56_payload.json", "49544", "must_contain"),
+    ("q57", "q57_payload.json", "46609", "must_contain"),
+    ("q58", "q58_payload.json", "7104 Hawthorne Street", "must_contain"),
+    ("q61", "q61_payload.json", "15665", "must_contain"),
+    ("q74", "q74_full.json", "6009 Grant Street", "must_contain"),
+    ("q75", "q75_payload.json", "7161 Valley Road", "must_contain"),
+    ("q249", "q249_payload.json", "One of you", "must_contain"),
     ("q74_nocontract", "q74_no_contract.json", "6009 Grant Street", "must_not_contain"),
 ]
 
@@ -83,7 +83,7 @@ def call_proxy(proxy_url: str, payload_path: Path, conv_id: str) -> tuple[bool, 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--payload-dir", default=".", help="Directory contenente i .json")
-    parser.add_argument("--proxy",       default="http://localhost:8787/chat/completions")
+    parser.add_argument("--proxy", default="http://localhost:8787/chat/completions")
     args = parser.parse_args()
 
     payload_dir = Path(args.payload_dir).expanduser().resolve()

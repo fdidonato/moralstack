@@ -103,9 +103,7 @@ class TestNoContractInjectedBlockAbsent:
             llm_risk_estimator.estimate("hello world")
 
         intent_calls = [
-            c
-            for c in mock_policy.generate.call_args_list
-            if "SEMANTIC INTENT JUDGE" in str(c.kwargs.get("system", ""))
+            c for c in mock_policy.generate.call_args_list if "SEMANTIC INTENT JUDGE" in str(c.kwargs.get("system", ""))
         ]
         assert len(intent_calls) == 1
         user_prompt = str(intent_calls[0].kwargs.get("prompt", ""))

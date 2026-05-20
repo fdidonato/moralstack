@@ -190,9 +190,7 @@ class DeveloperContractComplianceLayer:
                     verdict = ComplianceVerdict(
                         decision=ComplianceDecision.NO_MATCH,
                         confidence=verdict_llm.confidence,
-                        rationale=(
-                            f"Hybrid: structured found no rule; LLM also found none. {verdict_llm.rationale}"
-                        ),
+                        rationale=(f"Hybrid: structured found no rule; LLM also found none. {verdict_llm.rationale}"),
                         evaluation_path=EvaluationPath.HYBRID,
                         contract_hash=contract_hash,
                     )

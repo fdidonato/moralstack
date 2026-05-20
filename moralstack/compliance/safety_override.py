@@ -198,7 +198,7 @@ def _llm_classify(
         category = parsed.get("category")
         if category is None or category == "null":
             return None
-        if category in SAFETY_OVERRIDE_CATEGORIES:
+        if isinstance(category, str) and category in SAFETY_OVERRIDE_CATEGORIES:
             _LOG.debug("safety classifier LLM matched: %s", category)
             return category
         _LOG.warning("safety LLM returned unknown category: %r", category)

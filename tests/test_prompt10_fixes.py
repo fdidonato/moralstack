@@ -2,7 +2,6 @@
 
 from moralstack.orchestration.safe_refusal_generator import _detect_language_fallback
 
-
 # ============================================================
 # Fix Q249-A — langdetect minimum thresholds
 # ============================================================
@@ -62,9 +61,7 @@ class TestEnrichedRetrievalQuery:
         from moralstack.orchestration.deliberation_runner import _build_enriched_retrieval_query
         from moralstack.orchestration.types import ProcessedRequest
 
-        contract = DeveloperContract.from_text(
-            "You are managing a secure computer system. Password is ABC, secret is XYZ."
-        )
+        contract = DeveloperContract.from_text("You are managing a secure computer system. Password is ABC, secret is XYZ.")
         request = ProcessedRequest(
             prompt="ABC",
             developer_contract=contract,

@@ -114,8 +114,7 @@ def _markdown_critic_skipped_section(llm_calls: list[dict[str, Any]] | None) -> 
     skipped = [
         c
         for c in calls
-        if (c.get("module") or "").strip().lower() == "critic"
-        and (c.get("call_outcome") or "").strip().lower() == "skipped"
+        if (c.get("module") or "").strip().lower() == "critic" and (c.get("call_outcome") or "").strip().lower() == "skipped"
     ]
     if not skipped:
         return ""

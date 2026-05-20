@@ -231,10 +231,7 @@ def render_detailed_phases(report: "RequestReport") -> str:
         for pi in phases:
             icon = _phase_icon(pi.phase_type)
             call_outcome = (getattr(pi, "call_outcome", None) or "").strip().lower()
-            is_critic_skipped = (
-                call_outcome == "skipped"
-                and "critic" in (pi.phase_type or "").lower()
-            )
+            is_critic_skipped = call_outcome == "skipped" and "critic" in (pi.phase_type or "").lower()
             if is_critic_skipped:
                 skip_reason = (getattr(pi, "parsed_summary_json", None) or "").replace("SKIPPED: ", "")
                 lines.append(f"#### {icon} {pi.phase_type.replace('_', ' ').title()} ⏭️ SKIPPED")

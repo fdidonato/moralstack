@@ -1040,9 +1040,7 @@ class OrchestrationController:
                     "confidence": compliance_verdict.confidence,
                     "evaluation_path": compliance_verdict.evaluation_path.value,
                     "speculative_draft_validated": compliance_verdict.speculative_draft_validated,
-                    "rationale_excerpt": (
-                        compliance_verdict.rationale[:300] if compliance_verdict.rationale else ""
-                    ),
+                    "rationale_excerpt": (compliance_verdict.rationale[:300] if compliance_verdict.rationale else ""),
                     "contract_hash": compliance_verdict.contract_hash,
                 },
             )

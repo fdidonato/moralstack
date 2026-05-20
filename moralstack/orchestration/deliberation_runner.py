@@ -35,8 +35,8 @@ from moralstack.orchestration.language_resolver import resolve_prompt_with_langu
 from moralstack.orchestration.orchestration_event_taxonomy import (
     AGGREGATED_GUIDANCE_EVALUATED,
     CONVERGENCE_EVALUATED,
-    CRITIC_SKIPPED,
     CRITIC_SHORT_CIRCUIT_TRIGGERED,
+    CRITIC_SKIPPED,
     EARLY_CONVERGENCE_ACCEPTED,
     EARLY_CONVERGENCE_REJECTED,
     PARALLEL_STRATEGY_SELECTED,
@@ -2837,16 +2837,12 @@ class DeliberationRunner:
                     "started_at": int(start * 1000),
                     "duration_ms": elapsed,
                     "prompt": (
-                        f"[SKIPPED] {skip_reason}" if is_skipped
-                        else (getattr(critique, "prompt", None) or prompt_text)
+                        f"[SKIPPED] {skip_reason}" if is_skipped else (getattr(critique, "prompt", None) or prompt_text)
                     ),
                     "system_prompt": getattr(critique, "system_prompt", ""),
                     "raw_response": getattr(critique, "raw_response", "") or "",
                     "parsed_json": None,
-                    "parsed_summary_json": (
-                        f"SKIPPED: {skip_reason}" if is_skipped
-                        else response_text
-                    ),
+                    "parsed_summary_json": (f"SKIPPED: {skip_reason}" if is_skipped else response_text),
                     "attempts": getattr(critique, "parse_attempts", 1),
                     "sequence_in_cycle": SEQ_CRITIC,
                     "token_usage_json": _token_usage_json_from_result(critique),

@@ -413,9 +413,7 @@ class LLMConstitutionalCritic:
             active_principles = constitution.principles[: self.config.top_k_principles]
 
         if not active_principles:
-            return CriticReport.empty_skipped(
-                reason="no relevant principles retrieved from constitution"
-            )
+            return CriticReport.empty_skipped(reason="no relevant principles retrieved from constitution")
 
         # Costruisci mappa per lookup
         principles_map = {p.id: p for p in active_principles}

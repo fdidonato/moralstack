@@ -31,10 +31,10 @@ from moralstack.compliance.safety_override import (
     classify_safety_override,
 )
 
-
 # =============================================================================
 # Enums
 # =============================================================================
+
 
 class TestEnums:
     def test_compliance_decision_values(self):
@@ -58,6 +58,7 @@ class TestEnums:
 # =============================================================================
 # StructuredRule
 # =============================================================================
+
 
 class TestStructuredRule:
     def test_valid_rule(self):
@@ -111,6 +112,7 @@ class TestStructuredRule:
 # ComplianceVerdict
 # =============================================================================
 
+
 class TestComplianceVerdict:
     def test_no_contract_verdict(self):
         v = ComplianceVerdict(decision=ComplianceDecision.NO_CONTRACT)
@@ -141,6 +143,7 @@ class TestComplianceVerdict:
 # =============================================================================
 # ComplianceSignal
 # =============================================================================
+
 
 class TestComplianceSignal:
     def test_from_match_verdict(self):
@@ -173,6 +176,7 @@ class TestComplianceSignal:
 # =============================================================================
 # Config loader (env vars)
 # =============================================================================
+
 
 class TestConfigLoader:
     def test_defaults_when_no_env(self, monkeypatch):
@@ -215,6 +219,7 @@ class TestConfigLoader:
 # Safety override categories (declared, classifier stubbed)
 # =============================================================================
 
+
 class TestSafetyOverrideStub:
     def test_categories_list(self):
         # The 7 categories from the specification.
@@ -232,6 +237,7 @@ class TestSafetyOverrideStub:
 # =============================================================================
 # DCCL scaffold
 # =============================================================================
+
 
 class TestDCCLScaffold:
     def test_dccl_is_instantiable(self):

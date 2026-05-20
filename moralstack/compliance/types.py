@@ -12,10 +12,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-
 # =============================================================================
 # Enums
 # =============================================================================
+
 
 class ComplianceDecision(str, Enum):
     """The four possible verdicts of a DCCL evaluation."""
@@ -79,6 +79,7 @@ class ActionType(str, Enum):
 # Structured rule (deployer-declarable)
 # =============================================================================
 
+
 @dataclass(frozen=True)
 class StructuredRule:
     """
@@ -118,18 +119,15 @@ class StructuredRule:
         if not self.trigger_pattern:
             raise ValueError("StructuredRule.trigger_pattern must be non-empty")
         if self.action_type != ActionType.REDIRECT and not self.action_payload:
-            raise ValueError(
-                f"StructuredRule.action_payload must be non-empty for action_type={self.action_type.value}"
-            )
+            raise ValueError(f"StructuredRule.action_payload must be non-empty for action_type={self.action_type.value}")
         if not (0 <= self.priority <= 100):
-            raise ValueError(
-                f"StructuredRule.priority must be in [0, 100], got {self.priority}"
-            )
+            raise ValueError(f"StructuredRule.priority must be in [0, 100], got {self.priority}")
 
 
 # =============================================================================
 # Matched rule (verdict-side, populated when DCCL returns MATCH)
 # =============================================================================
+
 
 @dataclass(frozen=True)
 class MatchedRule:
@@ -155,6 +153,7 @@ class MatchedRule:
 # =============================================================================
 # Compliance verdict (output of DCCL.evaluate)
 # =============================================================================
+
 
 @dataclass(frozen=True)
 class ComplianceVerdict:
@@ -198,6 +197,7 @@ class ComplianceVerdict:
 # =============================================================================
 # Compliance signal (propagated to downstream modules via request context)
 # =============================================================================
+
 
 @dataclass(frozen=True)
 class ComplianceSignal:

@@ -64,7 +64,10 @@ def _parse_int(raw: str, default: int, var_name: str, min_value: int | None = No
     if min_value is not None and value < min_value:
         _LOG.warning(
             "value for %s (%d) below minimum %d, using default %d",
-            var_name, value, min_value, default,
+            var_name,
+            value,
+            min_value,
+            default,
         )
         return default
     return value
@@ -83,7 +86,11 @@ def _parse_float(raw: str, default: float, var_name: str, min_value: float, max_
     if not (min_value <= value <= max_value):
         _LOG.warning(
             "value for %s (%f) out of range [%f, %f], using default %f",
-            var_name, value, min_value, max_value, default,
+            var_name,
+            value,
+            min_value,
+            max_value,
+            default,
         )
         return default
     return value
@@ -103,7 +110,9 @@ def get_dccl_evaluation_path() -> EvaluationPathLiteral:
         return raw  # type: ignore[return-value]
     _LOG.warning(
         "invalid value for %s: %r, using default %s",
-        _ENV_EVALUATION_PATH, raw, _DEFAULT_EVALUATION_PATH,
+        _ENV_EVALUATION_PATH,
+        raw,
+        _DEFAULT_EVALUATION_PATH,
     )
     return _DEFAULT_EVALUATION_PATH  # type: ignore[return-value]
 
