@@ -62,6 +62,45 @@ turn proceeds with full deliberation. Payload includes ``from_turn``,
 CONVERSATION_CONTEXT_ATTACHED = "CONVERSATION_CONTEXT_ATTACHED"
 CONVERSATION_STATE_UPDATED = "CONVERSATION_STATE_UPDATED"
 
+# =============================================================================
+# Developer Contract Compliance Layer (DCCL)
+# =============================================================================
+# Emitted by the DCCL component. Reference: dccl_specification_v0.3.md §8.2.
+# Commit 1 (Foundation) declares the constants; emission ships in Commit 2-3.
+
+COMPLIANCE_LAYER_STARTED = "COMPLIANCE_LAYER_STARTED"
+"""DCCL.evaluate() invoked. Payload: has_contract, has_structured_rules, evaluation_path_preference."""
+
+COMPLIANCE_LAYER_VERDICT_MATCH = "COMPLIANCE_LAYER_VERDICT_MATCH"
+"""DCCL returned MATCH. Payload: matched_rule_id, evaluation_path, confidence, duration_ms."""
+
+COMPLIANCE_LAYER_VERDICT_NO_MATCH = "COMPLIANCE_LAYER_VERDICT_NO_MATCH"
+"""DCCL returned NO_MATCH. Payload: rationale_excerpt, evaluation_path, duration_ms, confidence."""
+
+COMPLIANCE_LAYER_VERDICT_SAFETY_OVERRIDE = "COMPLIANCE_LAYER_VERDICT_SAFETY_OVERRIDE"
+"""DCCL returned SAFETY_OVERRIDE. Payload: safety_override_reason, rule_excerpt, duration_ms."""
+
+COMPLIANCE_LAYER_VERDICT_NO_CONTRACT = "COMPLIANCE_LAYER_VERDICT_NO_CONTRACT"
+"""Request has no developer contract. Payload: empty."""
+
+CONTRACT_RULE_REJECTED = "CONTRACT_RULE_REJECTED"
+"""A structured rule failed safety validation at contract loading. Payload: rule_id, reason, rejected_action_payload_excerpt."""
+
+CONTRACT_RULES_LOADED = "CONTRACT_RULES_LOADED"
+"""Contract loading complete. Payload: contract_hash, total_rules, accepted_rules, rejected_rules."""
+
+MODULE_DEFERRED_TO_COMPLIANCE = "MODULE_DEFERRED_TO_COMPLIANCE"
+"""A downstream module returned early due to ComplianceSignal(MATCH). Payload: module, reason, cycle, deferred_outcome_summary."""
+
+CONTRACT_INJECTION_DETECTED = "CONTRACT_INJECTION_DETECTED"
+"""LLM detected a deployer-side prompt injection in the contract. Payload: detection_rationale, contract_hash."""
+
+COMPLIANCE_LAYER_TIMEOUT = "COMPLIANCE_LAYER_TIMEOUT"
+"""DCCL LLM call exceeded timeout. Payload: timeout_ms, evaluation_path."""
+
+CONTRACT_STRUCTURE_PROSE_CONFLICT = "CONTRACT_STRUCTURE_PROSE_CONFLICT"
+"""structured_rules conflict with raw_text in the same contract. Payload: contract_hash, conflict_description."""
+
 ALL_EVENT_TYPES: frozenset[str] = frozenset(
     {
         AGGREGATED_GUIDANCE_EVALUATED,

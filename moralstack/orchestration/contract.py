@@ -21,6 +21,8 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Literal
 
+from moralstack.compliance.types import StructuredRule
+
 ContractMode = Literal["opaque", "structured"]
 
 
@@ -52,6 +54,14 @@ class DeveloperContract:
     declared_scope: str | None = None
     declared_role: str | None = None
     declared_restrictions: tuple[str, ...] = field(default_factory=tuple)
+
+    # DCCL integration (mode-agnostic):
+    structured_rules: tuple[StructuredRule, ...] = field(default_factory=tuple)
+    """
+    Optional structured rules declared by the deployer for the DCCL.
+    When empty (default), the DCCL falls back to LLM evaluation of raw_text.
+    Reference: dccl_specification_v0.3.md section 4.1.
+    """
 
     @classmethod
     def from_text(cls, text: str, mode: ContractMode = "opaque") -> DeveloperContract:

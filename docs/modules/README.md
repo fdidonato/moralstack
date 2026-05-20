@@ -36,6 +36,12 @@ usage examples.
 |-----------------------------------------------|------------------------------------|------------------------------|
 | [Constitution Store](./constitution_store.md) | `moralstack/constitution/store.py` | Ethical principle management |
 
+### Compliance
+
+| Module                                              | File                         | Description                                                                 |
+|-------------------------------------------------------|------------------------------|-----------------------------------------------------------------------------|
+| [Compliance Layer (DCCL)](./compliance_layer.md)      | `moralstack/compliance/`     | Evaluates deployer-authorized behavior before standard governance runs. New in MoralStack 0.2. |
+
 ### Utilities
 
 | Module                              | File                                | Description                                                                    |
@@ -54,6 +60,17 @@ usage examples.
 
 ```
 Request
+   │
+   ▼
+┌─────────────────────────────┐
+│ Policy Speculative (draft)  │
+└─────────────────────────────┘
+   │
+   ▼
+┌─────────────────────────────┐
+│ Developer Contract          │
+│ Compliance Layer (DCCL)     │ ──► Contract-authorized behavior check (Commit 2+)
+└─────────────────────────────┘
    │
    ▼
 ┌──────────────┐
