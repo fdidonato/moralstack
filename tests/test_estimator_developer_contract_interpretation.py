@@ -272,7 +272,7 @@ class TestQ74SimulatedClassification:
         ]
         assert len(intent_calls) == 1
         intent_system = str(intent_calls[0].kwargs.get("system", ""))
-        assert "DEVELOPER CONTRACT INTERPRETATION" in intent_system
+        assert "PRIORITY OVER ALL OTHER FRAMINGS" in intent_system
 
 
 class TestSafetyOverrideInIntentSystemPrompt:
@@ -344,7 +344,9 @@ class TestNoContractUserPromptByteEquivalence:
         ]
         assert len(intent_calls) == 1
         user_prompt = str(intent_calls[0].kwargs.get("prompt", ""))
-        assert "DEVELOPER CONTRACT" not in user_prompt
+        # Injected deployer block prefix must be absent; STEP 0 instructions may mention DEVELOPER CONTRACT.
+        assert "DEVELOPER CONTRACT (system prompt declared" not in user_prompt
+        assert "STEP 0 — DEVELOPER CONTRACT CHECK" in user_prompt
         assert "If no DEVELOPER CONTRACT block is present" in str(intent_calls[0].kwargs.get("system", ""))
 
 
@@ -356,12 +358,13 @@ class TestSystemPromptStructureSmoke:
         for marker in ("1.", "2.", "3.", "4.", "5.", "6."):
             assert marker in p
         for phrase in (
-            "DEVELOPER CONTRACT INTERPRETATION",
+            "PRIORITY OVER ALL OTHER FRAMINGS",
             "SAFETY OVERRIDE",
-            "PROMPT INJECTION",
+            "RULE EXECUTION IS THE EXPECTED LEGITIMATE BEHAVIOR",
         ):
             assert phrase in p
-        head, sep, tail = p.partition("\n\n6. DEVELOPER CONTRACT INTERPRETATION.")
+        assert "PROMPT INJECTION ATTEMPT" not in p
+        head, sep, tail = p.partition("\n\n6. DEVELOPER CONTRACT — PRIORITY OVER ALL OTHER FRAMINGS.")
         assert sep
         assert head == _LEGACY_INTENT_CONTEXT_SYSTEM_PROMPT.rstrip("\n")
         assert tail

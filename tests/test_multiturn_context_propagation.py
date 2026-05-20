@@ -229,7 +229,7 @@ class TestSingleTurnByteEquivalence:
 
         assert len(captured) == 3
         for prompt in captured:
-            assert "DEVELOPER CONTRACT" not in prompt
+            assert "DEVELOPER CONTRACT (system prompt declared" not in prompt
             assert "RECENT CONVERSATION HISTORY" not in prompt
             assert Q74_PROMPT in prompt
 
