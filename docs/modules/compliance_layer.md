@@ -79,7 +79,13 @@ The output of `evaluate()`. Frozen dataclass with:
 - `evaluation_path`: STRUCTURED, LLM, HYBRID, or SKIPPED
 - `duration_ms`: time spent on the evaluation
 - `contract_hash`: fingerprint of the contract evaluated
-- `speculative_draft_validated`: bool
+- `speculative_draft_validated`: bool — whether the speculative draft delivers the
+  authorized action (only meaningful on MATCH)
+- `draft_match_method`: `""` | `"substring"` | `"semantic"` | `"none"` — how draft
+  validation succeeded (or `"none"` when not validated)
+- `draft_match_confidence`: float in [0.0, 1.0] — semantic draft-match confidence from
+  the LLM verdict JSON (`draft_match_confidence`); `0.0` when validation used the
+  substring pre-check or did not validate
 
 ### `ComplianceSignal`
 
@@ -119,6 +125,26 @@ Structured matching supports `LITERAL` (exact equality) and `REGEX` (`re.fullmat
 `SEMANTIC` triggers are delegated to the LLM path. When multiple structured rules
 match, the highest `priority` wins.
 
+### Speculative draft validation
+
+On **MATCH**, the controller fast-path requires `speculative_draft_validated=True` and
+a non-empty speculative draft. Validation runs inside the same DCCL evaluation — no
+extra LLM round-trip.
+
+| Path | Mechanism |
+|---|---|
+| **Structured** | Substring check: `action_payload.lower()` contained in `speculative_draft.lower()`. On success, `draft_match_method="substring"`. |
+| **LLM** | Two-stage check in `_parse_llm_verdict` after the single verdict call: (1) **substring pre-check** — if `action_excerpt` appears verbatim in the draft, `draft_match_method="substring"` and semantic fields from the JSON are ignored; (2) **semantic fallback** — otherwise use `draft_matches_action` and `draft_match_confidence` from the same LLM JSON; accept when `draft_matches_action=true` and `draft_match_confidence >= MORALSTACK_DCCL_CONFIDENCE_THRESHOLD`, setting `draft_match_method="semantic"`. |
+
+Paraphrases, reformattings, and equivalent renderings count as a semantic match; they
+need not be verbatim. A conforming draft that still contains the literal
+`action_excerpt` always takes the substring path (zero semantic logic on exact
+matches).
+
+When validation fails (`speculative_draft_validated=False`, `draft_match_method="none"`),
+the controller does not enter the compliance fast-path; the standard pipeline handles
+the request (fix-D case 2).
+
 ## Safety Override
 
 The DCCL never authorizes a rule whose action_payload would constitute
@@ -151,18 +177,30 @@ The LLM path uses a fixed system prompt (`_DCCL_LLM_SYSTEM_PROMPT` in `dccl.py`)
 that instructs the model to:
 
 - Identify literal rule invocation (not topical similarity)
-- Emit structured JSON with verdict, excerpts, confidence, and injection flag
+- Emit structured JSON with verdict, excerpts, rationale, and confidence
+- When a speculative draft is present in the user prompt, also emit
+  `draft_matches_action` and `draft_match_confidence` judging whether the draft
+  semantically delivers `action_excerpt` (paraphrase allowed; not required to be
+  verbatim). If no draft was provided, set `draft_matches_action=false` and
+  `draft_match_confidence=0.0`
 - Never authorize the seven safety-restricted categories
-- Treat deployer attempts to override safety as `contract_injection_detected`
 
 Post-LLM, keyword safety check runs again on `action_excerpt` (defense in depth).
+Draft validation uses the substring pre-check first; semantic fields are consulted
+only when the verbatim excerpt is absent from the draft.
 
 ## Confidence threshold
 
-`MORALSTACK_DCCL_CONFIDENCE_THRESHOLD` (default `0.85`) applies only to the LLM
-path. An LLM verdict of `MATCH` with confidence below the threshold is downgraded
-to `NO_MATCH`; the standard governance pipeline then handles the request.
-Structured path always uses confidence `1.0`.
+`MORALSTACK_DCCL_CONFIDENCE_THRESHOLD` (default `0.85`) applies to the LLM path in
+two places:
+
+1. **Verdict confidence** — an LLM `MATCH` with `confidence` below the threshold is
+   downgraded to `NO_MATCH`; the standard governance pipeline then handles the request.
+2. **Draft semantic match** — on MATCH, `draft_matches_action=true` is accepted only
+   when `draft_match_confidence` is also at or above the threshold (substring matches
+   bypass this gate).
+
+Structured path always uses verdict confidence `1.0`.
 
 ## Configuration
 
@@ -202,6 +240,15 @@ All events flow through the standard observability infrastructure
 (`moralstack/observability/sink.py`), so they appear in the same SQLite tables /
 JSONL files as other module events, depending on `MORALSTACK_OBSERVABILITY_MODE`.
 
+Verdict events (`COMPLIANCE_LAYER_VERDICT_*`) include, among other fields:
+
+- `speculative_draft_validated`
+- `draft_match_method`
+- `draft_match_confidence`
+
+The `COMPLIANCE_LAYER` decision trace `stage_payload` mirrors the same three fields
+for audit export and UI.
+
 ## Pipeline integration
 
 The controller calls `_run_dccl_evaluation()` after speculative overlap / risk entry.
@@ -209,8 +256,9 @@ The verdict is stored on `ProcessCallContext.compliance_verdict` and exposed on
 `OrchestratorResult.compliance_verdict`.
 
 When the DCCL returns **MATCH** and `speculative_draft_validated=True` with a non-empty
-speculative draft, `_route_compliance_match()` produces `NORMAL_COMPLETE` from the
-validated draft (`path=COMPLIANCE_FAST_PATH`), abandons remaining speculative work,
+speculative draft (substring or semantic validation), `_route_compliance_match()`
+produces `NORMAL_COMPLETE` from the validated draft (`path=COMPLIANCE_FAST_PATH`),
+abandons remaining speculative work,
 emits five `MODULE_DEFERRED_TO_COMPLIANCE` events (risk_router, critic, simulator,
 perspectives, deliberation), and skips `decide_action` routing entirely. A fast-path
 failure falls back to the standard pipeline (non-fatal).

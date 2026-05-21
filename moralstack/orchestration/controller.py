@@ -1044,6 +1044,8 @@ class OrchestrationController:
                     "confidence": compliance_verdict.confidence,
                     "evaluation_path": compliance_verdict.evaluation_path.value,
                     "speculative_draft_validated": compliance_verdict.speculative_draft_validated,
+                    "draft_match_method": compliance_verdict.draft_match_method,
+                    "draft_match_confidence": compliance_verdict.draft_match_confidence,
                     "rationale_excerpt": (compliance_verdict.rationale[:300] if compliance_verdict.rationale else ""),
                     "contract_hash": compliance_verdict.contract_hash,
                 },
@@ -1209,6 +1211,8 @@ class OrchestrationController:
                 "evaluation_path": cv.evaluation_path.value if cv else "skipped",
                 "confidence": cv.confidence if cv else 0.0,
                 "speculative_draft_validated": cv.speculative_draft_validated if cv else False,
+                "draft_match_method": cv.draft_match_method if cv else "",
+                "draft_match_confidence": cv.draft_match_confidence if cv else 0.0,
                 "contract_hash": cv.contract_hash if cv else "",
             }
             normalize_trace_fields(dt)

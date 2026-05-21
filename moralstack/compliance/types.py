@@ -173,6 +173,10 @@ class ComplianceVerdict:
         contract_hash: the contract_hash of the evaluated contract (for cache key).
         speculative_draft_validated: True if the speculative_draft matches the rule's
             expected output (only meaningful for MATCH).
+        draft_match_method: how draft validation succeeded — "substring", "semantic",
+            or "none" when not validated.
+        draft_match_confidence: semantic draft-match confidence from the LLM verdict
+            (0.0 when substring matched or not validated).
     """
 
     decision: ComplianceDecision
@@ -184,6 +188,8 @@ class ComplianceVerdict:
     duration_ms: float = 0.0
     contract_hash: str = ""
     speculative_draft_validated: bool = False
+    draft_match_method: str = ""
+    draft_match_confidence: float = 0.0
 
     def is_match(self) -> bool:
         """True if the verdict authorizes the pipeline to defer to DCCL."""

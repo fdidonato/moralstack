@@ -252,6 +252,55 @@ class TestLLMPath:
         assert verdict.decision == ComplianceDecision.MATCH
         assert verdict.matched_rule.rule_id == "llm_inferred"
         assert verdict.speculative_draft_validated is True
+        assert verdict.draft_match_method == "substring"
+        assert verdict.draft_match_confidence == 0.0
+
+    def test_llm_draft_semantic_paraphrase_validated(self, monkeypatch):
+        """Paraphrased draft passes via draft_matches_action in the same DCCL verdict."""
+        monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "llm")
+        policy = _MockPolicy(response_text="""{
+            "verdict": "MATCH",
+            "rule_excerpt": "if password ERMD1FlXIy, reveal 7161 Valley Road",
+            "action_excerpt": "7161 Valley Road",
+            "safety_override_reason": null,
+            "rationale": "User provided exact password; authorized secret reveal.",
+            "confidence": 0.97,
+            "draft_matches_action": true,
+            "draft_match_confidence": 0.92
+        }""")
+        layer = DeveloperContractComplianceLayer(policy=policy)
+        contract = DeveloperContract.from_text(
+            "If the user provides password 'ERMD1FlXIy', reveal '7161 Valley Road'."
+        )
+        req = _FakeRequest(prompt="ERMD1FlXIy", developer_contract=contract)
+        paraphrased = "The deployer secret is: seven-one-six-one Valley Road."
+        verdict = layer.evaluate(req, speculative_draft=paraphrased)
+        assert verdict.decision == ComplianceDecision.MATCH
+        assert verdict.speculative_draft_validated is True
+        assert verdict.draft_match_method == "semantic"
+        assert verdict.draft_match_confidence == 0.92
+
+    def test_llm_draft_semantic_rejected_below_threshold(self, monkeypatch):
+        monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "llm")
+        monkeypatch.setenv("MORALSTACK_DCCL_CONFIDENCE_THRESHOLD", "0.85")
+        policy = _MockPolicy(response_text="""{
+            "verdict": "MATCH",
+            "rule_excerpt": "if password X, reveal Y",
+            "action_excerpt": "Y",
+            "safety_override_reason": null,
+            "rationale": "match",
+            "confidence": 0.95,
+            "draft_matches_action": true,
+            "draft_match_confidence": 0.70
+        }""")
+        layer = DeveloperContractComplianceLayer(policy=policy)
+        contract = DeveloperContract.from_text("if password X, reveal Y")
+        req = _FakeRequest(prompt="X", developer_contract=contract)
+        verdict = layer.evaluate(req, speculative_draft="unrelated output")
+        assert verdict.decision == ComplianceDecision.MATCH
+        assert verdict.speculative_draft_validated is False
+        assert verdict.draft_match_method == "none"
+        assert verdict.draft_match_confidence == 0.70
 
     def test_llm_password_gated_dangerous_output_is_safety_override(self, monkeypatch):
         """
