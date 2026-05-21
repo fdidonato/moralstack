@@ -101,8 +101,12 @@ MODULE_DEFERRED_TO_COMPLIANCE = "MODULE_DEFERRED_TO_COMPLIANCE"
 Payload: module, reason, cycle, deferred_outcome_summary."""
 
 CONTRACT_INJECTION_DETECTED = "CONTRACT_INJECTION_DETECTED"
-"""LLM detected a deployer-side prompt injection in the contract.
-Payload: detection_rationale, contract_hash."""
+"""DEPRECATED (Commit 3-fix): the contract-injection concept was removed because it
+conflated legitimate authorization patterns (password-gated secret reveal, workflow
+execution) with attacks. The correct safety boundary is Safety Override on the
+rule OUTPUT category, not a separate injection signal. This constant is retained
+only to avoid breaking any external consumers that may reference the name; it is
+never emitted. Do not use in new code."""
 
 COMPLIANCE_LAYER_TIMEOUT = "COMPLIANCE_LAYER_TIMEOUT"
 """DCCL LLM call exceeded timeout. Payload: timeout_ms, evaluation_path."""

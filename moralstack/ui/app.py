@@ -324,6 +324,10 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
     elif "hindsight" in module:
         inputs.append({"label": "draft", "source": "policy"})
         inputs.append({"label": "consequences", "source": "simulator"})
+    elif "compliance" in module:
+        inputs.append({"label": "developer_contract", "source": "user"})
+        inputs.append({"label": "draft", "source": "policy"})
+        inputs.append({"label": "prompt", "source": "user"})
     elif "constitution" in module:
         inputs.append({"label": "domain", "source": "risk_estimator"})
 
@@ -423,11 +427,22 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
     elif "hindsight" in module:
         if "score" in summary:
             outputs.append({"label": "score", "value": summary["score"]})
+    elif "compliance" in module:
+        raw = call.get("raw_response") or ""
+        try:
+            verdict_data = json.loads(raw) if raw else {}
+        except Exception:
+            verdict_data = {}
+        verdict = verdict_data.get("verdict") or summary.get("verdict") or "—"
+        outputs.append({"label": "verdict", "value": verdict})
     elif "constitution" in module:
         if "count" in summary:
             outputs.append({"label": "principles", "value": summary["count"]})
 
-    return {"inputs": inputs, "outputs": outputs}
+    result: dict[str, Any] = {"inputs": inputs, "outputs": outputs}
+    if "constitution" in module and call.get("_constitution_phase"):
+        result["phase_hint"] = call["_constitution_phase"]
+    return result
 
 
 def _group_calls_into_tiers_and_enrich(calls: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
@@ -579,8 +594,62 @@ def _compute_connector_labels(tiers: list[list[dict[str, Any]]]) -> list[str | N
         if "critic" in src_modules:
             if dst_modules & {"simulator", "perspectives"}:
                 parts.append("gate: proceed")
+        if any("compliance" in m for m in dst_modules):
+            parts.append("DCCL")
         labels.append(" · ".join(parts) if parts else None)
     return labels
+
+
+def _tag_constitution_phases(calls: list[dict[str, Any]]) -> None:
+    """Tag constitution prefilter calls so the UI can distinguish routing vs deliberation."""
+    prefilter_calls = sorted(
+        [
+            c
+            for c in calls
+            if "constitution" in (c.get("module") or "").lower() and "domain_prefilter" in (c.get("action") or "").lower()
+        ],
+        key=lambda c: c.get("started_at") or 0,
+    )
+    for idx, call in enumerate(prefilter_calls):
+        if idx == 0:
+            call["_constitution_phase"] = "domain prefilter (risk routing)"
+        else:
+            call["_constitution_phase"] = "domain prefilter (deliberation retrieval)"
+
+
+def _build_compliance_card(orchestration_events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Build the DCCL compliance card from orchestration events for the request page."""
+    compliance_events = [
+        e for e in orchestration_events if (e.get("event_type") or "").startswith("COMPLIANCE_LAYER_VERDICT")
+    ]
+    if not compliance_events:
+        return None
+
+    verdict_event = compliance_events[0]
+    payload = _parse_json_field(verdict_event.get("payload_json")) or _parse_json_field(verdict_event.get("payload"))
+    if not isinstance(payload, dict):
+        payload = {}
+    decision = verdict_event.get("decision") or payload.get("decision") or "—"
+
+    if decision == "NO_CONTRACT":
+        return None
+
+    deferred = [e for e in orchestration_events if (e.get("event_type") or "") == "MODULE_DEFERRED_TO_COMPLIANCE"]
+
+    return {
+        "decision": decision,
+        "evaluation_path": payload.get("evaluation_path", "—"),
+        "matched_rule_id": payload.get("matched_rule_id"),
+        "matched_rule_summary": payload.get("matched_rule_summary"),
+        "safety_override_reason": payload.get("safety_override_reason"),
+        "confidence": payload.get("confidence"),
+        "speculative_draft_validated": payload.get("speculative_draft_validated"),
+        "rationale": payload.get("rationale_excerpt"),
+        "modules_deferred": [
+            (_parse_json_field(d.get("payload_json")) or _parse_json_field(d.get("payload")) or {}).get("module")
+            for d in deferred
+        ],
+    }
 
 
 def _pick_final_trace_row(traces: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1643,6 +1712,7 @@ button:hover{opacity:0.9}
         synthetic_constitution = _synthetic_constitution_call_from_traces(traces)
 
         # Enrich calls with I/O annotations and semantic badges (call_kind / cache_status)
+        _tag_constitution_phases(llm_calls)
         for call in llm_calls:
             call["io_annotations"] = _build_module_io_annotations(call)
             enriched = enrich_llm_call_for_ui(call)
@@ -1650,6 +1720,7 @@ button:hover{opacity:0.9}
 
         all_flow_calls = list(llm_calls)
         if synthetic_constitution is not None:
+            synthetic_constitution["_constitution_phase"] = "relevant principles (deliberation retrieval)"
             synthetic_constitution["io_annotations"] = _build_module_io_annotations(synthetic_constitution)
             all_flow_calls.append(synthetic_constitution)
 
@@ -1767,6 +1838,7 @@ button:hover{opacity:0.9}
                     "orchestrator_observability": orchestrator_observability,
                     "orchestration_events": orchestration_events,
                     "runtime_decision_obs": runtime_decision_obs,
+                    "compliance_card": _build_compliance_card(orchestration_events),
                     "conversation_context": conversation_context,
                 },
             )

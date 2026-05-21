@@ -385,6 +385,68 @@
     </div>
 </div>
 
+{% if compliance_card %}
+<div class="card">
+    <h3>⚖️ Developer Contract Compliance Layer</h3>
+    <p class="muted" style="margin-bottom:0.5rem;">
+        The DCCL evaluated whether this request invokes a deployer-authorized behavior.
+    </p>
+    <div class="meta-grid">
+        <div class="meta-item">
+            <span class="meta-label">Decision</span>
+            <span class="meta-value">
+                {% if compliance_card.decision == 'MATCH' %}
+                    <span class="badge badge-ok">MATCH</span>
+                {% elif compliance_card.decision == 'SAFETY_OVERRIDE' %}
+                    <span class="badge badge-fail">SAFETY_OVERRIDE</span>
+                {% else %}
+                    <span class="badge">{{ compliance_card.decision }}</span>
+                {% endif %}
+            </span>
+        </div>
+
+        <div class="meta-item">
+            <span class="meta-label">Evaluation path</span>
+            <span class="meta-value mono">{{ compliance_card.evaluation_path }}</span>
+        </div>
+
+        {% if compliance_card.matched_rule_summary %}
+        <div class="meta-item">
+            <span class="meta-label">Matched rule</span>
+            <span class="meta-value mono">{{ compliance_card.matched_rule_summary }}</span>
+        </div>
+        {% endif %}
+
+        {% if compliance_card.safety_override_reason %}
+        <div class="meta-item">
+            <span class="meta-label">Safety override reason</span>
+            <span class="meta-value mono">{{ compliance_card.safety_override_reason }}</span>
+        </div>
+        {% endif %}
+
+        <div class="meta-item">
+            <span class="meta-label">Confidence</span>
+            <span class="meta-value">{{ '%.2f'|format(compliance_card.confidence or 0.0) }}</span>
+        </div>
+
+        <div class="meta-item">
+            <span class="meta-label">Draft validated</span>
+            <span class="meta-value">{{ 'yes' if compliance_card.speculative_draft_validated else 'no' }}</span>
+        </div>
+    </div>
+
+    {% if compliance_card.rationale %}
+    <p class="muted" style="margin-top:0.5rem;"><strong>Rationale:</strong> {{ compliance_card.rationale }}</p>
+    {% endif %}
+
+    {% if compliance_card.modules_deferred %}
+    <p class="muted" style="margin-top:0.5rem;"><strong>Modules deferred to compliance:</strong>
+        <span class="mono">{{ compliance_card.modules_deferred | join(', ') }}</span>
+    </p>
+    {% endif %}
+</div>
+{% endif %}
+
 <h2>Runtime decisions</h2>
 <p class="muted" style="margin-bottom:0.5rem;">Orchestration events persisted independently of LLM calls (scheduler,
     retrieval, convergence). Empty when no rows were recorded for this request.</p>
@@ -857,7 +919,7 @@
                         <div class="flow-node-header">
                             <span class="flow-node-chevron">&#9658;</span>
                             <div class="flow-node-title-area">
-                                <div class="flow-node-title">{{ call.module }} / {{ call.phase }}</div>
+                                <div class="flow-node-title">{{ call.module }} / {{ call.phase }}{% if call.io_annotations and call.io_annotations.phase_hint %} · {{ call.io_annotations.phase_hint }}{% endif %}</div>
                                 <div class="flow-node-meta">
                                     {% if call.action %}
                                     <span class="badge badge-type">{{ call.action }}</span>
