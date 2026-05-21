@@ -503,6 +503,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         parse_contract: dict[str, Any] | None = None,
         token_usage_json: str | None = None,
         llm_model: str | None = None,
+        sequence_in_cycle: int = -9,
     ) -> None:
         """Persist a single mini-estimator LLM call. Logs debug on ImportError."""
         import json as _json
@@ -532,6 +533,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                 parsed_summary_json=_json.dumps(summary, ensure_ascii=False),
                 attempts=attempts,
                 token_usage_json=token_usage_json,
+                sequence_in_cycle=sequence_in_cycle,
             )
         except Exception as e:
             _RISK_LOG.debug("persist_mini_llm_call failed: %s", e)
@@ -770,6 +772,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                 action="calibration_guard",
                 duration_ms=0.0,
                 attempts=1,
+                sequence_in_cycle=-8,
             )
 
         parsed = parse_risk_dict(merged)

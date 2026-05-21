@@ -381,6 +381,7 @@ class DeveloperContractComplianceLayer:
             )
 
             llm_start = time.perf_counter()
+            wall_start_ms = int(time.time() * 1000)
             result = self._policy.generate(
                 prompt=prompt,
                 system=_DCCL_LLM_SYSTEM_PROMPT,
@@ -402,7 +403,7 @@ class DeveloperContractComplianceLayer:
                         "module": "compliance_layer",
                         "action": "evaluate",
                         "model": self._llm_model,
-                        "started_at": int(llm_start * 1000),
+                        "started_at": wall_start_ms,
                         "duration_ms": llm_elapsed_ms,
                         "prompt": prompt,
                         "system_prompt": _DCCL_LLM_SYSTEM_PROMPT,

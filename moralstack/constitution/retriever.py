@@ -64,6 +64,7 @@ def _persist_constitution_llm_call(
             raw_response=raw_response,
             parsed_summary_json=summary,
             attempts=1,
+            sequence_in_cycle=-10,
         )
     except Exception:
         logger.debug("constitution retrieval llm_call persist skipped", exc_info=True)
