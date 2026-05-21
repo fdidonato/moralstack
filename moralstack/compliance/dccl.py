@@ -359,6 +359,7 @@ class DeveloperContractComplianceLayer:
             contract_hash=getattr(contract, "contract_hash", ""),
             speculative_draft_validated=draft_validated,
             draft_match_method=draft_match_method,
+            draft_match_confidence=(1.0 if draft_match_method == "substring" else 0.0),
         )
 
     def _rule_matches_prompt(self, rule: StructuredRule, user_prompt: str) -> bool:

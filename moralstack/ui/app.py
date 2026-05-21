@@ -31,6 +31,7 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     MODULE_DEFERRED_TO_COMPLIANCE,
     PROXY_OUTPUT_FINALIZED,
     SPECULATIVE_DRAFT_REUSED,
+    SPECULATIVE_RESULT_USED,
 )
 from moralstack.reports.benchmark_report_loader import (
     get_benchmark_result_by_request_id,
@@ -1216,10 +1217,14 @@ def _synthetic_speculative_draft_reuse_from_events(
     orchestration_events: list[dict[str, Any]],
     llm_calls: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    """Synthetic journey step when benign/compliance fast-path reused speculative draft (no LLM call)."""
+    """Synthetic journey step for legacy runs that reused a speculative draft without persisting llm_call."""
+    if any((c.get("phase") or "") == "speculative_generate" for c in llm_calls):
+        return None
+
     reuse_event: dict[str, Any] | None = None
     for e in orchestration_events:
-        if (e.get("event_type") or "") == SPECULATIVE_DRAFT_REUSED:
+        et = e.get("event_type") or ""
+        if et in (SPECULATIVE_DRAFT_REUSED, SPECULATIVE_RESULT_USED):
             reuse_event = e
             break
     if reuse_event is None:

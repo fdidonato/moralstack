@@ -1211,6 +1211,8 @@ class OrchestrationController:
         trace: Trace,
         call_ctx: ProcessCallContext,
         spec_handle: SpeculativeOverlapHandle | None,
+        *,
+        draft_is_speculative: bool = False,
     ) -> OrchestratorResult:
         """
         Compliance fast-path: DCCL recognized deployer-authorized rule execution.
@@ -1237,9 +1239,12 @@ class OrchestrationController:
 
         if spec_handle is not None:
             try:
-                spec_handle.abandon("compliance_match", "COMPLIANCE_MATCH")
+                if draft_is_speculative:
+                    spec_handle.join_for_consumer("COMPLIANCE_MATCH", "compliance_fast_path")
+                else:
+                    spec_handle.abandon("compliance_regenerated", "COMPLIANCE_MATCH")
             except Exception:
-                _LOG.debug("spec_handle.abandon failed in compliance fast-path", exc_info=True)
+                _LOG.debug("spec_handle handling failed in compliance fast-path", exc_info=True)
 
         for module_name in ("risk_router", "critic", "simulator", "perspectives", "deliberation"):
             try:
@@ -1966,6 +1971,7 @@ class OrchestrationController:
                             trace=trace,
                             call_ctx=call_ctx,
                             spec_handle=spec_handle,
+                            draft_is_speculative=True,
                         )
                     except Exception as e:
                         _LOG.warning(
@@ -2000,6 +2006,7 @@ class OrchestrationController:
                                 trace=trace,
                                 call_ctx=call_ctx,
                                 spec_handle=spec_handle,
+                                draft_is_speculative=False,
                             )
                         except Exception as e:
                             _LOG.warning(
@@ -2023,6 +2030,14 @@ class OrchestrationController:
                                 "degraded_reason": cv.degraded_reason,
                             },
                         )
+                        if spec_handle is not None:
+                            try:
+                                spec_handle.abandon("compliance_match_downgraded", "DELIBERATIVE_PATH")
+                            except Exception:
+                                _LOG.debug(
+                                    "spec_handle.abandon failed after compliance downgrade",
+                                    exc_info=True,
+                                )
 
             risk_score = risk_estimation.score if hasattr(risk_estimation, "score") else 0.5
             risk_category = getattr(risk_estimation, "risk_category", None)

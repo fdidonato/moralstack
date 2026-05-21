@@ -995,6 +995,16 @@
                                     {% if call.model %}
                                     <span class="badge">{{ call.model }}</span>
                                     {% endif %}
+                                    {% if call.call_outcome %}
+                                    <span class="badge badge-semantic" title="call_outcome">{{ call.call_outcome }}</span>
+                                    {% endif %}
+                                    {% if call.semantic_badges %}
+                                    {% for b in call.semantic_badges %}
+                                    {% if b != call.call_outcome %}
+                                    <span class="badge badge-semantic" title="Call semantics">{{ b }}</span>
+                                    {% endif %}
+                                    {% endfor %}
+                                    {% endif %}
                                     {% if call.duration_ms %}
                                     <span class="flow-node-dur">{{ call.duration_ms | round(0) | int }}ms</span>
                                     {% endif %}
@@ -1230,9 +1240,14 @@
                 {% if call.model %}
                 <span class="badge">{{ call.model }}</span>
                 {% endif %}
+                {% if call.call_outcome %}
+                <span class="badge badge-semantic" title="call_outcome">{{ call.call_outcome }}</span>
+                {% endif %}
                 {% if call.semantic_badges %}
                 {% for b in call.semantic_badges %}
+                {% if b != call.call_outcome %}
                 <span class="badge badge-semantic" title="Call semantics">{{ b }}</span>
+                {% endif %}
                 {% endfor %}
                 {% endif %}
                 {% if call.duration_ms %}
@@ -1283,9 +1298,14 @@
             {% if call.model %}
             <span class="badge">{{ call.model }}</span>
             {% endif %}
+            {% if call.call_outcome %}
+            <span class="badge badge-semantic" title="call_outcome">{{ call.call_outcome }}</span>
+            {% endif %}
             {% if call.semantic_badges %}
             {% for b in call.semantic_badges %}
+            {% if b != call.call_outcome %}
             <span class="badge badge-semantic" title="Call semantics">{{ b }}</span>
+            {% endif %}
             {% endfor %}
             {% endif %}
             {% if call.duration_ms %}
