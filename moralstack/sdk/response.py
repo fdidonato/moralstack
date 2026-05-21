@@ -82,6 +82,25 @@ class GovernanceMetadata:
     turn_index: int | None
     """Turn index in the conversation. None if session tracking is disabled."""
 
+    # DCCL fields (populated when contract is present)
+    compliance_decision: str | None = None
+    """DCCL verdict: MATCH | NO_MATCH | SAFETY_OVERRIDE | NO_CONTRACT."""
+
+    matched_rule_id: str | None = None
+    """Rule id when DCCL decision is MATCH."""
+
+    matched_rule_summary: str | None = None
+    """Human-readable matched rule summary."""
+
+    compliance_evaluation_path: str | None = None
+    """DCCL evaluation path: STRUCTURED | LLM | HYBRID | SKIPPED."""
+
+    compliance_confidence: float | None = None
+    """DCCL confidence score."""
+
+    safety_override_reason: str | None = None
+    """Safety override category when DCCL decision is SAFETY_OVERRIDE."""
+
     @classmethod
     def from_result(cls, result: OrchestratorResult) -> GovernanceMetadata:
         """
@@ -89,6 +108,13 @@ class GovernanceMetadata:
         internal types and the public SDK interface.
         """
         meta = result.response.metadata
+        cv = getattr(result, "compliance_verdict", None)
+        compliance_decision = cv.decision.value if cv else None
+        matched_rule_id = cv.matched_rule.rule_id if (cv and cv.matched_rule) else None
+        matched_rule_summary = cv.matched_rule.rule_summary if (cv and cv.matched_rule) else None
+        compliance_evaluation_path = cv.evaluation_path.value if cv else None
+        compliance_confidence = cv.confidence if cv else None
+        safety_override_reason = cv.safety_override_reason if cv else None
         return cls(
             final_action=meta.final_action,
             risk_score=meta.risk_score,
@@ -105,6 +131,12 @@ class GovernanceMetadata:
             why_not_safe_complete=meta.why_not_safe_complete,
             conversation_id=result.conversation_id,
             turn_index=result.turn_index,
+            compliance_decision=compliance_decision,
+            matched_rule_id=matched_rule_id,
+            matched_rule_summary=matched_rule_summary,
+            compliance_evaluation_path=compliance_evaluation_path,
+            compliance_confidence=compliance_confidence,
+            safety_override_reason=safety_override_reason,
         )
 
 

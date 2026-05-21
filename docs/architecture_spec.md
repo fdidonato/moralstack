@@ -186,10 +186,12 @@ class DeliberationState:
 #### Developer Contract Compliance Layer (DCCL)
 
 Inserted between policy speculative overlap and risk-based routing. The DCCL evaluates
-whether a request invokes a deployer-authorized behavior; in Commit 2 it
-emits its verdict for observability (`COMPLIANCE_LAYER_*` events,
-`OrchestratorResult.compliance_verdict`) but does not yet alter pipeline decisions.
-Pipeline integration with cooperative early-return ships in Commit 3.
+whether a request invokes a deployer-authorized behavior. It emits its verdict for
+observability (`COMPLIANCE_LAYER_*` events, `OrchestratorResult.compliance_verdict`).
+When the verdict is **MATCH** with `speculative_draft_validated=True`, the controller
+routes to the **compliance fast-path** (`COMPLIANCE_FAST_PATH`, `NORMAL_COMPLETE`)
+and skips risk routing, deliberation, critic, simulator, and perspectives. All other
+verdicts leave the standard pipeline unchanged.
 
 Reference: `docs/modules/compliance_layer.md`, `dccl_specification_v0.3.md`.
 

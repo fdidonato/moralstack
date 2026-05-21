@@ -38,7 +38,7 @@ explains why full NORMAL_COMPLETE was not allowed; `why_not_safe_complete` is N/
 
 Structured codes include: `HIGH_RISK_OPERATIONAL`, `SENSITIVE_DOMAIN`, `OVERLAY_HEALTHCARE`, `OVERLAY_LEGAL`,
 `FAST_PATH_LOW_RISK`, `CYCLES_EXHAUSTED_FALLBACK`, `RISK_BELOW_REFUSE_THRESHOLD`, `NO_OPERATIONAL_INTENT`,
-`DEFAULT_NORMAL_COMPLETE`, and others. Policy reason strings are mapped via `policy_reason_codes_to_reason_codes()`.
+`COMPLIANCE_LAYER_MATCH`, `DEFAULT_NORMAL_COMPLETE`, and others. Policy reason strings are mapped via `policy_reason_codes_to_reason_codes()`.
 
 ## Winning Rules
 
@@ -50,6 +50,7 @@ Structured codes include: `HIGH_RISK_OPERATIONAL`, `SENSITIVE_DOMAIN`, `OVERLAY_
 | `epistemic_escalation`      | Simulator negativity with high actionability |
 | `informational_recovery`    | Informational recovery path                  |
 | `fast_path`                 | PRE policy bounds indicate FAST_PATH         |
+| `compliance_layer_match`    | DCCL MATCH with validated speculative draft  |
 | `policy_bounds_fallback`    | Fallback to policy bounds                    |
 | `cycles_exhausted_fallback` | CYCLES_EXHAUSTED sensitive fallback          |
 

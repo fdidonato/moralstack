@@ -159,7 +159,7 @@ def response_type_to_final_action(response_type: ResponseType) -> FinalAction | 
 # =============================================================================
 
 FinalActionStr = Literal["REFUSE", "SAFE_COMPLETE", "NORMAL_COMPLETE"]
-PathStr = Literal["FAST_PATH", "DELIBERATIVE_PATH"]
+PathStr = Literal["FAST_PATH", "DELIBERATIVE_PATH", "COMPLIANCE_FAST_PATH"]
 AxisStr = Literal["LOW", "MEDIUM", "HIGH"]
 
 
@@ -422,7 +422,7 @@ class FinalResponse:
         )
 
 
-OrchestratorPath = Literal["FAST_PATH", "DELIBERATIVE_PATH", "DOMAIN_EXCLUDED", "ERROR_PATH"]
+OrchestratorPath = Literal["FAST_PATH", "DELIBERATIVE_PATH", "COMPLIANCE_FAST_PATH", "DOMAIN_EXCLUDED", "ERROR_PATH"]
 PathTakenType = Literal[
     "fast",
     "deliberative",

@@ -16,8 +16,9 @@ The Orchestrator is the central component of MoralStack that coordinates the ent
 The Orchestrator handles:
 
 - Request reception and preprocessing
-- Initial risk estimation
-- Routing between **Fast Path** and **Deliberative Path**
+- Developer Contract Compliance Layer (DCCL) evaluation and optional compliance fast-path
+- Initial risk estimation (parallel with speculative generation when enabled)
+- Routing between **Fast Path**, **Compliance Fast Path**, and **Deliberative Path**
 - Deliberative cycle coordination
 - Guidance aggregation from modules
 - Final response assembly

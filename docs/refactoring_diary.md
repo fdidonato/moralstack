@@ -199,6 +199,14 @@ One row or block per refactoring step. Add rows as you go.
 
 ### Template for a single entry (copy as needed)
 
+#### Entry: 2026-05-21 — DCCL Commit 3 (compliance fast-path)
+
+- **What:** `OrchestrationController._route_compliance_match`, SDK `GovernanceMetadata` DCCL fields, proxy compliance headers, markdown export DCCL section, tests `test_compliance_fast_path.py` / `test_sdk_dccl.py`, module docs.
+- **Why:** When the Developer Contract Compliance Layer emits MATCH with a validated speculative draft, deployer-authorized rule execution must produce `NORMAL_COMPLETE` without running risk routing or deliberation (q51–q58, q74, q75 authentication samples). Per-module early-return was replaced by a single controller fast-path (functionally equivalent, less invasive).
+- **Risk:** medium (safety-critical routing); guarded by `speculative_draft_validated`, failsafe try/except fallback, and unchanged pipeline for NO_MATCH / SAFETY_OVERRIDE / NO_CONTRACT.
+- **Tests run:** `pytest tests/test_compliance_fast_path.py tests/test_sdk_dccl.py`; full suite `pytest tests/` (1644 passed).
+- **Commit:** (pending user commit)
+
 ```markdown
 #### Entry: YYYY-MM-DD — &lt;short title&gt;
 

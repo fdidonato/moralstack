@@ -20,6 +20,10 @@ The Constitutional Critic:
 - **Generates guidance** for response revision
 - **Flags information leakage** when the request warrants refusal (see below)
 
+On a DCCL **MATCH**, this module is not invoked. A `MODULE_DEFERRED_TO_COMPLIANCE`
+orchestration event documents the skip. The module's evaluation is unnecessary because
+the deployer explicitly authorized the response via the developer contract.
+
 ---
 
 ## Information Leakage

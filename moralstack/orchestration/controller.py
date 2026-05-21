@@ -12,6 +12,7 @@ from dataclasses import replace as _dc_replace
 from functools import partial
 from typing import Any, cast
 
+from moralstack.compliance.types import ComplianceVerdict
 from moralstack.core.types import (
     CriticProtocol,
     HindsightProtocol,
@@ -54,6 +55,7 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     CONVERSATION_STATE_UPDATED,
     LEDGER_FAST_PATH_APPLIED,
     LEDGER_FAST_PATH_NOT_APPLIED,
+    MODULE_DEFERRED_TO_COMPLIANCE,
     SPECULATIVE_STARTED,
 )
 from moralstack.orchestration.overlay_policy import (
@@ -979,9 +981,11 @@ class OrchestrationController:
         call_ctx: ProcessCallContext,
     ) -> None:
         """
-        Invoke DCCL after speculative overlap risk wait; verdict is logged only (Commit 2).
+        Invoke DCCL after speculative overlap risk wait.
 
-        Does not alter pipeline routing or final_action.
+        Verdict is stored on ``call_ctx.compliance_verdict``. When decision is MATCH
+        with a validated speculative draft, ``process()`` routes to the compliance
+        fast-path (Commit 3); otherwise the standard pipeline continues unchanged.
         """
         compliance_verdict = None
         try:
@@ -1049,6 +1053,168 @@ class OrchestrationController:
             compliance_verdict = None
 
         call_ctx.compliance_verdict = compliance_verdict
+
+    def _route_compliance_match(
+        self,
+        request: ProcessedRequest,
+        risk_estimation: RiskEstimationProtocol,
+        speculative_draft: str,
+        start_time: float,
+        trace: Trace,
+        call_ctx: ProcessCallContext,
+        spec_handle: SpeculativeOverlapHandle | None,
+    ) -> OrchestratorResult:
+        """
+        Compliance fast-path: DCCL recognized deployer-authorized rule execution.
+
+        Produces NORMAL_COMPLETE from the validated speculative draft, skipping risk
+        routing, deliberation, critic, simulator, and perspectives. Emits
+        MODULE_DEFERRED_TO_COMPLIANCE for each skipped module (audit).
+        """
+
+        cv = call_ctx.compliance_verdict
+        matched_rule_id = cv.matched_rule.rule_id if (cv and cv.matched_rule) else None
+
+        orch_debug_log(
+            "controller.py:_route_compliance_match",
+            "entering compliance fast-path (DCCL MATCH)",
+            {
+                "matched_rule_id": matched_rule_id,
+                "evaluation_path": cv.evaluation_path.value if cv else None,
+                "confidence": cv.confidence if cv else None,
+            },
+            "H-compliance-match",
+            request_id=request.request_id or "",
+        )
+
+        if spec_handle is not None:
+            try:
+                spec_handle.abandon("compliance_match", "COMPLIANCE_MATCH")
+            except Exception:
+                _LOG.debug("spec_handle.abandon failed in compliance fast-path", exc_info=True)
+
+        for module_name in ("risk_router", "critic", "simulator", "perspectives", "deliberation"):
+            try:
+                self._events.emit_orchestration_event(
+                    request_id=request.request_id or "",
+                    stage="compliance_layer",
+                    component=module_name,
+                    event_type=MODULE_DEFERRED_TO_COMPLIANCE,
+                    decision="deferred",
+                    status="ok",
+                    payload={
+                        "module": module_name,
+                        "reason": "compliance_layer_match",
+                        "matched_rule_id": matched_rule_id,
+                        "cycle": 0,
+                        "deferred_outcome_summary": ("skipped: request is authorized contract rule execution"),
+                    },
+                )
+            except Exception:
+                _LOG.debug("emit MODULE_DEFERRED_TO_COMPLIANCE failed for %s", module_name, exc_info=True)
+
+        decision = self._build_compliance_decision(request, risk_estimation, cv)
+        decision_explanation = self._build_compliance_decision_explanation(request, cv)
+
+        result = self._runner.run_benign_fast_path(
+            request=request,
+            risk_estimation=risk_estimation,
+            start_time=start_time,
+            decision=decision,
+            decision_explanation=decision_explanation,
+            speculative_draft=speculative_draft,
+        )
+
+        if call_ctx.compliance_verdict is not None:
+            result.compliance_verdict = call_ctx.compliance_verdict
+
+        try:
+            self._emit_compliance_decision_trace(request, cv, risk_estimation)
+        except Exception:
+            _LOG.debug("emit compliance decision trace failed", exc_info=True)
+
+        fill_trace_from_result(trace, result)
+        result.trace = trace
+        return self._diagnostics.ensure_final_action_and_return(
+            result,
+            request,
+            start_time,
+            "compliance_fast_path",
+            partial(self._attach_trace_and_return, call_ctx=call_ctx),
+        )
+
+    def _build_compliance_decision(
+        self,
+        request: ProcessedRequest,
+        risk_estimation: RiskEstimationProtocol,
+        cv: ComplianceVerdict | None,
+    ) -> Decision:
+        """Build a NORMAL_COMPLETE Decision for a compliance match."""
+        return Decision(
+            final_action="NORMAL_COMPLETE",
+            path="COMPLIANCE_FAST_PATH",
+            intent_clarity="HIGH",
+            misuse_plausibility="LOW",
+            actionability_risk="LOW",
+            triggered_principles=[],
+            hard_violations=[],
+            risk_signals=[],
+            reason_codes=["COMPLIANCE_LAYER_MATCH"],
+        )
+
+    def _build_compliance_decision_explanation(
+        self,
+        request: ProcessedRequest,
+        cv: ComplianceVerdict | None,
+    ) -> DecisionExplanation | None:
+        """Build a DecisionExplanation documenting the compliance match."""
+        try:
+            return DecisionExplanation(
+                request_id=request.request_id or "",
+                final_action="NORMAL_COMPLETE",
+                risk_score=cv.confidence if cv else 0.0,
+                risk_category="benign",
+                reason_codes=["COMPLIANCE_LAYER_MATCH"],
+                winning_rule="compliance_layer_match",
+                why_not_refuse=(
+                    "The deployer explicitly authorized this behavior via the developer "
+                    "contract, and the output is not safety-restricted."
+                ),
+                why_not_safe_complete=(
+                    "Contract execution does not require caveats; the deployer authorized " "the direct response."
+                ),
+            )
+        except Exception:
+            _LOG.debug("build compliance decision explanation failed", exc_info=True)
+            return None
+
+    def _emit_compliance_decision_trace(
+        self,
+        request: ProcessedRequest,
+        cv: ComplianceVerdict | None,
+        risk_estimation: RiskEstimationProtocol,
+    ) -> None:
+        """Emit a decision trace at the COMPLIANCE_LAYER stage."""
+        try:
+            dt = DecisionTrace(
+                request_id=request.request_id or "",
+                stage="COMPLIANCE_LAYER",
+                sequence=-5,
+                risk_score=float(getattr(risk_estimation, "score", 0.1) or 0.1),
+            )
+            dt.stage_payload = {
+                "compliance_decision": cv.decision.value if cv else "NO_CONTRACT",
+                "matched_rule_id": cv.matched_rule.rule_id if (cv and cv.matched_rule) else None,
+                "matched_rule_summary": cv.matched_rule.rule_summary if (cv and cv.matched_rule) else None,
+                "evaluation_path": cv.evaluation_path.value if cv else "skipped",
+                "confidence": cv.confidence if cv else 0.0,
+                "speculative_draft_validated": cv.speculative_draft_validated if cv else False,
+                "contract_hash": cv.contract_hash if cv else "",
+            }
+            normalize_trace_fields(dt)
+            append_decision_trace(dt)
+        except Exception:
+            _LOG.debug("emit COMPLIANCE_LAYER decision trace failed", exc_info=True)
 
     def _handle_timeout(self, request: ProcessedRequest, error_msg: str, start_time: float) -> OrchestratorResult:
         processing_time = int((time.time() - start_time) * 1000)
@@ -1609,6 +1775,32 @@ class OrchestrationController:
 
             speculative_draft_for_dccl = self._nonblocking_speculative_draft(spec_handle)
             self._run_dccl_evaluation(request, speculative_draft_for_dccl, call_ctx)
+
+            from moralstack.compliance.types import ComplianceDecision
+
+            cv = call_ctx.compliance_verdict
+            if (
+                cv is not None
+                and cv.decision == ComplianceDecision.MATCH
+                and cv.speculative_draft_validated
+                and speculative_draft_for_dccl.strip()
+            ):
+                try:
+                    return self._route_compliance_match(
+                        request=request,
+                        risk_estimation=risk_estimation,
+                        speculative_draft=speculative_draft_for_dccl,
+                        start_time=start_time,
+                        trace=trace,
+                        call_ctx=call_ctx,
+                        spec_handle=spec_handle,
+                    )
+                except Exception as e:
+                    _LOG.warning(
+                        "DCCL compliance fast-path failed (non-fatal), " "falling back to standard pipeline: %s",
+                        e,
+                        exc_info=True,
+                    )
 
             risk_score = risk_estimation.score if hasattr(risk_estimation, "score") else 0.5
             risk_category = getattr(risk_estimation, "risk_category", None)

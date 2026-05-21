@@ -35,12 +35,17 @@ Policy speculative (optional, parallel with risk when enabled)
         ▼
 DCCL.evaluate()  ──► COMPLIANCE_LAYER_* events (observability)
         │              OrchestratorResult.compliance_verdict
-        │              (Commit 2: logged only; no routing effect)
-        ▼
-Risk estimator
+        │
+        ├── MATCH + speculative_draft_validated ──► COMPLIANCE_FAST_PATH
+        │         (NORMAL_COMPLETE from speculative draft; modules deferred)
+        │
+        └── NO_MATCH / SAFETY_OVERRIDE / NO_CONTRACT ──► standard pipeline
         │
         ▼
-decide_action → fast path / deliberation (unchanged in Commit 2)
+Risk estimator (score still computed; may not drive final_action on MATCH)
+        │
+        ▼
+decide_action → fast path / deliberation
 ```
 
 The controller invokes DCCL immediately after the speculative overlap handle
@@ -79,8 +84,10 @@ The output of `evaluate()`. Frozen dataclass with:
 ### `ComplianceSignal`
 
 Attached to the request context when DCCL returns a non-NO_CONTRACT verdict.
-Downstream modules check for this signal and behave cooperatively.
-[Implementation in Commit 3]
+Commit 3 implements the routing effect via a controller-level compliance fast-path
+rather than per-module early-return; downstream modules are not invoked on MATCH.
+A `MODULE_DEFERRED_TO_COMPLIANCE` orchestration event is emitted for each skipped
+module (audit).
 
 ### `StructuredRule`
 
@@ -197,14 +204,18 @@ JSONL files as other module events, depending on `MORALSTACK_OBSERVABILITY_MODE`
 
 ## Pipeline integration
 
-**Commit 2:** The controller calls `_run_dccl_evaluation()` after speculative
-overlap / risk entry. The verdict is stored on `ProcessCallContext.compliance_verdict`
-and exposed on `OrchestratorResult.compliance_verdict`. **Routing and `final_action`
-are unchanged.**
+The controller calls `_run_dccl_evaluation()` after speculative overlap / risk entry.
+The verdict is stored on `ProcessCallContext.compliance_verdict` and exposed on
+`OrchestratorResult.compliance_verdict`.
 
-**Commit 3:** When the DCCL returns `MATCH`, downstream modules check for the
-`ComplianceSignal` in the request context and return early with synthetic
-results, emitting `MODULE_DEFERRED_TO_COMPLIANCE` for audit.
+When the DCCL returns **MATCH** and `speculative_draft_validated=True` with a non-empty
+speculative draft, `_route_compliance_match()` produces `NORMAL_COMPLETE` from the
+validated draft (`path=COMPLIANCE_FAST_PATH`), abandons remaining speculative work,
+emits five `MODULE_DEFERRED_TO_COMPLIANCE` events (risk_router, critic, simulator,
+perspectives, deliberation), and skips `decide_action` routing entirely. A fast-path
+failure falls back to the standard pipeline (non-fatal).
+
+**NO_MATCH**, **SAFETY_OVERRIDE**, and **NO_CONTRACT** leave routing unchanged.
 
 ## Testing
 
@@ -213,7 +224,8 @@ Unit tests for the data structures and config loader are in
 Safety classifier tests in `tests/test_compliance_safety_override.py` (Commit 2).
 Full evaluation logic tests in `tests/test_compliance_evaluation.py` (Commit 2).
 Orchestrator integration (isolation) in `tests/test_compliance_orchestrator_integration.py` (Commit 2).
-Pipeline signal propagation tests in `tests/test_compliance_integration.py` (Commit 3).
+Pipeline signal propagation tests in `tests/test_compliance_fast_path.py` and
+`tests/test_sdk_dccl.py` (Commit 3).
 
 ## SDK compatibility
 

@@ -47,4 +47,9 @@ def build_governance_headers(
     }
     if cached_from:
         headers["X-Moralstack-Cached-From"] = cached_from
+    cv = getattr(result, "compliance_verdict", None)
+    if cv is not None and cv.decision.value != "NO_CONTRACT":
+        headers["X-Moralstack-Compliance-Decision"] = cv.decision.value
+        if cv.matched_rule is not None:
+            headers["X-Moralstack-Compliance-Rule"] = cv.matched_rule.rule_id
     return headers

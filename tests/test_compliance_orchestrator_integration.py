@@ -173,11 +173,11 @@ def test_orchestrator_no_dccl_events_without_contract(
     assert result.compliance_verdict.decision == ComplianceDecision.NO_CONTRACT
 
 
-def test_pipeline_decision_unchanged_with_dccl_match(
+def test_pipeline_decision_unchanged_without_validated_draft(
     benign_decision: Decision,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DCCL MATCH is observable but routing still follows decide_action (Commit 2 isolation)."""
+    """DCCL MATCH without validated draft does not activate the compliance fast-path."""
     monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "structured")
     ctrl = _build_controller()
 
@@ -198,6 +198,7 @@ def test_pipeline_decision_unchanged_with_dccl_match(
     run_benign_mock = MagicMock(return_value=_benign_orchestrator_result(req.request_id))
 
     with (
+        patch.object(ctrl, "_nonblocking_speculative_draft", return_value=""),
         patch("moralstack.orchestration.controller.decide_action", return_value=(benign_decision, explanation)),
         patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
         patch("moralstack.persistence.sink.persist_orchestration_event"),
@@ -207,5 +208,6 @@ def test_pipeline_decision_unchanged_with_dccl_match(
 
     assert result.compliance_verdict is not None
     assert result.compliance_verdict.decision == ComplianceDecision.MATCH
+    assert result.compliance_verdict.speculative_draft_validated is False
     assert run_benign_mock.call_count == 1
     assert result.path == "FAST_PATH"

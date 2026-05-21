@@ -415,6 +415,91 @@ def _overlay_db_models(cfg: dict[str, Any], run_id: str) -> None:
             ms[key] = db_models[key]
 
 
+_COMPLIANCE_VERDICT_EVENT_TYPES = frozenset(
+    {
+        "COMPLIANCE_LAYER_VERDICT_MATCH",
+        "COMPLIANCE_LAYER_VERDICT_NO_MATCH",
+        "COMPLIANCE_LAYER_VERDICT_SAFETY_OVERRIDE",
+        "COMPLIANCE_LAYER_VERDICT_NO_CONTRACT",
+    }
+)
+
+
+def _extract_compliance_data_from_events(orchestration_events: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Build compliance export payload from persisted COMPLIANCE_LAYER_* orchestration events."""
+    if not orchestration_events:
+        return {}
+    for ev in reversed(orchestration_events):
+        event_type = str(ev.get("event_type") or "")
+        if event_type not in _COMPLIANCE_VERDICT_EVENT_TYPES:
+            continue
+        payload = ev.get("payload") or ev.get("payload_json") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        decision = str(ev.get("decision") or payload.get("compliance_decision") or "")
+        if not decision or decision == "NO_CONTRACT":
+            if event_type == "COMPLIANCE_LAYER_VERDICT_NO_CONTRACT":
+                return {}
+            continue
+        return {
+            "compliance_decision": decision,
+            "evaluation_path": payload.get("evaluation_path"),
+            "matched_rule_summary": payload.get("matched_rule_summary"),
+            "safety_override_reason": payload.get("safety_override_reason"),
+            "confidence": payload.get("confidence", 0.0),
+            "speculative_draft_validated": payload.get("speculative_draft_validated", False),
+        }
+    return {}
+
+
+def _render_compliance_layer_section(compliance_data: dict[str, Any]) -> str:
+    """Render the DCCL section in the markdown export."""
+    decision = compliance_data.get("compliance_decision")
+    if not decision or decision == "NO_CONTRACT":
+        return ""
+
+    icon = {
+        "MATCH": "⚖️",
+        "NO_MATCH": "⚖️",
+        "SAFETY_OVERRIDE": "⚠️",
+    }.get(decision, "⚖️")
+
+    lines = [
+        f"## {icon} Developer Contract Compliance Layer\n",
+        "| Property | Value |",
+        "|----------|-------|",
+        f"| Decision | {decision} |",
+        f"| Evaluation Path | {compliance_data.get('evaluation_path', '—')} |",
+    ]
+    if compliance_data.get("matched_rule_summary"):
+        lines.append(f"| Matched Rule | {compliance_data['matched_rule_summary']} |")
+    if compliance_data.get("safety_override_reason"):
+        lines.append(f"| Safety Override Reason | {compliance_data['safety_override_reason']} |")
+    confidence = compliance_data.get("confidence", 0.0)
+    try:
+        confidence_fmt = f"{float(confidence):.2f}"
+    except (TypeError, ValueError):
+        confidence_fmt = "0.00"
+    lines.append(f"| Confidence | {confidence_fmt} |")
+    validated = compliance_data.get("speculative_draft_validated")
+    lines.append(f"| Speculative Draft Validated | {'✓ Yes' if validated else '✗ No'} |")
+
+    if decision == "MATCH":
+        lines.append("\n### Modules Deferred")
+        lines.append("- risk_router (skipped: compliance_layer_match)")
+        lines.append("- critic (skipped: compliance_layer_match)")
+        lines.append("- simulator (skipped: compliance_layer_match)")
+        lines.append("- perspectives (skipped: compliance_layer_match)")
+        lines.append("- deliberation (skipped: compliance_layer_match)")
+
+    return "\n".join(lines) + "\n"
+
+
 def export_request_markdown(run_id: str, request_id: str) -> str:
     """
     Exports a single request's deliberation report as markdown.
@@ -444,6 +529,10 @@ def export_request_markdown(run_id: str, request_id: str) -> str:
 
     try:
         orch = get_orchestration_events_for_request(run_id, request_id)
+        compliance_data = _extract_compliance_data_from_events(orch)
+        compliance_md = _render_compliance_layer_section(compliance_data)
+        if compliance_md:
+            md += "\n\n---\n\n" + compliance_md
         calls = get_llm_calls_for_request(run_id, request_id)
         vm = build_runtime_decision_observability(
             traces=report.decision_traces or [],

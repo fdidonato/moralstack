@@ -13,6 +13,22 @@ Normative reference: multiturn design v1.3 section 4.
 - `compute_conversation_fingerprint` — deterministic diagnostic hash from the opening message stem (through the first `user` message); not the authoritative `conversation_id` (use `msconv-*` from the correlation store or client headers).
 - `build_governance_headers` — header dict from `OrchestratorResult`.
 
+## Governance response headers
+
+`build_governance_headers` (`moralstack/server/headers.py`) attaches:
+
+| Header | Description |
+|--------|-------------|
+| `X-Moralstack-Decision` | `final_action` (`NORMAL_COMPLETE`, `SAFE_COMPLETE`, `REFUSE`, …) |
+| `X-Moralstack-Risk-Score` | Normalized risk score |
+| `X-Moralstack-Posture` | Conversation governance posture |
+| `X-Moralstack-Path` | Processing path (includes `COMPLIANCE_FAST_PATH` on DCCL match) |
+| `X-Moralstack-Conversation-Id` | Resolved conversation id |
+| `X-Moralstack-Internal-Draft-Reused` | Whether an internal speculative draft was reused |
+| `X-Moralstack-Cached-From` | Present when a ledger cache hit was applied |
+| `X-Moralstack-Compliance-Decision` | DCCL verdict when a developer contract was evaluated (`MATCH`, `NO_MATCH`, `SAFETY_OVERRIDE`; omitted for `NO_CONTRACT`) |
+| `X-Moralstack-Compliance-Rule` | Matched structured rule id when decision is `MATCH` |
+
 ## Deployment notes
 
 - For multi-turn conversational clients (full history replay per request), run **one** uvicorn worker per process unless you provide a **shared** session store and distributed locking across workers. Each worker has its own `InMemorySessionStore` and `ConversationCorrelationStore`.

@@ -19,6 +19,10 @@ The Perspective Ensemble:
 - Generates **suggestions** to improve the response
 - Aggregates evaluations into an overall score
 
+On a DCCL **MATCH**, this module is not invoked. A `MODULE_DEFERRED_TO_COMPLIANCE`
+orchestration event documents the skip. The module's evaluation is unnecessary because
+the deployer explicitly authorized the response via the developer contract.
+
 ---
 
 ## Prompt structure (token reduction)

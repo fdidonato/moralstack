@@ -523,6 +523,11 @@ else:
     max_cycles = config.max_deliberation_cycles
 ```
 
+When the DCCL emits **MATCH**, the request is routed to the compliance fast-path
+before risk routing influences the final action. The risk estimation is still computed
+(in parallel with the speculative draft when enabled) but does not drive the
+`final_action` on that path.
+
 ---
 
 ## Semantic signals and calibrated strings

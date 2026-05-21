@@ -20,6 +20,10 @@ The Consequence Simulator:
 - **Provides feedback** to guide revisions
 - **Semantic layer**: damage taxonomy (`harm_type`, `harm_scope`) and `semantic_expected_harm` influence deliberation
 
+On a DCCL **MATCH**, this module is not invoked. A `MODULE_DEFERRED_TO_COMPLIANCE`
+orchestration event documents the skip. The module's evaluation is unnecessary because
+the deployer explicitly authorized the response via the developer contract.
+
 ---
 
 ## Ultra-Lean Design
