@@ -24,6 +24,13 @@ from starlette.templating import Jinja2Templates
 from moralstack.observability.config import get_db_path
 from moralstack.observability.service import get_obs
 from moralstack.observability.sinks.sqlite_sink import delete_request, delete_run
+from moralstack.orchestration.orchestration_event_taxonomy import (
+    COMPLIANCE_DRAFT_REGENERATED,
+    COMPLIANCE_DRAFT_REUSED,
+    COMPLIANCE_MATCH_DOWNGRADED,
+    MODULE_DEFERRED_TO_COMPLIANCE,
+    PROXY_OUTPUT_FINALIZED,
+)
 from moralstack.reports.benchmark_report_loader import (
     get_benchmark_result_by_request_id,
     get_questions_by_category,
@@ -445,24 +452,63 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+# Deliberation-cycle visual tiers (cycle >= 1).  SEQ_SIMULATOR=3 and SEQ_PERSPECTIVES=4
+# share a tier because they run in parallel via executor.submit.
+_SEQ_TO_VISUAL_TIER: dict[int, int] = {
+    1: 1,  # policy
+    2: 2,  # critic
+    3: 3,  # simulator  } parallel
+    4: 3,  # perspectives}
+    5: 4,  # hindsight
+    6: 5,  # refusal/finalize
+}
+
+# Cycle-0 pipeline sequences (constitution -10, risk -9, calibration -8, compliance -5, …).
+_CYCLE0_SEQ_TO_VISUAL_TIER: dict[int, int] = {
+    -10: 0,  # constitution domain prefilter
+    -9: 1,  # risk mini-estimators (parallel)
+    -8: 2,  # calibration guard
+    -5: 3,  # DCCL evaluate
+    -4: 4,  # draft revalidation (Case 2)
+    0: 1,  # speculative policy (parallel with risk)
+    1: 5,  # compliance-regenerate policy
+}
+
+
+def _visual_tier_for_call(call: dict[str, Any]) -> int:
+    """Map a call to a visual tier for grouping parallel modules."""
+    seq_raw = call.get("sequence_in_cycle")
+    if seq_raw is None:
+        return 9999
+    seq = int(seq_raw)
+    cycle = int(call.get("cycle") or 0)
+    if cycle == 0:
+        vt = _CYCLE0_SEQ_TO_VISUAL_TIER.get(seq)
+        return vt if vt is not None else seq
+    vt = _SEQ_TO_VISUAL_TIER.get(seq)
+    return vt if vt is not None else seq
+
+
+def _call_tier_sort_key(call: dict[str, Any]) -> tuple[Any, ...]:
+    """Primary sort: sequence_in_cycle, then id, then started_at (tie-break only)."""
+    seq = call.get("sequence_in_cycle")
+    if seq is None:
+        seq = 9999
+    return (seq, call.get("id") or 0, call.get("started_at") or 0)
+
+
 def _group_calls_into_tiers_and_enrich(calls: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Group calls into tiers reflecting the actual execution order.
+    """Group calls into tiers reflecting architectural execution order.
 
-    For calls WITH ``sequence_in_cycle`` (deliberation cycles): group by
-    sequence value — same value = same tier (parallel), different value =
-    different tier (sequential).  Adjacent sequence-based tiers whose calls
-    overlap in time are merged (e.g. simulator seq=3 and perspectives seq=4
-    run in parallel via executor).
+    Primary ordering uses ``(sequence_in_cycle, id, started_at)`` — never
+    ``started_at`` alone.  Calls sharing a visual tier (e.g. simulator +
+    perspectives, or risk + speculative policy) are grouped as parallel.
 
-    For calls WITHOUT ``sequence_in_cycle`` (cycle 0 mini-estimators,
-    constitution): fall back to time-overlap grouping.
+    Calls without ``sequence_in_cycle`` fall back to time-overlap grouping
+    (legacy data only) and are appended after sequenced tiers.
 
     Legacy data fix: when ``sequence_in_cycle`` is NULL for deliberation
-    calls (cycle >= 1), infer it from the module name using the known
-    architectural execution order.
-
-    Returns a list of tiers (each tier is a list of call dicts), enriched
-    with relative timing info for parallel tiers.
+    calls (cycle >= 1), infer it from the module name.
     """
     if not calls:
         return []
@@ -484,30 +530,20 @@ def _group_calls_into_tiers_and_enrich(calls: list[dict[str, Any]]) -> list[list
     sequenced = [c for c in calls if c.get("sequence_in_cycle") is not None]
     unsequenced = [c for c in calls if c.get("sequence_in_cycle") is None]
 
-    # ── Sequenced calls: group by visual tier ───────────────────────────
-    # Map sequence_in_cycle to a "visual tier" number.  Sequences that are
-    # known to run in parallel share the same visual tier.
-    # From deliberation_runner: SEQ_SIMULATOR=3 and SEQ_PERSPECTIVES=4 run
-    # via executor.submit (parallel).  Everything else is sequential.
-    _SEQ_TO_VISUAL_TIER: dict[int, int] = {
-        1: 1,  # policy
-        2: 2,  # critic
-        3: 3,  # simulator  }  parallel
-        4: 3,  # perspectives}
-        5: 4,  # hindsight
-        6: 5,  # refusal/finalize
-    }
     by_vtier: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for c in sequenced:
-        seq = c["sequence_in_cycle"]
-        vtier = _SEQ_TO_VISUAL_TIER.get(seq, seq)
-        by_vtier[vtier].append(c)
-    merged_seq_tiers: list[list[dict[str, Any]]] = [
-        sorted(by_vtier[k], key=lambda c: c.get("started_at") or 0) for k in sorted(by_vtier.keys())
-    ]
+        by_vtier[_visual_tier_for_call(c)].append(c)
 
-    # ── Unsequenced calls: time-overlap grouping ─────────────────────────
-    unsorted = sorted(unsequenced, key=lambda c: c.get("started_at") or 0)
+    merged_seq_tiers: list[list[dict[str, Any]]] = []
+    for vtier in sorted(by_vtier.keys()):
+        tier_calls = sorted(
+            by_vtier[vtier],
+            key=lambda c: (c.get("id") or 0, c.get("started_at") or 0),
+        )
+        merged_seq_tiers.append(tier_calls)
+
+    # Rare fallback: legacy rows without sequence_in_cycle.
+    unsorted = sorted(unsequenced, key=lambda c: (c.get("started_at") or 0, c.get("id") or 0))
     time_tiers: list[list[dict[str, Any]]] = []
     current_tier: list[dict[str, Any]] = []
     current_max_end = 0
@@ -527,26 +563,7 @@ def _group_calls_into_tiers_and_enrich(calls: list[dict[str, Any]]) -> list[list
     if current_tier:
         time_tiers.append(current_tier)
 
-    # ── Merge & sort all tiers by earliest started_at ────────────────────
-    all_tiers = time_tiers + merged_seq_tiers
-    all_tiers.sort(key=lambda t: min((c.get("started_at") or 0) for c in t))
-
-    # ── Post-merge: collapse adjacent tiers that overlap in time ────────
-    # With full-parallel evaluation (critic||sim||persp) or speculative
-    # overlap (risk||generate), modules from different static vtiers may
-    # actually run concurrently.  Merge them so the UI shows a single
-    # parallel tier instead of misleading sequential steps.
-    if len(all_tiers) > 1:
-        collapsed: list[list[dict[str, Any]]] = [all_tiers[0]]
-        for tier in all_tiers[1:]:
-            prev = collapsed[-1]
-            prev_max_end = max((c.get("started_at") or 0) + (c.get("duration_ms") or 0) for c in prev)
-            tier_min_start = min((c.get("started_at") or 0) for c in tier)
-            if tier_min_start < prev_max_end:
-                prev.extend(tier)
-            else:
-                collapsed.append(tier)
-        all_tiers = collapsed
+    all_tiers = merged_seq_tiers + time_tiers
 
     # ── Enrich with timing info ──────────────────────────────────────────
     processed: list[list[dict[str, Any]]] = []
@@ -634,22 +651,140 @@ def _build_compliance_card(orchestration_events: list[dict[str, Any]]) -> dict[s
     if decision == "NO_CONTRACT":
         return None
 
-    deferred = [e for e in orchestration_events if (e.get("event_type") or "") == "MODULE_DEFERRED_TO_COMPLIANCE"]
+    deferred = [e for e in orchestration_events if (e.get("event_type") or "") == MODULE_DEFERRED_TO_COMPLIANCE]
+    deferred_modules: list[dict[str, str]] = []
+    for d in deferred:
+        dp = _parse_json_field(d.get("payload_json")) or _parse_json_field(d.get("payload")) or {}
+        mod = (dp.get("module") or "").strip()
+        if mod:
+            deferred_modules.append({"module": mod, "skip_reason": "contract_authorized_rule_execution"})
+
+    action_excerpt = ""
+    for event_type in (COMPLIANCE_DRAFT_REUSED, COMPLIANCE_DRAFT_REGENERATED):
+        for e in orchestration_events:
+            if (e.get("event_type") or "") == event_type:
+                ep = _parse_json_field(e.get("payload_json")) or _parse_json_field(e.get("payload")) or {}
+                action_excerpt = (ep.get("action_excerpt") or "").strip()
+                if action_excerpt:
+                    break
+        if action_excerpt:
+            break
 
     return {
         "decision": decision,
         "evaluation_path": payload.get("evaluation_path", "—"),
         "matched_rule_id": payload.get("matched_rule_id"),
         "matched_rule_summary": payload.get("matched_rule_summary"),
+        "action_payload_summary": action_excerpt or payload.get("matched_rule_summary"),
         "safety_override_reason": payload.get("safety_override_reason"),
         "confidence": payload.get("confidence"),
         "speculative_draft_validated": payload.get("speculative_draft_validated"),
+        "draft_match_method": payload.get("draft_match_method"),
+        "draft_match_confidence": payload.get("draft_match_confidence"),
+        "degraded": payload.get("degraded"),
+        "degraded_reason": payload.get("degraded_reason"),
+        "contract_hash": payload.get("contract_hash"),
         "rationale": payload.get("rationale_excerpt"),
-        "modules_deferred": [
-            (_parse_json_field(d.get("payload_json")) or _parse_json_field(d.get("payload")) or {}).get("module")
-            for d in deferred
-        ],
+        "modules_deferred": [m["module"] for m in deferred_modules],
+        "modules_deferred_detail": deferred_modules,
     }
+
+
+def _compliance_stage_payload_from_traces(traces: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return stage_payload from the COMPLIANCE_LAYER decision trace, if present."""
+    for t in traces:
+        if (t.get("stage") or "").strip().upper() != "COMPLIANCE_LAYER":
+            continue
+        td = _parse_trace_json(t)
+        sp = td.get("stage_payload")
+        if isinstance(sp, dict) and sp:
+            return sp
+    return {}
+
+
+def _build_compliance_fast_path_panel(
+    traces: list[dict[str, Any]],
+    orchestration_events: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Panel fields for COMPLIANCE_FAST_PATH from decision trace stage_payload."""
+    sp = _compliance_stage_payload_from_traces(traces)
+    if not sp:
+        return None
+
+    action_summary = (sp.get("action_payload_summary") or "").strip()
+    if not action_summary:
+        card = _build_compliance_card(orchestration_events)
+        if card:
+            action_summary = (card.get("action_payload_summary") or "").strip()
+
+    return {
+        "compliance_decision": sp.get("compliance_decision"),
+        "matched_rule_id": sp.get("matched_rule_id"),
+        "matched_rule_summary": sp.get("matched_rule_summary"),
+        "action_payload_summary": action_summary,
+        "evaluation_path": sp.get("evaluation_path"),
+        "confidence": sp.get("confidence"),
+        "contract_hash": sp.get("contract_hash"),
+        "speculative_draft_validated": sp.get("speculative_draft_validated"),
+        "draft_match_method": sp.get("draft_match_method"),
+        "draft_match_confidence": sp.get("draft_match_confidence"),
+        "degraded": sp.get("degraded"),
+        "degraded_reason": sp.get("degraded_reason"),
+    }
+
+
+def _build_path_badge_info(orchestration_events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Human-readable pipeline path badge from compliance fast-path orchestration events."""
+    event_types = {(e.get("event_type") or "") for e in orchestration_events}
+
+    if COMPLIANCE_DRAFT_REUSED in event_types:
+        return {
+            "label": "Contract MATCH · draft riusato · moduli bypassati",
+            "kind": "compliance_reused",
+        }
+
+    if COMPLIANCE_DRAFT_REGENERATED in event_types:
+        degraded = False
+        for e in orchestration_events:
+            if (e.get("event_type") or "") != COMPLIANCE_DRAFT_REGENERATED:
+                continue
+            ep = _parse_json_field(e.get("payload_json")) or _parse_json_field(e.get("payload")) or {}
+            reason = (ep.get("reason") or "").strip()
+            if reason.startswith("degraded:"):
+                degraded = True
+                break
+        label = "Contract MATCH · rigenerato"
+        if degraded:
+            label += " (degradato)"
+        label += " · moduli bypassati"
+        return {"label": label, "kind": "compliance_regenerated", "degraded": degraded}
+
+    if COMPLIANCE_MATCH_DOWNGRADED in event_types:
+        return {
+            "label": "MATCH declassato → pipeline standard",
+            "kind": "compliance_downgraded",
+        }
+
+    return {"label": "Pipeline deliberativa standard", "kind": "deliberative"}
+
+
+def _build_proxy_output_info(orchestration_events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Extract final_text_source from PROXY_OUTPUT_FINALIZED, if recorded."""
+    for e in orchestration_events:
+        if (e.get("event_type") or "") != PROXY_OUTPUT_FINALIZED:
+            continue
+        payload = _parse_json_field(e.get("payload_json")) or _parse_json_field(e.get("payload"))
+        if not isinstance(payload, dict):
+            payload = {}
+        source = (payload.get("final_text_source") or "").strip()
+        if source:
+            return {
+                "final_text_source": source,
+                "final_action": payload.get("final_action") or e.get("decision"),
+                "reused_governed_content": payload.get("reused_governed_content"),
+                "final_response_length": payload.get("final_response_length"),
+            }
+    return None
 
 
 def _pick_final_trace_row(traces: list[dict[str, Any]]) -> dict[str, Any]:
@@ -704,9 +839,17 @@ def _execution_summary_from_request(
         except Exception:
             pass
 
+    path_upper = (path_val or "").strip().upper()
+    if path_upper == "FAST_PATH":
+        path_badge = "FAST_PATH"
+    elif path_upper == "COMPLIANCE_FAST_PATH":
+        path_badge = "COMPLIANCE_FAST_PATH"
+    else:
+        path_badge = "DELIBERATIVE_PATH"
+
     return {
         "path": path_val or "—",
-        "path_badge": ("FAST_PATH" if (path_val or "").strip().upper() == "FAST_PATH" else "DELIBERATIVE_PATH"),
+        "path_badge": path_badge,
         "total_cycles": total_cycles,
         "converged": converged,
         "domain_excluded": bool(excluded_trace),
@@ -1098,11 +1241,11 @@ def _synthetic_constitution_call_from_traces(traces: list[dict[str, Any]]) -> di
     return None
 
 
-def _journey_sort_key(c: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
-    """Sort key for journey: cycle, then sequence_in_cycle (logical order), then started_at, phase."""
+def _journey_sort_key(c: dict[str, Any]) -> tuple[Any, Any, Any, Any, Any]:
+    """Sort key: cycle, sequence_in_cycle, id, started_at (tie-break), phase."""
     cycle = c.get("cycle") if c.get("cycle") is not None else -1
     seq = c.get("sequence_in_cycle") if c.get("sequence_in_cycle") is not None else 999
-    return (cycle, seq, c.get("started_at") or 0, c.get("phase") or "")
+    return (cycle, seq, c.get("id") or 0, c.get("started_at") or 0, c.get("phase") or "")
 
 
 def _journey_steps(llm_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1194,7 +1337,12 @@ def _build_execution_timeline(llm_calls: list[dict[str, Any]]) -> dict[str, Any]
         seen.add(mod)
         calls = sorted(
             by_module[mod],
-            key=lambda x: (x.get("started_at") or 0, x.get("phase") or ""),
+            key=lambda x: (
+                x.get("sequence_in_cycle") if x.get("sequence_in_cycle") is not None else 9999,
+                x.get("id") or 0,
+                x.get("started_at") or 0,
+                x.get("phase") or "",
+            ),
         )
         bar_list: list[dict[str, Any]] = []
         for c in calls:
@@ -1218,7 +1366,12 @@ def _build_execution_timeline(llm_calls: list[dict[str, Any]]) -> dict[str, Any]
             continue
         calls = sorted(
             by_module[mod],
-            key=lambda x: (x.get("started_at") or 0, x.get("phase") or ""),
+            key=lambda x: (
+                x.get("sequence_in_cycle") if x.get("sequence_in_cycle") is not None else 9999,
+                x.get("id") or 0,
+                x.get("started_at") or 0,
+                x.get("phase") or "",
+            ),
         )
         bar_list_else: list[dict[str, Any]] = []
         for c in calls:
@@ -1815,6 +1968,12 @@ button:hover{opacity:0.9}
                 "meta_json__parsed": _parse_json_field(req_data.get("meta_json")) if isinstance(req_data, dict) else None,
             }
 
+        path_badge_info = _build_path_badge_info(orchestration_events)
+        proxy_output_info = _build_proxy_output_info(orchestration_events)
+        compliance_fast_path_panel = None
+        if (execution_summary.get("path") or "").strip().upper() == "COMPLIANCE_FAST_PATH":
+            compliance_fast_path_panel = _build_compliance_fast_path_panel(traces, orchestration_events)
+
         if templates:
             return templates.TemplateResponse(
                 request,
@@ -1839,6 +1998,9 @@ button:hover{opacity:0.9}
                     "orchestration_events": orchestration_events,
                     "runtime_decision_obs": runtime_decision_obs,
                     "compliance_card": _build_compliance_card(orchestration_events),
+                    "compliance_fast_path_panel": compliance_fast_path_panel,
+                    "path_badge_info": path_badge_info,
+                    "proxy_output_info": proxy_output_info,
                     "conversation_context": conversation_context,
                 },
             )

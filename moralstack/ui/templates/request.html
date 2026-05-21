@@ -10,6 +10,20 @@
     <h1>Request <span class="mono">{{ req.request_id[:12] }}</span></h1>
 </div>
 
+{% if path_badge_info %}
+<div class="card" style="margin-bottom:1rem; border-left:4px solid #2dd4bf;">
+    <span class="meta-label">Percorso esecuzione</span>
+    <span class="meta-value" style="margin-left:0.5rem;">
+        <span class="badge badge-parallel">{{ path_badge_info.label }}</span>
+    </span>
+    {% if proxy_output_info and proxy_output_info.final_text_source %}
+    <span class="muted" style="margin-left:0.75rem;">
+        Fonte output finale: <span class="mono">{{ proxy_output_info.final_text_source }}</span>
+    </span>
+    {% endif %}
+</div>
+{% endif %}
+
 <div class="card meta-grid">
     <div class="meta-item">
         <span class="meta-label">Domain</span>
@@ -156,7 +170,12 @@
     <div class="meta-grid">
         <div class="meta-item">
             <span class="meta-label">Path</span>
-            <span class="meta-value">{{ execution_summary.path_badge }}</span>
+            <span class="meta-value">
+                {{ execution_summary.path_badge }}
+                {% if path_badge_info %}
+                <span class="muted">({{ path_badge_info.label }})</span>
+                {% endif %}
+            </span>
         </div>
         <div class="meta-item">
             <span class="meta-label">Total deliberative cycles</span>
@@ -433,13 +452,51 @@
             <span class="meta-label">Draft validated</span>
             <span class="meta-value">{{ 'yes' if compliance_card.speculative_draft_validated else 'no' }}</span>
         </div>
+
+        {% if compliance_card.draft_match_method %}
+        <div class="meta-item">
+            <span class="meta-label">Draft validation</span>
+            <span class="meta-value mono">
+                {{ compliance_card.draft_match_method }}
+                {% if compliance_card.draft_match_confidence is not none %}
+                ({{ '%.2f'|format(compliance_card.draft_match_confidence) }})
+                {% endif %}
+            </span>
+        </div>
+        {% endif %}
+
+        {% if compliance_card.degraded %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Verdetto degradato</span>
+            <span class="meta-value">
+                <span class="badge badge-running">{{ compliance_card.degraded_reason or '—' }}</span>
+            </span>
+        </div>
+        {% endif %}
     </div>
+
+    {% if compliance_card.action_payload_summary %}
+    <p class="muted" style="margin-top:0.5rem;">
+        <strong>Output autorizzato:</strong>
+        <span class="mono">{{ compliance_card.action_payload_summary }}</span>
+    </p>
+    {% endif %}
 
     {% if compliance_card.rationale %}
     <p class="muted" style="margin-top:0.5rem;"><strong>Rationale:</strong> {{ compliance_card.rationale }}</p>
     {% endif %}
 
-    {% if compliance_card.modules_deferred %}
+    {% if compliance_card.modules_deferred_detail %}
+    <h4 style="margin-top:1rem;">Moduli bypassati (DCCL MATCH)</h4>
+    <ul class="principles-list">
+        {% for m in compliance_card.modules_deferred_detail %}
+        <li class="principle-item">
+            <span class="mono">{{ m.module }}</span>
+            <span class="muted"> — saltato: esecuzione regola autorizzata dal contratto</span>
+        </li>
+        {% endfor %}
+    </ul>
+    {% elif compliance_card.modules_deferred %}
     <p class="muted" style="margin-top:0.5rem;"><strong>Modules deferred to compliance:</strong>
         <span class="mono">{{ compliance_card.modules_deferred | join(', ') }}</span>
     </p>
@@ -1030,10 +1087,61 @@
                     <span class="meta-label">Total Cycles</span>
                     <span class="meta-value">{{ final_decision_card.total_cycles }}</span>
                 </div>
+                {% if final_decision_card.path %}
                 <div class="meta-item">
                     <span class="meta-label">Path</span>
                     <span class="meta-value">{{ final_decision_card.path }}</span>
                 </div>
+                {% endif %}
+                {% if compliance_fast_path_panel %}
+                <div class="meta-item span-2" style="grid-column:1/-1; margin-top:0.5rem; padding-top:0.75rem; border-top:1px solid var(--border);">
+                    <span class="meta-label">DCCL decision (fast-path)</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Verdetto</span>
+                    <span class="meta-value">
+                        <span class="badge badge-ok">{{ compliance_fast_path_panel.compliance_decision or '—' }}</span>
+                    </span>
+                </div>
+                {% if compliance_fast_path_panel.matched_rule_summary or compliance_fast_path_panel.matched_rule_id %}
+                <div class="meta-item">
+                    <span class="meta-label">Regola</span>
+                    <span class="meta-value mono">
+                        {{ compliance_fast_path_panel.matched_rule_summary or compliance_fast_path_panel.matched_rule_id }}
+                    </span>
+                </div>
+                {% endif %}
+                {% if compliance_fast_path_panel.action_payload_summary %}
+                <div class="meta-item span-2">
+                    <span class="meta-label">Output autorizzato</span>
+                    <span class="meta-value mono">{{ compliance_fast_path_panel.action_payload_summary }}</span>
+                </div>
+                {% endif %}
+                {% if compliance_fast_path_panel.draft_match_method %}
+                <div class="meta-item">
+                    <span class="meta-label">Validazione draft</span>
+                    <span class="meta-value mono">
+                        {{ compliance_fast_path_panel.draft_match_method }}
+                        {% if compliance_fast_path_panel.draft_match_confidence is not none %}
+                        · conf={{ '%.2f'|format(compliance_fast_path_panel.draft_match_confidence) }}
+                        {% endif %}
+                    </span>
+                </div>
+                {% endif %}
+                {% if compliance_fast_path_panel.evaluation_path %}
+                <div class="meta-item">
+                    <span class="meta-label">Evaluation path</span>
+                    <span class="meta-value mono">{{ compliance_fast_path_panel.evaluation_path }}</span>
+                </div>
+                {% endif %}
+                {% if compliance_fast_path_panel.degraded %}
+                <div class="meta-item span-2">
+                    <span class="meta-label">Verdetto degradato</span>
+                    <span class="meta-value">
+                        <span class="badge badge-running">{{ compliance_fast_path_panel.degraded_reason or '—' }}</span>
+                    </span>
+                </div>
+                {% endif %}
                 {% if final_decision_card.winning_rule %}
                 <div class="meta-item">
                     <span class="meta-label">Winning Rule</span>

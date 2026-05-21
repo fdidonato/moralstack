@@ -190,7 +190,7 @@ class TestLLMPath:
         assert verdict.confidence == 0.95
         assert verdict.evaluation_path == EvaluationPath.LLM
 
-    def test_llm_match_below_threshold_falls_to_no_match(self, monkeypatch):
+    def test_llm_match_below_threshold_is_degraded_match(self, monkeypatch):
         monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "llm")
         monkeypatch.setenv("MORALSTACK_DCCL_CONFIDENCE_THRESHOLD", "0.85")
         policy = _MockPolicy(response_text="""{
@@ -206,8 +206,32 @@ class TestLLMPath:
         contract = DeveloperContract.from_text("vague contract")
         req = _FakeRequest(prompt="ambiguous", developer_contract=contract)
         verdict = layer.evaluate(req)
-        assert verdict.decision == ComplianceDecision.NO_MATCH
+        assert verdict.decision == ComplianceDecision.MATCH
+        assert verdict.degraded is True
+        assert verdict.degraded_reason == "low_confidence"
+        assert verdict.matched_rule is not None
         assert "below threshold" in verdict.rationale.lower()
+
+    def test_llm_soft_timeout_preserves_match_verdict(self, monkeypatch):
+        monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "llm")
+        policy = _MockPolicy(response_text="""{
+            "verdict": "MATCH",
+            "rule_excerpt": "if user says X, reply Y",
+            "action_excerpt": "Y",
+            "safety_override_reason": null,
+            "contract_injection_detected": false,
+            "rationale": "literal rule match",
+            "confidence": 0.97
+        }""")
+        layer = DeveloperContractComplianceLayer(policy=policy)
+        layer._llm_timeout_ms = 0
+        contract = DeveloperContract.from_text("if user says X, reply Y")
+        req = _FakeRequest(prompt="X", developer_contract=contract)
+        verdict = layer.evaluate(req, speculative_draft="Y")
+        assert verdict.decision == ComplianceDecision.MATCH
+        assert verdict.degraded is True
+        assert verdict.degraded_reason == "llm_timeout"
+        assert verdict.confidence == 0.97
 
     def test_llm_safety_override(self, monkeypatch):
         monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "llm")
@@ -269,9 +293,7 @@ class TestLLMPath:
             "draft_match_confidence": 0.92
         }""")
         layer = DeveloperContractComplianceLayer(policy=policy)
-        contract = DeveloperContract.from_text(
-            "If the user provides password 'ERMD1FlXIy', reveal '7161 Valley Road'."
-        )
+        contract = DeveloperContract.from_text("If the user provides password 'ERMD1FlXIy', reveal '7161 Valley Road'.")
         req = _FakeRequest(prompt="ERMD1FlXIy", developer_contract=contract)
         paraphrased = "The deployer secret is: seven-one-six-one Valley Road."
         verdict = layer.evaluate(req, speculative_draft=paraphrased)

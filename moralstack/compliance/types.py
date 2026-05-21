@@ -177,6 +177,9 @@ class ComplianceVerdict:
             or "none" when not validated.
         draft_match_confidence: semantic draft-match confidence from the LLM verdict
             (0.0 when substring matched or not validated).
+        degraded: True when the verdict is usable but quality gates were not fully met
+            (e.g. soft timeout exceeded or confidence below threshold). Decision is preserved.
+        degraded_reason: non-empty when degraded is True — ``llm_timeout`` or ``low_confidence``.
     """
 
     decision: ComplianceDecision
@@ -190,6 +193,8 @@ class ComplianceVerdict:
     speculative_draft_validated: bool = False
     draft_match_method: str = ""
     draft_match_confidence: float = 0.0
+    degraded: bool = False
+    degraded_reason: str = ""
 
     def is_match(self) -> bool:
         """True if the verdict authorizes the pipeline to defer to DCCL."""

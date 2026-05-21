@@ -46,11 +46,14 @@ from moralstack.orchestration.event_emitter import EventEmitter
 from moralstack.orchestration.language_resolver import resolve_prompt_with_language
 from moralstack.orchestration.ledger import CachedDecision, LedgerResult, SemanticDecisionLedger
 from moralstack.orchestration.orchestration_event_taxonomy import (
+    COMPLIANCE_DRAFT_REGENERATED,
+    COMPLIANCE_DRAFT_REUSED,
     COMPLIANCE_LAYER_STARTED,
     COMPLIANCE_LAYER_VERDICT_MATCH,
     COMPLIANCE_LAYER_VERDICT_NO_CONTRACT,
     COMPLIANCE_LAYER_VERDICT_NO_MATCH,
     COMPLIANCE_LAYER_VERDICT_SAFETY_OVERRIDE,
+    COMPLIANCE_MATCH_DOWNGRADED,
     CONVERSATION_CONTEXT_ATTACHED,
     CONVERSATION_STATE_UPDATED,
     LEDGER_FAST_PATH_APPLIED,
@@ -1046,6 +1049,8 @@ class OrchestrationController:
                     "speculative_draft_validated": compliance_verdict.speculative_draft_validated,
                     "draft_match_method": compliance_verdict.draft_match_method,
                     "draft_match_confidence": compliance_verdict.draft_match_confidence,
+                    "degraded": compliance_verdict.degraded,
+                    "degraded_reason": compliance_verdict.degraded_reason,
                     "rationale_excerpt": (compliance_verdict.rationale[:300] if compliance_verdict.rationale else ""),
                     "contract_hash": compliance_verdict.contract_hash,
                 },
@@ -1055,6 +1060,147 @@ class OrchestrationController:
             compliance_verdict = None
 
         call_ctx.compliance_verdict = compliance_verdict
+
+    def _regenerate_for_contract(
+        self,
+        request: ProcessedRequest,
+        cv: ComplianceVerdict,
+        risk_estimation: RiskEstimationProtocol,
+    ) -> str:
+        """Generate a contract-authorized response when the speculative draft is missing or invalid."""
+        if self.policy is None or cv.matched_rule is None:
+            return ""
+
+        system = effective_system_for_request(
+            base=self._protected_system_prompt,
+            request=request,
+            mode="normal",
+        )
+        action_ref = cv.matched_rule.action_payload_summary or cv.matched_rule.rule_excerpt
+        user = (
+            f"The deployer contract authorizes this exact response for the request: "
+            f"{action_ref}.\nProduce that authorized response now, exactly and without "
+            f"refusal.\n\nUser request: {request.prompt}"
+        )
+
+        from moralstack.models.base import GenerationConfig
+        from moralstack.orchestration.persistence_helpers import record_llm_call
+
+        config = GenerationConfig(max_tokens=1024, temperature=0.0, top_p=1.0)
+        start = time.perf_counter()
+        wall = int(time.time() * 1000)
+        try:
+            result = self.policy.generate(prompt=user, system=system, config=config)
+        except TypeError:
+            result = self.policy.generate(prompt=user, system=system)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        text = getattr(result, "text", "") or ""
+
+        try:
+            record_llm_call(
+                self.logger,
+                None,
+                {
+                    "cycle": 0,
+                    "phase": "policy_generate",
+                    "module": "policy",
+                    "action": "generate (compliance-regenerate)",
+                    "started_at": wall,
+                    "duration_ms": elapsed_ms,
+                    "prompt": user,
+                    "raw_response": text,
+                    "token_usage_json": (result.token_usage_json() if hasattr(result, "token_usage_json") else None),
+                    "sequence_in_cycle": 1,
+                    "call_kind": "compliance_regenerate",
+                },
+            )
+        except Exception:
+            _LOG.debug("record compliance_regenerate llm call failed", exc_info=True)
+
+        return text
+
+    def _revalidate_draft(
+        self,
+        cv: ComplianceVerdict,
+        draft: str,
+    ) -> tuple[bool, str, float]:
+        """Re-check draft against the matched rule action; semantic LLM only if substring fails."""
+        from moralstack.compliance.config import get_dccl_confidence_threshold, get_dccl_llm_model
+        from moralstack.compliance.dccl import DCCL_DRAFT_MATCH_SYSTEM_PROMPT, validate_draft_against_action
+        from moralstack.models.base import GenerationConfig
+        from moralstack.orchestration.persistence_helpers import record_llm_call
+        from moralstack.utils.json_utils import extract_json
+
+        threshold = get_dccl_confidence_threshold()
+        action_excerpt = cv.matched_rule.action_payload_summary if cv.matched_rule else ""
+        ok, method, conf = validate_draft_against_action(action_excerpt, draft, None, threshold)
+        if ok:
+            return ok, method, conf
+
+        if self.policy is None or not action_excerpt or not draft:
+            return (False, "none", conf)
+
+        prompt = (
+            f"AUTHORIZED ACTION:\n{action_excerpt[:500]}\n\n"
+            f"DRAFT:\n{draft[:1000]}\n\n"
+            f"Does the draft semantically deliver the authorized action?"
+        )
+        config = GenerationConfig(
+            max_tokens=128,
+            temperature=0.0,
+            top_p=1.0,
+            response_format={"type": "json_object"},
+        )
+        start = time.perf_counter()
+        wall = int(time.time() * 1000)
+        try:
+            result = self.policy.generate(
+                prompt=prompt,
+                system=DCCL_DRAFT_MATCH_SYSTEM_PROMPT,
+                config=config,
+                model_override=get_dccl_llm_model(),
+            )  # type: ignore[call-arg]
+        except TypeError:
+            try:
+                result = self.policy.generate(prompt=prompt, system=DCCL_DRAFT_MATCH_SYSTEM_PROMPT)
+            except Exception:
+                _LOG.debug("compliance draft semantic revalidation failed", exc_info=True)
+                return (False, "none", conf)
+        except Exception:
+            _LOG.debug("compliance draft semantic revalidation failed", exc_info=True)
+            return (False, "none", conf)
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        raw_text = getattr(result, "text", "") or ""
+        try:
+            record_llm_call(
+                self.logger,
+                None,
+                {
+                    "cycle": 0,
+                    "phase": "compliance_layer",
+                    "module": "compliance_layer",
+                    "action": "draft_revalidate",
+                    "started_at": wall,
+                    "duration_ms": elapsed_ms,
+                    "prompt": prompt,
+                    "system_prompt": DCCL_DRAFT_MATCH_SYSTEM_PROMPT,
+                    "raw_response": raw_text,
+                    "token_usage_json": (result.token_usage_json() if hasattr(result, "token_usage_json") else None),
+                    "sequence_in_cycle": -4,
+                    "call_kind": "compliance_draft_revalidate",
+                },
+            )
+        except Exception:
+            _LOG.debug("record compliance_draft_revalidate llm call failed", exc_info=True)
+
+        try:
+            parsed = extract_json(raw_text)
+        except Exception:
+            _LOG.debug("compliance draft revalidation JSON parse failed", exc_info=True)
+            return (False, "none", conf)
+
+        return validate_draft_against_action(action_excerpt, draft, parsed, threshold)
 
     def _route_compliance_match(
         self,
@@ -1213,6 +1359,8 @@ class OrchestrationController:
                 "speculative_draft_validated": cv.speculative_draft_validated if cv else False,
                 "draft_match_method": cv.draft_match_method if cv else "",
                 "draft_match_confidence": cv.draft_match_confidence if cv else 0.0,
+                "degraded": cv.degraded if cv else False,
+                "degraded_reason": cv.degraded_reason if cv else "",
                 "contract_hash": cv.contract_hash if cv else "",
             }
             normalize_trace_fields(dt)
@@ -1783,28 +1931,91 @@ class OrchestrationController:
             from moralstack.compliance.types import ComplianceDecision
 
             cv = call_ctx.compliance_verdict
-            if (
-                cv is not None
-                and cv.decision == ComplianceDecision.MATCH
-                and cv.speculative_draft_validated
-                and speculative_draft_for_dccl.strip()
-            ):
-                try:
-                    return self._route_compliance_match(
-                        request=request,
-                        risk_estimation=risk_estimation,
-                        speculative_draft=speculative_draft_for_dccl,
-                        start_time=start_time,
-                        trace=trace,
-                        call_ctx=call_ctx,
-                        spec_handle=spec_handle,
+            if cv is not None and cv.decision == ComplianceDecision.MATCH:
+                draft = speculative_draft_for_dccl
+                case1 = cv.speculative_draft_validated and not cv.degraded and draft.strip()
+                if case1:
+                    self._events.emit_orchestration_event(
+                        request_id=request.request_id or "",
+                        stage="compliance_layer",
+                        component="dccl",
+                        event_type=COMPLIANCE_DRAFT_REUSED,
+                        decision="reused",
+                        status="ok",
+                        payload={
+                            "matched_rule_id": (cv.matched_rule.rule_id if cv.matched_rule else None),
+                            "draft_match_method": cv.draft_match_method,
+                            "draft_match_confidence": cv.draft_match_confidence,
+                            "action_excerpt": (cv.matched_rule.action_payload_summary if cv.matched_rule else ""),
+                            "degraded": False,
+                        },
                     )
-                except Exception as e:
-                    _LOG.warning(
-                        "DCCL compliance fast-path failed (non-fatal), " "falling back to standard pipeline: %s",
-                        e,
-                        exc_info=True,
-                    )
+                    try:
+                        return self._route_compliance_match(
+                            request=request,
+                            risk_estimation=risk_estimation,
+                            speculative_draft=draft,
+                            start_time=start_time,
+                            trace=trace,
+                            call_ctx=call_ctx,
+                            spec_handle=spec_handle,
+                        )
+                    except Exception as e:
+                        _LOG.warning(
+                            "compliance fast-path failed (non-fatal): %s",
+                            e,
+                            exc_info=True,
+                        )
+                else:
+                    new_draft = self._regenerate_for_contract(request, cv, risk_estimation)
+                    ok, method, conf = self._revalidate_draft(cv, new_draft)
+                    if ok:
+                        self._events.emit_orchestration_event(
+                            request_id=request.request_id or "",
+                            stage="compliance_layer",
+                            component="dccl",
+                            event_type=COMPLIANCE_DRAFT_REGENERATED,
+                            decision="regenerated",
+                            status="ok",
+                            payload={
+                                "validated": True,
+                                "draft_match_method": method,
+                                "draft_match_confidence": conf,
+                                "reason": (f"degraded:{cv.degraded_reason}" if cv.degraded else "initial_draft_unvalidated"),
+                            },
+                        )
+                        try:
+                            return self._route_compliance_match(
+                                request=request,
+                                risk_estimation=risk_estimation,
+                                speculative_draft=new_draft,
+                                start_time=start_time,
+                                trace=trace,
+                                call_ctx=call_ctx,
+                                spec_handle=spec_handle,
+                            )
+                        except Exception as e:
+                            _LOG.warning(
+                                "compliance regen fast-path failed (non-fatal): %s",
+                                e,
+                                exc_info=True,
+                            )
+                    else:
+                        self._events.emit_orchestration_event(
+                            request_id=request.request_id or "",
+                            stage="compliance_layer",
+                            component="dccl",
+                            event_type=COMPLIANCE_MATCH_DOWNGRADED,
+                            decision="downgraded",
+                            status="ok",
+                            payload={
+                                "reason": "regenerated_draft_unvalidated",
+                                "matched_rule_id": (cv.matched_rule.rule_id if cv.matched_rule else None),
+                                "action_excerpt": (cv.matched_rule.action_payload_summary if cv.matched_rule else ""),
+                                "degraded": cv.degraded,
+                                "degraded_reason": cv.degraded_reason,
+                            },
+                        )
 
             risk_score = risk_estimation.score if hasattr(risk_estimation, "score") else 0.5
             risk_category = getattr(risk_estimation, "risk_category", None)

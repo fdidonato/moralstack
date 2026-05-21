@@ -13,6 +13,7 @@ Note: invocation from the controller happens in Commit 2; signal propagation shi
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 import time
@@ -41,6 +42,37 @@ from moralstack.compliance.types import (
 )
 
 _LOG = logging.getLogger(__name__)
+
+DCCL_DRAFT_MATCH_SYSTEM_PROMPT = """You judge whether a response draft semantically delivers an authorized action.
+
+Output ONLY valid JSON:
+{
+  "draft_matches_action": true | false,
+  "draft_match_confidence": 0.0-1.0
+}
+
+A paraphrase, reformatting, or equivalent rendering counts as a match — it need NOT be verbatim."""
+
+
+def validate_draft_against_action(
+    action_excerpt: str,
+    draft: str,
+    parsed_semantic: dict[str, Any] | None,
+    threshold: float,
+) -> tuple[bool, str, float]:
+    """Return (validated, method, confidence). method is one of substring, semantic, none."""
+    if not action_excerpt or not draft:
+        return (False, "none", 0.0)
+    if action_excerpt.lower().strip() in draft.lower().strip():
+        return (True, "substring", 1.0)
+    if parsed_semantic is not None:
+        sem = bool(parsed_semantic.get("draft_matches_action", False))
+        conf = float(parsed_semantic.get("draft_match_confidence", 0.0))
+        if sem and conf >= threshold:
+            return (True, "semantic", conf)
+        return (False, "none", conf)
+    return (False, "none", 0.0)
+
 
 _DCCL_LLM_SYSTEM_PROMPT = """You are the Developer Contract Compliance Layer (DCCL).
 
@@ -250,6 +282,8 @@ class DeveloperContractComplianceLayer:
                 speculative_draft_validated=verdict.speculative_draft_validated,
                 draft_match_method=verdict.draft_match_method,
                 draft_match_confidence=verdict.draft_match_confidence,
+                degraded=verdict.degraded,
+                degraded_reason=verdict.degraded_reason,
             )
         return verdict
 
@@ -346,12 +380,13 @@ class DeveloperContractComplianceLayer:
         if rule.action_type != ActionType.EMIT:
             return True
 
-        if not rule.action_payload or not speculative_draft:
-            return False
-
-        payload_lower = rule.action_payload.lower().strip()
-        draft_lower = speculative_draft.lower().strip()
-        return payload_lower in draft_lower
+        validated, _, _ = validate_draft_against_action(
+            rule.action_payload,
+            speculative_draft,
+            None,
+            self._confidence_threshold,
+        )
+        return validated
 
     def _evaluate_llm(
         self,
@@ -430,22 +465,20 @@ class DeveloperContractComplianceLayer:
             except Exception:
                 _LOG.debug("DCCL LLM call logging failed", exc_info=True)
 
+            parsed = extract_json(result.text)
+            verdict = self._parse_llm_verdict(parsed, contract, speculative_draft)
             if llm_elapsed_ms > self._llm_timeout_ms:
                 _LOG.warning(
-                    "DCCL LLM call exceeded timeout: %.0f ms > %d ms",
+                    "DCCL LLM exceeded soft timeout: %.0f ms > %d ms (verdict preserved, marked degraded)",
                     llm_elapsed_ms,
                     self._llm_timeout_ms,
                 )
-                return ComplianceVerdict(
-                    decision=ComplianceDecision.NO_MATCH,
-                    confidence=0.0,
-                    rationale=f"LLM call timeout ({llm_elapsed_ms:.0f}ms > {self._llm_timeout_ms}ms).",
-                    evaluation_path=EvaluationPath.LLM,
-                    contract_hash=getattr(contract, "contract_hash", ""),
+                verdict = dataclasses.replace(
+                    verdict,
+                    degraded=True,
+                    degraded_reason="llm_timeout",
                 )
-
-            parsed = extract_json(result.text)
-            return self._parse_llm_verdict(parsed, contract, speculative_draft)
+            return verdict
         except Exception as e:
             _LOG.warning("DCCL LLM evaluation failed: %s", e)
             return ComplianceVerdict(
@@ -504,17 +537,7 @@ class DeveloperContractComplianceLayer:
             )
 
         if verdict_str == "MATCH":
-            if confidence < self._confidence_threshold:
-                return ComplianceVerdict(
-                    decision=ComplianceDecision.NO_MATCH,
-                    confidence=confidence,
-                    rationale=(
-                        f"LLM suggested MATCH but confidence {confidence:.2f} "
-                        f"below threshold {self._confidence_threshold:.2f}. {rationale}"
-                    ),
-                    evaluation_path=EvaluationPath.LLM,
-                    contract_hash=contract_hash,
-                )
+            low_confidence_degraded = confidence < self._confidence_threshold
 
             action_text_for_check = action_excerpt or speculative_draft
             override_cat = classify_safety_override(action_text_for_check, policy=None, use_llm=False)
@@ -532,16 +555,22 @@ class DeveloperContractComplianceLayer:
             draft_match_method = "none"
             draft_match_confidence = 0.0
             if action_excerpt and speculative_draft:
-                if action_excerpt.lower().strip() in speculative_draft.lower().strip():
-                    draft_validated = True
-                    draft_match_method = "substring"
-                else:
-                    sem = bool(parsed.get("draft_matches_action", False))
-                    sem_conf = float(parsed.get("draft_match_confidence", 0.0))
-                    if sem and sem_conf >= self._confidence_threshold:
-                        draft_validated = True
-                        draft_match_method = "semantic"
-                    draft_match_confidence = sem_conf
+                validated, method, conf = validate_draft_against_action(
+                    action_excerpt,
+                    speculative_draft,
+                    parsed,
+                    self._confidence_threshold,
+                )
+                draft_validated = validated
+                draft_match_method = method
+                draft_match_confidence = 0.0 if method == "substring" else conf
+
+            match_rationale = rationale
+            if low_confidence_degraded:
+                match_rationale = (
+                    f"LLM MATCH with confidence {confidence:.2f} "
+                    f"below threshold {self._confidence_threshold:.2f}. {rationale}"
+                )
 
             return ComplianceVerdict(
                 decision=ComplianceDecision.MATCH,
@@ -552,12 +581,14 @@ class DeveloperContractComplianceLayer:
                     action_payload_summary=action_excerpt[:120],
                 ),
                 confidence=confidence,
-                rationale=rationale,
+                rationale=match_rationale,
                 evaluation_path=EvaluationPath.LLM,
                 contract_hash=contract_hash,
                 speculative_draft_validated=draft_validated,
                 draft_match_method=draft_match_method,
                 draft_match_confidence=draft_match_confidence,
+                degraded=low_confidence_degraded,
+                degraded_reason="low_confidence" if low_confidence_degraded else "",
             )
 
         return ComplianceVerdict(

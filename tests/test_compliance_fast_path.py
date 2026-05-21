@@ -10,12 +10,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from moralstack.compliance import ComplianceDecision, StructuredRule
+from moralstack.compliance.types import ComplianceVerdict, EvaluationPath, MatchedRule
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.risk import OperationalRisk, RiskCategory
 from moralstack.models.risk.schema import RiskEstimation
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.controller import OrchestrationController
 from moralstack.orchestration.orchestration_event_taxonomy import (
+    COMPLIANCE_DRAFT_REGENERATED,
+    COMPLIANCE_DRAFT_REUSED,
     MODULE_DEFERRED_TO_COMPLIANCE,
 )
 from moralstack.orchestration.types import (
@@ -110,6 +113,11 @@ class TestComplianceFastPath:
             request_id="req-fast-match",
             developer_contract=_ping_contract(),
         )
+        emitted: list[str] = []
+
+        def _tracking_emit(**kwargs):
+            emitted.append(str(kwargs.get("event_type") or ""))
+            return None
 
         with (
             patch.object(
@@ -117,6 +125,7 @@ class TestComplianceFastPath:
                 "_nonblocking_speculative_draft",
                 return_value="PONG",
             ),
+            patch.object(ctrl._events, "emit_orchestration_event", side_effect=_tracking_emit),
             patch("moralstack.persistence.sink.persist_orchestration_event"),
         ):
             result = ctrl.process(req)
@@ -126,6 +135,52 @@ class TestComplianceFastPath:
         assert result.response.metadata.final_action == "NORMAL_COMPLETE"
         assert "PONG" in result.response.content
         assert result.path == "COMPLIANCE_FAST_PATH"
+        assert COMPLIANCE_DRAFT_REUSED in emitted
+
+    def test_degraded_match_regenerates_and_fast_paths(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "structured")
+        ctrl = _build_controller()
+        req = ProcessedRequest(
+            prompt="PING",
+            request_id="req-fast-degraded-regen",
+            developer_contract=_ping_contract(),
+        )
+        degraded = ComplianceVerdict(
+            decision=ComplianceDecision.MATCH,
+            matched_rule=MatchedRule(
+                rule_id="r1",
+                rule_summary="ping",
+                rule_excerpt="PING",
+                action_payload_summary="PONG",
+            ),
+            confidence=0.5,
+            rationale="degraded match",
+            evaluation_path=EvaluationPath.LLM,
+            degraded=True,
+            degraded_reason="llm_timeout",
+            speculative_draft_validated=False,
+        )
+        emitted: list[str] = []
+
+        def _tracking_emit(**kwargs):
+            emitted.append(str(kwargs.get("event_type") or ""))
+            return None
+
+        with (
+            patch.object(ctrl, "_nonblocking_speculative_draft", return_value=""),
+            patch(
+                "moralstack.compliance.dccl.DeveloperContractComplianceLayer.evaluate",
+                return_value=degraded,
+            ),
+            patch.object(ctrl, "_regenerate_for_contract", return_value="PONG"),
+            patch.object(ctrl._events, "emit_orchestration_event", side_effect=_tracking_emit),
+            patch("moralstack.persistence.sink.persist_orchestration_event"),
+        ):
+            result = ctrl.process(req)
+
+        assert result.path == "COMPLIANCE_FAST_PATH"
+        assert "PONG" in result.response.content
+        assert COMPLIANCE_DRAFT_REGENERATED in emitted
 
     def test_no_match_uses_standard_pipeline(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "structured")
@@ -290,9 +345,16 @@ class TestComplianceFastPath:
             request_id="req-fast-unvalidated",
             developer_contract=_ping_contract(),
         )
+        emitted: list[str] = []
+
+        def _tracking_emit(**kwargs):
+            emitted.append(str(kwargs.get("event_type") or ""))
+            return None
 
         with (
             patch.object(ctrl, "_nonblocking_speculative_draft", return_value="WRONG OUTPUT"),
+            patch.object(ctrl, "_regenerate_for_contract", return_value="STILL WRONG"),
+            patch.object(ctrl._events, "emit_orchestration_event", side_effect=_tracking_emit),
             patch(
                 "moralstack.orchestration.controller.decide_action",
                 return_value=(
@@ -342,6 +404,7 @@ class TestComplianceFastPath:
         assert result.compliance_verdict.decision == ComplianceDecision.MATCH
         assert result.compliance_verdict.speculative_draft_validated is False
         assert result.path == "FAST_PATH"
+        assert "COMPLIANCE_MATCH_DOWNGRADED" in emitted
 
     def test_module_deferred_events_emitted_on_match(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "structured")

@@ -188,10 +188,13 @@ class DeliberationState:
 Inserted between policy speculative overlap and risk-based routing. The DCCL evaluates
 whether a request invokes a deployer-authorized behavior. It emits its verdict for
 observability (`COMPLIANCE_LAYER_*` events, `OrchestratorResult.compliance_verdict`).
-When the verdict is **MATCH** with `speculative_draft_validated=True`, the controller
-routes to the **compliance fast-path** (`COMPLIANCE_FAST_PATH`, `NORMAL_COMPLETE`)
-and skips risk routing, deliberation, critic, simulator, and perspectives. All other
-verdicts leave the standard pipeline unchanged.
+When the verdict is **MATCH**, the controller applies a three-case routing state
+machine: (1) reuse a validated non-degraded speculative draft, (2) regenerate and
+revalidate when the draft is missing, wrong, or the verdict is `degraded`, or
+(3) fall through to deliberation when revalidation fails. Cases 1–2 route to the
+**compliance fast-path** (`COMPLIANCE_FAST_PATH`, `NORMAL_COMPLETE`) and skip risk
+routing, deliberation, critic, simulator, and perspectives. All other verdicts leave
+the standard pipeline unchanged.
 
 Reference: `docs/modules/compliance_layer.md`, `dccl_specification_v0.3.md`.
 

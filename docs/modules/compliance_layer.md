@@ -86,6 +86,9 @@ The output of `evaluate()`. Frozen dataclass with:
 - `draft_match_confidence`: float in [0.0, 1.0] — semantic draft-match confidence from
   the LLM verdict JSON (`draft_match_confidence`); `0.0` when validation used the
   substring pre-check or did not validate
+- `degraded`: bool — `True` when the verdict is preserved but quality gates were not
+  fully met (soft timeout exceeded or verdict confidence below threshold)
+- `degraded_reason`: `""` | `llm_timeout` | `low_confidence`
 
 ### `ComplianceSignal`
 
@@ -127,23 +130,26 @@ match, the highest `priority` wins.
 
 ### Speculative draft validation
 
-On **MATCH**, the controller fast-path requires `speculative_draft_validated=True` and
-a non-empty speculative draft. Validation runs inside the same DCCL evaluation — no
-extra LLM round-trip.
+Draft validation is centralized in `validate_draft_against_action()` (`dccl.py`).
 
 | Path | Mechanism |
 |---|---|
-| **Structured** | Substring check: `action_payload.lower()` contained in `speculative_draft.lower()`. On success, `draft_match_method="substring"`. |
-| **LLM** | Two-stage check in `_parse_llm_verdict` after the single verdict call: (1) **substring pre-check** — if `action_excerpt` appears verbatim in the draft, `draft_match_method="substring"` and semantic fields from the JSON are ignored; (2) **semantic fallback** — otherwise use `draft_matches_action` and `draft_match_confidence` from the same LLM JSON; accept when `draft_matches_action=true` and `draft_match_confidence >= MORALSTACK_DCCL_CONFIDENCE_THRESHOLD`, setting `draft_match_method="semantic"`. |
+| **Structured** | Substring check via `validate_draft_against_action(action_payload, draft, None, threshold)`. On success, `draft_match_method="substring"`. |
+| **LLM** | Same helper after the verdict call: substring pre-check on `action_excerpt`, then semantic fields `draft_matches_action` / `draft_match_confidence` from the verdict JSON when the excerpt is absent from the draft. |
 
-Paraphrases, reformattings, and equivalent renderings count as a semantic match; they
-need not be verbatim. A conforming draft that still contains the literal
-`action_excerpt` always takes the substring path (zero semantic logic on exact
-matches).
+### Controller routing (Cases 1–3)
 
-When validation fails (`speculative_draft_validated=False`, `draft_match_method="none"`),
-the controller does not enter the compliance fast-path; the standard pipeline handles
-the request (fix-D case 2).
+On **MATCH**, the controller applies a three-case state machine before deliberation:
+
+| Case | Condition | Action | Event |
+|---|---|---|---|
+| **1** | `speculative_draft_validated=True`, `degraded=False`, non-empty draft | Reuse draft → `COMPLIANCE_FAST_PATH` | `COMPLIANCE_DRAFT_REUSED` |
+| **2** | Case 1 false (unvalidated draft, empty draft, or `degraded=True`) | `_regenerate_for_contract()` + `_revalidate_draft()`; on success → fast-path | `COMPLIANCE_DRAFT_REGENERATED` |
+| **3** | Case 2 revalidation fails | Continue standard pipeline (deliberation) | `COMPLIANCE_MATCH_DOWNGRADED` |
+
+Case 2 covers degraded MATCH (`llm_timeout`, `low_confidence`) and missing or wrong
+speculative drafts (timing, paraphrase, or absent draft). Revalidation uses substring
+first; a targeted semantic LLM call runs only when substring fails.
 
 ## Safety Override
 
@@ -194,8 +200,9 @@ only when the verbatim excerpt is absent from the draft.
 `MORALSTACK_DCCL_CONFIDENCE_THRESHOLD` (default `0.85`) applies to the LLM path in
 two places:
 
-1. **Verdict confidence** — an LLM `MATCH` with `confidence` below the threshold is
-   downgraded to `NO_MATCH`; the standard governance pipeline then handles the request.
+1. **Verdict confidence** — an LLM `MATCH` with `confidence` below the threshold stays
+   `MATCH` with `degraded=True` and `degraded_reason=low_confidence` (not invalidated
+   to `NO_MATCH`). Downstream routing may treat degraded MATCH differently (see controller).
 2. **Draft semantic match** — on MATCH, `draft_matches_action=true` is accepted only
    when `draft_match_confidence` is also at or above the threshold (substring matches
    bypass this gate).
@@ -212,7 +219,7 @@ The DCCL is configured via the following environment variables. See
 | `MORALSTACK_DCCL_ENABLED` | `true` | Enable/disable the DCCL globally |
 | `MORALSTACK_DCCL_EVALUATION_PATH` | `hybrid` | `structured` / `llm` / `hybrid` |
 | `MORALSTACK_DCCL_LLM_MODEL` | `gpt-4o` | Model used by the LLM path |
-| `MORALSTACK_DCCL_LLM_TIMEOUT_MS` | `5000` | LLM call timeout (post-hoc check) |
+| `MORALSTACK_DCCL_LLM_TIMEOUT_MS` | `5000` | Soft timeout: if the LLM response arrives later, the parsed verdict is preserved and marked `degraded` (`llm_timeout`) |
 | `MORALSTACK_DCCL_LLM_MAX_TOKENS` | `512` | LLM response max tokens |
 | `MORALSTACK_DCCL_CONFIDENCE_THRESHOLD` | `0.85` | Minimum confidence to accept MATCH |
 | `MORALSTACK_DCCL_MAX_RULES_PER_CONTRACT` | `100` | Limit on structured rules per contract |
@@ -234,6 +241,9 @@ The DCCL emits the following event types:
 | `MODULE_DEFERRED_TO_COMPLIANCE` | Downstream module returns early |
 | `CONTRACT_INJECTION_DETECTED` | Deployer-side injection in contract |
 | `COMPLIANCE_LAYER_TIMEOUT` | LLM path exceeded timeout |
+| `COMPLIANCE_DRAFT_REUSED` | Case 1: validated draft reused on fast-path |
+| `COMPLIANCE_DRAFT_REGENERATED` | Case 2: regen + revalidation succeeded |
+| `COMPLIANCE_MATCH_DOWNGRADED` | Case 3: MATCH fell through to deliberation |
 | `CONTRACT_STRUCTURE_PROSE_CONFLICT` | Structured/prose mismatch |
 
 All events flow through the standard observability infrastructure
@@ -255,13 +265,12 @@ The controller calls `_run_dccl_evaluation()` after speculative overlap / risk e
 The verdict is stored on `ProcessCallContext.compliance_verdict` and exposed on
 `OrchestratorResult.compliance_verdict`.
 
-When the DCCL returns **MATCH** and `speculative_draft_validated=True` with a non-empty
-speculative draft (substring or semantic validation), `_route_compliance_match()`
-produces `NORMAL_COMPLETE` from the validated draft (`path=COMPLIANCE_FAST_PATH`),
-abandons remaining speculative work,
-emits five `MODULE_DEFERRED_TO_COMPLIANCE` events (risk_router, critic, simulator,
-perspectives, deliberation), and skips `decide_action` routing entirely. A fast-path
-failure falls back to the standard pipeline (non-fatal).
+When the DCCL returns **MATCH**, the controller applies the Case 1–3 state machine
+(see above). Cases 1 and 2 call `_route_compliance_match()` with the reused or
+regenerated draft, producing `NORMAL_COMPLETE` (`path=COMPLIANCE_FAST_PATH`),
+abandoning remaining speculative work, emitting five `MODULE_DEFERRED_TO_COMPLIANCE`
+events, and skipping `decide_action` routing. Case 3 and fast-path failures fall
+through to the standard pipeline (non-fatal).
 
 **NO_MATCH**, **SAFETY_OVERRIDE**, and **NO_CONTRACT** leave routing unchanged.
 

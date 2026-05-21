@@ -974,9 +974,7 @@ class TestObservabilityPersistence:
         import sqlite3
 
         conn = sqlite3.connect(db_path)
-        rows = conn.execute(
-            "SELECT event_type, decision, payload_json FROM orchestration_events"
-        ).fetchall()
+        rows = conn.execute("SELECT event_type, decision, payload_json FROM orchestration_events").fetchall()
         conn.close()
         proxy_events = [r for r in rows if r[0] == "PROXY_OUTPUT_FINALIZED"]
         assert len(proxy_events) == 1

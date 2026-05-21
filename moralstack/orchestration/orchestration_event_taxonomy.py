@@ -111,6 +111,18 @@ never emitted. Do not use in new code."""
 COMPLIANCE_LAYER_TIMEOUT = "COMPLIANCE_LAYER_TIMEOUT"
 """DCCL LLM call exceeded timeout. Payload: timeout_ms, evaluation_path."""
 
+COMPLIANCE_DRAFT_REUSED = "COMPLIANCE_DRAFT_REUSED"
+"""Validated speculative draft reused on compliance fast-path (Case 1).
+Payload: matched_rule_id, draft_match_method, draft_match_confidence, action_excerpt, degraded."""
+
+COMPLIANCE_DRAFT_REGENERATED = "COMPLIANCE_DRAFT_REGENERATED"
+"""Contract-authorized draft regenerated and validated (Case 2 success).
+Payload: validated, draft_match_method, draft_match_confidence, reason."""
+
+COMPLIANCE_MATCH_DOWNGRADED = "COMPLIANCE_MATCH_DOWNGRADED"
+"""DCCL MATCH could not be fast-pathed after regen/revalidation (Case 3).
+Payload: reason, matched_rule_id, action_excerpt, degraded, degraded_reason."""
+
 CONTRACT_STRUCTURE_PROSE_CONFLICT = "CONTRACT_STRUCTURE_PROSE_CONFLICT"
 """structured_rules conflict with raw_text in the same contract.
 Payload: contract_hash, conflict_description."""
