@@ -19,6 +19,7 @@ from moralstack.ui.app import (
     _build_proxy_output_info,
     _group_calls_into_tiers_and_enrich,
     _journey_sort_key,
+    _tag_constitution_phases,
 )
 
 
@@ -47,6 +48,56 @@ def test_cycle0_tiers_ordered_by_sequence_not_started_at():
         "compliance_layer",
         "policy",
     ]
+
+
+def test_cycle0_risk_routing_and_deliberation_retrieval_in_separate_tiers():
+    """Two domain_prefilter calls must not share a visual tier (seq -10 vs -1)."""
+    calls = [
+        {"id": 3, "cycle": 0, "sequence_in_cycle": 1, "started_at": 9000, "module": "policy", "phase": "generate"},
+        {
+            "id": 2,
+            "cycle": 0,
+            "sequence_in_cycle": -1,
+            "started_at": 8000,
+            "module": "constitution_retriever",
+            "action": "domain_prefilter",
+            "phase": "constitution_retrieval",
+        },
+        {
+            "id": 1,
+            "cycle": 0,
+            "sequence_in_cycle": -10,
+            "started_at": 5000,
+            "module": "constitution_retriever",
+            "action": "domain_prefilter",
+            "phase": "constitution_retrieval",
+        },
+    ]
+    tiers = _group_calls_into_tiers_and_enrich(calls)
+    tier_sizes = [len(t) for t in tiers]
+    assert tier_sizes == [1, 1, 1]
+    assert tiers[0][0]["sequence_in_cycle"] == -10
+    assert tiers[1][0]["sequence_in_cycle"] == -1
+    assert tiers[2][0]["module"] == "policy"
+
+
+def test_tag_constitution_phases_from_retrieval_phase_metadata():
+    calls = [
+        {
+            "module": "constitution_retriever",
+            "action": "domain_prefilter",
+            "parsed_summary_json": '{"retrieval_phase": "deliberation_retrieval"}',
+        },
+        {
+            "module": "constitution_retriever",
+            "action": "domain_prefilter",
+            "parsed_summary_json": '{"retrieval_phase": "risk_routing"}',
+        },
+    ]
+    _tag_constitution_phases(calls)
+    by_phase = {c["parsed_summary_json"]: c["_constitution_phase"] for c in calls}
+    assert "deliberation retrieval" in by_phase['{"retrieval_phase": "deliberation_retrieval"}']
+    assert "risk routing" in by_phase['{"retrieval_phase": "risk_routing"}']
 
 
 def test_deliberation_parallel_simulator_perspectives_same_tier():

@@ -33,6 +33,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+RETRIEVAL_PHASE_RISK_ROUTING = "risk_routing"
+RETRIEVAL_PHASE_DELIBERATION = "deliberation_retrieval"
+
+_RETRIEVAL_PHASE_PERSISTENCE: dict[str, tuple[int, int]] = {
+    RETRIEVAL_PHASE_RISK_ROUTING: (0, -10),
+    RETRIEVAL_PHASE_DELIBERATION: (0, -1),
+}
+
 
 def _persist_constitution_llm_call(
     *,
@@ -44,6 +52,9 @@ def _persist_constitution_llm_call(
     started_at: int | None,
     parse_contract: dict[str, Any],
     model: str | None,
+    retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING,
+    cycle: int | None = 0,
+    sequence_in_cycle: int | None = None,
 ) -> None:
     """
     Best-effort persistence for constitution retrieval LLM calls (parse metadata in parsed_summary_json).
@@ -51,7 +62,15 @@ def _persist_constitution_llm_call(
     Skips silently when no DB context or persistence is disabled.
     """
     try:
-        summary = merge_parse_contract_into_summary({"module": "constitution_retriever"}, parse_contract)
+        if sequence_in_cycle is None:
+            _, sequence_in_cycle = _RETRIEVAL_PHASE_PERSISTENCE.get(
+                retrieval_phase,
+                _RETRIEVAL_PHASE_PERSISTENCE[RETRIEVAL_PHASE_RISK_ROUTING],
+            )
+        summary = merge_parse_contract_into_summary(
+            {"module": "constitution_retriever", "retrieval_phase": retrieval_phase},
+            parse_contract,
+        )
         persist_llm_call(
             phase="constitution_retrieval",
             module="constitution_retriever",
@@ -64,7 +83,8 @@ def _persist_constitution_llm_call(
             raw_response=raw_response,
             parsed_summary_json=summary,
             attempts=1,
-            sequence_in_cycle=-10,
+            cycle=cycle,
+            sequence_in_cycle=sequence_in_cycle,
         )
     except Exception:
         logger.debug("constitution retrieval llm_call persist skipped", exc_info=True)
@@ -332,7 +352,13 @@ class DomainPrefilter:
             },
         )
 
-    def filter_domains(self, query: str, available_domains: list[str]) -> list[str]:
+    def filter_domains(
+        self,
+        query: str,
+        available_domains: list[str],
+        *,
+        retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING,
+    ) -> list[str]:
         """Identify domains most relevant to the query."""
         from moralstack.orchestration.orchestration_event_taxonomy import (
             DOMAIN_PREFILTER_CACHE_HIT,
@@ -451,7 +477,7 @@ class DomainPrefilter:
         """
 
         try:
-            result = self._call_openai(prompt)
+            result = self._call_openai(prompt, retrieval_phase=retrieval_phase)
 
             if result and result.get("confidence", 0) >= self.DOMAIN_CONFIDENCE_THRESHOLD:
                 selected = result.get("domains", [])
@@ -466,7 +492,7 @@ class DomainPrefilter:
             logger.warning(f"DomainPrefilter failed: {e}, returning core only")
             return list(self.ALWAYS_EVALUATE & set(available_domains))
 
-    def _call_openai(self, prompt: str) -> dict[str, Any]:
+    def _call_openai(self, prompt: str, *, retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING) -> dict[str, Any]:
         import time
 
         from moralstack.utils.json_utils import JSONParseError
@@ -550,6 +576,10 @@ class DomainPrefilter:
                         "parse_attempts": 1,
                         "retry_count": 0,
                     }
+            cycle_val, seq_val = _RETRIEVAL_PHASE_PERSISTENCE.get(
+                retrieval_phase,
+                _RETRIEVAL_PHASE_PERSISTENCE[RETRIEVAL_PHASE_RISK_ROUTING],
+            )
             _persist_constitution_llm_call(
                 action="domain_prefilter",
                 system_prompt=sys_msg,
@@ -559,6 +589,9 @@ class DomainPrefilter:
                 started_at=started_ms,
                 parse_contract=p_contract,
                 model=self.openai_config.model,
+                retrieval_phase=retrieval_phase,
+                cycle=cycle_val,
+                sequence_in_cycle=seq_val,
             )
             return data
 
@@ -1050,6 +1083,8 @@ class ConstitutionRetriever:
         query: str,
         top_k: int = 10,
         domain: str | None = None,
+        *,
+        retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING,
     ) -> list[Principle]:
         """
         Retrieve relevant principles via parallel domain agents.
@@ -1071,7 +1106,11 @@ class ConstitutionRetriever:
             prefilter_kw_changed = self._domain_prefilter.set_domain_keywords(self._provider.get_domain_keywords())
             # Keep descriptions in sync with the same lifecycle as keywords.
             self._domain_prefilter.set_domain_descriptions(self._provider.get_domain_descriptions())
-            relevant_domains = self._domain_prefilter.filter_domains(query, available_domains)
+            relevant_domains = self._domain_prefilter.filter_domains(
+                query,
+                available_domains,
+                retrieval_phase=retrieval_phase,
+            )
             prefilter_cache_hit = self._domain_prefilter._last_cache_lookup_hit
             if domain and domain not in relevant_domains:
                 relevant_domains.append(domain)

@@ -465,15 +465,16 @@ _SEQ_TO_VISUAL_TIER: dict[int, int] = {
     6: 5,  # refusal/finalize
 }
 
-# Cycle-0 pipeline sequences (constitution -10, risk -9, calibration -8, compliance -5, …).
+# Cycle-0 pipeline sequences (constitution -10/-1, risk -9, calibration -8, compliance -5, …).
 _CYCLE0_SEQ_TO_VISUAL_TIER: dict[int, int] = {
-    -10: 0,  # constitution domain prefilter
+    -10: 0,  # domain prefilter (risk routing)
     -9: 1,  # risk mini-estimators (parallel)
     -8: 2,  # calibration guard
     -5: 3,  # DCCL evaluate
-    -4: 4,  # draft revalidation (Case 2)
+    -1: 4,  # domain prefilter (deliberation retrieval)
+    -4: 5,  # draft revalidation (Case 2)
     0: 1,  # speculative policy (parallel with risk)
-    1: 5,  # compliance-regenerate policy
+    1: 6,  # compliance-regenerate policy
 }
 
 
@@ -619,21 +620,40 @@ def _compute_connector_labels(tiers: list[list[dict[str, Any]]]) -> list[str | N
     return labels
 
 
+_CONSTITUTION_RETRIEVAL_PHASE_LABELS: dict[str, str] = {
+    "risk_routing": "domain prefilter (risk routing)",
+    "deliberation_retrieval": "domain prefilter (deliberation retrieval)",
+}
+
+
 def _tag_constitution_phases(calls: list[dict[str, Any]]) -> None:
     """Tag constitution prefilter calls so the UI can distinguish routing vs deliberation."""
-    prefilter_calls = sorted(
-        [
-            c
-            for c in calls
-            if "constitution" in (c.get("module") or "").lower() and "domain_prefilter" in (c.get("action") or "").lower()
-        ],
-        key=lambda c: c.get("started_at") or 0,
-    )
-    for idx, call in enumerate(prefilter_calls):
+    prefilter_calls = [
+        c
+        for c in calls
+        if "constitution" in (c.get("module") or "").lower() and "domain_prefilter" in (c.get("action") or "").lower()
+    ]
+    for call in prefilter_calls:
+        summary = call.get("parsed_summary_json")
+        if isinstance(summary, str):
+            try:
+                summary = json.loads(summary)
+            except Exception:
+                summary = {}
+        if not isinstance(summary, dict):
+            summary = {}
+        phase = summary.get("retrieval_phase")
+        label = _CONSTITUTION_RETRIEVAL_PHASE_LABELS.get(str(phase) if phase else "")
+        if label:
+            call["_constitution_phase"] = label
+
+    # Legacy rows without retrieval_phase: infer from started_at order.
+    untagged = [c for c in prefilter_calls if not c.get("_constitution_phase")]
+    for idx, call in enumerate(sorted(untagged, key=lambda c: c.get("started_at") or 0)):
         if idx == 0:
-            call["_constitution_phase"] = "domain prefilter (risk routing)"
+            call["_constitution_phase"] = _CONSTITUTION_RETRIEVAL_PHASE_LABELS["risk_routing"]
         else:
-            call["_constitution_phase"] = "domain prefilter (deliberation retrieval)"
+            call["_constitution_phase"] = _CONSTITUTION_RETRIEVAL_PHASE_LABELS["deliberation_retrieval"]
 
 
 def _build_compliance_card(orchestration_events: list[dict[str, Any]]) -> dict[str, Any] | None:

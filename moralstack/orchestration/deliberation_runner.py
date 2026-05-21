@@ -411,6 +411,7 @@ class DeliberationRunner:
                 query=enriched_query,
                 top_k=top_k,
                 domain=request.get_domain(),
+                retrieval_phase="deliberation_retrieval",
             )
             t1 = time.time()
             constitution = get_constitution_safe(self.constitution_store, request.get_domain())

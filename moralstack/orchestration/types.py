@@ -835,7 +835,14 @@ class ConstitutionStoreProtocol(Protocol):
         """Returns the constitution for the given domain."""
         ...
 
-    def get_relevant_principles(self, query: str, top_k: int = 10, domain: str | None = None) -> Sequence[Any]:
+    def get_relevant_principles(
+        self,
+        query: str,
+        top_k: int = 10,
+        domain: str | None = None,
+        *,
+        retrieval_phase: str = "risk_routing",
+    ) -> Sequence[Any]:
         """Returns relevant principles for the query."""
         ...
 

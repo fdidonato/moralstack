@@ -25,8 +25,9 @@ from moralstack.constitution.retriever import DomainPrefilter
 def _stub_openai(captured: dict, return_domains=None):
     """Patch DomainPrefilter._call_openai to capture the prompt and stub a response."""
 
-    def _fake(self, prompt: str):  # noqa: ARG001
+    def _fake(self, prompt: str, *, retrieval_phase: str = "risk_routing"):  # noqa: ARG001
         captured["prompt"] = prompt
+        captured["retrieval_phase"] = retrieval_phase
         return {"domains": return_domains or [], "confidence": 0.9}
 
     return patch.object(DomainPrefilter, "_call_openai", _fake)

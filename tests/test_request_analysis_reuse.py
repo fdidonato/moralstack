@@ -115,7 +115,14 @@ def test_single_store_retrieval_for_deliberation_critic_path(monkeypatch):
         active_overlay = None
 
     class _Store:
-        def get_relevant_principles(self, query: str, top_k: int = 10, domain: Any = None) -> list[_P]:
+        def get_relevant_principles(
+            self,
+            query: str,
+            top_k: int = 10,
+            domain: Any = None,
+            *,
+            retrieval_phase: str = "risk_routing",
+        ) -> list[_P]:
             calls.append("get_relevant_principles")
             return [_P("p1")]
 

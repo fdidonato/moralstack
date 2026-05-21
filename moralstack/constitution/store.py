@@ -869,6 +869,8 @@ class ConstitutionStore:
         query: str,
         top_k: int = 10,
         domain: str | None = None,
+        *,
+        retrieval_phase: str = "risk_routing",
     ) -> list[Principle]:
         """
         Retrieval con agenti paralleli per dominio.
@@ -879,11 +881,18 @@ class ConstitutionStore:
             query: Testo della richiesta/prompt (qualsiasi lingua).
             top_k: Numero massimo di principi da ritornare.
             domain: Dominio opzionale (forza valutazione di questo dominio).
+            retrieval_phase: Observability qualifier for domain prefilter persistence
+                (``risk_routing`` vs ``deliberation_retrieval``).
 
         Returns:
             Lista di principi ordinati per rilevanza (max top_k).
         """
-        return self._retriever.get_relevant_principles(query, top_k=top_k, domain=domain)
+        return self._retriever.get_relevant_principles(
+            query,
+            top_k=top_k,
+            domain=domain,
+            retrieval_phase=retrieval_phase,
+        )
 
     def detect_relevant_domains(self, query: str) -> list[str]:
         """
