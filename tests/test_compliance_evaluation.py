@@ -277,7 +277,7 @@ class TestLLMPath:
         assert verdict.matched_rule.rule_id == "llm_inferred"
         assert verdict.speculative_draft_validated is True
         assert verdict.draft_match_method == "substring"
-        assert verdict.draft_match_confidence == 0.0
+        assert verdict.draft_match_confidence == 1.0
 
     def test_llm_draft_semantic_paraphrase_validated(self, monkeypatch):
         """Paraphrased draft passes via draft_matches_action in the same DCCL verdict."""

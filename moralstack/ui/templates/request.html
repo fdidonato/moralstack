@@ -213,7 +213,15 @@
         {% if ra.get('risk_score') is not none %}
         <div class="meta-item">
             <span class="meta-label">Risk score (assessment trace)</span>
-            <span class="meta-value mono">{{ ra.get('risk_score') }}</span>
+            <span class="meta-value mono">
+                {{ ra.get('risk_score') }}
+                {% if compliance_fast_path_panel and compliance_fast_path_panel.risk_estimation_used_for_decision is sameas false %}
+                <span class="badge" style="background:#64748b;color:#fff;"
+                    title="Risk was computed on the compliance fast-path but did not influence the DCCL routing decision">
+                    calcolato ma non usato per la decisione
+                </span>
+                {% endif %}
+            </span>
         </div>
         {% endif %}
         {% if ra.get('risk_category') %}
@@ -851,9 +859,12 @@
                                            title="Ran in parallel with other modules in this cycle">Parallel</span>{%
             endif %}
             <span class="journey-cycle">{% if call.cycle is none or call.cycle == 0 %}cycle 0{% else %}cycle {{ call.cycle }}{% endif %}</span>
-            <span class="journey-module">{{ call.module }} / {{ call.phase }}{% if call.get('parallel_retrieval') or call.get('is_synthetic') %} <span
+            <span class="journey-module">{{ call.module }} / {{ call.phase }}{% if call.get('is_draft_reuse') %}
+                <span class="badge badge-parallel" title="Speculative draft reused without a policy LLM call">Draft riusato (no LLM call)</span>{% elif call.get('parallel_retrieval') or call.get('is_synthetic') %} <span
                     class="muted">(parallel domain agents)</span>{% endif %}</span>
-            {% if call.duration_ms %}<span class="muted">{{ call.duration_ms | round(0) | int }}ms</span>{% endif %}
+            {% if call.get('is_draft_reuse') %}
+            <span class="muted">0ms (reuse)</span>
+            {% elif call.duration_ms %}<span class="muted">{{ call.duration_ms | round(0) | int }}ms</span>{% endif %}
             <span class="muted ts">{{ call.started_at | fmtdate }}</span>
             {% if call.ended_at_ms %}<span class="muted ts">→ {{ call.ended_at_ms | fmtdate }}</span>{% endif %}
         </li>
@@ -1139,8 +1150,23 @@
                     <span class="meta-label">Verdetto degradato</span>
                     <span class="meta-value">
                         <span class="badge badge-running">{{ compliance_fast_path_panel.degraded_reason or '—' }}</span>
+                        {% if compliance_fast_path_panel.degraded_reason == 'llm_timeout' %}
+                        <span class="muted">(verdetto lento; draft riusato se validato)</span>
+                        {% endif %}
                     </span>
                 </div>
+                {% endif %}
+                {% if compliance_fast_path_panel.risk_estimation_used_for_decision is sameas false %}
+                <div class="meta-item span-2">
+                    <span class="meta-label">Risk estimation</span>
+                    <span class="meta-value">
+                        <span class="badge" style="background:#64748b;color:#fff;"
+                            title="{{ compliance_fast_path_panel.risk_score_source or '' }}">
+                            calcolato ma non usato per la decisione
+                        </span>
+                    </span>
+                </div>
+                {% endif %}
                 {% endif %}
                 {% if final_decision_card.winning_rule %}
                 <div class="meta-item">

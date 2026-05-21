@@ -30,6 +30,7 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     COMPLIANCE_MATCH_DOWNGRADED,
     MODULE_DEFERRED_TO_COMPLIANCE,
     PROXY_OUTPUT_FINALIZED,
+    SPECULATIVE_DRAFT_REUSED,
 )
 from moralstack.reports.benchmark_report_loader import (
     get_benchmark_result_by_request_id,
@@ -730,6 +731,8 @@ def _build_compliance_fast_path_panel(
         "draft_match_confidence": sp.get("draft_match_confidence"),
         "degraded": sp.get("degraded"),
         "degraded_reason": sp.get("degraded_reason"),
+        "risk_estimation_used_for_decision": sp.get("risk_estimation_used_for_decision"),
+        "risk_score_source": sp.get("risk_score_source"),
     }
 
 
@@ -738,9 +741,27 @@ def _build_path_badge_info(orchestration_events: list[dict[str, Any]]) -> dict[s
     event_types = {(e.get("event_type") or "") for e in orchestration_events}
 
     if COMPLIANCE_DRAFT_REUSED in event_types:
+        degraded = False
+        degraded_reason = ""
+        for e in orchestration_events:
+            if (e.get("event_type") or "") != COMPLIANCE_DRAFT_REUSED:
+                continue
+            ep = _parse_json_field(e.get("payload_json")) or _parse_json_field(e.get("payload")) or {}
+            if ep.get("degraded"):
+                degraded = True
+                degraded_reason = (ep.get("degraded_reason") or "").strip()
+                break
+        label = "Contract MATCH · draft riusato"
+        if degraded and degraded_reason == "llm_timeout":
+            label += " · (verdetto lento)"
+        elif degraded:
+            label += " · (degradato)"
+        label += " · moduli bypassati"
         return {
-            "label": "Contract MATCH · draft riusato · moduli bypassati",
+            "label": label,
             "kind": "compliance_reused",
+            "degraded": degraded,
+            "degraded_reason": degraded_reason,
         }
 
     if COMPLIANCE_DRAFT_REGENERATED in event_types:
@@ -1188,6 +1209,51 @@ def _build_synthetic_path_routing_node(
         "system_prompt": "[orchestrator] Path routing observability (structured logs, not an LLM call)",
         "raw_response": json.dumps(raw_payload, indent=2, ensure_ascii=False),
         "io_annotations": io,
+    }
+
+
+def _synthetic_speculative_draft_reuse_from_events(
+    orchestration_events: list[dict[str, Any]],
+    llm_calls: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Synthetic journey step when benign/compliance fast-path reused speculative draft (no LLM call)."""
+    reuse_event: dict[str, Any] | None = None
+    for e in orchestration_events:
+        if (e.get("event_type") or "") == SPECULATIVE_DRAFT_REUSED:
+            reuse_event = e
+            break
+    if reuse_event is None:
+        return None
+
+    ep = _parse_json_field(reuse_event.get("payload_json")) or _parse_json_field(reuse_event.get("payload")) or {}
+    char_len = int(ep.get("char_len") or 0)
+    started_at = reuse_event.get("started_at")
+    if started_at is None:
+        last_risk_end = 0
+        for c in llm_calls:
+            if (c.get("module") or "").lower() != "risk_estimator":
+                continue
+            c_end = (c.get("started_at") or 0) + int(c.get("duration_ms") or 0)
+            if c_end > last_risk_end:
+                last_risk_end = c_end
+        started_at = last_risk_end or int(time.time() * 1000)
+
+    return {
+        "module": "policy",
+        "phase": "policy_generate",
+        "action": "draft_reused",
+        "cycle": reuse_event.get("cycle") if reuse_event.get("cycle") is not None else 0,
+        "sequence_in_cycle": ep.get("sequence_in_cycle") if ep.get("sequence_in_cycle") is not None else 1,
+        "started_at": int(started_at),
+        "duration_ms": 0.0,
+        "is_synthetic": True,
+        "is_draft_reuse": True,
+        "prompt": "Speculative draft reused (no policy LLM call).",
+        "system_prompt": "[orchestration] SPECULATIVE_DRAFT_REUSED",
+        "raw_response": json.dumps(
+            {"source": ep.get("source") or "speculative_overlap", "char_len": char_len},
+            indent=2,
+        ),
     }
 
 
@@ -1885,6 +1951,11 @@ button:hover{opacity:0.9}
         path_routing_node = _build_synthetic_path_routing_node(debug_events, traces, calibration_node, llm_calls)
         if path_routing_node is not None:
             all_flow_calls.append(path_routing_node)
+
+        draft_reuse_node = _synthetic_speculative_draft_reuse_from_events(orchestration_events, llm_calls)
+        if draft_reuse_node is not None:
+            draft_reuse_node["io_annotations"] = _build_module_io_annotations(draft_reuse_node)
+            all_flow_calls.append(draft_reuse_node)
 
         orchestrator_observability = build_orchestrator_observability(debug_events, traces)
 

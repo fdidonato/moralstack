@@ -45,6 +45,7 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     SIMULATOR_EXECUTED,
     SIMULATOR_GATE_DECISION,
     SIMULATOR_SKIPPED,
+    SPECULATIVE_DRAFT_REUSED,
 )
 from moralstack.orchestration.overlay_policy import get_constitution_safe
 from moralstack.orchestration.persistence_helpers import record_decision_trace, record_llm_call
@@ -565,21 +566,23 @@ class DeliberationRunner:
             try:
                 if speculative_draft:
                     content = speculative_draft
-                    record_llm_call(
-                        self.logger,
-                        None,
-                        {
-                            "cycle": 0,
-                            "phase": "policy_generate",
-                            "module": "policy",
-                            "action": "generate (speculative-reuse," " benign_fast_path)",
-                            "model": _policy_llm_model_for_action(self.policy, "generate"),
-                            "duration_ms": 0.0,
-                            "prompt": request.prompt[:200],
-                            "raw_response": content[:200],
-                            "sequence_in_cycle": SEQ_POLICY,
-                        },
-                    )
+                    try:
+                        persist_orchestration_event(
+                            cycle=0,
+                            stage="policy_generate",
+                            component="policy",
+                            event_type=SPECULATIVE_DRAFT_REUSED,
+                            decision="reused",
+                            status="ok",
+                            payload={
+                                "source": "speculative_overlap",
+                                "char_len": len(content),
+                                "sequence_in_cycle": SEQ_POLICY,
+                                "path": "benign_fast_path",
+                            },
+                        )
+                    except Exception:
+                        _LOG.debug("emit SPECULATIVE_DRAFT_REUSED failed", exc_info=True)
                 else:
                     prompt_text = resolve_prompt_with_language(
                         request.prompt,

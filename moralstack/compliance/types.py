@@ -176,7 +176,7 @@ class ComplianceVerdict:
         draft_match_method: how draft validation succeeded — "substring", "semantic",
             or "none" when not validated.
         draft_match_confidence: semantic draft-match confidence from the LLM verdict
-            (0.0 when substring matched or not validated).
+            (1.0 when substring matched; 0.0 when not validated).
         degraded: True when the verdict is usable but quality gates were not fully met
             (e.g. soft timeout exceeded or confidence below threshold). Decision is preserved.
         degraded_reason: non-empty when degraded is True — ``llm_timeout`` or ``low_confidence``.

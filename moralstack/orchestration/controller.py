@@ -1362,6 +1362,8 @@ class OrchestrationController:
                 "degraded": cv.degraded if cv else False,
                 "degraded_reason": cv.degraded_reason if cv else "",
                 "contract_hash": cv.contract_hash if cv else "",
+                "risk_estimation_used_for_decision": False,
+                "risk_score_source": "computed_but_unused_on_compliance_fast_path",
             }
             normalize_trace_fields(dt)
             append_decision_trace(dt)
@@ -1933,7 +1935,11 @@ class OrchestrationController:
             cv = call_ctx.compliance_verdict
             if cv is not None and cv.decision == ComplianceDecision.MATCH:
                 draft = speculative_draft_for_dccl
-                case1 = cv.speculative_draft_validated and not cv.degraded and draft.strip()
+                draft_ok = cv.speculative_draft_validated and draft.strip()
+                # llm_timeout: slow verdict but draft still reliable -> Case 1 when validated.
+                # low_confidence: uncertain verdict -> Case 2 (regen) even with validated draft.
+                force_case2 = cv.degraded and cv.degraded_reason == "low_confidence"
+                case1 = draft_ok and not force_case2
                 if case1:
                     self._events.emit_orchestration_event(
                         request_id=request.request_id or "",
@@ -1947,7 +1953,8 @@ class OrchestrationController:
                             "draft_match_method": cv.draft_match_method,
                             "draft_match_confidence": cv.draft_match_confidence,
                             "action_excerpt": (cv.matched_rule.action_payload_summary if cv.matched_rule else ""),
-                            "degraded": False,
+                            "degraded": cv.degraded,
+                            "degraded_reason": cv.degraded_reason,
                         },
                     )
                     try:

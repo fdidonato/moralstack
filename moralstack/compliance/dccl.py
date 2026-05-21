@@ -563,7 +563,7 @@ class DeveloperContractComplianceLayer:
                 )
                 draft_validated = validated
                 draft_match_method = method
-                draft_match_confidence = 0.0 if method == "substring" else conf
+                draft_match_confidence = 1.0 if method == "substring" else conf
 
             match_rationale = rationale
             if low_confidence_degraded:

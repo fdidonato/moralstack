@@ -137,6 +137,104 @@ class TestComplianceFastPath:
         assert result.path == "COMPLIANCE_FAST_PATH"
         assert COMPLIANCE_DRAFT_REUSED in emitted
 
+    def test_degraded_llm_timeout_with_validated_draft_reuses_without_regen(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """llm_timeout marks slow verdict only; validated draft stays Case 1 (no regen)."""
+        monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "structured")
+        ctrl = _build_controller()
+        req = ProcessedRequest(
+            prompt="PING",
+            request_id="req-fast-degraded-timeout-reuse",
+            developer_contract=_ping_contract(),
+        )
+        degraded = ComplianceVerdict(
+            decision=ComplianceDecision.MATCH,
+            matched_rule=MatchedRule(
+                rule_id="r1",
+                rule_summary="ping",
+                rule_excerpt="PING",
+                action_payload_summary="PONG",
+            ),
+            confidence=0.5,
+            rationale="degraded match",
+            evaluation_path=EvaluationPath.LLM,
+            degraded=True,
+            degraded_reason="llm_timeout",
+            speculative_draft_validated=True,
+            draft_match_method="substring",
+            draft_match_confidence=1.0,
+        )
+        emitted: list[str] = []
+        regen_mock = MagicMock(return_value="SHOULD NOT REGEN")
+
+        def _tracking_emit(**kwargs):
+            emitted.append(str(kwargs.get("event_type") or ""))
+            return None
+
+        with (
+            patch.object(ctrl, "_nonblocking_speculative_draft", return_value="PONG"),
+            patch(
+                "moralstack.compliance.dccl.DeveloperContractComplianceLayer.evaluate",
+                return_value=degraded,
+            ),
+            patch.object(ctrl, "_regenerate_for_contract", regen_mock),
+            patch.object(ctrl._events, "emit_orchestration_event", side_effect=_tracking_emit),
+            patch("moralstack.persistence.sink.persist_orchestration_event"),
+        ):
+            result = ctrl.process(req)
+
+        assert result.path == "COMPLIANCE_FAST_PATH"
+        assert "PONG" in result.response.content
+        assert COMPLIANCE_DRAFT_REUSED in emitted
+        assert COMPLIANCE_DRAFT_REGENERATED not in emitted
+        regen_mock.assert_not_called()
+
+    def test_degraded_low_confidence_forces_regen_even_with_validated_draft(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "structured")
+        ctrl = _build_controller()
+        req = ProcessedRequest(
+            prompt="PING",
+            request_id="req-fast-degraded-low-conf",
+            developer_contract=_ping_contract(),
+        )
+        degraded = ComplianceVerdict(
+            decision=ComplianceDecision.MATCH,
+            matched_rule=MatchedRule(
+                rule_id="r1",
+                rule_summary="ping",
+                rule_excerpt="PING",
+                action_payload_summary="PONG",
+            ),
+            confidence=0.5,
+            rationale="degraded match",
+            evaluation_path=EvaluationPath.LLM,
+            degraded=True,
+            degraded_reason="low_confidence",
+            speculative_draft_validated=True,
+            draft_match_method="substring",
+            draft_match_confidence=1.0,
+        )
+        emitted: list[str] = []
+
+        def _tracking_emit(**kwargs):
+            emitted.append(str(kwargs.get("event_type") or ""))
+            return None
+
+        with (
+            patch.object(ctrl, "_nonblocking_speculative_draft", return_value="PONG"),
+            patch(
+                "moralstack.compliance.dccl.DeveloperContractComplianceLayer.evaluate",
+                return_value=degraded,
+            ),
+            patch.object(ctrl, "_regenerate_for_contract", return_value="PONG"),
+            patch.object(ctrl._events, "emit_orchestration_event", side_effect=_tracking_emit),
+            patch("moralstack.persistence.sink.persist_orchestration_event"),
+        ):
+            result = ctrl.process(req)
+
+        assert result.path == "COMPLIANCE_FAST_PATH"
+        assert COMPLIANCE_DRAFT_REGENERATED in emitted
+        assert COMPLIANCE_DRAFT_REUSED not in emitted
+
     def test_degraded_match_regenerates_and_fast_paths(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "structured")
         ctrl = _build_controller()

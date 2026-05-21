@@ -74,6 +74,19 @@ def test_path_badge_compliance_draft_reused():
     assert info["kind"] == "compliance_reused"
 
 
+def test_path_badge_compliance_draft_reused_degraded_timeout():
+    info = _build_path_badge_info(
+        [
+            {
+                "event_type": COMPLIANCE_DRAFT_REUSED,
+                "payload_json": '{"degraded": true, "degraded_reason": "llm_timeout"}',
+            }
+        ]
+    )
+    assert "verdetto lento" in info["label"]
+    assert info.get("degraded") is True
+
+
 def test_path_badge_compliance_regenerated_degraded():
     info = _build_path_badge_info(
         [
