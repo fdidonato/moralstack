@@ -181,6 +181,73 @@ class TestRouting:
         # No synthetic turn — original messages preserved
         assert call_kwargs["messages"] == original_messages
 
+    def test_compliance_fast_path_reuses_governed_draft_without_upstream(self, client_factory):
+        """COMPLIANCE_FAST_PATH must return pipeline content; no second upstream generation."""
+        from moralstack.sdk.config import GovernanceConfig
+        from moralstack.server.proxy import create_app
+
+        secret = "7161 Valley Road"
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.process = MagicMock(
+            return_value=OrchestratorResult(
+                response=FinalResponse(
+                    content=secret,
+                    response_type=ResponseType.DIRECT,
+                    metadata=ResponseMetadata(final_action="NORMAL_COMPLETE"),
+                ),
+                request_id="req-compliance",
+                path_taken="fast",
+                path="COMPLIANCE_FAST_PATH",
+                total_cycles=0,
+                converged=True,
+            )
+        )
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion("wrong"))
+
+        app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "ERMD1FlXIy"}]},
+        )
+        assert response.status_code == 200
+        assert response.json()["choices"][0]["message"]["content"] == secret
+        mock_openai.chat.completions.create.assert_not_called()
+
+    def test_compliance_fast_path_empty_draft_falls_back_to_upstream(self, client_factory):
+        """COMPLIANCE_FAST_PATH with empty governed content still regenerates upstream."""
+        from moralstack.sdk.config import GovernanceConfig
+        from moralstack.server.proxy import create_app
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.process = MagicMock(
+            return_value=OrchestratorResult(
+                response=FinalResponse(
+                    content="   ",
+                    response_type=ResponseType.DIRECT,
+                    metadata=ResponseMetadata(final_action="NORMAL_COMPLETE"),
+                ),
+                request_id="req-compliance-empty",
+                path_taken="fast",
+                path="COMPLIANCE_FAST_PATH",
+                total_cycles=0,
+                converged=True,
+            )
+        )
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion("Upstream answer."))
+
+        app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+        )
+        assert response.status_code == 200
+        assert response.json()["choices"][0]["message"]["content"] == "Upstream answer."
+        mock_openai.chat.completions.create.assert_called_once()
+
 
 class TestGovernanceHeaders:
     def test_headers_present_on_refuse(self, client_factory):
@@ -864,5 +931,57 @@ class TestObservabilityPersistence:
         conn = sqlite3.connect(db_path)
         events = conn.execute("SELECT stage, component, decision FROM orchestration_events").fetchall()
         conn.close()
-        assert len(events) == 1
-        assert events[0] == ("deliberation", "critic", "approved")
+        assert len(events) == 2
+        assert ("deliberation", "critic", "approved") in events
+        assert ("proxy", "proxy", "NORMAL_COMPLETE") in events
+
+    def test_proxy_output_finalized_event_persisted(self, tmp_path, monkeypatch):
+        """PROXY_OUTPUT_FINALIZED is written before request finalization."""
+        db_path = str(tmp_path / "test_proxy_output_finalized.db")
+        monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", db_path)
+        monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
+
+        from moralstack.sdk.config import GovernanceConfig
+        from moralstack.server.proxy import create_app
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.process = MagicMock(
+            return_value=OrchestratorResult(
+                response=FinalResponse(
+                    content="7161 Valley Road",
+                    response_type=ResponseType.DIRECT,
+                    metadata=ResponseMetadata(final_action="NORMAL_COMPLETE"),
+                ),
+                request_id="req-proxy-out",
+                path_taken="fast",
+                path="COMPLIANCE_FAST_PATH",
+                total_cycles=0,
+                converged=True,
+            )
+        )
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion())
+
+        app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+            headers={"X-Moralstack-Conversation-Id": "proxy-output-finalized"},
+        )
+        assert response.status_code == 200
+
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute(
+            "SELECT event_type, decision, payload_json FROM orchestration_events"
+        ).fetchall()
+        conn.close()
+        proxy_events = [r for r in rows if r[0] == "PROXY_OUTPUT_FINALIZED"]
+        assert len(proxy_events) == 1
+        assert proxy_events[0][1] == "NORMAL_COMPLETE"
+        payload = json.loads(proxy_events[0][2])
+        assert payload["final_text_source"] == "governed_draft"
+        assert payload["reused_governed_content"] is True
+        assert payload["finish_reason"] == "stop"

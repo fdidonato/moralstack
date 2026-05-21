@@ -38,7 +38,9 @@ from moralstack.observability.governance_audit import (
     state_summary_or_none as _state_summary_or_none,
 )
 from moralstack.orchestration.controller import OrchestrationController
+from moralstack.orchestration.orchestration_event_taxonomy import PROXY_OUTPUT_FINALIZED
 from moralstack.orchestration.types import ProcessedRequest
+from moralstack.persistence.sink import persist_orchestration_event
 from moralstack.sdk.bootstrap import _resolve_model
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.session_store import InMemorySessionStore, SessionStoreProtocol
@@ -218,6 +220,9 @@ def _handle_chat_completion_sync(
 
     request_id_for_audit: str = ""
     final_response_text: str = ""
+    final_text_source: str = ""
+    final_action_for_event: str | None = None
+    finish_reason_for_event: str = "stop"
     domain_for_audit: str | None = None
     result_for_audit: Any | None = None
     governance_headers_for_audit: dict[str, str] | None = None
@@ -282,6 +287,9 @@ def _handle_chat_completion_sync(
                         **_build_upstream_kwargs(body, upstream_model=upstream_model)
                     )
                     final_response_text = _extract_text_from_upstream(upstream_response)
+                    final_text_source = "passthrough_on_error"
+                    final_action_for_event = "PASSTHROUGH_ON_ERROR"
+                    finish_reason_for_event = _finish_reason_from_upstream(upstream_response)
                     out_response = _serialize_upstream_response(
                         upstream_response, headers={"X-Moralstack-Decision": "PASSTHROUGH_ON_ERROR"}
                     )
@@ -296,6 +304,7 @@ def _handle_chat_completion_sync(
                 store.put(conversation_id, governance_state_out)
 
             final_action = result.response.metadata.final_action
+            final_action_for_event = final_action
             governance_headers = build_governance_headers(result, conversation_id=conversation_id)
             governance_headers_for_audit = dict(governance_headers) if governance_headers else None
             domain_for_audit = getattr(result.response.metadata, "domain_overlay", None)
@@ -303,6 +312,8 @@ def _handle_chat_completion_sync(
             if final_action == "REFUSE":
                 refusal_content = result.response.content or "I cannot help with that request."
                 final_response_text = refusal_content
+                final_text_source = "refusal"
+                finish_reason_for_event = "content_filter"
                 payload = _build_synthetic_chat_completion(
                     content=refusal_content,
                     model=upstream_model,
@@ -320,17 +331,34 @@ def _handle_chat_completion_sync(
                     logger.exception("Upstream call failed: %s", exc)
                     raise HTTPException(status_code=502, detail=f"Upstream call failed: {exc}") from exc
                 final_response_text = _extract_text_from_upstream(upstream_response)
+                final_text_source = "safe_complete_upstream"
+                finish_reason_for_event = _finish_reason_from_upstream(upstream_response)
                 out_response = _serialize_upstream_response(upstream_response, headers=governance_headers)
 
             else:
-                upstream_kwargs = _build_upstream_kwargs(body, upstream_model=upstream_model)
-                try:
-                    upstream_response = openai_client.chat.completions.create(**upstream_kwargs)
-                except Exception as exc:
-                    logger.exception("Upstream call failed: %s", exc)
-                    raise HTTPException(status_code=502, detail=f"Upstream call failed: {exc}") from exc
-                final_response_text = _extract_text_from_upstream(upstream_response)
-                out_response = _serialize_upstream_response(upstream_response, headers=governance_headers)
+                governed_content = result.response.content or ""
+                is_compliance_fast_path = getattr(result, "path", "") == "COMPLIANCE_FAST_PATH"
+                if is_compliance_fast_path and governed_content.strip():
+                    final_response_text = governed_content
+                    final_text_source = "governed_draft"
+                    finish_reason_for_event = "stop"
+                    payload = _build_synthetic_chat_completion(
+                        content=governed_content,
+                        model=upstream_model,
+                        finish_reason="stop",
+                    )
+                    out_response = JSONResponse(content=payload, headers=governance_headers)
+                else:
+                    upstream_kwargs = _build_upstream_kwargs(body, upstream_model=upstream_model)
+                    try:
+                        upstream_response = openai_client.chat.completions.create(**upstream_kwargs)
+                    except Exception as exc:
+                        logger.exception("Upstream call failed: %s", exc)
+                        raise HTTPException(status_code=502, detail=f"Upstream call failed: {exc}") from exc
+                    final_response_text = _extract_text_from_upstream(upstream_response)
+                    final_text_source = "upstream_regen"
+                    finish_reason_for_event = _finish_reason_from_upstream(upstream_response)
+                    out_response = _serialize_upstream_response(upstream_response, headers=governance_headers)
 
     finally:
         if conversation_id and final_response_text:
@@ -343,6 +371,27 @@ def _handle_chat_completion_sync(
             except Exception:
                 logger.debug("observe_completed_turn failed (non-fatal)", exc_info=True)
         lock_manager.release(lock)
+        if proxy_run_id and request_id_for_audit and final_text_source:
+            try:
+                persist_orchestration_event(
+                    run_id=proxy_run_id,
+                    request_id=request_id_for_audit,
+                    stage="proxy",
+                    component="proxy",
+                    event_type=PROXY_OUTPUT_FINALIZED,
+                    decision=final_action_for_event,
+                    status="ok",
+                    payload={
+                        "final_action": final_action_for_event,
+                        "final_text_source": final_text_source,
+                        "reused_governed_content": final_text_source == "governed_draft",
+                        "final_response_length": len(final_response_text or ""),
+                        "finish_reason": finish_reason_for_event,
+                        "model": upstream_model,
+                    },
+                )
+            except Exception:
+                logger.debug("persist PROXY_OUTPUT_FINALIZED failed (non-fatal)", exc_info=True)
         _finalize_request(
             proxy_run_id=proxy_run_id,
             request_id=request_id_for_audit,
@@ -654,6 +703,25 @@ def _finalize_request(
         obs.flush(timeout=5.0)
     except Exception as exc:
         logger.warning("Failed to finalize request observability: %s", exc)
+
+
+def _finish_reason_from_upstream(upstream_response: Any) -> str:
+    """Best-effort extraction of finish_reason from an upstream ChatCompletion."""
+    try:
+        if hasattr(upstream_response, "model_dump"):
+            payload = upstream_response.model_dump()
+        elif hasattr(upstream_response, "to_dict"):
+            payload = upstream_response.to_dict()
+        elif isinstance(upstream_response, dict):
+            payload = upstream_response
+        else:
+            return "stop"
+        choices = payload.get("choices") or []
+        if not choices:
+            return "stop"
+        return str(choices[0].get("finish_reason") or "stop")
+    except Exception:
+        return "stop"
 
 
 def _extract_text_from_upstream(upstream_response: Any) -> str:

@@ -115,6 +115,12 @@ CONTRACT_STRUCTURE_PROSE_CONFLICT = "CONTRACT_STRUCTURE_PROSE_CONFLICT"
 """structured_rules conflict with raw_text in the same contract.
 Payload: contract_hash, conflict_description."""
 
+# Proxy output routing (server)
+PROXY_OUTPUT_FINALIZED = "PROXY_OUTPUT_FINALIZED"
+"""Proxy finalized the HTTP response body.
+Payload: final_action, final_text_source, reused_governed_content,
+final_response_length, finish_reason, model."""
+
 ALL_EVENT_TYPES: frozenset[str] = frozenset(
     {
         AGGREGATED_GUIDANCE_EVALUATED,
