@@ -1,0 +1,515 @@
+# MoralStack Codebase Index
+
+> A file/function map of the MoralStack codebase, grounded in inspected source.
+> Snapshot of `main` at package version `0.5.0` (`pyproject.toml:7`).
+> The code is authoritative — verify a symbol still exists before relying on it.
+> Confidence and evidence for individual claims live in `docs/CODEBASE_FACTS.md`.
+
+---
+
+## 1. Repository layout
+
+```
+moralstack/
+  __init__.py            # public package; lazy-exports the SDK surface
+  sdk/                   # public SDK: govern(), GovernedClient, GovernanceConfig
+  runtime/               # Orchestrator facade + decision policy + deliberative modules
+  orchestration/         # OrchestrationController and all routing/deliberation services
+  models/                # risk estimator, policy LLM, decision explanation
+    risk/                # LLMBasedRiskEstimator, calibration, signal catalog
+  constitution/          # ConstitutionStore, schema/loader/retriever, YAML data
+    data/core.yaml       # baseline constitution
+    data/overlays/*.yaml # 21 domain overlays
+  compliance/            # DCCL (Developer Contract Compliance Layer)
+  observability/         # telemetry service, sinks (SQLite/JSONL), read store
+  persistence/           # DB/file persistence ports used by the controller
+  pipeline/              # context builder + deliberation stack assembly
+  prompts/               # module prompt templates
+  reports/               # markdown/conversation/benchmark export + UI data builders
+  server/                # OpenAI-compatible FastAPI governance proxy
+  ui/                    # FastAPI dashboard (moralstack-ui)
+  cli/                   # `moralstack` CLI
+  utils/                 # env loading, caching, output protection, json helpers
+  core/                  # shared types/schema
+scripts/                 # benchmark, standalone bridge, inspector, install
+examples/                # runnable usage examples
+tests/                   # ~120 test modules + e2e payloads
+docs/                    # architecture, modules, traces, this index
+```
+
+Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=2`,
+`python-dotenv`, `ruamel.yaml`, `langdetect`. UI/server extras add `fastapi`,
+`uvicorn`, `httpx`, `jinja2` (`pyproject.toml:27-56`).
+
+### Console entry points (`pyproject.toml:58-62`)
+
+| Script | Target | Notes |
+|---|---|---|
+| `moralstack` | `moralstack.cli.run:main` | CLI runner |
+| `moralstack-ui` | `moralstack.ui.app:main` | dashboard |
+| `moralstack-server` | `moralstack.server.proxy:main` | **reserved** — `main()` raises `NotImplementedError`; use `create_app` instead (`server/proxy.py:777`) |
+| `moralstack-validate-overlay` | `moralstack.cli.validate_overlay:main` | overlay validation |
+
+---
+
+## 2. Main packages and their roles
+
+### SDK — `moralstack/sdk/`
+- `wrapper.py` — `govern(client, config=None)` wraps any OpenAI-compatible client
+  and returns `GovernedClient`. `GovernedCompletions.create()` runs deliberation
+  *before* delegating to the wrapped client. Helpers: `_extract_last_user_message`,
+  `_extract_developer_contract` (last `system` message wins, `mode="opaque"`),
+  `_messages_to_turns`, `_build_safe_complete_user_turn`.
+- `bootstrap.py` — `_bootstrap_pipeline(config)` builds the `Orchestrator`;
+  `_resolve_model(config)` resolves the generation model.
+- `config.py` — `GovernanceConfig` (domain_overlay, failure_policy,
+  observability_mode, jsonl_dir, enable_session_tracking, …).
+- `session.py` — `SessionState`: per-client conversation_id + turn counter,
+  wraps a `SessionStore`.
+- `session_store.py` — `SessionStoreProtocol`, `InMemorySessionStore`.
+- `response.py` — `GovernedResponse`, `GovernanceMetadata` (`final_action`,
+  `risk_score`, `risk_category`, `path`, `reason_codes`, `triggered_principles`,
+  `conversation_id`, `turn_index`, …). Constructors: `from_normal`, `from_safe`,
+  `from_refusal`, `from_passthrough`, `from_pipeline_error`.
+- `errors.py` — `GovernanceError` + subclasses.
+
+### Runtime — `moralstack/runtime/`
+- `orchestrator.py` — `Orchestrator` facade. Builds an `OrchestrationController`
+  and forwards `.process(...)`. Factories `create_orchestrator`,
+  `create_minimal_orchestrator`. Re-exports public types.
+- `decision/safe_complete_policy.py` — **single source of truth** for action
+  bounds. `Action` enum (`NORMAL_COMPLETE < SAFE_COMPLETE < REFUSE`),
+  `PolicyContext`, `PolicyBounds`, `compute_action_bounds`, `decide_final_action`.
+- `decision_policy.py`, `decision_correctness.py` — supporting decision logic.
+- `modules/` — deliberative modules and their config loaders:
+  `critic_module.LLMConstitutionalCritic`, `simulator_module.LLMConsequenceSimulator`,
+  `perspective_module` (`create_minimal_ensemble`), `hindsight_module.LLMHindsightEvaluator`.
+- `trace/` — `decision_trace.DecisionTrace`, `trace_stages`.
+
+### Orchestration — `moralstack/orchestration/`
+- `controller.py` — `OrchestrationController.process(...)` is the governance
+  runner core (file is ~2498 lines). Owns risk estimation, speculative overlap,
+  DCCL invocation, routing, ledger lookup/store, conversation-state extension,
+  and event emission.
+- `decision_service.py` — `decide_action(request, risk_proto, …)` →
+  `(Decision, DecisionExplanation)`.
+- `path_router.py` — `get_route(...)` → `(route, borderline_refuse, risk_policy_action)`;
+  `is_hard_signal_refuse(...)`.
+- `safe_complete_gating.py` — `apply_safe_complete_gating(...)`.
+- `deliberation_runner.py` — `DeliberationRunner` (cycles, convergence,
+  `run_fast_path`, `run_benign_fast_path`).
+- `convergence.py`, `convergence_evaluator.py` — convergence engine.
+- `conversation_state.py` — `ConversationGovernanceState`, `TurnDecisionSummary`.
+- `conversational_fast_path.py` — `ConversationalFastPathRunner` (cache-driven skip).
+- `ledger.py`, `ledger_storage.py` — `SemanticDecisionLedger`, `CachedDecision`,
+  `LedgerResult`.
+- `refusal_handler.py`, `refusal_context.py`, `safe_refusal_generator.py` — refusal text.
+- `response_assembler.py` — `ResponseAssembler` builds the `FinalResponse`.
+- `speculative_overlap.py` — `SpeculativeOverlapHandle` (parallel draft + risk).
+- `system_prompt_resolver.py` — `effective_system_for_request(...)`.
+- `overlay_policy.py` — `is_overlay_sensitive`, `apply_risk_floor_if_sensitive`,
+  `is_domain_excluded`, `get_constitution_safe`, `OVERLAY_SENSITIVE_RISK_FLOOR`.
+- `process_context.py` — `ProcessCallContext` (per-call mutable carrier).
+- `types.py` — `ProcessedRequest`, `OrchestratorResult`, `Decision`,
+  `FinalResponse`, `ResponseMetadata`, `OrchestratorConfig`, errors.
+- `contract.py` — `DeveloperContract` (`from_text`, `contract_hash`, `structured_rules`).
+- `orchestration_event_taxonomy.py` — canonical event-type constants.
+
+### Risk — `moralstack/models/risk/`
+- `estimator.py` — `LLMBasedRiskEstimator`. `estimate(prompt, developer_contract_text=…,
+  conversation_history=…)` runs **three parallel mini-estimators** via a
+  `ThreadPoolExecutor`: `estimate_intent`, `estimate_signals` (q1–q17),
+  `estimate_operational`; merged by `calibration.merge_mini_estimator_results`.
+- `calibration.py` — `merge_mini_estimator_results`, `parse_risk_dict`, score
+  calibration rules (defensive override, harm escalation, non-operational clamp,
+  calibration guard).
+- `categories.py` — `RiskCategory` (BENIGN, SENSITIVE, MORALLY_NUANCED,
+  POTENTIALLY_HARMFUL, CLEARLY_HARMFUL), `OperationalRisk`.
+- `config/signals.yaml` — signal catalog; `prompts.py` — mini-estimator prompts.
+- `schema.py` — `RiskEstimation`.
+
+### Constitution — `moralstack/constitution/`
+- `store.py` — `ConstitutionStore` (optional LLM-based principle matching).
+- `loader.py`, `schema.py`, `retriever.py`, `prompt_formatter.py`, `helpers.py`.
+- `data/core.yaml` — baseline constitution.
+- `data/overlays/*.yaml` — 21 domain overlays: children, coding, creative,
+  customer_service, cybersecurity, education, emergency, enterprise, environment,
+  financial, gaming, healthcare, journalism, legal, medical, mental_health,
+  political, relationships, research, science, violent_crime.
+
+### Compliance / COMPL-AI bridge — `moralstack/compliance/`
+- `dccl.py` — `DeveloperContractComplianceLayer.evaluate(...)` → `ComplianceVerdict`.
+  Three evaluation paths (structured / LLM / hybrid). `validate_draft_against_action`.
+- `safety_override.py` — `classify_safety_override` (P0 categories that can never
+  be authorized).
+- `types.py` — `ComplianceDecision` (MATCH, NO_MATCH, SAFETY_OVERRIDE, NO_CONTRACT),
+  `ComplianceVerdict`, `MatchedRule`, `StructuredRule`, `EvaluationPath`.
+- `config.py` — DCCL env config getters.
+
+### Observability — `moralstack/observability/`
+- `service.py` — `ObservabilityService`, singleton via `get_obs()` / `obs`.
+  `emit`/`emit_batch` are async fire-and-forget; `flush()` at request boundary.
+- `router.py` — dispatch by mode (`db_only` → SQLite, `file_only` → JSONL,
+  `dual` → both).
+- `sinks/sqlite_sink.py` — schema + writers (`init_db`, `create_run`,
+  `upsert_request`, `update_request_*`, `delete_*`). Tables in §8.
+- `sinks/jsonl_sink.py` — JSONL envelope writer.
+- `read_store.py` — `SqliteReadStore` (read contract used by UI & exports).
+- `conversation_events.py` — `emit_conversation_state_updated`,
+  `emit_proxy_request_finalized`.
+- `governance_audit.py` — `finalize_governance_audit`, `posture_of`,
+  `state_summary_or_none`.
+- `context.py` — contextvars (`set_current_run_id`, `set_current_request_id`,
+  `set_current_session_id`, `set_current_turn_number`).
+- `config.py` — `get_observability_mode`, `get_db_path`.
+
+### Persistence — `moralstack/persistence/`
+- `default.py` — `DefaultPersistence` (`ensure_run_and_upsert_request`,
+  `set_request_context`, `update_request_domain`). Used by the controller.
+- `null.py` — `NullPersistence` (no-op default).
+- `port.py` — `PersistencePort` protocol; `sink.py` — `persist_orchestration_event`.
+- `db.py`, `write_queue.py`, `config.py`, `context.py`.
+
+### Server proxy — `moralstack/server/`
+- `proxy.py` — `create_app(openai_client, orchestrator, config, session_store)`
+  returns a FastAPI app exposing `POST /v1/chat/completions`, `/chat/completions`,
+  `GET /healthz`. `ConversationLockManager` (per-conversation locks),
+  `_handle_chat_completion_sync` (runs in a threadpool).
+- `conversation_correlation.py` — `ConversationCorrelationStore` (lineage hashing
+  → conversation_id) + `canonical_history_hash`, `canonical_parent_history_hash`.
+- `headers.py` — `build_governance_headers` (X-Moralstack-* response headers).
+- `fingerprint.py` — request fingerprinting.
+
+### UI — `moralstack/ui/`
+- `app.py` — FastAPI dashboard (`moralstack-ui`). Reads exclusively from the
+  observability SQLite DB via `SqliteReadStore`. Routes in §11. Templates in
+  `templates/`, assets in `static/`.
+
+### CLI / scripts
+- `moralstack/cli/run.py`, `shell.py`, `loader.py`, `report.py`, `visualizer.py`.
+- `scripts/benchmark_moralstack.py` — internal 84-question benchmark.
+- `scripts/openai_compatible_server.py` — **standalone single-turn** OpenAI bridge
+  (distinct from `server/proxy.py`; see §10).
+- `scripts/inspect_multiturn_trace.py` — multi-turn inspector CLI.
+- `scripts/mstack_run.py`, `consolidate_jsonl_meta.py`, `install.py`.
+
+---
+
+## 3. Runtime governance flow (high level)
+
+`govern()` → `GovernedClient.chat.completions.create()` → `Orchestrator.process()`
+→ `OrchestrationController.process()` (`orchestration/controller.py:1885`).
+
+Inside `process()` (order verified in source):
+1. Normalize request; build `ProcessCallContext`; set session/turn context vars;
+   pre-insert the `requests` row (`controller.py:1900-1923`).
+2. **Risk estimation** — speculative overlap (risk + draft in parallel) when
+   `enable_speculative_generation`, else direct `_estimate_risk`
+   (`controller.py:1928-1935`).
+3. **DCCL evaluation** on the (possibly non-blocking) speculative draft
+   (`_run_dccl_evaluation`, `controller.py:1936`). On `MATCH` with a validated
+   draft → **compliance fast-path** (`_route_compliance_match`), skipping risk
+   routing and deliberation (`controller.py:1941-2040`).
+4. Apply overlay sensitivity risk floor (`apply_risk_floor_if_sensitive`),
+   normalize domain, domain-exclusion check (`controller.py:2062-2116`).
+5. **Decision** — `decide_action(...)` then `apply_safe_complete_gating(...)`
+   (`controller.py:2118-2130`).
+6. **Routing** — `get_route(...)` → one of `refuse | benign | safe_complete |
+   fast_path | deliberative`; `is_hard_signal_refuse(...)`
+   (`controller.py:2143-2144`).
+7. **Ledger lookup** (multi-turn) — when a ledger + conversation_id exist, a
+   cache hit may patch the decision/route to skip deliberation
+   (`controller.py:2149-2306`).
+8. Dispatch to the matching `_route_*` handler (`controller.py:2345-end`).
+9. `_apply_conversation_metadata_to_result` stamps conversation linkage, builds
+   `conversation_governance_state_out`, emits conversation events, and stores the
+   decision in the ledger (`controller.py:319-413`).
+
+See `docs/TRACES/governance_decision_flow.md` for the full trace.
+
+---
+
+## 4. Decision actions: NORMAL_COMPLETE / SAFE_COMPLETE / REFUSE
+
+Computed in `runtime/decision/safe_complete_policy.py` from structured signals,
+never from text:
+
+- `compute_action_bounds(ctx)` → `PolicyBounds(min_required, max_allowed,
+  reason_codes)`. Rules (in order): hard violations / `clearly_harmful` /
+  op_risk HIGH ⇒ REFUSE bounds; HIGH actionability ⇒ SAFE_COMPLETE; sensitive /
+  morally_nuanced ⇒ SAFE_COMPLETE (factual non-sensitive exemption allows
+  NORMAL); potentially_harmful ⇒ SAFE_COMPLETE in sensitive overlays else gray
+  zone; benign ⇒ NORMAL_COMPLETE.
+- `decide_final_action(ctx)` derives the action from bounds; gray zone defaults
+  to `NORMAL_COMPLETE` to reduce false positives (`safe_complete_policy.py:264-285`).
+- **Runtime final action is assembled by `decision_service.py` and post-gated
+  by `safe_complete_gating.py`.** `_handle_hard_violations`
+  (`decision_service.py:493-579`) has three narrow cases that return
+  SAFE_COMPLETE even when bounds say REFUSE: (1) MH.CRISIS.1 + crisis_support
+  request type; (2) low-risk + non-operational + domain_regulated; (3) pre-policy
+  action SAFE_COMPLETE + low-risk + non-operational + no requested_instructions.
+  `apply_safe_complete_gating` (`safe_complete_gating.py:73-171`) can downgrade
+  gray-zone SAFE_COMPLETE → NORMAL_COMPLETE (not applied to SENSITIVE /
+  MORALLY_NUANCED categories).
+
+Routing consequences (`sdk/wrapper.py`, `server/proxy.py`):
+
+| `final_action` | SDK behavior | Proxy behavior |
+|---|---|---|
+| `NORMAL_COMPLETE` | call wrapped client with original kwargs | forward original body (or reuse governed draft on `COMPLIANCE_FAST_PATH`) |
+| `SAFE_COMPLETE` | append synthetic guidance `user` turn, then call client | append synthetic guidance `user` turn, then forward |
+| `REFUSE` | return refusal text; **client not called** | return synthetic `chat.completion` (finish_reason `content_filter`); **upstream not called** |
+
+---
+
+## 5. Risk estimation
+
+`LLMBasedRiskEstimator.estimate(...)` (`models/risk/estimator.py:249`) delegates
+to the parallel mini-estimator path (`estimator.py:549-678`, `ThreadPoolExecutor`
+at `:674-678`), which runs three mini-estimators and merges them:
+- `estimate_intent` — detected_language, intent flags, request_type, harm_type.
+- `estimate_signals` — q1–q17 harm/topic signals.
+- `estimate_operational` — operational_risk, raw risk_score, confidence,
+  misuse/actionability.
+
+`calibration.py` then applies deterministic guardrails to produce the final
+`RiskEstimation` (score, `risk_category`, `operational_risk`, detected_domain,
+semantic_signals). Verified rules (`models/risk/calibration.py`):
+- **Defensive override** (`:284-304`): harmful_count≥1 but all intent flags False
+  and op_risk NONE/LOW ⇒ SENSITIVE, score≤0.30 (blocked for weapons+intent and q17).
+- **Harm escalation** (`:310-319`): harmful_count≥3 / q5 / q17 / priority-harm +
+  operational signal / score≥0.85 / clear_harm ⇒ CLEARLY_HARMFUL, score≥0.85.
+- **Intent-contradiction** (`:536-548`): op_risk HIGH but all intent False ⇒
+  CLEARLY_HARMFUL→SENSITIVE, score≤0.55, DENY→DELIBERATE.
+- **Non-operational clamp** (`:554-565`): op_risk NONE + all intent False + not q17
+  ⇒ CLEARLY_HARMFUL→SENSITIVE, score≤0.30, DENY→DELIBERATE.
+- **Calibration guard** (`:659-763`): benign request types with no harm intent and
+  no requested instructions ⇒ risk_score→0.45, op_risk HIGH→LOW, DENY→DELIBERATE,
+  misuse/actionability HIGH→MEDIUM.
+
+q1–q6, q8–q12 and q17 feed `harmful_count`; q13 and the reputational cluster
+q14–q16 are topic-only and excluded from the count (`:118-193`). The controller
+can additionally raise the score with a sensitive-overlay floor
+(`apply_risk_floor_if_sensitive`).
+
+---
+
+## 6. Constitution and overlays
+
+- `ConstitutionStore` loads `data/core.yaml` plus per-domain overlays from
+  `data/overlays/*.yaml`. Optional LLM-based principle matching
+  (`use_llm_matching=True`).
+- An overlay can declare `sensitive=true` (drives `is_overlay_sensitive` and the
+  risk floor) and `sensitive_risk_floor`. Excluded domains short-circuit to a
+  domain-exclusion response (`_route_domain_excluded`).
+- `core` is retrieval-only and never becomes a runtime overlay
+  (`_normalize_runtime_domain`, `controller.py:117-130`).
+
+---
+
+## 7. Deliberative modules & convergence
+
+When `route == "deliberative"`, `DeliberationRunner` runs cycles (default
+`max_deliberation_cycles=2`) over the following modules. **Modules only run
+on the eligible deliberative route** — benign, safe_complete, ledger
+fast-path, and compliance fast-path routes bypass them entirely. Individual
+modules can also be absent, disabled, or skipped by timeout or gating:
+- **Constitutional Critic** (`LLMConstitutionalCritic`) — principle violations.
+- **Consequence Simulator** (`LLMConsequenceSimulator`) — projected harm /
+  expected valence. Runs in parallel with perspectives.
+- **Perspectives Ensemble** — multi-stakeholder approval scores.
+- **Hindsight Evaluator** — retrospective quality score.
+
+The **Convergence Engine** decides the loop outcome (verified):
+- `ConvergenceEvaluator.determine_decision` (`convergence_evaluator.py:314-519`)
+  tallies weighted votes from critic/simulator/perspectives/hindsight into a
+  `DecisionType` (PROCEED→CONVERGED, REVISE, REFUSE, CONTINUE, plus
+  CONVERGED_WITH_SUGGESTIONS). The **simulator can never vote REFUSE** — REFUSE
+  comes only from hard violations or a refuse-vote majority. Perspective weights:
+  vulnerable 1.2, compliance 1.1, user/observer 1.0, adversary 0.8 (`:24-42`).
+  A conservative cycle-1 early-convergence check can stop after one cycle
+  (`_evaluate_cycle1_early_convergence`, `:168-301`).
+- `enforce_convergence_invariants` (`convergence.py:19-65`) is the sole loop
+  authority: CONVERGED ⇒ stop+converged; REFUSE ⇒ stop (`HARD_VIOLATION_STOP`);
+  cycle≥max ⇒ stop (`CYCLES_EXHAUSTED`); else continue while cycles remain.
+
+The controller emits a `DELIBERATION_AGGREGATE` decision trace
+(`controller.py:721-786`). Fast paths (`run_fast_path`, `run_benign_fast_path`)
+skip the deliberative loop.
+
+---
+
+## 8. SDK wrapper
+
+`GovernedClient` is a transparent proxy: only `chat.completions.create()` is
+intercepted; everything else passes through via `__getattr__`
+(`wrapper.py:606-608`). On construction it generates a session `run_id` and (for
+`db_only`/`dual`) ensures the DB schema + a `runs` row exist
+(`wrapper.py:578-604`). After each call it flushes observability synchronously
+(`wrapper.py:275-283`). Failure handling honors `config.failure_policy`
+(`refuse` default, or `passthrough`).
+
+---
+
+## 9. OpenAI-compatible bridge
+
+Two distinct implementations — do not confuse them:
+
+1. **Production proxy** — `moralstack/server/proxy.py:create_app`. Multi-turn
+   aware: resolves conversation_id (header → `extra_body` → lineage correlation),
+   serializes same-conversation requests with per-conversation locks, uses a
+   `SessionStore`, emits full observability, routes REFUSE/SAFE_COMPLETE/NORMAL.
+   Served via `examples/server_quickstart.py` (uvicorn, **single worker**;
+   recommended command targets port 8080; `main()` reads env var
+   `MORALSTACK_OPENAI_COMPATIBLE_API_PORT`, defaulting to 8787). This is the
+   path recommended for COMPL-AI `llm_rules`.
+2. **Standalone bridge** — `scripts/openai_compatible_server.py` (port 8787).
+   Single-turn only: extracts the last user message and calls
+   `orchestrator.process(request)` with **no** conversation_id/turn_index and
+   **no** conversation history. Returns the governed `result.response.content`
+   directly (not a fresh upstream generation). Creates a new `run` per request;
+   bounds concurrency with an asyncio semaphore.
+
+See `docs/TRACES/openai_compatible_multiturn.md`.
+
+---
+
+## 10. Streaming behavior
+
+- **SDK**: supported. Deliberation runs *before* streaming starts. `REFUSE`
+  yields a single synthetic chunk (`GovernedRefusalStream`); otherwise the
+  upstream stream is wrapped by `GovernedStreamResponse` with
+  `governance_metadata` attached (`wrapper.py:186-251`).
+- **Production proxy**: **no streaming branch.** `_build_upstream_kwargs` does
+  not strip `stream`, and responses are serialized via `model_dump()`
+  (`proxy.py:750-774`). Streaming through the proxy is therefore unsupported (see
+  fragile areas, §14).
+- **Standalone bridge**: accepts a `stream` field but always returns a complete
+  non-streamed JSON body (`scripts/openai_compatible_server.py:81,347`).
+
+---
+
+## 11. Multi-turn behavior
+
+- **Identity**: `conversation_id` + `turn_index`. SDK uses a per-`SessionState`
+  counter (`next_turn_index`, `session.py:77-84`). Proxy derives `turn_index`
+  statelessly as `user_message_count - 1` (`proxy.py:526-541`) and resolves
+  `conversation_id` via header/extra_body/lineage.
+- **State**: `ConversationGovernanceState` carries posture, last contract hash,
+  hard constraints, and `turn_decisions_summary`. The controller extends it per
+  turn (`_extend_state_out_v04`, `controller.py:478-543`).
+- **Cache**: `SemanticDecisionLedger` can short-circuit deliberation on a
+  same-conversation cache hit, gated by `ConversationalFastPathRunner.is_safe_to_apply`
+  (cached REFUSE always applied; ESCALATED never cached; `turn_index < 1` skipped).
+- **Risk in context**: history + developer contract are passed into the risk
+  estimator so context-dependent prompts are not mis-scored
+  (`controller.py:788-845`).
+
+---
+
+## 12. Observability & DB logging
+
+- Modes (`MORALSTACK_OBSERVABILITY_MODE`): `file_only` (default), `db_only`,
+  `dual`. DB path via `MORALSTACK_OBSERVABILITY_DB_PATH` (legacy
+  `MORALSTACK_DB_PATH`).
+- Async write queue + background worker; `flush()` at request/SDK boundary.
+- **SQLite tables** (`sinks/sqlite_sink.py:48-489`): `runs`, `requests`,
+  `llm_calls`, `orchestration_events`, `decision_traces`, `debug_events`,
+  `exports_cache`, `conversation_states`, `ledger_events`,
+  `session_store_events`, `proxy_request_events`. WAL + foreign keys enabled
+  (`_get_connection`, `sinks/sqlite_sink.py:497-504`).
+- **JSONL** sink writes the same event envelopes to
+  `MORALSTACK_OBSERVABILITY_JSONL_DIR` (default `logs/observability`).
+- Read contract: `SqliteReadStore` (`read_store.py`).
+
+See `docs/TRACES/observability_db_to_ui.md`.
+
+## 13. Filesystem logging
+
+The JSONL sink (`sinks/jsonl_sink.py`) is the filesystem audit stream, active in
+`file_only` and `dual` modes. Each emitted `EventEnvelope` becomes one JSON line.
+`scripts/consolidate_jsonl_meta.py` post-processes JSONL meta. The UI reads from
+SQLite only, **not** from JSONL — `file_only` runs are not visible in the
+dashboard (see fragile areas).
+
+## 14. UI integration
+
+`moralstack-ui` (`ui/app.py`) is a FastAPI app with form-based auth
+(`MORALSTACK_UI_USERNAME` / `_PASSWORD`). It requires a configured SQLite DB
+(`get_db_path()`), and renders per-request and per-conversation views by reading
+the observability tables and rebuilding the deliberation timeline / metro map.
+
+Routes (`ui/app.py:1738-2185`): `/`, `/login`, `/logout`, `/auth-status`,
+`/runs`, `/runs/{run_id}`, `/runs/{run_id}/requests/{request_id}`,
+`/runs/{run_id}/requests/{request_id}/export.md`,
+`/runs/{run_id}/export_benchmark.md`, `/conversations`,
+`/conversations/{conversation_id}` (multi-turn timeline),
+`/conversations/{conversation_id}/export.md` (AI Act art. 12 audit export).
+
+---
+
+## 15. COMPL-AI integration points
+
+There is **no `compl-ai` package** in this repo. COMPL-AI integrates from the
+outside by pointing its OpenAI-compatible client at the MoralStack proxy. The
+codebase contains targeted accommodations for it:
+- `server/conversation_correlation.py` exists specifically because COMPL-AI
+  `llm_rules` resends the full history with no stable `conversation_id`
+  (module docstring).
+- `controller._estimate_risk` passes the developer contract + history to the
+  risk estimator citing "compl-ai llm_rules-benign Q74" (`controller.py:797-799`).
+- `examples/server_quickstart.py` documents the recommended COMPL-AI launch
+  (uvicorn, single worker, port 8080).
+- `scripts/benchmark_moralstack.py` is MoralStack's **own** 84-question
+  benchmark, separate from COMPL-AI.
+
+See `docs/TRACES/complai_llm_rules_flow.md`.
+
+---
+
+## 16. Test layout
+
+`tests/` (~120 modules). Notable groups:
+- Decision/policy: `test_decide_action.py`, `test_decision_policy.py`,
+  `test_safe_complete_*.py`, `test_decision_correctness.py`.
+- Governance invariants: `tests/governance_invariants/` (e.g.
+  `test_q17_hard_signal_invariant.py`).
+- Risk: `test_risk*.py`, `test_calibration_guard.py`, `test_signal*.py`,
+  `test_axis_mapping.py`.
+- Multi-turn / ledger / session: `test_ledger*.py`, `test_session_store.py`,
+  `test_conversation_state_v04.py`, `test_multiturn_context_propagation.py`,
+  `test_conversational_fast_path.py`.
+- SDK: `test_sdk_*.py` (wrapper, session, stream, dccl, integration, …).
+- Server/proxy: `test_server_proxy.py`, `test_conversation_correlation.py`,
+  `test_server_fingerprint.py`.
+- Observability: `test_observability_*.py`, `test_persistence_*.py`.
+- UI/reports: `test_ui_*.py`, `test_reports.py`, `test_conversation_export.py`.
+- Byte-equality: `test_system_prompt_byte_equality.py`,
+  `test_system_prompt_resolver.py`.
+- Compliance: `test_compliance_evaluation.py`, `test_sdk_dccl.py`.
+- E2E payloads in `tests/e2e_payloads/`; regression in `tests/e2e_run_regression.py`.
+
+---
+
+## 17. Known fragile areas
+
+- **Proxy streaming is unsupported (verified).** `server/proxy.py` has no
+  `stream` branch; `_build_upstream_kwargs` keeps `stream` in the body, the
+  upstream `Stream` object has no `model_dump`/`to_dict`, so
+  `_serialize_upstream_response` returns `{"raw": str(...)}` — a non-OpenAI body
+  with no streaming (`proxy.py:750-774`). No test exercises this. Use the SDK for
+  streaming.
+- **Lineage-based conversation correlation can collide.** Two samples with
+  byte-identical histories (and identical assistant outputs) map to the same
+  `conversation_id` (`conversation_correlation.py` docstring + `resolve`). This
+  is the central COMPL-AI risk — see `docs/TRACES/complai_llm_rules_flow.md`.
+- **Two bridges, different semantics.** `scripts/openai_compatible_server.py` is
+  single-turn and ignores history; `server/proxy.py` is multi-turn. Choosing the
+  wrong one silently changes multi-turn behavior.
+- **UI requires SQLite.** `file_only` runs never appear in the dashboard; the UI
+  reads only the DB.
+- **Cache governance.** Ledger fast-path can reuse a prior decision; the
+  `is_safe_to_apply` gate is what prevents unsafe reuse. Changes there are P0.
+- **`controller.process()` is very large** (~2498 lines) with many interleaved
+  early returns and best-effort emit blocks — read the whole method before
+  editing routing.

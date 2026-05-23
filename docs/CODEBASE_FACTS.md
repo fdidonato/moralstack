@@ -1,0 +1,100 @@
+# MoralStack — Verified Facts Ledger
+
+Every row in the **Verified facts** table was verified by reading the cited
+source. Where a behavior depends on an external input (e.g. the contents of a
+benchmark dataset), the row states the verified code behavior plus the exact
+input condition. Claims that involve external systems, deployment configuration,
+or the current test-suite state are collected in the **Conditionally verified /
+deployment assumptions** section below the main table.
+
+Test baseline (previously reported): 1673 passed / 0 failed / 0 skipped with
+the project `venv`. Not independently rerun in the reconciliation audit.
+Re-verify with: `./venv/Scripts/python.exe -m pytest -q`. The 5 skips reported
+elsewhere appear only when the `[ui]`/`[server]` extras are absent.
+
+## Verified facts
+
+| Fact | Evidence file/function | Confidence | Notes |
+|---|---|---|---|
+| Package version is `0.5.0`; requires Python >=3.11 | `pyproject.toml:7,11` | High | |
+| Public SDK surface is `govern`, `GovernedClient`, `GovernanceConfig`, `GovernedResponse`, `GovernanceMetadata`, error types; lazily imported from `moralstack.sdk` | `moralstack/__init__.py:38-64`, `moralstack/sdk/__init__.py:7-22` | High | |
+| `govern(client, config=None)` wraps any client exposing `.chat.completions.create()`; returns `GovernedClient` | `sdk/wrapper.py:616-661` | High | duck-typed check at `:652` |
+| Only `chat.completions.create()` is intercepted; all other attributes pass through | `sdk/wrapper.py:606-608` (`GovernedClient.__getattr__`) | High | |
+| Deliberation runs before any upstream generation; routing depends on `final_action` | `sdk/wrapper.py:285-403` | High | |
+| `final_action` ∈ {NORMAL_COMPLETE, SAFE_COMPLETE, REFUSE} computed from structured signals, not text. Action bounds defined in `safe_complete_policy.py`; runtime final action assembled by `decision_service.py` and post-gated by `safe_complete_gating.py` | `runtime/decision/safe_complete_policy.py:158-285`; `orchestration/decision_service.py:493-579`; `orchestration/safe_complete_gating.py:86-171` | High | |
+| Action ordering is `NORMAL_COMPLETE < SAFE_COMPLETE < REFUSE` | `runtime/decision/safe_complete_policy.py:38-41` | High | `Action` enum |
+| Hard violations, `clearly_harmful`, or op_risk HIGH force REFUSE bounds in `compute_action_bounds` | `runtime/decision/safe_complete_policy.py:167-176` | High | `decision_service._handle_hard_violations` (`decision_service.py:493-579`) has three narrow exceptions that return SAFE_COMPLETE instead of REFUSE: (1) MH.CRISIS.1 + `crisis_support` request type; (2) risk_score<0.5 + op_risk NONE + non-operational + domain_regulated; (3) pre-policy action was SAFE_COMPLETE + risk<0.5 + non-operational + no requested_instructions |
+| HIGH `actionability_risk` forces SAFE_COMPLETE (does not override REFUSE) | `runtime/decision/safe_complete_policy.py:183-190` | High | |
+| Gray-zone `potentially_harmful` defaults to NORMAL_COMPLETE to reduce false positives | `runtime/decision/safe_complete_policy.py:264-285` | High | |
+| On REFUSE the wrapped SDK client / proxy upstream generation client is NOT called | `sdk/wrapper.py:333-345`; `server/proxy.py:312-322` | High | Internal MoralStack LLM calls may still occur: risk mini-estimators, a possibly in-flight speculative draft (`controller.py:847-964`), and refusal wording generation (`refusal_handler.py:94-104`) |
+| SAFE_COMPLETE appends a synthetic trailing `user` turn; system prompt left byte-identical | `sdk/wrapper.py:147-178,347-378`; `server/proxy.py:324-336` | High | `_build_safe_complete_user_turn` |
+| Developer contract = last `system` message, `mode="opaque"`; None if absent | `sdk/wrapper.py:51-93` | High | |
+| `Orchestrator` is a facade delegating to `OrchestrationController` | `runtime/orchestrator.py:133-196` | High | |
+| Governance core is `OrchestrationController.process(...)` | `orchestration/controller.py:1885-1893` | High | accepts conversation_id/turn_index/parent_request_id/conversation_state |
+| Risk estimation uses 3 parallel mini-estimators (intent, signals q1–q17, operational) merged + calibrated | `models/risk/estimator.py:541-735`; `calibration.merge_mini_estimator_results` | High | `ThreadPoolExecutor` at `:674-678`. Note: the `estimate_signals` docstring (`estimator.py:552`) still says `q1-q13` and is **stale** — the schema (`:486-490`) and `config/signals.yaml` carry q14–q17, so q1–q17 is correct (code wins per CLAUDE.md §4) |
+| Risk estimator is given developer-contract text + conversation history for context | `orchestration/controller.py:788-845` | High | comment cites compl-ai Q74 |
+| Routing decided by `get_route(...)` → route/borderline_refuse/risk_policy_action | `orchestration/controller.py:2143`; `orchestration/path_router.py:get_route` | High | routes: refuse, benign, safe_complete, fast_path, deliberative |
+| Hard-signal refuse computed via `is_hard_signal_refuse` and re-evaluated after cache patches | `orchestration/controller.py:2144,2209` | High | |
+| DCCL runs before risk routing; MATCH + validated draft routes to compliance fast-path skipping deliberation | `orchestration/controller.py:1936-2040,1205-1297` | High | `_route_compliance_match`, path `COMPLIANCE_FAST_PATH` |
+| DCCL Safety Override blocks authorization of P0 categories regardless of contract | `compliance/dccl.py:77-117`; `compliance/safety_override.py:classify_safety_override` | High | |
+| `core` constitution is retrieval-only, never a runtime overlay | `orchestration/controller.py:117-130` (`_normalize_runtime_domain`) | High | |
+| Sensitive overlays apply a risk-score floor before decision | `orchestration/controller.py:2083-2116`; `overlay_policy.apply_risk_floor_if_sensitive` | High | |
+| 21 domain overlays ship under `constitution/data/overlays/` | `git ls-files` overlay listing | High | enumerated in index §6 |
+| Deliberative path default is 2 cycles | `runtime/orchestrator.py:87` (`max_cycles=2`); `orchestration/types.OrchestratorConfig` | High | |
+| SDK streaming runs deliberation first; REFUSE yields one synthetic chunk | `sdk/wrapper.py:186-251,333-345` | High | `GovernedRefusalStream`, `GovernedStreamResponse` |
+| Two OpenAI-compatible bridges exist with different semantics | `server/proxy.py:413-520`; `scripts/openai_compatible_server.py:308-376` | High | proxy = multi-turn; script = single-turn |
+| Production proxy serializes same-conversation requests with per-conversation locks | `server/proxy.py:72-119,234-242` | High | `ConversationLockManager`, 30s acquire timeout |
+| Proxy `turn_index` = user-message count − 1 (stateless) | `server/proxy.py:526-541` | High | |
+| Proxy resolves conversation_id: header > extra_body > lineage correlation | `server/proxy.py:218-219,121-136` | High | header alias `X-Moralstack-Conversation-Id` |
+| Lineage correlation maps history hashes → conversation_id; identical histories collide | `server/conversation_correlation.py:88-130` + module docstring | High | central COMPL-AI risk |
+| Standalone bridge ignores conversation history; only last user prompt is used | `scripts/openai_compatible_server.py:98-104,201-223` | High | `orchestrator.process(request)` with no conv kwargs |
+| Standalone bridge returns governed `result.response.content`, not a fresh upstream call | `scripts/openai_compatible_server.py:239-251,355` | High | |
+| Standalone bridge default port 8787; proxy quickstart recommended uvicorn command uses port 8080 but `main()` defaults to 8787 via `MORALSTACK_OPENAI_COMPATIBLE_API_PORT` | `scripts/openai_compatible_server.py:11,381`; `examples/server_quickstart.py:74-79` | High | |
+| Proxy has no streaming branch; `_build_upstream_kwargs` does not strip `stream` | `server/proxy.py:750-774` | High | full streaming behavior verified in the row near the bottom of this table |
+| `moralstack-server` console entry raises NotImplementedError | `server/proxy.py:777-783` | High | use `create_app` |
+| Observability has 3 modes routed to SQLite/JSONL sinks | `observability/router.py:37-54`; `observability/config.get_observability_mode` | High | db_only / file_only / dual |
+| Observability emit is async fire-and-forget; flush at request boundary | `observability/service.py:44-60` | High | daemon write queue |
+| Observability failures never break the request (best-effort try/except) | `sdk/wrapper.py:405-508`; `server/proxy.py:363-406` | High | |
+| SQLite schema defines 11 tables incl. multi-turn (`conversation_states`, `ledger_events`, `session_store_events`, `proxy_request_events`) | `observability/sinks/sqlite_sink.py:48-489` | High | full list in index §12 |
+| SQLite uses WAL + foreign keys ON | `observability/sinks/sqlite_sink.py:497-504` | High | |
+| UI reads only from SQLite (`get_db_path()` required) | `ui/app.py:24-94,2147-2148`; `_ReadStoreProxy` | High | file_only not shown in UI |
+| UI exposes per-conversation timeline + AI Act art.12 markdown export | `ui/app.py:2143-2174` | High | `/conversations/{id}`, `.../export.md` |
+| Conversation audit export reconstructs turns, decisions, posture, ledger/session/proxy activity | `reports/conversation_export.py:1-26` | High | Requires DB/dual persistence, successful flush before process termination, and no lineage collision. JSONL-only runs are invisible to the UI and require custom joins across per-event-type files. Lineage-collided conversations cannot be separated after the fact. |
+| `GovernedClient` init creates a session run_id and (db modes) ensures schema + runs row | `sdk/wrapper.py:578-604` | High | |
+| Ledger fast-path reuse gate: cached REFUSE always applied; non-deliberative current route (benign/safe_complete/refuse/fast_path) applied; deliberative route + non-REFUSE cache rejected | `orchestration/conversational_fast_path.py:111-151` (`is_safe_to_apply`) | High | |
+| Fast-path reuses only governance metadata (final_action, reason_codes, triggered_principles); response **content is never cached** (regenerated fresh) | `orchestration/conversational_fast_path.py:1-15,96-101` | High | DAF-4 |
+| Ledger `lookup` and `store` both skip when posture==ESCALATED (`posture_escalated`) or turn_index<1 (`turn_index_below_one`); lookup can also miss on `below_threshold`/`intent_divergence` | `orchestration/ledger.py:15-17,245-251,313-340,141-142` | High | |
+| Pipeline failure honors `failure_policy` (`refuse` default, `passthrough` calls client directly) | `sdk/wrapper.py:510-542`; `server/proxy.py:282-299` | High | |
+| Multi-turn governance state extended per turn (posture, contract hash, turn summary) | `orchestration/controller.py:478-543` (`_extend_state_out_v04`) | High | |
+| `enable_speculative_generation` defaults to `True` (risk + draft run in parallel) | `orchestration/types.py:540` (`OrchestratorConfig`) | High | |
+| `get_route` returns one of refuse/benign/safe_complete/fast_path/deliberative | `orchestration/path_router.py:113-129` | High | |
+| No `compl-ai` package in repo; the repo contains proxy mechanics and accommodation code for COMPL-AI-like clients (lineage correlation, history propagation, per-turn lock) | `git ls-files` (no compl-ai path); `server/conversation_correlation.py` docstring; `controller.py:797-799` | High | Whether an external COMPL-AI runner actually points at the production proxy is a deployment configuration not verifiable from this repo — see Conditionally verified section below |
+| Deliberative final action: `ConvergenceEvaluator.determine_decision` produces a `DecisionType` from weighted votes (critic/simulator/perspectives/hindsight); simulator can never produce REFUSE; REFUSE only from hard violations or refuse-vote majority | `orchestration/convergence_evaluator.py:314-519` | High | |
+| `enforce_convergence_invariants` is the sole loop authority: CONVERGED/CONVERGED_WITH_SUGGESTIONS ⇒ stop+converged; REFUSE ⇒ stop (`HARD_VIOLATION_STOP`); cycle≥max ⇒ stop (`CYCLES_EXHAUSTED`) | `orchestration/convergence.py:19-65` | High | |
+| Perspective weighting: vulnerable 1.2, compliance 1.1, user/observer 1.0, adversary 0.8 | `orchestration/convergence_evaluator.py:24-42` | High | |
+| Calibration "defensive override": harmful_count≥1, all intent flags False, op_risk NONE/LOW (and not weapons+intent / not q17) ⇒ SENSITIVE, score≤0.30 | `models/risk/calibration.py:284-304` | High | |
+| Calibration "harm escalation" (when not defensive): harmful_count≥3 / q5_physical / q17 / (priority_harm_count≥1 + operational signal) / score≥0.85 / clear_harm ⇒ CLEARLY_HARMFUL, score≥0.85 | `models/risk/calibration.py:310-319` | High | |
+| Non-operational clamp: op_risk NONE + all intent False + not q17 ⇒ CLEARLY_HARMFUL→SENSITIVE, score≤0.30, DENY→DELIBERATE | `models/risk/calibration.py:554-565` | High | |
+| Intent-contradiction downgrade: op_risk HIGH but all intent False (not priority-harm domain) ⇒ CLEARLY_HARMFUL→SENSITIVE, score≤0.55, DENY→DELIBERATE | `models/risk/calibration.py:536-548` | High | |
+| Calibration guard caps benign request types (factual_query/sensitive_topic/ethical_dilemma/support_request/crisis_support, no harm intent, no requested instructions): risk_score→0.45, op_risk HIGH→LOW, DENY→DELIBERATE, misuse/actionability HIGH→MEDIUM; skipped if q17 | `models/risk/calibration.py:659-763` | High | |
+| q13 and the reputational cluster (q14–q16) and the semantic flags (stated_personal_bias, seeks_norm_circumvention) do NOT contribute to harmful_count; q17 does | `models/risk/calibration.py:118-193` | High | |
+| Proxy response headers: always `X-Moralstack-{Decision,Risk-Score,Posture,Path,Conversation-Id,Internal-Draft-Reused}`; conditionally `X-Moralstack-Cached-From`, `X-Moralstack-Compliance-Decision`, `X-Moralstack-Compliance-Rule` | `server/headers.py:40-54` | High | |
+| JSONL sink writes one file **per event_type** (`{event_type}.jsonl`), each line = `envelope.to_dict()`; SQLite normalizes the same `EventEnvelope` into typed columns. Same source, different shape | `observability/sinks/jsonl_sink.py:77-95`; `observability/router.py:37-54` | High | |
+| Proxy does not special-case `stream`: `_build_upstream_kwargs` keeps `stream`; a streaming `Stream` object has no `model_dump`/`to_dict`, so `_serialize_upstream_response` returns `{"raw": str(...)}` — a non-OpenAI body, no streaming. No test exercises this | `server/proxy.py:750-774`; `tests/test_server_proxy.py` (no stream test) | High | |
+| Lineage correlation: identical canonicalized histories produce the same `conversation_id`; that id keys the per-conversation lock, the session store entry, and the ledger key — so colliding requests serialize and share governance state | `server/conversation_correlation.py:61-114`; `server/proxy.py:87-110,256,303-304`; `orchestration/ledger.py:254` | High | benchmark impact requires the dataset to actually contain identical-history samples |
+| Client retry creates a new `requests` row at the same turn: `ProcessedRequest.request_id` is a fresh uuid4 per instance and proxy `turn_index` is recomputed statelessly | `orchestration/types.py:196`; `server/proxy.py:526-541` | High | retries are not deduplicated |
+| Full test suite — previously reported: 1673 passed / 0 failed / 0 skipped with the `venv` (5 skips without `[ui]`/`[server]` extras) | `./venv/Scripts/python.exe -m pytest -q` | Medium | **Not independently rerun in the reconciliation audit.** Re-verify before relying on this count. |
+
+---
+
+## Conditionally verified / deployment assumptions
+
+These items involve external systems, deployment configuration, or runtime behavior that cannot be fully verified from the repository source alone.
+
+| Item | Verified component | Unverified / conditional component |
+|---|---|---|
+| COMPL-AI uses the production proxy | Repo contains proxy mechanics and accommodation code (lineage correlation, history propagation, per-turn lock, risk-estimator COMPL-AI comment at `controller.py:797-799`) | Whether an actual external COMPL-AI runner points at the proxy, the exact request format it sends, and the benchmark dataset's collision prevalence are external facts not verifiable from this repo |
+| Single-uvicorn-worker requirement | `examples/server_quickstart.py:16-21` documents the requirement and explains why | Not runtime-enforced: an external load balancer routing turns of one conversation to different workers silently breaks continuity without an error |
+| Benchmark collision prevalence | Hash-collision mechanism verified (`conversation_correlation.py:61-114`) | Whether a given run encounters identical-history samples depends on the external dataset |
+| Full test-suite pass count | Previously reported 1673 passed during original audit session | Not independently rerun in reconciliation audit; current status requires a fresh run |
+| `GovernanceConfig.observability_mode="off"` | Field declared in `sdk/config.py:58`; `get_observability_mode()` reads env var and does not recognize "off" | The SDK field has no wired runtime effect; observability mode is controlled exclusively by `MORALSTACK_OBSERVABILITY_MODE` env var |
