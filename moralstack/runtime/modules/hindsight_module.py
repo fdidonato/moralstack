@@ -57,7 +57,7 @@ def _build_context_block(
             content = (getattr(turn, "content", "") or "")[:200]
             lines.append(f"[{role}]: {content}")
         sections.append(
-            "CONVERSATION HISTORY (last 3 turns):\n"
+            "CONVERSATION HISTORY (context_mode=role_serialized_truncated; last 3 turns):\n"
             f"{chr(10).join(lines)}\n"
             "Evaluate whether the response contradicts or escalates concerning patterns from previous turns."
         )

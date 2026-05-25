@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Iterator
 
 from moralstack.core.types import Turn, UserContext
 from moralstack.orchestration.contract import DeveloperContract
+from moralstack.orchestration.conversation_context import build_conversation_context, context_to_turns
 from moralstack.orchestration.types import ProcessedRequest
 from moralstack.sdk.bootstrap import _bootstrap_pipeline
 from moralstack.sdk.config import GovernanceConfig
@@ -37,15 +38,7 @@ def _extract_last_user_message(messages: list[dict[str, Any]]) -> str:
     Return the content of the last message with role='user'.
     Returns empty string if no user message is present.
     """
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                # Multimodal format: list of {type, text} or {type, image_url}
-                parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
-                return " ".join(parts)
-            return str(content)
-    return ""
+    return build_conversation_context(messages).final_user_message
 
 
 def _extract_developer_contract(
@@ -55,9 +48,8 @@ def _extract_developer_contract(
     Extract the developer-declared application contract from a list of OpenAI messages.
 
     Semantics:
-    - Scan all messages with role='system' in order of appearance.
-    - The LAST system message wins (most recent override semantics, consistent with how
-      OpenAI clients typically use multiple system messages).
+    - Scan all messages with role='system' or role='developer' in order of appearance.
+    - The LAST system/developer message wins (most recent override semantics).
     - Multimodal content (list of {type, text/image_url}) is reduced to text parts only;
       non-text parts are ignored.
     - If no system message is present, or the extracted text is empty/whitespace-only,
@@ -76,21 +68,7 @@ def _extract_developer_contract(
         scope/role/restrictions extraction) is deferred to a later step and gated by
         an explicit GovernanceConfig flag not present in Step 2.
     """
-    last_system_text = ""
-    for msg in messages:
-        if msg.get("role") != "system":
-            continue
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            # Multimodal: keep text parts only.
-            parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
-            last_system_text = " ".join(parts)
-        else:
-            last_system_text = str(content)
-
-    if not last_system_text.strip():
-        return None
-    return DeveloperContract.from_text(last_system_text, mode="opaque")
+    return build_conversation_context(messages).developer_contract
 
 
 def _messages_to_turns(messages: list[dict[str, Any]]) -> list[Turn]:
@@ -98,17 +76,9 @@ def _messages_to_turns(messages: list[dict[str, Any]]) -> list[Turn]:
     Convert a list of OpenAI messages to Turn objects for the pipeline.
     Excludes messages with role='system' (not conversational turns).
     """
-    turns: list[Turn] = []
-    for msg in messages:
-        role = msg.get("role", "")
-        if role not in ("user", "assistant"):
-            continue
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
-            content = " ".join(parts)
-        turns.append(Turn(role=role, content=str(content)))
-    return turns
+    # Preserve the legacy helper contract: convert the supplied messages as history,
+    # without treating their last user turn as the current request.
+    return context_to_turns(build_conversation_context(messages + [{"role": "user", "content": ""}]))
 
 
 def _extract_text_from_openai_response(openai_response: Any) -> str:
@@ -287,12 +257,10 @@ class GovernedCompletions:
         is_stream = kwargs.get("stream", False)
         messages = kwargs.get("messages", [])
 
-        user_message = _extract_last_user_message(messages)
-        # History excludes the last user message (the one being deliberated).
-        history_messages = messages[:-1] if messages else []
-        conversation_history = _messages_to_turns(history_messages)
-        # Extract developer contract from any role='system' messages (last-wins).
-        developer_contract = _extract_developer_contract(messages)
+        conversation_context = build_conversation_context(messages)
+        user_message = conversation_context.final_user_message
+        conversation_history = context_to_turns(conversation_context)
+        developer_contract = conversation_context.developer_contract
 
         domain = self._governed._config.domain_overlay
         request = ProcessedRequest(
@@ -300,6 +268,7 @@ class GovernedCompletions:
             conversation_history=conversation_history,
             user_context=UserContext(domain_overlay=domain),
             developer_contract=developer_contract,
+            conversation_context=conversation_context,
         )
 
         session = self._governed._session

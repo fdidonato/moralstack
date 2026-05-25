@@ -28,6 +28,14 @@ optional keyword-only arguments `conversation_id`, `turn_index`, `parent_request
 (`ConversationGovernanceState`). When provided, metadata is persisted on the request row and echoed on
 `OrchestratorResult`; they do not change routing or `decide_action` when omitted. See `moralstack/orchestration/conversation_state.py`.
 
+**Request transcript context**: SDK and proxy attach
+`moralstack.orchestration.conversation_context.ConversationContext` to
+`ProcessedRequest`. It is additive and dormant when absent. DCCL and speculative
+generation use its role-serialized transcript when prior turns exist; risk keeps
+its smaller declared last-3 context. The result records context-shape fields such
+as `history_source`, `prior_turn_count`, `governance_context_mode`,
+`candidate_context_mode`, and the delivery mismatch guard outcome.
+
 **Per-call context under concurrency:** `OrchestrationController.process()` constructs a stack-local `ProcessCallContext` (`moralstack/orchestration/process_context.py`) and passes it to internal helpers (`_apply_conversation_metadata_to_result`, ledger follow-up, canonical conversation events). A single controller instance may handle overlapping `process()` calls (for example from the HTTP proxy threadpool); conversation linkage and ledger intent scratch fields must never live on `self` for that reason.
 
 When `OrchestrationController` is constructed with a non-`None` `SemanticDecisionLedger` and `process(..., conversation_id=...)`
@@ -37,6 +45,14 @@ string route to skip deliberation only when a conservative gate allows (cached `
 non-deliberative). Response text is never read from the ledger (DAF-4); only governance metadata is reused.
 
 `moralstack/orchestration/system_prompt_resolver.py` exposes `effective_system_for_request(...)`, composing the policy system prompt per request from the protected base, optional non-empty `DeveloperContract.raw_text`, and an optional mode suffix (`normal`, `safe_complete`, `constrained`). When no contract text is present, output matches the legacy single-turn byte strings. The suffix modes remain available for other call sites; **`DeliberationRunner` does not use `safe_complete` or `constrained` resolver modes for policy generation** (see below).
+
+**Compliance delivery guard**: On DCCL `MATCH`, a validated speculative draft can
+be reused only if its candidate context is aligned with the governance context.
+If prior turns exist and governance saw a full role-serialized/native transcript
+but the candidate draft came from last-user-only context, the controller forces
+Case 2 regeneration or downgrades to the standard pipeline. This guard is
+strictly conservative: it can prevent fast-path draft reuse, but it cannot loosen
+routing or override Safety Override / hard-signal refusal.
 
 **Governance prompt placement (v0.4 Step 10)**:
 

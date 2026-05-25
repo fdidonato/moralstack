@@ -24,6 +24,7 @@ from moralstack.core.types import (
 )
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.orchestration.contract import DeveloperContract
+from moralstack.orchestration.conversation_context import ConversationContext
 from moralstack.utils.output_protection import ProtectionResult
 
 # =============================================================================
@@ -199,6 +200,7 @@ class ProcessedRequest:
     user_context: UserContext = field(default_factory=UserContext)
     timestamp: float = field(default_factory=time.time)
     developer_contract: DeveloperContract | None = None  # NEW v0.4
+    conversation_context: ConversationContext | None = None
 
     def get_domain(self) -> str | None:
         """Ottiene il dominio overlay dall'user context."""
@@ -460,6 +462,12 @@ class OrchestratorResult:
     conversation_governance_state_out: Any | None = None  # ConversationGovernanceState when set
     conversation_state_updated: bool = False
     compliance_verdict: ComplianceVerdict | None = None
+    delivery_context_broader_than_governance: bool = False
+    mismatch_guard_action: str = "none"
+    governance_context_mode: str = "none"
+    candidate_context_mode: str = "none"
+    prior_turn_count: int = 0
+    history_source: str = "none"
     """
     DCCL verdict from this turn, if the DCCL was invoked.
     None for backward-compatible scenarios (DCCL disabled or pre-Commit 2 call sites).

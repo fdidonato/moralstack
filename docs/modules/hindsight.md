@@ -320,6 +320,14 @@ Hindsight evaluation uses OpenAI's `json_object` response format (`response_form
 
 ---
 
+## Conversation Context
+
+For multi-turn requests, hindsight receives the developer contract plus recent conversation history from
+`ProcessedRequest`. The prompt declares `context_mode=role_serialized_truncated; last 3 turns`, and the deliberation
+runner records `CONTEXT_SHAPE_RECORDED` plus context-shape metadata on the hindsight LLM call.
+
+---
+
 ## See Also
 
 - [Consequence Simulator](./simulator.md) - Provides scenarios to evaluate

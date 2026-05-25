@@ -11,8 +11,8 @@ Path-specific caveats are noted inline.
 | File | `moralstack/server/proxy.py` (`create_app`) | `scripts/openai_compatible_server.py` |
 | Launch | `examples/server_quickstart.py` (uvicorn, **1 worker**; recommended command port **8080**; `main()` default **8787** via `MORALSTACK_OPENAI_COMPATIBLE_API_PORT`) | `python scripts/openai_compatible_server.py` (port **8787**) |
 | Multi-turn | yes (conversation_id, locks, session store) | **no** (single-turn) |
-| History used | yes (`conversation_history` built from messages[:-1]) | **no** (only last user message) |
-| Output | upstream generation (or governed draft on compliance fast-path) | governed `result.response.content` |
+| History used | yes (`ConversationContext` + `conversation_history` built from the full request body) | **no** (only last user message) |
+| Output | upstream generation (or guarded governed draft on compliance fast-path) | governed `result.response.content` |
 | Observability | full (requests, events, proxy_request_events, conversation_states) | per-request `run`, governance events |
 
 The COMPL-AI `llm_rules` path uses the **production proxy** (per
@@ -32,15 +32,28 @@ non-empty list, then dispatches `_handle_chat_completion_sync` via
 ### How messages arrive
 The full OpenAI body is received. `messages` is the entire client-sent history
 (OpenAI clients resend history every turn). The proxy:
-- builds `developer_contract` from the last `system` message,
-- builds `conversation_history` from `messages[:-1]` (when len>1),
-- extracts `user_prompt` from the last user message
-  (`proxy.py:244-252`).
+- builds one shared `ConversationContext` from the full message list,
+- derives `developer_contract` from the last non-empty `system`/`developer`
+  message in that context,
+- builds `conversation_history` from prior user/assistant turns before the final
+  user message,
+- extracts `user_prompt` from the final user message (`proxy.py:239-256`).
 
-**Full history is passed** into governance via `ProcessedRequest` (contract +
-history), but the upstream generation body is the client's original `messages`
-(minus `extra_body`, with the model forced to the configured upstream model)
+**Full request-body history is attached** to governance via
+`ProcessedRequest.conversation_context` plus the legacy `conversation_history`
+field. DCCL and speculative generation can use a role-serialized transcript; the
+upstream generation body remains the client's original `messages` (minus
+`extra_body`, with the model forced to the configured upstream model)
 (`_build_upstream_kwargs`, `proxy.py:750-755`).
+
+### Compliance fast-path delivery
+
+When DCCL returns `MATCH`, `process()` computes the governance decision before
+the proxy decides how to deliver text. The proxy may return the governed draft
+directly only when `path == COMPLIANCE_FAST_PATH`, the content is non-empty, and
+`delivery_context_broader_than_governance` is false. If the guard is true, the
+proxy falls back to an upstream call with the original full messages, which is a
+safe superset of the governance context.
 
 ### conversation_id generation / propagation (`proxy.py:218-219`, `121-136`)
 Resolution precedence:

@@ -367,7 +367,7 @@ def _build_history_snippet(conversation_history: list[Turn] | None) -> str:
         role = getattr(turn, "role", "") or "unknown"
         content = (getattr(turn, "content", "") or "")[:200]
         lines.append(f"[{role}]: {content}")
-    return "\n".join(lines)
+    return "context_mode=role_serialized_truncated; last 3 turns\n" + "\n".join(lines)
 
 
 # =============================================================================

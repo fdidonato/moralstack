@@ -1,0 +1,15 @@
+# Copy these targets into your repository Makefile if desired.
+
+.PHONY: adversarial-plan adversarial-dry-run adversarial-validate
+
+TASK ?= .adversarial/tasks/multiturn_history_propagation_issues_investigations.md
+ROUNDS ?= 2
+
+adversarial-validate:
+	python .adversarial/scripts/validate_artifacts.py --root .adversarial
+
+adversarial-dry-run:
+	python .adversarial/scripts/adversarial_plan.py --task "$(TASK)" --dry-run
+
+adversarial-plan:
+	python .adversarial/scripts/adversarial_plan.py --task "$(TASK)" --max-rounds "$(ROUNDS)"

@@ -32,8 +32,29 @@ Normative reference: multiturn design v1.3 section 4.
 ## Deployment notes
 
 - For multi-turn conversational clients (full history replay per request), run **one** uvicorn worker per process unless you provide a **shared** session store and distributed locking across workers. Each worker has its own `InMemorySessionStore` and `ConversationCorrelationStore`.
+- Request parsing uses `moralstack.orchestration.conversation_context.build_conversation_context` so the proxy and SDK agree on the final user message, prior turns, developer contract, and `history_source`. The legacy `conversation_history` field is still populated for existing modules, but the full request-body transcript is also available as `ProcessedRequest.conversation_context`.
 - Blocking orchestrator and upstream OpenAI SDK calls run in a Starlette threadpool so the ASGI loop can accept concurrent requests; per-`conversation_id` locks still serialize same-conversation turns.
 - **Per-request controller state:** `OrchestrationController` is typically a process-wide singleton (for example one instance per `create_app`). Multi-turn linkage and ledger intent fields for a single `process()` call are held in a stack-local `ProcessCallContext` (`moralstack/orchestration/process_context.py`) passed through internal helpers — not on the controller instance — so concurrent proxy requests on different `conversation_id` values cannot cross-contaminate observability metadata.
+
+## Compliance fast-path delivery
+
+On `COMPLIANCE_FAST_PATH`, the proxy can return the governed draft directly
+instead of making a second upstream call. This is intentionally different from
+the SDK, which calls the wrapped client with the original full `messages` after
+governance. The divergence is post-governance text delivery only: `final_action`,
+`path`, compliance verdict, risk category, and reason codes are computed in the
+shared `process()` call before either entry layer delivers content.
+
+The proxy reuses governed content only when:
+
+- `result.path == "COMPLIANCE_FAST_PATH"`
+- `result.response.content` is non-empty
+- `result.delivery_context_broader_than_governance` is false
+
+If the delivery/governance mismatch guard is true, the proxy falls back to an
+upstream call with the original full messages. `PROXY_OUTPUT_FINALIZED` records
+`final_text_source`, `reused_governed_content`, context modes, `prior_turn_count`,
+and the guard decision.
 
 ## Upstream generation model
 

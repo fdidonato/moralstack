@@ -230,6 +230,42 @@ def test_get_orchestration_events_for_request(tmp_path, monkeypatch):
     assert events[0]["event_type"] == "CYCLE_STARTED"
 
 
+def test_context_shape_event_round_trips_payload(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    create_run("run-context-shape", run_type="test", meta={})
+    upsert_request("run-context-shape", "req-context-shape", prompt="p", domain="")
+
+    env = make_envelope(
+        EVENT_ORCHESTRATION_EVENT,
+        run_id="run-context-shape",
+        request_id="req-context-shape",
+        cycle=1,
+        payload={
+            "stage": "context",
+            "component": "dccl",
+            "event_type": "CONTEXT_SHAPE_RECORDED",
+            "status": "ok",
+            "sequence": 1,
+            "payload": {
+                "context_mode": "role_serialized_truncated",
+                "prior_turn_count": 5,
+                "prior_turns_used": 3,
+                "history_truncation": "last_3",
+            },
+        },
+    )
+    route(env)
+
+    rs = SqliteReadStore()
+    events = rs.get_orchestration_events_for_request("run-context-shape", "req-context-shape")
+    assert len(events) == 1
+    assert events[0]["event_type"] == "CONTEXT_SHAPE_RECORDED"
+    payload = json.loads(events[0]["payload_json"])
+    assert payload["context_mode"] == "role_serialized_truncated"
+    assert payload["prior_turn_count"] == 5
+    assert payload["prior_turns_used"] == 3
+
+
 def test_get_debug_events_for_request(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     create_run("run-de-1", run_type="test", meta={})

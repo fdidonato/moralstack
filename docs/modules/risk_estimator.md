@@ -144,6 +144,13 @@ Semantic analysis in `LLMBasedRiskEstimator._semantic_analysis` always runs in *
 Three concurrent LLM calls (`estimate_intent`, `estimate_signals`, `estimate_operational`) are merged by
 `merge_mini_estimator_results()` in `calibration.py`, then parsed and calibrated. `RiskEstimation.estimation_mode="parallel"`.
 
+When the caller supplies `developer_contract_text` or `conversation_history`,
+`_format_context_block` prepends context to each mini-estimator request. The
+history block is intentionally bounded to the last up to 3 prior turns and is
+declared in-prompt as `context_mode=role_serialized_truncated`; the controller
+emits `CONTEXT_SHAPE_RECORDED` so audit can distinguish available prior turns
+from the subset used by risk estimation.
+
 Shared steps:
 
 1. **Prompt building** — dedicated templates in `prompts.py` (`INTENT_CONTEXT_*`, `HARM_SIGNAL_*`, `OPERATIONAL_RISK_*`). `GenerationConfig`

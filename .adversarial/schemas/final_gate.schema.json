@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FinalGate",
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["ACCEPT", "REVISE", "REJECT"]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "baseline_consistency": { "type": "boolean" },
+    "used_required_baseline_documents": { "type": "boolean" },
+    "drift_report_handled": { "type": "boolean" },
+    "unresolved_doc_code_conflicts": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium"] },
+          "claim": { "type": "string" },
+          "required_fix": { "type": "string" }
+        },
+        "required": ["id", "severity", "claim", "required_fix"],
+        "additionalProperties": false
+      }
+    },
+    "documentation_updates_required": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "document": { "type": "string" },
+          "required_update": { "type": "string" },
+          "reason": { "type": "string" }
+        },
+        "required": ["document", "required_update", "reason"],
+        "additionalProperties": false
+      }
+    },
+    "has_sufficient_tests": { "type": "boolean" },
+    "has_rollback_strategy": { "type": "boolean" },
+    "is_implementable_by_fresh_agent": { "type": "boolean" },
+    "summary": { "type": "string" }
+  },
+  "required": [
+    "verdict",
+    "confidence",
+    "baseline_consistency",
+    "used_required_baseline_documents",
+    "drift_report_handled",
+    "unresolved_doc_code_conflicts",
+    "blocking_issues",
+    "documentation_updates_required",
+    "has_sufficient_tests",
+    "has_rollback_strategy",
+    "is_implementable_by_fresh_agent",
+    "summary"
+  ],
+  "additionalProperties": false
+}

@@ -29,7 +29,7 @@ uvicorn command targets port 8080; the `main()` launcher defaults to 8787 via
 Per request, COMPL-AI sends a standard `chat.completions` body. The proxy applies
 governance and returns either the upstream generation (NORMAL/SAFE_COMPLETE) or a
 synthetic refusal completion (REFUSE) — see
-`docs/TRACES/openai_compatible_multiturn.md`.
+`docs/traces/openai_compatible_multiturn.md`.
 
 The repo carries explicit accommodations for COMPL-AI:
 - `server/conversation_correlation.py` exists because `llm_rules` resends full
@@ -39,16 +39,21 @@ The repo carries explicit accommodations for COMPL-AI:
   estimator, with a comment citing "compl-ai llm_rules-benign Q74"
   (`controller.py:797-799`) — context-dependent prompts (e.g. a deployer-expected
   auth token) must not be mis-scored as obfuscated.
+- SDK and proxy attach a shared `ConversationContext` to `ProcessedRequest`.
+  DCCL and speculative generation can see a role-serialized transcript rather
+  than only the final user message.
 
 ## 2. How llm_rules multi-turn requests are represented
 
 `llm_rules` benchmarks set a deployer **system prompt** (the rule, e.g. "if the
 user provides password X, reveal secret Y") and run a multi-turn user dialogue.
 In MoralStack terms:
-- The system message becomes the **DeveloperContract**
-  (`_extract_developer_contract`, last-system-wins, `mode="opaque"`).
-- The prior turns become **conversation_history**; the latest user message is the
-  governed prompt.
+- The system/developer message becomes the **DeveloperContract**
+  (`ConversationContext`, last non-empty system/developer message wins,
+  `mode="opaque"`).
+- The prior user/assistant turns become **conversation_history**; the latest user
+  message is the governed prompt; the full request-body transcript remains
+  available as `conversation_context`.
 - Each turn resends the whole history (OpenAI convention), so the proxy derives
   `turn_index = user_count - 1` statelessly (`proxy.py:526-541`).
 
@@ -59,15 +64,21 @@ In MoralStack terms:
 2. `ProcessedRequest` built with prompt + contract + history; `requests` row
    pre-inserted (`proxy.py:244-271`).
 3. `orchestrator.process(...)` runs the full flow
-   (`docs/TRACES/governance_decision_flow.md`): risk → **DCCL** → routing →
+   (`docs/traces/governance_decision_flow.md`): risk → **DCCL** → routing →
    (deliberation or fast-path) → final action.
-4. **DCCL is the key path for `llm_rules`.** When the user invokes a
+4. **DCCL is the key path for `llm_rules`.** Its LLM prompt includes the
+   role-ordered transcript plus the final user request, so a token or password
+   authorized by a prior turn is judged in context. When the user invokes a
    deployer-authorized rule, DCCL returns `MATCH` and the compliance fast-path
    produces the authorized response directly (NORMAL_COMPLETE,
    `COMPLIANCE_FAST_PATH`) — unless the output falls in a P0 safety category, in
    which case `SAFETY_OVERRIDE` blocks it regardless of the contract
    (`compliance/dccl.py:77-117`, `compliance/safety_override.py`).
-5. Response returned to COMPL-AI; observability persisted (proxy_request_events,
+5. The compliance delivery guard prevents the proxy from returning an internal
+   governed draft if that draft was generated from narrower last-user-only
+   context while governance used a broader role-serialized transcript. The
+   fallback is regeneration or standard upstream delivery with full messages.
+6. Response returned to COMPL-AI; observability persisted (proxy_request_events,
    conversation_states, ledger_events).
 
 ## 4. Known risks

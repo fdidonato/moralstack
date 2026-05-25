@@ -34,6 +34,7 @@ from moralstack.orchestration.guidance_builder import build_aggregated_guidance
 from moralstack.orchestration.language_resolver import resolve_prompt_with_language
 from moralstack.orchestration.orchestration_event_taxonomy import (
     AGGREGATED_GUIDANCE_EVALUATED,
+    CONTEXT_SHAPE_RECORDED,
     CONVERGENCE_EVALUATED,
     CRITIC_SHORT_CIRCUIT_TRIGGERED,
     CRITIC_SKIPPED,
@@ -128,6 +129,56 @@ def _emit_aggregated_guidance_observability(
         )
     except Exception:
         _LOG.debug("emit AGGREGATED_GUIDANCE_EVALUATED failed", exc_info=True)
+
+
+def _context_shape_payload(request: ProcessedRequest, module: str) -> dict[str, Any]:
+    """Build a compact context-shape payload for deliberative modules."""
+    ctx = request.conversation_context
+    history = list(getattr(request, "conversation_history", None) or [])
+    prior_available = getattr(ctx, "prior_turn_count", len(history)) if ctx is not None else len(history)
+    used = min(int(prior_available or 0), 3)
+    if ctx is not None:
+        payload = ctx.context_shape_metadata(
+            module=module,
+            context_mode="role_serialized_truncated" if prior_available > used else "role_serialized_full",
+            prior_used=used,
+            history_truncation="last_3" if prior_available > used else "none",
+            history_truncated_count=max(0, prior_available - used),
+        )
+    else:
+        payload = {
+            "module": module,
+            "context_mode": "role_serialized_truncated" if len(history) > used else "role_serialized_full",
+            "raw_message_count": 0,
+            "system_message_count": 0,
+            "developer_message_count": 0,
+            "prior_user_available": sum(1 for t in history if getattr(t, "role", "") == "user"),
+            "prior_assistant_available": sum(1 for t in history if getattr(t, "role", "") == "assistant"),
+            "prior_turn_count": len(history),
+            "prior_turns_used": used,
+            "history_truncation": "last_3" if len(history) > used else "none",
+            "history_truncated_count": max(0, len(history) - used),
+            "contains_full_native_messages": False,
+            "developer_contract_included": getattr(request, "developer_contract", None) is not None,
+            "final_user_included": bool(getattr(request, "prompt", "")),
+            "history_source": "legacy_conversation_history" if history else "none",
+        }
+    return payload
+
+
+def _emit_context_shape(request: ProcessedRequest, module: str, cycle: int) -> None:
+    try:
+        persist_orchestration_event(
+            cycle=cycle,
+            stage="context",
+            component=module,
+            event_type=CONTEXT_SHAPE_RECORDED,
+            decision="recorded",
+            status="ok",
+            payload=_context_shape_payload(request, module),
+        )
+    except Exception:
+        _LOG.debug("emit CONTEXT_SHAPE_RECORDED failed for %s", module, exc_info=True)
 
 
 def _policy_llm_model_for_action(policy: Any, action: str) -> str | None:
@@ -2838,6 +2889,7 @@ class DeliberationRunner:
                     "related_event_id": None,
                 },
             )
+            _emit_context_shape(request, "critic", state.cycle)
             state.critiques.append(critique)
             # Propagate critic signals into DelibContext for downstream modules
             if delib_context is not None:
@@ -2942,6 +2994,7 @@ class DeliberationRunner:
                             "semantic_expected_harm": sem_harm,
                             "dominant_harm_types": dom_harms,
                             "worst_harm": worst,
+                            "context_shape": _context_shape_payload(request, "simulator"),
                         }
                     ),
                     "attempts": getattr(simulation, "parse_attempts", 1),
@@ -2949,6 +3002,7 @@ class DeliberationRunner:
                     "token_usage_json": _token_usage_json_from_result(simulation),
                 },
             )
+            _emit_context_shape(request, "simulator", state.cycle)
             state.simulations.append(simulation)
             from moralstack.orchestration.diagnostics import orch_debug_log
 
@@ -3044,11 +3098,13 @@ class DeliberationRunner:
                     "prompt": getattr(hindsight_result, "prompt", ""),
                     "system_prompt": getattr(hindsight_result, "system_prompt", ""),
                     "raw_response": getattr(hindsight_result, "raw_response", ""),
+                    "parsed_summary_json": json.dumps({"context_shape": _context_shape_payload(request, "hindsight")}),
                     "attempts": getattr(hindsight_result, "parse_attempts", 1),
                     "sequence_in_cycle": SEQ_HINDSIGHT,
                     "token_usage_json": _token_usage_json_from_result(hindsight_result),
                 },
             )
+            _emit_context_shape(request, "hindsight", state.cycle)
             state.hindsight = hindsight_result
             _emit_hindsight_diagnostic(
                 outcome="evaluate_ok",
@@ -3155,10 +3211,12 @@ class DeliberationRunner:
                     "prompt": "\n---\n".join(prompts_list) if prompts_list else "",
                     "system_prompt": "\n---\n".join(system_list) if system_list else "",
                     "raw_response": raw_resp,
+                    "parsed_summary_json": json.dumps({"context_shape": _context_shape_payload(request, "perspectives")}),
                     "sequence_in_cycle": SEQ_PERSPECTIVES,
                     "token_usage_json": _token_usage_json_from_result(result),
                 },
             )
+            _emit_context_shape(request, "perspectives", state.cycle)
             if getattr(result, "results", None):
                 state.perspectives = result.results
             else:

@@ -64,6 +64,7 @@ turn proceeds with full deliberation. Payload includes ``from_turn``,
 # Conversation (multi-turn foundation; emit only when context is explicitly provided)
 CONVERSATION_CONTEXT_ATTACHED = "CONVERSATION_CONTEXT_ATTACHED"
 CONVERSATION_STATE_UPDATED = "CONVERSATION_STATE_UPDATED"
+CONTEXT_SHAPE_RECORDED = "CONTEXT_SHAPE_RECORDED"
 
 # =============================================================================
 # Developer Contract Compliance Layer (DCCL)

@@ -417,6 +417,15 @@ def test_sdk_emits_proxy_request_finalized_into_readstore(tmp_path, monkeypatch)
     result.ledger_hit_applied = None
     result.cached_from_turn = None
     result.ledger_from_turn = None
+    # ``build_request_meta_from_result`` reads several optional result fields.
+    # Unconfigured MagicMock attributes end up in meta and make ``_json_safe``
+    # recurse indefinitely via mock ``to_dict()`` (hangs the test).
+    result.delivery_context_broader_than_governance = False
+    result.mismatch_guard_action = "none"
+    result.governance_context_mode = "none"
+    result.candidate_context_mode = "none"
+    result.prior_turn_count = 0
+    result.history_source = "none"
 
     # Capture the auto-generated request_id from the SDK so we can pre-insert
     # the ``requests`` row that satisfies the FK on proxy_request_events. The

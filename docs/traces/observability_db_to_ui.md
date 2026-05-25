@@ -67,6 +67,29 @@ Writers: `init_db`, `create_run`, `upsert_request`, `update_request_response`,
 (`sqlite_sink.py:611+`). Shared finalization: `finalize_governance_audit`
 (`observability/governance_audit.py`) merges meta and writes `final_response`.
 
+### Context-shape fields
+
+The multi-turn alignment layer emits `CONTEXT_SHAPE_RECORDED` orchestration
+events for LLM-using modules. The payload records:
+
+- `context_mode`
+- raw/system/developer message counts
+- available and used prior user/assistant turns
+- `history_truncation` and `history_truncated_count`
+- `contains_full_native_messages`
+- `developer_contract_included`
+- `final_user_included`
+- `history_source`
+- delivery guard fields such as `delivery_context_broader_than_governance`,
+  `mismatch_guard_action`, `governance_context_mode`, `candidate_context_mode`,
+  and `prior_turn_count` where applicable
+
+These fields are queryable from SQLite `orchestration_events.payload_json` and
+from the corresponding JSONL envelope. They are also folded into existing
+request/proxy metadata where a result is finalized. There is intentionally no
+SQLite migration for dedicated typed columns in this version, and the UI does
+not render a dedicated context-shape panel yet.
+
 ## 4. What is logged to the filesystem (JSONL)
 
 `JsonlEventSink` (`observability/sinks/jsonl_sink.py:77-95`) writes **one file per
@@ -139,6 +162,9 @@ Yes, **when persistence is to the DB** (`db_only`/`dual`):
 - **JSONL is not table-shaped.** Reconstructing a conversation from JSONL means
   joining across per-event-type files on `request_id`/`conversation_id` yourself;
   the UI and `conversation_export` only consume SQLite (§4, §6).
+- **Context-shape telemetry is payload JSON.** It is present in
+  `orchestration_events` / JSONL payloads and request metadata, not in dedicated
+  typed SQLite columns or a UI panel.
 - **Reconstruction completeness depends on flush.** A process killed before
   `flush()` may drop queued envelopes; the SDK/proxy flush at the boundary to
   minimize this, but a hard crash mid-turn can truncate a turn's evidence.

@@ -58,7 +58,8 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 - `wrapper.py` — `govern(client, config=None)` wraps any OpenAI-compatible client
   and returns `GovernedClient`. `GovernedCompletions.create()` runs deliberation
   *before* delegating to the wrapped client. Helpers: `_extract_last_user_message`,
-  `_extract_developer_contract` (last `system` message wins, `mode="opaque"`),
+  `_extract_developer_contract` (delegates to shared `ConversationContext`; last
+  non-empty `system`/`developer` message wins, `mode="opaque"`),
   `_messages_to_turns`, `_build_safe_complete_user_turn`.
 - `bootstrap.py` — `_bootstrap_pipeline(config)` builds the `Orchestrator`;
   `_resolve_model(config)` resolves the generation model.
@@ -91,6 +92,10 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   runner core (file is ~2498 lines). Owns risk estimation, speculative overlap,
   DCCL invocation, routing, ledger lookup/store, conversation-state extension,
   and event emission.
+- `conversation_context.py` — shared OpenAI-message parser for SDK/proxy. Builds
+  `ConversationContext` with final user message, prior user/assistant turns,
+  developer contract, `history_source`, role-serialized transcript helpers,
+  context-shape metadata, and the compliance delivery mismatch guard.
 - `decision_service.py` — `decide_action(request, risk_proto, …)` →
   `(Decision, DecisionExplanation)`.
 - `path_router.py` — `get_route(...)` → `(route, borderline_refuse, risk_policy_action)`;
@@ -207,9 +212,12 @@ Inside `process()` (order verified in source):
    `enable_speculative_generation`, else direct `_estimate_risk`
    (`controller.py:1928-1935`).
 3. **DCCL evaluation** on the (possibly non-blocking) speculative draft
-   (`_run_dccl_evaluation`, `controller.py:1936`). On `MATCH` with a validated
-   draft → **compliance fast-path** (`_route_compliance_match`), skipping risk
-   routing and deliberation (`controller.py:1941-2040`).
+   (`_run_dccl_evaluation`, `controller.py:1936`). The LLM path receives a
+   budgeted role-ordered transcript from `ConversationContext`; when the draft
+   is about to be reused, the mismatch guard prevents a last-user-only draft from
+   becoming final if governance saw broader prior context. On `MATCH` with a
+   validated aligned draft → **compliance fast-path** (`_route_compliance_match`),
+   skipping risk routing and deliberation (`controller.py:1941-2040`).
 4. Apply overlay sensitivity risk floor (`apply_risk_floor_if_sensitive`),
    normalize domain, domain-exclusion check (`controller.py:2062-2116`).
 5. **Decision** — `decide_action(...)` then `apply_safe_complete_gating(...)`
@@ -225,7 +233,7 @@ Inside `process()` (order verified in source):
    `conversation_governance_state_out`, emits conversation events, and stores the
    decision in the ledger (`controller.py:319-413`).
 
-See `docs/TRACES/governance_decision_flow.md` for the full trace.
+See `docs/traces/governance_decision_flow.md` for the full trace.
 
 ---
 
@@ -256,7 +264,7 @@ Routing consequences (`sdk/wrapper.py`, `server/proxy.py`):
 
 | `final_action` | SDK behavior | Proxy behavior |
 |---|---|---|
-| `NORMAL_COMPLETE` | call wrapped client with original kwargs | forward original body (or reuse governed draft on `COMPLIANCE_FAST_PATH`) |
+| `NORMAL_COMPLETE` | call wrapped client with original kwargs | forward original body (or reuse governed draft on `COMPLIANCE_FAST_PATH` when the mismatch guard allows it) |
 | `SAFE_COMPLETE` | append synthetic guidance `user` turn, then call client | append synthetic guidance `user` turn, then forward |
 | `REFUSE` | return refusal text; **client not called** | return synthetic `chat.completion` (finish_reason `content_filter`); **upstream not called** |
 
@@ -370,7 +378,7 @@ Two distinct implementations — do not confuse them:
    directly (not a fresh upstream generation). Creates a new `run` per request;
    bounds concurrency with an asyncio semaphore.
 
-See `docs/TRACES/openai_compatible_multiturn.md`.
+See `docs/traces/openai_compatible_multiturn.md`.
 
 ---
 
@@ -404,6 +412,12 @@ See `docs/TRACES/openai_compatible_multiturn.md`.
 - **Risk in context**: history + developer contract are passed into the risk
   estimator so context-dependent prompts are not mis-scored
   (`controller.py:788-845`).
+- **Request transcript**: SDK and proxy both attach `ConversationContext` to
+  `ProcessedRequest`. DCCL and speculative generation can use a role-serialized
+  transcript; risk/deliberative modules may use smaller declared windows.
+- **Compliance delivery guard**: records governance/candidate context modes and
+  blocks governed-draft reuse only when the reused draft was generated from a
+  narrower last-user-only context than the governance transcript.
 
 ---
 
@@ -421,8 +435,13 @@ See `docs/TRACES/openai_compatible_multiturn.md`.
 - **JSONL** sink writes the same event envelopes to
   `MORALSTACK_OBSERVABILITY_JSONL_DIR` (default `logs/observability`).
 - Read contract: `SqliteReadStore` (`read_store.py`).
+- **Context-shape telemetry**: `CONTEXT_SHAPE_RECORDED` orchestration events
+  record context mode, raw/system/developer counts, available/used prior turns,
+  truncation, `history_source`, and guard metadata. These fields are available
+  from JSONL and SQLite event payload JSON; there are no dedicated typed columns
+  or UI cards yet.
 
-See `docs/TRACES/observability_db_to_ui.md`.
+See `docs/traces/observability_db_to_ui.md`.
 
 ## 13. Filesystem logging
 
@@ -463,7 +482,7 @@ codebase contains targeted accommodations for it:
 - `scripts/benchmark_moralstack.py` is MoralStack's **own** 84-question
   benchmark, separate from COMPL-AI.
 
-See `docs/TRACES/complai_llm_rules_flow.md`.
+See `docs/traces/complai_llm_rules_flow.md`.
 
 ---
 
@@ -502,7 +521,7 @@ See `docs/TRACES/complai_llm_rules_flow.md`.
 - **Lineage-based conversation correlation can collide.** Two samples with
   byte-identical histories (and identical assistant outputs) map to the same
   `conversation_id` (`conversation_correlation.py` docstring + `resolve`). This
-  is the central COMPL-AI risk — see `docs/TRACES/complai_llm_rules_flow.md`.
+  is the central COMPL-AI risk — see `docs/traces/complai_llm_rules_flow.md`.
 - **Two bridges, different semantics.** `scripts/openai_compatible_server.py` is
   single-turn and ignores history; `server/proxy.py` is multi-turn. Choosing the
   wrong one silently changes multi-turn behavior.
@@ -513,3 +532,6 @@ See `docs/TRACES/complai_llm_rules_flow.md`.
 - **`controller.process()` is very large** (~2498 lines) with many interleaved
   early returns and best-effort emit blocks — read the whole method before
   editing routing.
+- **Do not bypass `ConversationContext` in entry points.** SDK and proxy must use
+  the shared builder so DCCL, speculative generation, risk context, and audit
+  metadata agree about the same request transcript.

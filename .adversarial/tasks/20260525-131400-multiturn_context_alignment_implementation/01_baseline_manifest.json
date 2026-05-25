@@ -1,0 +1,89 @@
+{
+  "baseline": {
+    "name": "moralstack-adversarial-documentation",
+    "version": 1,
+    "description": "Trusted adversarial documentation baseline used by the dual-planning workflow. This corrected default only declares the documentation that was actually produced: CLAUDE.md, docs/MORALSTACK_CODEBASE_INDEX.md and docs/CODEBASE_FACTS.md. Add further documents manually only after they exist."
+  },
+  "git": {
+    "branch": "main",
+    "commit": "92586c536a1738b5704d4ba269b80022ce69a5d6",
+    "status_short": "A  .adversarial/.gitignore\nAM .adversarial/Makefile.snippet\nA  .adversarial/README.md\nA  .adversarial/baseline/manifest.json\nA  .adversarial/baseline/trust_policy.md\nAM .adversarial/config.json\nA  .adversarial/prompts/01_planner_claude.md\nA  .adversarial/prompts/02_planner_codex.md\nA  .adversarial/prompts/03_reviewer_codex.md\nA  .adversarial/prompts/04_reviewer_claude.md\nA  .adversarial/prompts/05_synthesizer.md\nA  .adversarial/prompts/06_final_gate_codex.md\nA  .adversarial/prompts/07_revision_synthesizer.md\nA  .adversarial/prompts/shared_rules.md\nA  .adversarial/requirements.txt\nA  .adversarial/runs/.gitkeep\nA  .adversarial/schemas/baseline_manifest.schema.json\nA  .adversarial/schemas/final_gate.schema.json\nA  .adversarial/schemas/issue_matrix.schema.json\nAM .adversarial/schemas/review.schema.json\nAM .adversarial/scripts/adversarial_plan.py\nAM .adversarial/scripts/build_baseline_manifest.py\nAM .adversarial/scripts/build_context_pack.py\nAM .adversarial/scripts/build_doc_digest.py\nAM .adversarial/scripts/check_doc_code_drift.py\nAM .adversarial/scripts/common.py\nAM .adversarial/scripts/validate_artifacts.py\nA  .adversarial/setup.ps1\nAM .adversarial/setup.sh\nAM .adversarial/tasks/multiturn_history_propagation_issues_investigations.md\nR  docs/TRACES/complai_llm_rules_flow.md -> docs/traces/complai_llm_rules_flow.md\nR  docs/TRACES/governance_decision_flow.md -> docs/traces/governance_decision_flow.md\nR  docs/TRACES/observability_db_to_ui.md -> docs/traces/observability_db_to_ui.md\nR  docs/TRACES/openai_compatible_multiturn.md -> docs/traces/openai_compatible_multiturn.md\n M tests/e2e_payloads/verify_prompt8_authentication_samples.py\n?? .adversarial/tasks/multiturn_context_alignment_implementation.md\n?? final_investigation_report.md\n?? scratch_cumulative_history_paths.py\n?? scratch_history_dependent_rule_canary.py\n?? scratch_investigate_multiturn.py\n?? scratch_live_moralstack.py\n?? scratch_realistic_multiturn.py\n?? scratch_repeat_complai_sample75.py\n?? scratch_replay_complai_sample75.py\n?? scratch_sdk_proxy_parsing_modes.py"
+  },
+  "trust_policy": {
+    "documentation_is_primary_for_architectural_intent": true,
+    "code_is_primary_for_current_runtime_behavior": true,
+    "unresolved_doc_code_conflict_blocks_final_plan": true,
+    "final_plan_must_reference_baseline": true,
+    "final_plan_must_include_documentation_updates": true
+  },
+  "documents": [
+    {
+      "path": "CLAUDE.md",
+      "role": "agent_operating_rules",
+      "authority": "high",
+      "required": true,
+      "always_include": true,
+      "exists": true,
+      "sha256": "4bf55b453aaaf0f5f9a0d7d5ef251ea665b7b9fea4b26969df96868be8458c60",
+      "snapshot_path": "02_baseline_snapshot\\CLAUDE.md"
+    },
+    {
+      "path": "docs/MORALSTACK_CODEBASE_INDEX.md",
+      "role": "codebase_index",
+      "authority": "high",
+      "required": true,
+      "always_include": true,
+      "exists": true,
+      "sha256": "b4fd8729a18d91514f4f1d468ee0d8a2a04ea4eea747c0a0b741c1b790b22c96",
+      "snapshot_path": "02_baseline_snapshot\\docs\\MORALSTACK_CODEBASE_INDEX.md"
+    },
+    {
+      "path": "docs/CODEBASE_FACTS.md",
+      "role": "verified_facts",
+      "authority": "high",
+      "required": true,
+      "always_include": true,
+      "exists": true,
+      "sha256": "14bed7de88725fa179c3ea3095e3500c0823c0f464515572de4321ce68a57b63",
+      "snapshot_path": "02_baseline_snapshot\\docs\\CODEBASE_FACTS.md"
+    }
+  ],
+  "trace_documents": [
+    {
+      "path": "docs/traces/complai_llm_rules_flow.md",
+      "role": "validated_trace_documents_if_present",
+      "authority": "medium",
+      "required": false,
+      "exists": true,
+      "sha256": "5c11a4b56d6604a9bd5cf7d11f0979b4517a991a106d22d4237337f0b97ead2c",
+      "snapshot_path": "02_baseline_snapshot\\docs\\traces\\complai_llm_rules_flow.md"
+    },
+    {
+      "path": "docs/traces/governance_decision_flow.md",
+      "role": "validated_trace_documents_if_present",
+      "authority": "medium",
+      "required": false,
+      "exists": true,
+      "sha256": "339663537ac5b563859ee13c78934880c544b3327bc45cd658d9a05b7ee86af4",
+      "snapshot_path": "02_baseline_snapshot\\docs\\traces\\governance_decision_flow.md"
+    },
+    {
+      "path": "docs/traces/observability_db_to_ui.md",
+      "role": "validated_trace_documents_if_present",
+      "authority": "medium",
+      "required": false,
+      "exists": true,
+      "sha256": "11aa8312c9329d975a1739b459b2eae42a81330d86d55216959cb2c6ff407265",
+      "snapshot_path": "02_baseline_snapshot\\docs\\traces\\observability_db_to_ui.md"
+    },
+    {
+      "path": "docs/traces/openai_compatible_multiturn.md",
+      "role": "validated_trace_documents_if_present",
+      "authority": "medium",
+      "required": false,
+      "exists": true,
+      "sha256": "777611e9a63a0420b152b10dfbcc6777a63dcff994e003e1179807d0c46651da",
+      "snapshot_path": "02_baseline_snapshot\\docs\\traces\\openai_compatible_multiturn.md"
+    }
+  ]
+}

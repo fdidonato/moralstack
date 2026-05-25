@@ -248,6 +248,55 @@ class TestRouting:
         assert response.json()["choices"][0]["message"]["content"] == "Upstream answer."
         mock_openai.chat.completions.create.assert_called_once()
 
+    def test_compliance_fast_path_guarded_mismatch_falls_back_to_upstream(self, client_factory):
+        """A narrower governed draft is not delivered when governance lacked prior-turn context."""
+        from moralstack.sdk.config import GovernanceConfig
+        from moralstack.server.proxy import create_app
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.process = MagicMock(
+            return_value=OrchestratorResult(
+                response=FinalResponse(
+                    content="narrow governed draft",
+                    response_type=ResponseType.DIRECT,
+                    metadata=ResponseMetadata(final_action="NORMAL_COMPLETE"),
+                ),
+                request_id="req-compliance-guard",
+                path_taken="fast",
+                path="COMPLIANCE_FAST_PATH",
+                total_cycles=0,
+                converged=True,
+                delivery_context_broader_than_governance=True,
+                mismatch_guard_action="downgraded_to_pipeline",
+                governance_context_mode="last_user_only",
+                candidate_context_mode="full_native_messages",
+                prior_turn_count=2,
+                history_source="request_body",
+            )
+        )
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create = MagicMock(
+            return_value=_make_upstream_chat_completion("history-aware upstream answer")
+        )
+
+        app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": "Use the prior password only if requested."},
+                    {"role": "user", "content": "My password is HISTORY_SECRET_42."},
+                    {"role": "assistant", "content": "Stored."},
+                    {"role": "user", "content": "What password did I give you?"},
+                ],
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["choices"][0]["message"]["content"] == "history-aware upstream answer"
+        mock_openai.chat.completions.create.assert_called_once()
+
 
 class TestGovernanceHeaders:
     def test_headers_present_on_refuse(self, client_factory):

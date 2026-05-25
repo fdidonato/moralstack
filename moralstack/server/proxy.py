@@ -38,6 +38,7 @@ from moralstack.observability.governance_audit import (
     state_summary_or_none as _state_summary_or_none,
 )
 from moralstack.orchestration.controller import OrchestrationController
+from moralstack.orchestration.conversation_context import build_conversation_context, context_to_turns
 from moralstack.orchestration.orchestration_event_taxonomy import PROXY_OUTPUT_FINALIZED
 from moralstack.orchestration.types import ProcessedRequest
 from moralstack.persistence.sink import persist_orchestration_event
@@ -46,9 +47,6 @@ from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.session_store import InMemorySessionStore, SessionStoreProtocol
 from moralstack.sdk.wrapper import (
     _build_safe_complete_user_turn,
-    _extract_developer_contract,
-    _extract_last_user_message,
-    _messages_to_turns,
 )
 from moralstack.server.conversation_correlation import ConversationCorrelationStore
 from moralstack.server.headers import build_governance_headers
@@ -241,14 +239,16 @@ def _handle_chat_completion_sync(
                 headers={"Retry-After": str(_LOCK_RETRY_AFTER_SECONDS)},
             )
 
-        developer_contract = _extract_developer_contract(messages)
-        conversation_history = _messages_to_turns(messages[:-1]) if len(messages) > 1 else []
-        user_prompt = _extract_last_user_message(messages)
+        conversation_context = build_conversation_context(messages)
+        developer_contract = conversation_context.developer_contract
+        conversation_history = context_to_turns(conversation_context)
+        user_prompt = conversation_context.final_user_message
 
         processed = ProcessedRequest(
             prompt=user_prompt,
             developer_contract=developer_contract,
             conversation_history=conversation_history,
+            conversation_context=conversation_context,
         )
         request_id_for_audit = processed.request_id
 
@@ -338,7 +338,8 @@ def _handle_chat_completion_sync(
             else:
                 governed_content = result.response.content or ""
                 is_compliance_fast_path = getattr(result, "path", "") == "COMPLIANCE_FAST_PATH"
-                if is_compliance_fast_path and governed_content.strip():
+                guard_allows_governed_draft = not bool(getattr(result, "delivery_context_broader_than_governance", False))
+                if is_compliance_fast_path and governed_content.strip() and guard_allows_governed_draft:
                     final_response_text = governed_content
                     final_text_source = "governed_draft"
                     finish_reason_for_event = "stop"
@@ -388,6 +389,13 @@ def _handle_chat_completion_sync(
                         "final_response_length": len(final_response_text or ""),
                         "finish_reason": finish_reason_for_event,
                         "model": upstream_model,
+                        "delivery_context_broader_than_governance": getattr(
+                            result_for_audit, "delivery_context_broader_than_governance", False
+                        ),
+                        "mismatch_guard_action": getattr(result_for_audit, "mismatch_guard_action", "none"),
+                        "governance_context_mode": getattr(result_for_audit, "governance_context_mode", "none"),
+                        "candidate_context_mode": getattr(result_for_audit, "candidate_context_mode", "none"),
+                        "prior_turn_count": getattr(result_for_audit, "prior_turn_count", 0),
                     },
                 )
             except Exception:

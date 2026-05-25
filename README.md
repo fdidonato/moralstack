@@ -240,6 +240,12 @@ MoralStack v0.4 introduces full support for conversational governance:
 
 - **Same single-line API**: just wrap your OpenAI client with `govern()` —
   multi-turn conversations are auto-managed.
+- **Transcript-aware governance**: SDK and proxy attach the full OpenAI-style
+  request transcript to governance; DCCL and speculative generation can use
+  role-ordered prior turns instead of judging only the final user message.
+- **Guarded compliance fast-path**: deployer-authorized contract execution can
+  take `COMPLIANCE_FAST_PATH`, but a proxy governed draft is reused only when its
+  generation context is aligned with the governance context.
 - **Jailbreak resistance**: escalation patterns are detected across turns.
 - **Audit trail**: every conversation produces a complete markdown
   export for AI Act art. 12 compliance.

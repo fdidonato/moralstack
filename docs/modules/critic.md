@@ -329,6 +329,14 @@ else:
 
 ---
 
+## Conversation Context
+
+For multi-turn requests, the Critic receives the developer contract plus recent conversation history from `ProcessedRequest`.
+The prompt declares `context_mode=role_serialized_truncated; last 3 turns`, and the deliberation runner emits
+`CONTEXT_SHAPE_RECORDED` for the critic so observability can compare available prior turns with the history window used.
+
+---
+
 ## See Also
 
 - [Constitution Store](./constitution_store.md) - Ethical principle management

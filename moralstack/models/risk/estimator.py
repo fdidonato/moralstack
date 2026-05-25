@@ -144,8 +144,8 @@ def _format_context_block(
             content = (turn.get("content") or "")[:200]
             history_lines.append(f"[{role}]: {content}")
         sections.append(
-            "RECENT CONVERSATION HISTORY (last up to 3 turns; the request below is a "
-            "continuation of this dialogue):\n" + "\n".join(history_lines)
+            "RECENT CONVERSATION HISTORY (context_mode=role_serialized_truncated; "
+            "last up to 3 turns; the request below is a continuation of this dialogue):\n" + "\n".join(history_lines)
         )
     return "\n".join(sections) + "\n\n"
 

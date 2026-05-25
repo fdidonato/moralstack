@@ -1,0 +1,8 @@
+{
+  "run_dir": ".adversarial\\runs\\20260525-131400-multiturn_context_alignment_implementation",
+  "task_file": ".adversarial\\tasks\\multiturn_context_alignment_implementation.md",
+  "git_branch": "main",
+  "git_commit": "92586c536a1738b5704d4ba269b80022ce69a5d6",
+  "mode": "documentation-grounded-dual-adversarial-planning",
+  "planning_only": true
+}

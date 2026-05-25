@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BaselineManifest",
+  "type": "object",
+  "properties": {
+    "baseline": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "integer" },
+        "description": { "type": "string" }
+      },
+      "required": ["name", "version"],
+      "additionalProperties": true
+    },
+    "required_documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "role": { "type": "string" },
+          "authority": { "type": "string", "enum": ["high", "medium", "low"] },
+          "required": { "type": "boolean" },
+          "always_include": { "type": "boolean" }
+        },
+        "required": ["path", "role", "authority", "required"],
+        "additionalProperties": true
+      }
+    },
+    "trace_directories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "role": { "type": "string" },
+          "authority": { "type": "string", "enum": ["high", "medium", "low"] },
+          "required": { "type": "boolean" }
+        },
+        "required": ["path", "role", "authority", "required"],
+        "additionalProperties": true
+      }
+    },
+    "trust_policy": { "type": "object" }
+  },
+  "required": ["baseline", "required_documents", "trace_directories", "trust_policy"],
+  "additionalProperties": false
+}

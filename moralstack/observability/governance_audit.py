@@ -94,6 +94,14 @@ def build_request_meta_from_result(result: Any) -> dict[str, Any]:
             meta["was_cached"] = bool(was_cached)
         if cached_from_turn is not None:
             meta["cached_from_turn"] = cached_from_turn
+        meta["delivery_context_broader_than_governance"] = bool(
+            getattr(result, "delivery_context_broader_than_governance", False)
+        )
+        meta["mismatch_guard_action"] = getattr(result, "mismatch_guard_action", "none")
+        meta["governance_context_mode"] = getattr(result, "governance_context_mode", "none")
+        meta["candidate_context_mode"] = getattr(result, "candidate_context_mode", "none")
+        meta["prior_turn_count"] = getattr(result, "prior_turn_count", 0)
+        meta["history_source"] = getattr(result, "history_source", "none")
     except Exception:
         logger.debug("build_request_meta_from_result: extraction failed (non-fatal)", exc_info=True)
     # Keep empty lists for reason_codes/triggered_principles so consumers can rely on stable shape.

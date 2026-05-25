@@ -21,14 +21,15 @@ Both build a `ProcessedRequest` and call `orchestrator.process(...)`.
 ## 1. Input request & message parsing
 
 `wrapper.py:285-303`:
-- `user_message = _extract_last_user_message(messages)` — last `role=user`
-  content (multimodal text parts joined).
-- `history_messages = messages[:-1]`; `conversation_history = _messages_to_turns(...)`
-  (only `user`/`assistant` turns, `system` excluded).
-- `developer_contract = _extract_developer_contract(messages)` — last `system`
-  message, `mode="opaque"`, or `None`.
+- `conversation_context = build_conversation_context(messages)` parses the full
+  OpenAI message list once.
+- `user_message` is `conversation_context.final_user_message`.
+- `conversation_history = context_to_turns(conversation_context)` contains prior
+  `user`/`assistant` turns before the final user message.
+- `developer_contract = conversation_context.developer_contract`, derived from
+  the last non-empty `system`/`developer` message with `mode="opaque"`.
 - `ProcessedRequest(prompt, conversation_history, user_context(domain_overlay),
-  developer_contract)`.
+  developer_contract, conversation_context)`.
 
 Session/turn (SDK): `conv_id = session.conversation_id`,
 `turn_idx = session.next_turn_index()`, `conv_state = session.current_state`
@@ -60,7 +61,9 @@ Proxy equivalent: `conversation_id` resolution + stateless `turn_index`
 - Else: `risk_estimation = self._estimate_risk(request)` (`controller.py:788`).
 
 `_estimate_risk` forwards the developer-contract text and conversation history to
-the estimator (`controller.py:797-823`). The estimator runs three parallel
+the estimator (`controller.py:797-823`) and emits `CONTEXT_SHAPE_RECORDED`. The
+risk estimator declares its reduced history mode as `role_serialized_truncated`
+when only the last-3 window is used. The estimator runs three parallel
 mini-estimators (intent / signals q1–q17 / operational) and calibrates them into
 a `RiskEstimation` (`models/risk/estimator.py:541-735`).
 
@@ -70,7 +73,16 @@ a `RiskEstimation` (`models/risk/estimator.py:541-735`).
   (only if the background draft already finished).
 - `_run_dccl_evaluation(...)` → `call_ctx.compliance_verdict`
   (`controller.py:980-1062`). Emits `COMPLIANCE_LAYER_STARTED` and a verdict event.
+- The DCCL LLM prompt includes a budgeted role-ordered transcript from
+  `ConversationContext`, not only the final user request. If budget trimming
+  occurs, the prompt explicitly says not to claim prior turns are absent.
 - If verdict is `MATCH`:
+  - The delivery/governance mismatch guard records `governance_context_mode`,
+    `candidate_context_mode`, `prior_turn_count`,
+    `delivery_context_broader_than_governance`, and `mismatch_guard_action`.
+    It only blocks draft reuse when prior turns exist, governance used a full
+    role-serialized/native context, and the candidate draft was generated from
+    last-user-only context.
   - **Case 1** (validated speculative draft, not low-confidence): emit
     `COMPLIANCE_DRAFT_REUSED` → `_route_compliance_match(..., draft_is_speculative=True)`.
   - **Case 2** (missing/invalid/low-confidence draft): `_regenerate_for_contract`
@@ -150,8 +162,10 @@ Back in the entry layer:
 
 - **NORMAL_COMPLETE**: SDK calls the wrapped client with the original kwargs
   (`wrapper.py:380-403`). Proxy forwards the original body — unless path is
-  `COMPLIANCE_FAST_PATH` with non-empty governed content, in which case the
-  governed draft is returned directly (`proxy.py:338-361`).
+  `COMPLIANCE_FAST_PATH` with non-empty governed content and the mismatch guard
+  allows governed-draft delivery, in which case the governed draft is returned
+  directly (`proxy.py:338-361`). If the guard blocks draft delivery, the proxy
+  calls upstream with the original full messages.
 - **SAFE_COMPLETE**: append `_build_safe_complete_user_turn(result)` to messages,
   then call the client/upstream (`wrapper.py:347-378`; `proxy.py:324-336`).
   The original system prompt is unchanged.
@@ -184,7 +198,7 @@ Emitted across the flow (DB rows + JSONL envelopes per observability mode):
 - `orchestration_events`: `SPECULATIVE_STARTED`, `COMPLIANCE_LAYER_*`,
   `MODULE_DEFERRED_TO_COMPLIANCE`, `LEDGER_FAST_PATH_*`,
   `CONVERSATION_CONTEXT_ATTACHED`, `CONVERSATION_STATE_UPDATED`,
-  `PROXY_OUTPUT_FINALIZED` (proxy).
+  `CONTEXT_SHAPE_RECORDED`, `PROXY_OUTPUT_FINALIZED` (proxy).
 - `conversation_states`, `ledger_events`, `session_store_events`,
   `proxy_request_events` for multi-turn.
 - SDK flushes observability synchronously after each call (`wrapper.py:275-283`);
