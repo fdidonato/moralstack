@@ -14,6 +14,7 @@ Note: invocation from the controller happens in Commit 2; signal propagation shi
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 import re
 import time
@@ -420,6 +421,7 @@ class DeveloperContractComplianceLayer:
         user_prompt = (getattr(request, "prompt", "") or "").strip()
         conversation_context = getattr(request, "conversation_context", None)
         prompt = self._build_llm_user_prompt(raw_text, user_prompt, speculative_draft, conversation_context)
+        messages = self._build_llm_messages(raw_text, user_prompt, speculative_draft, conversation_context)
 
         try:
             from moralstack.models.base import GenerationConfig
@@ -434,12 +436,19 @@ class DeveloperContractComplianceLayer:
 
             llm_start = time.perf_counter()
             wall_start_ms = int(time.time() * 1000)
-            result = self._policy.generate(
-                prompt=prompt,
-                system=_DCCL_LLM_SYSTEM_PROMPT,
-                config=config,
-                model_override=self._llm_model,
-            )
+            if hasattr(self._policy, "generate_messages"):
+                result = self._policy.generate_messages(
+                    messages=messages,
+                    config=config,
+                    model_override=self._llm_model,
+                )
+            else:
+                result = self._policy.generate(
+                    prompt=prompt,
+                    system=_DCCL_LLM_SYSTEM_PROMPT,
+                    config=config,
+                    model_override=self._llm_model,
+                )
             llm_elapsed_ms = (time.perf_counter() - llm_start) * 1000
 
             # Log the DCCL LLM call to observability (spec section 8.3).
@@ -457,23 +466,31 @@ class DeveloperContractComplianceLayer:
                         "model": self._llm_model,
                         "started_at": wall_start_ms,
                         "duration_ms": llm_elapsed_ms,
-                        "prompt": prompt,
+                        "prompt": messages[-1]["content"] if messages else prompt,
                         "system_prompt": _DCCL_LLM_SYSTEM_PROMPT,
                         "raw_response": getattr(result, "text", "") or "",
-                        "parsed_summary_json": {
-                            "context_shape": (
-                                conversation_context.context_shape_metadata(
-                                    module="compliance_layer",
-                                    context_mode=(
-                                        "role_serialized_full"
-                                        if getattr(conversation_context, "prior_turn_count", 0)
-                                        else "system_last_user_only"
-                                    ),
-                                )
-                                if conversation_context is not None
-                                else {"module": "compliance_layer", "context_mode": "none"}
-                            )
-                        },
+                        "parsed_summary_json": json.dumps(
+                            {
+                                "context_shape": (
+                                    conversation_context.context_shape_metadata(
+                                        module="compliance_layer",
+                                        context_mode=(
+                                            "full_native"
+                                            if getattr(conversation_context, "prior_turn_count", 0)
+                                            else "system_last_user_only"
+                                        ),
+                                    )
+                                    if conversation_context is not None
+                                    else {"module": "compliance_layer", "context_mode": "none"}
+                                ),
+                                "message_sections": (
+                                    conversation_context.observability_message_sections()
+                                    if conversation_context is not None
+                                    else {}
+                                ),
+                            },
+                            ensure_ascii=False,
+                        ),
                         "token_usage_json": (result.token_usage_json() if hasattr(result, "token_usage_json") else None),
                         "sequence_in_cycle": -5,
                         "call_kind": "compliance_layer",
@@ -505,6 +522,38 @@ class DeveloperContractComplianceLayer:
                 evaluation_path=EvaluationPath.LLM,
                 contract_hash=getattr(contract, "contract_hash", ""),
             )
+
+    def _build_llm_messages(
+        self,
+        raw_text: str,
+        user_prompt: str,
+        speculative_draft: str,
+        conversation_context: Any | None = None,
+    ) -> list[dict[str, str]]:
+        """Construct native OpenAI messages for DCCL evaluation."""
+        truncated_draft = speculative_draft[:1000] if speculative_draft else "(no draft generated yet)"
+        messages: list[dict[str, str]] = [{"role": "system", "content": _DCCL_LLM_SYSTEM_PROMPT}]
+        if conversation_context is not None and getattr(conversation_context, "contains_full_native_messages", False):
+            messages.extend(conversation_context.native_context_messages(include_final_user=True))
+        elif raw_text.strip():
+            messages.append({"role": "developer", "content": raw_text[:3000]})
+            messages.append({"role": "user", "content": user_prompt})
+        else:
+            messages.append({"role": "user", "content": user_prompt})
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Evaluate whether the preceding final user request, interpreted with the preceding "
+                    "native conversation messages, invokes a rule explicitly stated in the developer "
+                    "contract, and whether the rule is safety-permitted.\n\n"
+                    "SPECULATIVE DRAFT (response generated by the policy module):\n"
+                    f"---\n{truncated_draft}\n---\n\n"
+                    "Return ONLY valid JSON per the schema in the system prompt."
+                ),
+            }
+        )
+        return messages
 
     def _build_llm_user_prompt(
         self,

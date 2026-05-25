@@ -283,6 +283,45 @@ class OpenAIPolicy:
             completion_tokens=c_tok,
         )
 
+    def generate_messages(
+        self,
+        messages: list[dict[str, str]],
+        config: GenerationConfig | None = None,
+        prediction: dict[str, str] | None = None,
+        model_override: str | None = None,
+    ) -> GenerationResult:
+        """Generate from an already-structured OpenAI chat messages list."""
+        max_tokens = 1024
+        temperature = self._default_temperature
+        top_p = self._default_top_p
+        response_format = None
+        if config is not None:
+            max_tokens = getattr(config, "max_tokens", max_tokens)
+            temperature = getattr(config, "temperature", temperature)
+            top_p = getattr(config, "top_p", top_p)
+            response_format = getattr(config, "response_format", None)
+
+        text, tokens_used, finish_reason, p_tok, c_tok = self._complete(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            prediction=prediction,
+            response_format=response_format,
+            model_override=model_override,
+        )
+        return GenerationResult(
+            text=text,
+            tokens_used=tokens_used,
+            finish_reason=finish_reason,  # type: ignore[arg-type]
+            logprobs=None,
+            prompt_used=None,
+            system_used=None,
+            messages_used=messages,
+            prompt_tokens=p_tok,
+            completion_tokens=c_tok,
+        )
+
     def rewrite(
         self,
         prompt: str,

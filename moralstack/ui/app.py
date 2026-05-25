@@ -1850,6 +1850,22 @@ button:hover{opacity:0.9}
 
         templates.env.filters["module_result"] = _filter_module_result
 
+        def _filter_message_sections(parsed_summary_json: Any) -> dict[str, Any]:
+            if not parsed_summary_json:
+                return {}
+            try:
+                data = json.loads(parsed_summary_json) if isinstance(parsed_summary_json, str) else parsed_summary_json
+            except Exception:
+                return {}
+            if not isinstance(data, dict):
+                return {}
+            sections = data.get("message_sections")
+            if not isinstance(sections, dict) and isinstance(data.get("context_shape"), dict):
+                sections = data["context_shape"].get("message_sections")
+            return sections if isinstance(sections, dict) else {}
+
+        templates.env.filters["message_sections"] = _filter_message_sections
+
     @app.get("/runs", response_class=HTMLResponse)
     def list_runs(
         request: Request,

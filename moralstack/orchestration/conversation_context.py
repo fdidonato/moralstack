@@ -85,6 +85,38 @@ class ConversationContext:
                 return idx
         return None
 
+    @property
+    def system_messages(self) -> tuple[ChatMessage, ...]:
+        return tuple(m for m in self.messages if m.role == "system")
+
+    @property
+    def developer_messages(self) -> tuple[ChatMessage, ...]:
+        return tuple(m for m in self.messages if m.role == "developer")
+
+    def native_context_messages(self, *, include_final_user: bool = True) -> list[dict[str, str]]:
+        """Return original system/developer/user/assistant messages in native role order."""
+        final_idx = self._final_user_index()
+        out: list[dict[str, str]] = []
+        for idx, msg in enumerate(self.messages):
+            if msg.role not in {"system", "developer", "user", "assistant"}:
+                continue
+            if not include_final_user and final_idx is not None and idx == final_idx:
+                continue
+            out.append({"role": msg.role, "content": msg.content})
+        if include_final_user and not any(m["role"] == "user" for m in out) and self.final_user_message:
+            out.append({"role": "user", "content": self.final_user_message})
+        return out
+
+    def observability_message_sections(self) -> dict[str, Any]:
+        return {
+            "system_messages": [m.content for m in self.system_messages],
+            "developer_messages": [m.content for m in self.developer_messages],
+            "history_messages": [
+                {"role": m.role, "content": m.content} for m in self.prior_messages if m.role in {"user", "assistant"}
+            ],
+            "final_user_message": self.final_user_message,
+        }
+
     def role_serialized_transcript(self, budget: int = 6000) -> tuple[str, bool]:
         """Return a role-ordered transcript including the final user turn."""
         conversational: list[ChatMessage] = []

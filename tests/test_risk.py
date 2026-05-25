@@ -24,7 +24,6 @@ from moralstack.models.risk import (
     extract_json,
     parse_risk_response,
 )
-from moralstack.models.risk.estimator import _format_context_block
 
 # Default config for tests (avoids load_risk_estimator_config_from_env per test)
 _DEFAULT_TEST_CONFIG = RiskEstimatorConfig()
@@ -78,6 +77,7 @@ def reset_mock_llm(shared_mock_llm):
     shared_mock_llm.call_count = 0
     shared_mock_llm.responses = {}
     shared_mock_llm.last_prompt = ""
+    shared_mock_llm.last_messages = []
 
 
 # =============================================================================
@@ -110,6 +110,7 @@ class MockPolicyLLM:
         self.responses = responses or {}
         self.call_count = 0
         self.last_prompt = ""
+        self.last_messages: list[dict[str, str]] = []
 
     def generate(self, *args: Any, **kwargs: Any) -> MockGenerationResult:
         """
@@ -187,6 +188,11 @@ class MockPolicyLLM:
             "risk_policy_action": "ALLOW",
             "rationale": "Semantic analysis: standard informational request"
         }""")
+
+    def generate_messages(self, *, messages: list[dict[str, str]], config: Any = None) -> MockGenerationResult:
+        self.last_messages = messages
+        prompt = messages[-1]["content"] if messages else ""
+        return self.generate(prompt=prompt, system=messages[0]["content"] if messages else "", config=config)
 
     def _detects_harmful_intent(self, text: str) -> bool:
         """Simula rilevamento di intento dannoso (non keyword matching)."""
@@ -894,7 +900,7 @@ class TestCategorizeFromScore:
 
 
 class TestEstimateOptionalContext:
-    """estimate() kwargs: byte-identical without context; context in mini prompts."""
+    """estimate() kwargs: byte-identical without context; context in native messages."""
 
     _BYTE_EQUIV_PROMPT = "What time is it in Tokyo?"
     _BYTE_EQUIV_JSON = """{
@@ -915,10 +921,6 @@ class TestEstimateOptionalContext:
             "rationale": "Standard informational query"
         }"""
 
-    def test_format_context_block_empty(self):
-        assert _format_context_block(None, None) == ""
-        assert _format_context_block("", []) == ""
-
     def test_estimate_without_kwargs_matches_golden_rationale(
         self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm
     ):
@@ -928,15 +930,20 @@ class TestEstimateOptionalContext:
         golden_rationale = "[intent] Standard informational query | [op_risk] Standard informational query"
         assert estimation.rationale == golden_rationale
 
-    def test_estimate_with_context_injects_into_mini_prompts(self, reset_mock_llm, shared_estimator_with_mock):
-        """Context block is prepended into {request} for all three mini-estimators."""
+    def test_estimate_with_context_uses_native_messages(self, reset_mock_llm):
+        """Developer contract and history are passed as native chat messages, not prompt text."""
         captured_prompts: list[str] = []
+        captured_messages: list[list[dict[str, str]]] = []
 
         class RecordingMockPolicyLLM(MockPolicyLLM):
             def generate(self, *args: Any, **kwargs: Any) -> MockGenerationResult:
                 prompt = kwargs.get("prompt", args[0] if args else "")
                 captured_prompts.append(prompt)
                 return super().generate(*args, **kwargs)
+
+            def generate_messages(self, *, messages: list[dict[str, str]], config: Any = None) -> MockGenerationResult:
+                captured_messages.append(messages)
+                return super().generate_messages(messages=messages, config=config)
 
         policy = RecordingMockPolicyLLM()
         estimator = create_risk_estimator(policy=policy, config=_DEFAULT_TEST_CONFIG)
@@ -950,14 +957,15 @@ class TestEstimateOptionalContext:
             conversation_history=history,
         )
 
-        assert len(captured_prompts) == 3
-        for full_prompt in captured_prompts:
-            assert "DEVELOPER CONTRACT" in full_prompt
-            assert contract in full_prompt
-            assert "RECENT CONVERSATION HISTORY" in full_prompt
-            assert "[user]: prior turn" in full_prompt
-            assert user_prompt in full_prompt
-            assert full_prompt.index("DEVELOPER CONTRACT") < full_prompt.index(user_prompt)
+        assert len(captured_messages) == 3
+        for messages in captured_messages:
+            assert [m["role"] for m in messages[:3]] == ["system", "developer", "user"]
+            assert messages[1]["content"] == contract
+            assert messages[2]["content"] == "prior turn"
+            assert messages[-1]["role"] == "user"
+            assert user_prompt in messages[-1]["content"]
+            assert contract not in messages[-1]["content"]
+            assert "RECENT CONVERSATION HISTORY" not in messages[-1]["content"]
 
 
 # =============================================================================
@@ -1002,8 +1010,11 @@ class TestEstimateWithContext:
             conversation_history=history,
         )
 
-        # Verifica che il prompt sia stato arricchito
-        assert "RECENT CONVERSATION HISTORY" in shared_mock_llm.last_prompt or estimation is not None
+        assert estimation is not None
+        assert shared_mock_llm.last_messages
+        assert {"role": "user", "content": "Hello"} in shared_mock_llm.last_messages
+        assert {"role": "assistant", "content": "Hi there!"} in shared_mock_llm.last_messages
+        assert "RECENT CONVERSATION HISTORY" not in shared_mock_llm.last_prompt
 
     def test_with_user_context(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
         """Con user context, arricchisce il prompt."""

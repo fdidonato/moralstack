@@ -36,6 +36,7 @@ class GenerationResult:
     logprobs: Optional[List[float]] = None
     prompt_used: Optional[str] = None
     system_used: Optional[str] = None
+    messages_used: Optional[List[dict[str, Any]]] = None
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
 

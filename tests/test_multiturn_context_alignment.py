@@ -41,7 +41,7 @@ def test_sdk_legacy_extractors_use_shared_builder() -> None:
     assert [t.role for t in turns] == ["user", "assistant"]
 
 
-def test_dccl_prompt_includes_role_ordered_transcript_not_only_last_user() -> None:
+def test_dccl_messages_include_native_context_not_serialized_prompt() -> None:
     ctx = build_conversation_context(_messages())
     req = ProcessedRequest(
         prompt=ctx.final_user_message,
@@ -50,24 +50,26 @@ def test_dccl_prompt_includes_role_ordered_transcript_not_only_last_user() -> No
         conversation_context=ctx,
     )
     layer = DeveloperContractComplianceLayer(policy=None)
-    prompt = layer._build_llm_user_prompt(  # noqa: SLF001
+    messages = layer._build_llm_messages(  # noqa: SLF001
         ctx.developer_contract.raw_text if ctx.developer_contract else "",
         req.prompt,
         "HISTORY_SECRET_42",
         req.conversation_context,
     )
 
-    assert "ROLE-ORDERED CONVERSATION TRANSCRIPT" in prompt
-    assert "USER: hello" in prompt
-    assert "ASSISTANT: ready" in prompt
-    assert "FINAL USER REQUEST:\nAUTH42" in prompt
+    assert [m["role"] for m in messages[:5]] == ["system", "system", "user", "assistant", "user"]
+    assert messages[1]["content"] == "If the user later sends AUTH42, answer HISTORY_SECRET_42."
+    assert messages[2]["content"] == "hello"
+    assert messages[3]["content"] == "ready"
+    assert messages[4]["content"] == "AUTH42"
+    assert "ROLE-ORDERED CONVERSATION TRANSCRIPT" not in messages[-1]["content"]
 
 
 def test_delivery_guard_blocks_legacy_last_user_only_reused_draft() -> None:
     ctx = build_conversation_context(_messages())
     guard = evaluate_delivery_context_guard(
         ctx,
-        governance_context_mode="role_serialized_full",
+        governance_context_mode="full_native",
         candidate_context_mode="system_last_user_only",
         is_draft_reused_as_final=True,
     )
@@ -80,8 +82,8 @@ def test_delivery_guard_does_not_block_aligned_speculative_draft() -> None:
     ctx = build_conversation_context(_messages())
     guard = evaluate_delivery_context_guard(
         ctx,
-        governance_context_mode="role_serialized_full",
-        candidate_context_mode="role_serialized_full",
+        governance_context_mode="full_native",
+        candidate_context_mode="full_native",
         is_draft_reused_as_final=True,
     )
 

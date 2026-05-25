@@ -21,6 +21,7 @@ from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.retry import RETRY_CRITIC
+from moralstack.runtime.modules.message_context import build_module_messages
 from moralstack.utils.json_utils import JSONParseError, extract_json
 from moralstack.utils.structured_output import (
     CriticOutput,
@@ -38,38 +39,8 @@ def _build_context_block(
     developer_contract: DeveloperContract | None,
     conversation_history: list[Turn] | None,
 ) -> str:
-    """
-    Build optional context injected into the critic user prompt.
-
-    Returns an empty string for the single-turn legacy path.
-    """
-    if developer_contract is None and not conversation_history:
-        return ""
-
-    sections: list[str] = []
-
-    if developer_contract is not None and developer_contract.raw_text:
-        sections.append(
-            "DEVELOPER CONTRACT:\n"
-            f"The deployer of this assistant has declared:\n{developer_contract.raw_text}\n"
-            "Evaluate whether the response is coherent with this contract. "
-            "A response that violates the developer's stated scope or role is a violation."
-        )
-
-    if conversation_history:
-        recent = list(conversation_history)[-3:]
-        history_lines: list[str] = []
-        for turn in recent:
-            role = getattr(turn, "role", "") or "unknown"
-            content = (getattr(turn, "content", "") or "")[:200]
-            history_lines.append(f"[{role}]: {content}")
-        sections.append(
-            "CONVERSATION HISTORY (context_mode=role_serialized_truncated; last 3 turns):\n"
-            f"{chr(10).join(history_lines)}\n"
-            "Evaluate whether the response contradicts or escalates concerning patterns from previous turns."
-        )
-
-    return "\n\n" + "\n\n".join(sections) + "\n"
+    """Legacy compatibility hook; context is sent as native messages instead."""
+    return ""
 
 
 # =============================================================================
@@ -431,7 +402,8 @@ class LLMConstitutionalCritic:
             previous_violations=previous_violations,
             previous_guidance=previous_guidance,
         )
-        prompt = prompt + _build_context_block(developer_contract, conversation_history)
+        context_block = _build_context_block(developer_contract, conversation_history)
+        legacy_prompt = prompt + context_block
 
         # Genera critica con retry
         raw_response = ""
@@ -444,15 +416,26 @@ class LLMConstitutionalCritic:
 
             try:
                 effective_prompt = prompt if attempt == 0 else f"{prompt}\n\n{RETRY_PROMPT}"
-                if attempt == 0:
+                if hasattr(self.policy, "generate_messages"):
+                    result = self.policy.generate_messages(
+                        messages=build_module_messages(
+                            system_prompt=CRITIC_SYSTEM_PROMPT,
+                            user_prompt=prompt,
+                            developer_contract=developer_contract,
+                            conversation_history=conversation_history,
+                            retry_prompt="" if attempt == 0 else RETRY_PROMPT,
+                        ),
+                        config=self._generation_config,
+                    )
+                elif attempt == 0:
                     result = self.policy.generate(
-                        prompt=prompt,
+                        prompt=legacy_prompt,
                         system=CRITIC_SYSTEM_PROMPT,
                         config=self._generation_config,
                     )
                 else:
                     result = self.policy.generate(
-                        prompt=effective_prompt,
+                        prompt=f"{legacy_prompt}\n\n{RETRY_PROMPT}",
                         system=CRITIC_SYSTEM_PROMPT,
                         config=self._generation_config,
                     )

@@ -28,6 +28,7 @@ from moralstack.prompts.perspectives_prompt import (
     build_perspectives_user_prompt,
 )
 from moralstack.prompts.retry import RETRY_PERSPECTIVES
+from moralstack.runtime.modules.message_context import build_module_messages
 from moralstack.utils.cache import build_context_fingerprint, get_global_cache
 from moralstack.utils.json_utils import JSONParseError, extract_json
 
@@ -531,9 +532,19 @@ class LLMPerspectiveEnsemble:
         shared_system = PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + build_perspectives_system_prompt(ctx)
 
         if self.config.parallel_evaluation:
-            result = self._evaluate_parallel(active_perspectives, shared_system)
+            result = self._evaluate_parallel(
+                active_perspectives,
+                shared_system,
+                developer_contract=developer_contract,
+                conversation_history=conversation_history,
+            )
         else:
-            result = self._evaluate_sequential(active_perspectives, shared_system)
+            result = self._evaluate_sequential(
+                active_perspectives,
+                shared_system,
+                developer_contract=developer_contract,
+                conversation_history=conversation_history,
+            )
 
         # FIX PERFORMANCE: Salva in cache per usi futuri
         if self.config.enable_caching:
@@ -551,6 +562,9 @@ class LLMPerspectiveEnsemble:
         self,
         perspectives: list[Perspective],
         shared_system: str,
+        *,
+        developer_contract: DeveloperContract | None = None,
+        conversation_history: list[Turn] | None = None,
     ) -> EnsembleResult:
         """
         Evaluate perspectives in parallel. OPT-2: shared_system contains REQUEST+RESPONSE once.
@@ -561,7 +575,13 @@ class LLMPerspectiveEnsemble:
 
         with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
             future_to_perspective = {
-                executor.submit(self._evaluate_single_perspective, shared_system, perspective): perspective
+                executor.submit(
+                    self._evaluate_single_perspective,
+                    shared_system,
+                    perspective,
+                    developer_contract=developer_contract,
+                    conversation_history=conversation_history,
+                ): perspective
                 for perspective in perspectives
             }
 
@@ -618,6 +638,9 @@ class LLMPerspectiveEnsemble:
         self,
         perspectives: list[Perspective],
         shared_system: str,
+        *,
+        developer_contract: DeveloperContract | None = None,
+        conversation_history: list[Turn] | None = None,
     ) -> EnsembleResult:
         """
         Evaluate perspectives sequentially. OPT-2: shared_system contains REQUEST+RESPONSE once.
@@ -627,7 +650,12 @@ class LLMPerspectiveEnsemble:
         failed_perspectives: list[str] = []
 
         for perspective in perspectives:
-            result = self._evaluate_single_perspective(shared_system, perspective)
+            result = self._evaluate_single_perspective(
+                shared_system,
+                perspective,
+                developer_contract=developer_contract,
+                conversation_history=conversation_history,
+            )
 
             if result is not None:
                 results.append(result)
@@ -660,6 +688,9 @@ class LLMPerspectiveEnsemble:
         self,
         shared_system_prompt: str,
         perspective: Perspective,
+        *,
+        developer_contract: DeveloperContract | None = None,
+        conversation_history: list[Turn] | None = None,
     ) -> PerspectiveResult | None:
         """
         Evaluate the response from a single perspective. OPT-2: only user prompt (identity/instructions).
@@ -676,11 +707,27 @@ class LLMPerspectiveEnsemble:
         for attempt in range(self.config.max_retries):
             try:
                 effective_prompt = user_prompt if attempt == 0 else f"{user_prompt}\n\n{RETRY_PROMPT}"
-                result = self.policy.generate(
-                    prompt=effective_prompt,
-                    system=shared_system_prompt,
-                    config=self._generation_config,
-                )
+                if (
+                    (developer_contract is not None or conversation_history)
+                    and "generate_messages" in dir(self.policy)
+                    and callable(getattr(self.policy, "generate_messages", None))
+                ):
+                    result = self.policy.generate_messages(
+                        messages=build_module_messages(
+                            system_prompt=shared_system_prompt,
+                            user_prompt=user_prompt,
+                            developer_contract=developer_contract,
+                            conversation_history=conversation_history,
+                            retry_prompt="" if attempt == 0 else RETRY_PROMPT,
+                        ),
+                        config=self._generation_config,
+                    )
+                else:
+                    result = self.policy.generate(
+                        prompt=effective_prompt,
+                        system=shared_system_prompt,
+                        config=self._generation_config,
+                    )
                 pr = parse_perspective_response(result.text, perspective)
                 pr.prompt = effective_prompt
                 pr.system_prompt = shared_system_prompt

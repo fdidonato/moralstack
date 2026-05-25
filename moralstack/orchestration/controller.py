@@ -5,6 +5,7 @@ process() governa il flusso in base a decision.path; nessuna logica interna comp
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -918,29 +919,43 @@ class OrchestrationController:
             )
             conversation_context = getattr(request, "conversation_context", None)
             speculative_context_mode = "system_last_user_only"
+            messages: list[dict[str, str]] | None = None
             if conversation_context is not None and getattr(conversation_context, "prior_turn_count", 0) > 0:
-                transcript, truncated = conversation_context.role_serialized_transcript(budget=6000)
-                if transcript:
-                    prompt_text = (
-                        "Use the role-ordered conversation transcript below as context. "
-                        "Answer the final USER turn.\n\n"
-                        f"{transcript}"
-                    )
-                    speculative_context_mode = "role_serialized_truncated" if truncated else "role_serialized_full"
+                messages = [
+                    {
+                        "role": "system",
+                        "content": self._protected_system_prompt,
+                    },
+                    *conversation_context.native_context_messages(include_final_user=True),
+                ]
+                speculative_context_mode = "full_native"
             start = time.time()
             try:
-                result = self.policy.generate(
-                    prompt=prompt_text,
-                    system=effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal"),
-                )
+                if messages is not None and hasattr(self.policy, "generate_messages"):
+                    result = self.policy.generate_messages(messages=messages)
+                else:
+                    result = self.policy.generate(
+                        prompt=prompt_text,
+                        system=effective_system_for_request(
+                            base=self._protected_system_prompt,
+                            request=request,
+                            mode="normal",
+                        ),
+                    )
             except TypeError:
                 result = self.policy.generate(prompt_text)
             elapsed = (time.time() - start) * 1000
             response_text = getattr(result, "text", None) or str(result)
             protection = self._output_protector.validate(response_text)
             prompt_used = getattr(result, "prompt_used", None) or prompt_text
-            system_used = getattr(result, "system_used", None) or effective_system_for_request(
-                base=self._protected_system_prompt, request=request, mode="normal"
+            if messages is not None:
+                system_used = self._protected_system_prompt
+            else:
+                system_used = getattr(result, "system_used", None) or effective_system_for_request(
+                    base=self._protected_system_prompt, request=request, mode="normal"
+                )
+            message_sections = (
+                conversation_context.observability_message_sections() if conversation_context is not None else {}
             )
             policy_model = getattr(self.policy, "model", None)
             policy_model_str = str(policy_model) if policy_model is not None else None
@@ -955,16 +970,20 @@ class OrchestrationController:
                 "prompt": prompt_used,
                 "system_prompt": system_used or "",
                 "raw_response": response_text,
-                "parsed_summary_json": {
-                    "context_shape": (
-                        conversation_context.context_shape_metadata(
-                            module="speculative_generate",
-                            context_mode=speculative_context_mode,
-                        )
-                        if conversation_context is not None
-                        else {"module": "speculative_generate", "context_mode": "none"}
-                    )
-                },
+                "parsed_summary_json": json.dumps(
+                    {
+                        "context_shape": (
+                            conversation_context.context_shape_metadata(
+                                module="speculative_generate",
+                                context_mode=speculative_context_mode,
+                            )
+                            if conversation_context is not None
+                            else {"module": "speculative_generate", "context_mode": "none"}
+                        ),
+                        "message_sections": message_sections,
+                    },
+                    ensure_ascii=False,
+                ),
                 "sequence_in_cycle": 0,
                 "call_kind": "speculative",
             }
@@ -1097,9 +1116,7 @@ class OrchestrationController:
                     "context_shape": (
                         conv_ctx.context_shape_metadata(
                             module="compliance_layer",
-                            context_mode=(
-                                "role_serialized_full" if conv_ctx.prior_turn_count > 0 else "system_last_user_only"
-                            ),
+                            context_mode=("full_native" if conv_ctx.prior_turn_count > 0 else "system_last_user_only"),
                         )
                         if conv_ctx is not None
                         else {"module": "compliance_layer", "context_mode": "none"}
@@ -2062,8 +2079,8 @@ class OrchestrationController:
                 governance_context_mode = "system_last_user_only"
                 candidate_context_mode = "system_last_user_only"
                 if ctx is not None and ctx.prior_turn_count > 0:
-                    governance_context_mode = "role_serialized_full"
-                    candidate_context_mode = "role_serialized_full"
+                    governance_context_mode = "full_native"
+                    candidate_context_mode = "full_native"
                 guard = evaluate_delivery_context_guard(
                     ctx,
                     governance_context_mode=governance_context_mode,

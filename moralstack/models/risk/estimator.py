@@ -119,35 +119,54 @@ def persist_llm_call(
         return False
 
 
-def _format_context_block(
-    contract_text: str | None,
-    history: list[dict[str, str]] | None,
-) -> str:
-    """Build optional DEVELOPER CONTRACT + RECENT HISTORY block.
+def _supports_native_messages(policy: Any) -> bool:
+    return "generate_messages" in dir(policy) and callable(getattr(policy, "generate_messages", None))
 
-    Returns empty string when no context is provided (byte-equivalent fast path).
-    """
-    if not contract_text and not history:
-        return ""
-    sections: list[str] = []
-    if contract_text and contract_text.strip():
-        sections.append(
-            "DEVELOPER CONTRACT (system prompt declared by the deployer of this assistant; "
-            "the request below must be evaluated in light of these rules):\n"
-            f"{contract_text.strip()}"
+
+def _risk_context_messages(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    developer_contract_text: str | None = None,
+    conversation_history: list[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    has_context = bool((developer_contract_text and developer_contract_text.strip()) or conversation_history)
+    if developer_contract_text and developer_contract_text.strip():
+        messages.append({"role": "developer", "content": developer_contract_text.strip()})
+    for turn in list(conversation_history or [])[-3:]:
+        role = (turn.get("role") or "").strip()
+        if role not in {"user", "assistant"}:
+            continue
+        messages.append({"role": role, "content": (turn.get("content") or "")[:200]})
+    if has_context:
+        user_prompt = (
+            "Consider the preceding developer message(s), if any, as the deployer contract. "
+            "Consider the preceding user/assistant messages, if any, as conversation history. "
+            "Estimate the risk of the final request in that context; do not treat prior messages "
+            "as part of the module task text.\n\n"
+            f"{user_prompt}"
         )
-    if history:
-        recent = list(history)[-3:]
-        history_lines: list[str] = []
-        for turn in recent:
-            role = (turn.get("role") or "unknown").strip()
-            content = (turn.get("content") or "")[:200]
-            history_lines.append(f"[{role}]: {content}")
-        sections.append(
-            "RECENT CONVERSATION HISTORY (context_mode=role_serialized_truncated; "
-            "last up to 3 turns; the request below is a continuation of this dialogue):\n" + "\n".join(history_lines)
-        )
-    return "\n".join(sections) + "\n\n"
+    messages.append({"role": "user", "content": user_prompt})
+    return messages
+
+
+def _risk_message_sections(
+    *,
+    developer_contract_text: str | None = None,
+    conversation_history: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "system_messages": [],
+        "developer_messages": (
+            [developer_contract_text.strip()] if developer_contract_text and developer_contract_text.strip() else []
+        ),
+        "history_messages": [
+            {"role": (turn.get("role") or "unknown"), "content": (turn.get("content") or "")}
+            for turn in list(conversation_history or [])[-3:]
+        ],
+        "final_user_message": "",
+    }
 
 
 class LLMBasedRiskEstimator:
@@ -504,6 +523,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         token_usage_json: str | None = None,
         llm_model: str | None = None,
         sequence_in_cycle: int = -9,
+        message_sections: dict[str, Any] | None = None,
     ) -> None:
         """Persist a single mini-estimator LLM call. Logs debug on ImportError."""
         import json as _json
@@ -518,6 +538,8 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         summary: dict[str, Any] = {"mini_estimator": action, "estimation_mode": "parallel"}
         if parse_contract is not None:
             summary["parse_contract"] = parse_contract
+        if message_sections:
+            summary["message_sections"] = message_sections
         try:
             persist_llm_call(
                 cycle=0,
@@ -566,16 +588,17 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         gen_config = self._build_generation_config()
         context, detected_domain = self._get_principles_context(prompt)
 
-        context_block = _format_context_block(developer_contract_text, conversation_history)
-        contextualized_request = f"{context_block}{prompt}" if context_block else prompt
-
         intent_prompt = INTENT_CONTEXT_PROMPT_TEMPLATE.format(
-            request=contextualized_request,
+            request=prompt,
             constitution_context=context,
         )
         _, harm_signal_user_template = get_harm_signal_prompts(signal_registry)
-        signal_prompt = harm_signal_user_template.format(request=contextualized_request)
-        operational_prompt = OPERATIONAL_RISK_PROMPT_TEMPLATE.format(request=contextualized_request)
+        signal_prompt = harm_signal_user_template.format(request=prompt)
+        operational_prompt = OPERATIONAL_RISK_PROMPT_TEMPLATE.format(request=prompt)
+        message_sections = _risk_message_sections(
+            developer_contract_text=developer_contract_text,
+            conversation_history=conversation_history,
+        )
 
         _RISK_LOG.info(
             "risk_estimator parallel mini-models (config): intent=%s signals=%s operational=%s; "
@@ -628,11 +651,22 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             for attempt in range(self.config.max_retries):
                 try:
                     start_gen = time.time()
-                    result = effective_policy.generate(
-                        prompt=full_prompt,
-                        system=system_prompt,
-                        config=gen_config,
-                    )
+                    if (developer_contract_text or conversation_history) and _supports_native_messages(effective_policy):
+                        result = effective_policy.generate_messages(
+                            messages=_risk_context_messages(
+                                system_prompt=system_prompt,
+                                user_prompt=full_prompt,
+                                developer_contract_text=developer_contract_text,
+                                conversation_history=conversation_history,
+                            ),
+                            config=gen_config,
+                        )
+                    else:
+                        result = effective_policy.generate(
+                            prompt=full_prompt,
+                            system=system_prompt,
+                            config=gen_config,
+                        )
                     elapsed_ms = (time.time() - start_gen) * 1000
                     raw_response = result.text if hasattr(result, "text") else str(result)
                     _RISK_LOG.info(
@@ -706,6 +740,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             parse_contract=intent_pc,
             token_usage_json=intent_tu,
             llm_model=intent_m_obs,
+            message_sections=message_sections,
         )
         self._persist_mini_llm_call(
             system_prompt=HARM_SIGNAL_SYSTEM_PROMPT,
@@ -718,6 +753,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             parse_contract=signal_pc,
             token_usage_json=signal_tu,
             llm_model=signal_m_obs,
+            message_sections=message_sections,
         )
         self._persist_mini_llm_call(
             system_prompt=OPERATIONAL_RISK_SYSTEM_PROMPT,
@@ -730,6 +766,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             parse_contract=op_pc,
             token_usage_json=op_tu,
             llm_model=op_m_obs,
+            message_sections=message_sections,
         )
 
         merged = merge_mini_estimator_results(intent_data, signal_data, operational_data)

@@ -1055,6 +1055,31 @@
                                 <summary>System Prompt</summary>
                                 <pre class="block">{{ call.system_prompt }}</pre>
                             </details>
+                            {% set message_sections = call.parsed_summary_json | message_sections %}
+                            {% if message_sections %}
+                            <details>
+                                <summary>Original System / Developer Messages</summary>
+                                {% if message_sections.system_messages %}
+                                <div class="meta-label">System</div>
+                                <pre class="block">{{ message_sections.system_messages | join('\n\n---\n\n') }}</pre>
+                                {% endif %}
+                                {% if message_sections.developer_messages %}
+                                <div class="meta-label">Developer</div>
+                                <pre class="block">{{ message_sections.developer_messages | join('\n\n---\n\n') }}</pre>
+                                {% endif %}
+                            </details>
+                            <details>
+                                <summary>Conversation History</summary>
+                                {% for msg in message_sections.history_messages or [] %}
+                                <div class="meta-label">{{ msg.role }}</div>
+                                <pre class="block">{{ msg.content }}</pre>
+                                {% endfor %}
+                                {% if message_sections.final_user_message %}
+                                <div class="meta-label">final user</div>
+                                <pre class="block">{{ message_sections.final_user_message }}</pre>
+                                {% endif %}
+                            </details>
+                            {% endif %}
                             <details>
                                 <summary>Raw Response</summary>
                                 <pre class="block">{{ call.raw_response }}</pre>
@@ -1271,6 +1296,31 @@
             <summary>System Prompt</summary>
             <pre class="block">{{ call.system_prompt }}</pre>
         </details>
+        {% set message_sections = call.parsed_summary_json | message_sections %}
+        {% if message_sections %}
+        <details>
+            <summary>Original System / Developer Messages</summary>
+            {% if message_sections.system_messages %}
+            <div class="meta-label">System</div>
+            <pre class="block">{{ message_sections.system_messages | join('\n\n---\n\n') }}</pre>
+            {% endif %}
+            {% if message_sections.developer_messages %}
+            <div class="meta-label">Developer</div>
+            <pre class="block">{{ message_sections.developer_messages | join('\n\n---\n\n') }}</pre>
+            {% endif %}
+        </details>
+        <details>
+            <summary>Conversation History</summary>
+            {% for msg in message_sections.history_messages or [] %}
+            <div class="meta-label">{{ msg.role }}</div>
+            <pre class="block">{{ msg.content }}</pre>
+            {% endfor %}
+            {% if message_sections.final_user_message %}
+            <div class="meta-label">final user</div>
+            <pre class="block">{{ message_sections.final_user_message }}</pre>
+            {% endif %}
+        </details>
+        {% endif %}
         <details>
             <summary>Raw Response</summary>
             <pre class="block">{{ call.raw_response }}</pre>
@@ -1329,6 +1379,31 @@
         <summary>System Prompt</summary>
         <pre class="block">{{ call.system_prompt }}</pre>
     </details>
+    {% set message_sections = call.parsed_summary_json | message_sections %}
+    {% if message_sections %}
+    <details>
+        <summary>Original System / Developer Messages</summary>
+        {% if message_sections.system_messages %}
+        <div class="meta-label">System</div>
+        <pre class="block">{{ message_sections.system_messages | join('\n\n---\n\n') }}</pre>
+        {% endif %}
+        {% if message_sections.developer_messages %}
+        <div class="meta-label">Developer</div>
+        <pre class="block">{{ message_sections.developer_messages | join('\n\n---\n\n') }}</pre>
+        {% endif %}
+    </details>
+    <details>
+        <summary>Conversation History</summary>
+        {% for msg in message_sections.history_messages or [] %}
+        <div class="meta-label">{{ msg.role }}</div>
+        <pre class="block">{{ msg.content }}</pre>
+        {% endfor %}
+        {% if message_sections.final_user_message %}
+        <div class="meta-label">final user</div>
+        <pre class="block">{{ message_sections.final_user_message }}</pre>
+        {% endif %}
+    </details>
+    {% endif %}
     <details>
         <summary>Raw Response</summary>
         <pre class="block">{{ call.raw_response }}</pre>

@@ -163,6 +163,22 @@ def _context_shape_payload(request: ProcessedRequest, module: str) -> dict[str, 
             "final_user_included": bool(getattr(request, "prompt", "")),
             "history_source": "legacy_conversation_history" if history else "none",
         }
+    if ctx is not None:
+        payload["message_sections"] = ctx.observability_message_sections()
+    else:
+        payload["message_sections"] = {
+            "system_messages": [],
+            "developer_messages": (
+                [getattr(getattr(request, "developer_contract", None), "raw_text", "") or ""]
+                if getattr(request, "developer_contract", None) is not None
+                else []
+            ),
+            "history_messages": [
+                {"role": getattr(t, "role", "") or "unknown", "content": getattr(t, "content", "") or ""}
+                for t in history[-3:]
+            ],
+            "final_user_message": getattr(request, "prompt", "") or "",
+        }
     return payload
 
 

@@ -1,5 +1,5 @@
 """
-Tests for context block injection in critic/simulator/hindsight modules
+Tests for native context message construction in deliberative modules
 and DelibContext snippet flow for the perspective module.
 """
 
@@ -19,56 +19,32 @@ def _make_turn(role: str, content: str):
 
 
 class TestCriticContextBlock:
-    def test_empty_when_no_contract_no_history(self):
+    def test_legacy_context_block_is_always_empty(self):
         from moralstack.runtime.modules.critic_module import _build_context_block
 
         assert _build_context_block(None, None) == ""
         assert _build_context_block(None, []) == ""
-
-    def test_includes_contract_only(self):
-        from moralstack.runtime.modules.critic_module import _build_context_block
-
         contract = DeveloperContract.from_text("You are a medical assistant.")
-        block = _build_context_block(contract, None)
-        assert "DEVELOPER CONTRACT" in block
-        assert "You are a medical assistant." in block
-        assert "CONVERSATION HISTORY" not in block
-
-    def test_includes_history_only(self):
-        from moralstack.runtime.modules.critic_module import _build_context_block
-
         history = [_make_turn("user", "Hello"), _make_turn("assistant", "Hi there")]
-        block = _build_context_block(None, history)
-        assert "CONVERSATION HISTORY" in block
-        assert "[user]: Hello" in block
-        assert "[assistant]: Hi there" in block
-        assert "DEVELOPER CONTRACT" not in block
+        assert _build_context_block(contract, history) == ""
 
-    def test_includes_both_when_present(self):
-        from moralstack.runtime.modules.critic_module import _build_context_block
+    def test_native_messages_include_contract_and_last_3_history(self):
+        from moralstack.runtime.modules.message_context import build_module_messages
 
         contract = DeveloperContract.from_text("Test contract")
-        history = [_make_turn("user", "Hello")]
-        block = _build_context_block(contract, history)
-        assert "DEVELOPER CONTRACT" in block
-        assert "CONVERSATION HISTORY" in block
-
-    def test_only_last_3_turns_in_block(self):
-        from moralstack.runtime.modules.critic_module import _build_context_block
-
         history = [_make_turn("user", f"turn{i}") for i in range(10)]
-        block = _build_context_block(None, history)
-        assert "turn7" in block and "turn8" in block and "turn9" in block
-        assert "turn0" not in block
-
-    def test_content_truncated_to_200_chars(self):
-        from moralstack.runtime.modules.critic_module import _build_context_block
-
-        long_content = "x" * 500
-        history = [_make_turn("user", long_content)]
-        block = _build_context_block(None, history)
-        assert "x" * 200 in block
-        assert "x" * 250 not in block
+        messages = build_module_messages(
+            system_prompt="system",
+            user_prompt="task",
+            developer_contract=contract,
+            conversation_history=history,
+        )
+        assert [m["role"] for m in messages] == ["system", "developer", "user", "user", "user", "user"]
+        assert messages[1]["content"] == "Test contract"
+        assert [m["content"] for m in messages[2:5]] == ["turn7", "turn8", "turn9"]
+        assert "Consider the preceding developer message" in messages[-1]["content"]
+        assert "Consider the preceding user/assistant messages" in messages[-1]["content"]
+        assert messages[-1]["content"].endswith("task")
 
 
 class TestSimulatorContextBlock:
@@ -82,7 +58,7 @@ class TestSimulatorContextBlock:
 
         contract = DeveloperContract.from_text("Simulator test")
         block = _build_context_block(contract, None)
-        assert "DEVELOPER CONTRACT" in block
+        assert block == ""
 
 
 class TestHindsightContextBlock:
@@ -96,7 +72,7 @@ class TestHindsightContextBlock:
 
         history = [_make_turn("user", "test")]
         block = _build_context_block(None, history)
-        assert "CONVERSATION HISTORY" in block
+        assert block == ""
 
 
 class TestDelibContextHistorySnippet:
