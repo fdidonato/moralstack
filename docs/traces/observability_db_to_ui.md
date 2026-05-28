@@ -16,8 +16,15 @@ Primary code: `moralstack/observability/*`, `moralstack/persistence/*`,
 - `obs.emit(envelope)` / `emit_batch(...)` are **async fire-and-forget**: the
   envelope is submitted to a background `ObservabilityWriteQueue` that calls
   `router.route` with a captured contextvars snapshot (`service.py:44-52`).
-- `obs.flush(timeout)` blocks until pending writes drain — called at the request
-  boundary (SDK: `wrapper.py:281`; proxy: `proxy.py:703`).
+- `obs.flush(timeout)` blocks until pending writes drain. The SDK wrapper
+  calls it at the request boundary (`wrapper.py:281`). **The proxy does not
+  flush per-request**: under burst load the queue grew faster than the
+  single-writer drained it, so the bounded flush timed out on every call
+  without delivering visibility while adding ~5s overhead per response.
+  Drainage on the proxy side is the worker's job during the process lifetime
+  and a FastAPI `shutdown` hook (`obs.shutdown(timeout=30.0)`) on exit. Tests
+  or consumers that need synchronous visibility against the proxy must call
+  `obs.flush(...)` explicitly before reading.
 - Context is carried via contextvars: `run_id`, `request_id`, `session_id`,
   `turn_number` (`observability/context.py`).
 

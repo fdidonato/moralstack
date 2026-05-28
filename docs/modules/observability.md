@@ -214,7 +214,7 @@ When using the Python SDK (`govern()` / `GovernedClient`), observability context
 
 1. `GovernedClient.__init__` generates a session-scoped `run_id` (UUID4) and registers it via `set_current_run_id()`.
 2. If the active mode is `db_only` or `dual`, `init_db()` and `create_run()` are called to satisfy FK constraints for subsequent event inserts.
-3. At the end of every `chat.completions.create()` call, `obs.flush()` is invoked inside a `try/finally` block to guarantee that all enqueued events are written to disk before the call returns — critical for short-lived scripts.
+3. At the end of every `chat.completions.create()` call **via the SDK wrapper**, `obs.flush()` is invoked inside a `try/finally` block to guarantee that all enqueued events are written to disk before the call returns — critical for short-lived scripts. The server proxy does *not* flush per-request (the bounded flush timed out under burst load and only added overhead); it relies on the background worker plus a process-shutdown drain via FastAPI's `shutdown` hook.
 
 ### Minimum working configuration
 

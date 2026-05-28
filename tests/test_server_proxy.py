@@ -797,6 +797,13 @@ class TestAsyncConcurrency:
 
         asyncio.run(_run())
 
+        # The proxy no longer flushes per-request (it added 5s of overhead
+        # under bursty load without achieving visibility); consumers that
+        # need synchronous visibility must explicitly drain the queue.
+        from moralstack.observability import obs
+
+        obs.flush(timeout=10.0)
+
         proxy_jsonl = obs_dir / "proxy.request_finalized.jsonl"
         assert proxy_jsonl.is_file()
         events = [json.loads(line) for line in proxy_jsonl.read_text(encoding="utf-8").splitlines() if line.strip()]

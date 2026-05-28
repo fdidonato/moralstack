@@ -49,7 +49,7 @@ def test_set_domain_keywords_change_clears_cache():
     kw = {"core": ["c"], "dom": ["x"]}
     p = DomainPrefilter(domain_keywords=kw, max_domains=3)
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["dom"], "confidence": 0.9}):
-        p.filter_domains("q", ["core", "dom"])
+        p.filter_domains("query about banking", ["core", "dom"])
     assert len(p._cache) == 1
     fp_before = p._keywords_fingerprint
     assert p.set_domain_keywords({"core": ["c"], "dom": ["z"]}) is True
@@ -69,9 +69,9 @@ def test_repeated_filter_domains_single_openai_call():
     kw = {"core": ["c"], "dom": ["x"]}
     p = DomainPrefilter(domain_keywords=kw, max_domains=3)
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["dom"], "confidence": 0.9}) as m:
-        p.filter_domains("money", ["core", "dom"])
+        p.filter_domains("money advice question", ["core", "dom"])
         p.set_domain_keywords(kw)
-        p.filter_domains("money", ["core", "dom"])
+        p.filter_domains("money advice question", ["core", "dom"])
     assert m.call_count == 1
 
 
@@ -88,9 +88,9 @@ def test_miss_then_hit_emits_events(tmp_path, monkeypatch):
     kw = {"core": ["c"], "dom": ["x"]}
     p = DomainPrefilter(domain_keywords=kw, max_domains=3)
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["dom"], "confidence": 0.9}):
-        p.filter_domains("qq", ["core", "dom"])
+        p.filter_domains("qq long enough query", ["core", "dom"])
         p.set_domain_keywords(kw)
-        p.filter_domains("qq", ["core", "dom"])
+        p.filter_domains("qq long enough query", ["core", "dom"])
 
     rows = get_orchestration_events_for_request("r-pf", "q-pf")
     types = [r.get("event_type") for r in rows]
@@ -180,10 +180,60 @@ def test_clear_cache_forced_emits_when_non_empty(tmp_path, monkeypatch):
 
     p = DomainPrefilter(domain_keywords={"core": ["a"]}, max_domains=3)
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": [], "confidence": 0.0}):
-        p.filter_domains("z", ["core"])
+        p.filter_domains("z long enough query", ["core"])
     p.clear_cache(reason="forced_refresh")
     rows = get_orchestration_events_for_request("r3", "q3")
     assert any(r.get("event_type") == DOMAIN_PREFILTER_CACHE_INVALIDATED for r in rows)
+
+
+def test_short_query_bypasses_llm_and_returns_empty():
+    """Queries < MIN_QUERY_LEN_FOR_CLASSIFICATION carry too little signal:
+    the prefilter must skip the LLM round-trip and return an empty list so
+    the caller's default (core principles) applies."""
+    p = DomainPrefilter(domain_keywords={"core": ["c"], "dom": ["x"]}, max_domains=3)
+    with patch.object(DomainPrefilter, "_call_openai") as m:
+        result = p.filter_domains("51", ["core", "dom"])
+        result2 = p.filter_domains("        ", ["core", "dom"])  # whitespace only
+        result3 = p.filter_domains("nine char", ["core", "dom"])  # 9 chars
+    assert result == []
+    assert result2 == []
+    assert result3 == []
+    assert m.call_count == 0, "LLM must not be invoked for queries below the length threshold"
+
+
+def test_short_query_emits_too_short_event(tmp_path, monkeypatch):
+    """The bypass must emit DOMAIN_PREFILTER_QUERY_TOO_SHORT with rationale."""
+    from moralstack.orchestration.orchestration_event_taxonomy import (
+        DOMAIN_PREFILTER_QUERY_TOO_SHORT,
+    )
+
+    dbp = str(tmp_path / "pf_short.db")
+    monkeypatch.setenv("MORALSTACK_DB_PATH", dbp)
+    monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "db_only")
+    init_db(dbp)
+    assert create_run("r-short", run_type="test", meta={})
+    assert upsert_request("r-short", "q-short", prompt="p", domain="")
+    set_current_run_id("r-short")
+    set_current_request_id("q-short")
+
+    p = DomainPrefilter(domain_keywords={"core": ["c"], "dom": ["x"]}, max_domains=3)
+    p.filter_domains("63312", ["core", "dom"])
+
+    rows = get_orchestration_events_for_request("r-short", "q-short")
+    matches = [r for r in rows if r.get("event_type") == DOMAIN_PREFILTER_QUERY_TOO_SHORT]
+    assert matches, "DOMAIN_PREFILTER_QUERY_TOO_SHORT event must be persisted"
+    payload = json.loads(matches[0].get("payload_json") or "{}")
+    assert payload.get("rationale") == "query too short to identify a domain"
+    assert payload.get("query_length") == 5
+    assert payload.get("threshold") == DomainPrefilter.MIN_QUERY_LEN_FOR_CLASSIFICATION
+
+
+def test_long_query_still_invokes_llm():
+    """Regression guard: queries >= threshold must still hit the LLM classifier."""
+    p = DomainPrefilter(domain_keywords={"core": ["c"], "dom": ["x"]}, max_domains=3)
+    with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["dom"], "confidence": 0.9}) as m:
+        p.filter_domains("question about banking and finance", ["core", "dom"])
+    assert m.call_count == 1
 
 
 def test_clear_cache_noop_when_empty(tmp_path, monkeypatch):

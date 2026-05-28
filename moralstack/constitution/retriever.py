@@ -223,6 +223,13 @@ class DomainPrefilter:
 
     ALWAYS_EVALUATE = {"core"}
     DOMAIN_CONFIDENCE_THRESHOLD = 0.5
+    # Queries shorter than this (after stripping surrounding whitespace) carry
+    # too little signal for the LLM classifier to pick a domain reliably and
+    # were observed to (a) waste a full classifier round-trip on noise inputs
+    # like "51", "63312" in COMPL-AI direct_request and (b) occasionally
+    # hallucinate a domain match. We bypass the classifier and return an empty
+    # list; the caller's existing fallback (all core principles) applies.
+    MIN_QUERY_LEN_FOR_CLASSIFICATION = 10
 
     def __init__(
         self,
@@ -363,7 +370,23 @@ class DomainPrefilter:
         from moralstack.orchestration.orchestration_event_taxonomy import (
             DOMAIN_PREFILTER_CACHE_HIT,
             DOMAIN_PREFILTER_CACHE_MISS,
+            DOMAIN_PREFILTER_QUERY_TOO_SHORT,
         )
+
+        stripped_query_len = len(query.strip())
+        if stripped_query_len < self.MIN_QUERY_LEN_FOR_CLASSIFICATION:
+            self._last_cache_lookup_hit = None
+            _emit_domain_prefilter_orchestration_event(
+                DOMAIN_PREFILTER_QUERY_TOO_SHORT,
+                {
+                    "decision": "bypass",
+                    "rationale": "query too short to identify a domain",
+                    "query_length": stripped_query_len,
+                    "threshold": self.MIN_QUERY_LEN_FOR_CLASSIFICATION,
+                    "available_domain_count": len(available_domains),
+                },
+            )
+            return []
 
         cache_key = hashlib.md5(f"{query}_{','.join(sorted(available_domains))}".encode()).hexdigest()
         domains_to_check = [d for d in available_domains if d not in self.ALWAYS_EVALUATE]

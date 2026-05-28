@@ -463,6 +463,23 @@ def create_app(
         version="0.5.0",
     )
 
+    @app.on_event("shutdown")
+    def _drain_observability_queue() -> None:
+        """
+        Drain the async observability queue on process exit.
+
+        The per-request flush was removed because under burst load it timed
+        out without achieving visibility. Here we block (up to 30s) for the
+        background worker to finish persisting all queued events so nothing is
+        lost on graceful shutdown.
+        """
+        try:
+            from moralstack.observability import obs
+
+            obs.shutdown(timeout=30.0)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("observability shutdown drain failed: %s", exc)
+
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         """Liveness probe."""
@@ -644,7 +661,7 @@ def _finalize_request(
 ) -> None:
     """
     Finalize an HTTP request: update the requests row with final_response and
-    flush the observability queue so writes land before the response is sent.
+    emit the canonical request.meta_updated / proxy.request_finalized envelopes.
 
     Step 13 extension:
         - Build governance metadata from ``result.response.metadata`` and emit
@@ -652,14 +669,19 @@ def _finalize_request(
         - Emit ``proxy.request_finalized`` with state in/out, posture in/out,
           cache hints, X-MoralStack headers and response length.
 
+    Visibility model: events are enqueued on the async observability worker;
+    the per-request flush has been removed because under bursty load (>20
+    concurrent requests) the queue grows faster than the single SQLite writer
+    drains it, causing the bounded flush to time out at its limit on every
+    request and adding pure overhead to the response. Drainage to disk is
+    handled by the background worker and a process-shutdown hook in create_app.
+
     Best-effort: never raises. Skipped silently when observability is not
     configured (proxy_run_id == "").
     """
     if not proxy_run_id or not request_id:
         return
     try:
-        from moralstack.observability import obs
-
         # Step 13 — shared finalization: writes final_response + domain on the
         # ``requests`` row, builds the governance meta dict, and emits the
         # canonical ``request.meta_updated`` envelope so SQLite + JSONL stay
@@ -707,8 +729,11 @@ def _finalize_request(
         except Exception as exc:
             logger.debug("emit_proxy_request_finalized failed (non-fatal): %s", exc)
 
-        # Flush the async queue so the data is visible to readers right away.
-        obs.flush(timeout=5.0)
+        # Drainage of the async observability queue is the background worker's
+        # job; a bounded per-request flush only added overhead under load (the
+        # queue grew faster than it drained, hitting the timeout on every call)
+        # without actually achieving visibility. Process shutdown drains via
+        # the lifespan hook registered in create_app.
     except Exception as exc:
         logger.warning("Failed to finalize request observability: %s", exc)
 

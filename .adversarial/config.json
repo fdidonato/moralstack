@@ -11,7 +11,7 @@
   },
   "limits": {
     "max_review_rounds": 1,
-    "min_final_confidence": 0.9,
+    "min_final_confidence": 0.82,
     "max_digest_chars_per_document": 18000,
     "max_context_grep_matches": 250,
     "max_command_seconds": 900

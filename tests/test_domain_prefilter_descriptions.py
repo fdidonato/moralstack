@@ -85,7 +85,7 @@ def test_prefilter_partial_descriptions():
         domain_descriptions={"legal": "Legal stuff."},  # only legal has description
     )
     with _stub_openai(captured):
-        pf.filter_domains("question", ["core", "legal", "medical"])
+        pf.filter_domains("question about partial descriptions", ["core", "legal", "medical"])
 
     prompt = captured.get("prompt", "")
     # `core` is always-evaluated and excluded from the LLM prompt by
@@ -105,7 +105,7 @@ def test_set_domain_descriptions_idempotent_preserves_cache():
     )
     captured: dict = {}
     with _stub_openai(captured, return_domains=["core"]):
-        pf.filter_domains("query", ["core"])
+        pf.filter_domains("query about cache invariants", ["core"])
     cache_size_before = len(pf._cache)
     assert cache_size_before > 0, "cache must be populated after first call"
 
@@ -122,7 +122,7 @@ def test_set_domain_descriptions_change_clears_cache():
     )
     captured: dict = {}
     with _stub_openai(captured, return_domains=["core"]):
-        pf.filter_domains("query", ["core"])
+        pf.filter_domains("query about cache invariants", ["core"])
     assert len(pf._cache) > 0
 
     changed = pf.set_domain_descriptions({"core": "Updated description."})
