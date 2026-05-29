@@ -46,6 +46,12 @@ non-deliberative). Response text is never read from the ledger (DAF-4); only gov
 
 `moralstack/orchestration/system_prompt_resolver.py` exposes `effective_system_for_request(...)`, composing the policy system prompt per request from the protected base, optional non-empty `DeveloperContract.raw_text`, and an optional mode suffix (`normal`, `safe_complete`, `constrained`). When no contract text is present, output matches the legacy single-turn byte strings. The suffix modes remain available for other call sites; **`DeliberationRunner` does not use `safe_complete` or `constrained` resolver modes for policy generation** (see below).
 
+`moralstack/orchestration/final_revalidation.py` is the shared final-output
+gate for proxy and SDK delivery. It validates upstream-generated text against
+the developer contract using the same critic and constitution store owned by
+orchestration, then returns PASS or a refusal-first fail-closed outcome. Delivery
+layers must call this helper rather than duplicating critic-call construction.
+
 **Compliance delivery guard**: On DCCL `MATCH`, a validated speculative draft can
 be reused only if its candidate context is aligned with the governance context.
 If prior turns exist and governance saw a full role-serialized/native transcript

@@ -29,6 +29,11 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     COMPLIANCE_DRAFT_REUSED,
     COMPLIANCE_MATCH_DOWNGRADED,
     MODULE_DEFERRED_TO_COMPLIANCE,
+    PROXY_FINAL_REVALIDATION_BLOCKED,
+    PROXY_FINAL_REVALIDATION_ERROR,
+    PROXY_FINAL_REVALIDATION_PASSED,
+    PROXY_FINAL_REVALIDATION_SKIPPED,
+    PROXY_FINAL_REVALIDATION_STARTED,
     PROXY_OUTPUT_FINALIZED,
     SPECULATIVE_DRAFT_REUSED,
     SPECULATIVE_RESULT_USED,
@@ -320,6 +325,9 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
         else:
             inputs.append({"label": "revision_guidance", "source": "critic"})
             inputs.append({"label": "risk", "source": "risk_estimator"})
+    elif "upstream_provider" in module:
+        inputs.append({"label": "messages", "source": "request_body"})
+        inputs.append({"label": "governance_decision", "source": "moralstack"})
     elif "critic" in module:
         inputs.append({"label": "draft", "source": "policy"})
         inputs.append({"label": "principles", "source": "constitution"})
@@ -411,7 +419,15 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
                 }
             )
     elif "policy" in module:
-        outputs.append({"label": "draft", "value": "text"})
+        raw = call.get("raw_response") or ""
+        outputs.append({"label": "draft", "value": raw if raw else "text"})
+    elif "upstream_provider" in module:
+        raw = call.get("raw_response") or ""
+        outputs.append({"label": "candidate_final_text", "value": raw if raw else "text"})
+        if summary.get("final_text_source"):
+            outputs.append({"label": "source", "value": summary["final_text_source"]})
+        if summary.get("reason"):
+            outputs.append({"label": "reason", "value": summary["reason"]})
     elif "critic" in module:
         if "violations" in summary:
             outputs.append({"label": "violations", "value": summary["violations"]})
@@ -772,12 +788,12 @@ def _build_path_badge_info(orchestration_events: list[dict[str, Any]]) -> dict[s
                 degraded = True
                 degraded_reason = (ep.get("degraded_reason") or "").strip()
                 break
-        label = "Contract MATCH · draft riusato"
+        label = "Contract MATCH - draft reused"
         if degraded and degraded_reason == "llm_timeout":
-            label += " · (verdetto lento)"
+            label += " - (slow verdict)"
         elif degraded:
-            label += " · (degradato)"
-        label += " · moduli bypassati"
+            label += " - (degraded)"
+        label += " - modules bypassed"
         return {
             "label": label,
             "kind": "compliance_reused",
@@ -795,19 +811,19 @@ def _build_path_badge_info(orchestration_events: list[dict[str, Any]]) -> dict[s
             if reason.startswith("degraded:"):
                 degraded = True
                 break
-        label = "Contract MATCH · rigenerato"
+        label = "Contract MATCH - regenerated"
         if degraded:
-            label += " (degradato)"
-        label += " · moduli bypassati"
+            label += " (degraded)"
+        label += " - modules bypassed"
         return {"label": label, "kind": "compliance_regenerated", "degraded": degraded}
 
     if COMPLIANCE_MATCH_DOWNGRADED in event_types:
         return {
-            "label": "MATCH declassato → pipeline standard",
+            "label": "MATCH downgraded -> standard pipeline",
             "kind": "compliance_downgraded",
         }
 
-    return {"label": "Pipeline deliberativa standard", "kind": "deliberative"}
+    return {"label": "Standard deliberative pipeline", "kind": "deliberative"}
 
 
 def _build_proxy_output_info(orchestration_events: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -827,6 +843,282 @@ def _build_proxy_output_info(orchestration_events: list[dict[str, Any]]) -> dict
                 "final_response_length": payload.get("final_response_length"),
             }
     return None
+
+
+def _build_final_revalidation_info(orchestration_events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Extract final output revalidation status from proxy orchestration events."""
+    status_by_event = {
+        PROXY_FINAL_REVALIDATION_STARTED: "started",
+        PROXY_FINAL_REVALIDATION_PASSED: "passed",
+        PROXY_FINAL_REVALIDATION_BLOCKED: "blocked",
+        PROXY_FINAL_REVALIDATION_ERROR: "error",
+        PROXY_FINAL_REVALIDATION_SKIPPED: "skipped",
+    }
+    terminal_events = {
+        PROXY_FINAL_REVALIDATION_PASSED,
+        PROXY_FINAL_REVALIDATION_BLOCKED,
+        PROXY_FINAL_REVALIDATION_ERROR,
+        PROXY_FINAL_REVALIDATION_SKIPPED,
+    }
+
+    started = False
+    selected: dict[str, Any] | None = None
+    for e in orchestration_events:
+        event_type = e.get("event_type") or ""
+        if event_type == PROXY_FINAL_REVALIDATION_STARTED:
+            started = True
+        if event_type in terminal_events:
+            selected = e
+
+    if selected is None:
+        if not started:
+            return None
+        selected = next(e for e in orchestration_events if (e.get("event_type") or "") == PROXY_FINAL_REVALIDATION_STARTED)
+
+    payload = _parse_json_field(selected.get("payload_json")) or _parse_json_field(selected.get("payload"))
+    if not isinstance(payload, dict):
+        payload = {}
+    event_type = selected.get("event_type") or ""
+    status = status_by_event.get(event_type, "unknown")
+    return {
+        "status": status,
+        "event_type": event_type,
+        "decision": selected.get("decision") or status,
+        "started": started or event_type == PROXY_FINAL_REVALIDATION_STARTED,
+        "developer_contract_present": payload.get("developer_contract_present"),
+        "final_text_source_original": payload.get("final_text_source_original"),
+        "final_text_source_after_revalidation": payload.get("final_text_source_after_revalidation"),
+        "violated_hard": payload.get("violated_hard"),
+        "violated_principles": payload.get("violated_principles") or [],
+        "fallback_source": payload.get("fallback_source") or "",
+        "skip_reason": payload.get("skip_reason") or "",
+        "block_reason": payload.get("block_reason") or "",
+        "match_kind": payload.get("match_kind") or "",
+        "candidate_final_text_before": payload.get("candidate_final_text_before") or "",
+        "final_text_after_revalidation": payload.get("final_text_after_revalidation") or "",
+        "final_response_length_before": payload.get("final_response_length_before"),
+        "final_response_length_after": payload.get("final_response_length_after"),
+    }
+
+
+def _first_event(
+    orchestration_events: list[dict[str, Any]],
+    event_type: str,
+) -> dict[str, Any] | None:
+    for event in orchestration_events:
+        if (event.get("event_type") or "") == event_type:
+            return event
+    return None
+
+
+def _last_event(
+    orchestration_events: list[dict[str, Any]],
+    event_type: str,
+) -> dict[str, Any] | None:
+    selected = None
+    for event in orchestration_events:
+        if (event.get("event_type") or "") == event_type:
+            selected = event
+    return selected
+
+
+def _event_payload(event: dict[str, Any] | None) -> dict[str, Any]:
+    if not event:
+        return {}
+    payload = _parse_json_field(event.get("payload_json")) or _parse_json_field(event.get("payload"))
+    return payload if isinstance(payload, dict) else {}
+
+
+def _last_final_trace_payload(traces: list[dict[str, Any]]) -> dict[str, Any]:
+    final_trace = _pick_final_trace_row(traces)
+    return _parse_trace_json(final_trace) if final_trace else {}
+
+
+def _build_delivery_path_summary(
+    *,
+    orchestration_events: list[dict[str, Any]],
+    traces: list[dict[str, Any]],
+    llm_calls: list[dict[str, Any]],
+    final_revalidation_info: dict[str, Any] | None,
+    proxy_output_info: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build a reviewer-facing delivery timeline distinct from internal governance traces."""
+    event_types = {(e.get("event_type") or "") for e in orchestration_events}
+    final_trace = _last_final_trace_payload(traces)
+    delivered_action = (proxy_output_info or {}).get("final_action") or final_trace.get("final_action") or "unknown"
+    delivered_source = (proxy_output_info or {}).get("final_text_source") or "unknown"
+    pre_action = final_trace.get("final_action") or ""
+    pre_path = final_trace.get("path") or ""
+    status = "delivered"
+    headline = f"Delivered {delivered_action}"
+    explanation = "The proxy finalization event is the authoritative delivered result."
+
+    if final_revalidation_info and final_revalidation_info.get("status") == "blocked":
+        status = "blocked"
+        headline = f"Delivered {delivered_action} after final revalidation blocked the upstream candidate"
+        explanation = (
+            "The orchestrator allowed a pre-delivery response, but the proxy regenerated an upstream candidate "
+            "and blocked it before delivery."
+        )
+    elif COMPLIANCE_DRAFT_REUSED in event_types and delivered_source == "governed_draft":
+        status = "reused"
+        headline = f"Delivered {delivered_action} from the DCCL-validated governed draft"
+        explanation = "The DCCL validated the speculative draft, bypassed downstream modules, and delivered it directly."
+    elif delivered_source in {"upstream_regen", "safe_complete_upstream"}:
+        status = "upstream"
+        headline = f"Delivered {delivered_action} from {delivered_source}"
+        explanation = "The final response came from an upstream provider candidate after governance."
+
+    steps: list[dict[str, Any]] = []
+
+    spec_call = next(
+        (c for c in llm_calls if (c.get("phase") or "") == "speculative_generate" and (c.get("raw_response") or "").strip()),
+        None,
+    )
+    spec_event = _first_event(orchestration_events, "SPECULATIVE_STARTED")
+    if spec_event or spec_call:
+        steps.append(
+            {
+                "kind": "neutral",
+                "title": "Speculative draft generated",
+                "time": (spec_call or spec_event or {}).get("started_at"),
+                "detail": (
+                    "Policy draft started in parallel with risk estimation. This is a latency optimization, "
+                    "not a delivery decision."
+                ),
+                "source": "policy/speculative_generate",
+            }
+        )
+
+    compliance_event = next(
+        (e for e in orchestration_events if (e.get("event_type") or "").startswith("COMPLIANCE_LAYER_VERDICT")),
+        None,
+    )
+    if compliance_event:
+        payload = _event_payload(compliance_event)
+        decision = compliance_event.get("decision") or "unknown"
+        validated = bool(payload.get("speculative_draft_validated"))
+        steps.append(
+            {
+                "kind": "ok" if decision == "MATCH" and validated else ("warn" if decision == "MATCH" else "neutral"),
+                "title": f"DCCL verdict: {decision}",
+                "time": compliance_event.get("started_at"),
+                "detail": (
+                    f"speculative_draft_validated={str(validated).lower()}; "
+                    f"evaluation_path={payload.get('evaluation_path') or 'unknown'}"
+                ),
+                "source": "compliance_layer",
+            }
+        )
+
+    reuse_event = _first_event(orchestration_events, COMPLIANCE_DRAFT_REUSED)
+    if reuse_event:
+        payload = _event_payload(reuse_event)
+        steps.append(
+            {
+                "kind": "ok",
+                "title": "Validated draft promoted to governed_draft",
+                "time": reuse_event.get("started_at"),
+                "detail": (
+                    "COMPLIANCE_DRAFT_REUSED: this is the only event that means the speculative draft "
+                    "was validated and reused as final governed content."
+                ),
+                "source": payload.get("draft_match_method") or "dccl",
+            }
+        )
+    else:
+        spec_used = _first_event(orchestration_events, SPECULATIVE_RESULT_USED)
+        if spec_used:
+            payload = _event_payload(spec_used)
+            route = payload.get("route") or spec_used.get("decision") or "unknown"
+            steps.append(
+                {
+                    "kind": "warn" if route == "deliberative" else "neutral",
+                    "title": f"Speculative draft consumed by {route}",
+                    "time": spec_used.get("started_at"),
+                    "detail": (
+                        "No COMPLIANCE_DRAFT_REUSED event exists, so this was internal reuse "
+                        "as a route seed, not a DCCL-validated final delivery."
+                    ),
+                    "source": payload.get("consumer") or "speculative",
+                }
+            )
+
+    if final_trace:
+        steps.append(
+            {
+                "kind": "neutral",
+                "title": "Pre-delivery governance decision",
+                "time": None,
+                "detail": f"{pre_path or 'unknown path'} chose {pre_action or 'unknown'} before proxy delivery checks.",
+                "source": "decision_traces.FINAL",
+            }
+        )
+
+    upstream_call = next(
+        (
+            c
+            for c in llm_calls
+            if (c.get("module") or "") == "upstream_provider"
+            or (c.get("phase") or "") in {"upstream_regen", "safe_complete_upstream"}
+        ),
+        None,
+    )
+    if upstream_call:
+        steps.append(
+            {
+                "kind": "warn",
+                "title": "Final provider candidate generated",
+                "time": upstream_call.get("started_at"),
+                "detail": (
+                    f"{upstream_call.get('phase') or 'upstream'} produced the candidate final text. "
+                    "This is distinct from the speculative draft."
+                ),
+                "source": "upstream_provider",
+            }
+        )
+
+    if final_revalidation_info:
+        rv_status = final_revalidation_info.get("status") or "unknown"
+        rv_event = _last_event(orchestration_events, final_revalidation_info.get("event_type") or "")
+        steps.append(
+            {
+                "kind": "bad" if rv_status in {"blocked", "error"} else ("ok" if rv_status == "passed" else "neutral"),
+                "title": f"Final output revalidation: {rv_status}",
+                "time": (rv_event or {}).get("started_at"),
+                "detail": (
+                    f"target={final_revalidation_info.get('final_text_source_original') or 'unknown'}; "
+                    f"after={final_revalidation_info.get('final_text_source_after_revalidation') or 'unknown'}"
+                ),
+                "source": final_revalidation_info.get("block_reason") or final_revalidation_info.get("skip_reason") or "",
+            }
+        )
+
+    finalized = _last_event(orchestration_events, PROXY_OUTPUT_FINALIZED)
+    if finalized or proxy_output_info:
+        steps.append(
+            {
+                "kind": "ok" if status == "reused" else ("bad" if delivered_action == "REFUSE" else "neutral"),
+                "title": f"Delivered output: {delivered_action}",
+                "time": (finalized or {}).get("started_at"),
+                "detail": (
+                    f"authoritative final_text_source={delivered_source}; "
+                    f"reused_governed_content={str((proxy_output_info or {}).get('reused_governed_content')).lower()}"
+                ),
+                "source": "PROXY_OUTPUT_FINALIZED",
+            }
+        )
+
+    return {
+        "status": status,
+        "headline": headline,
+        "explanation": explanation,
+        "pre_delivery_action": pre_action,
+        "pre_delivery_path": pre_path,
+        "delivered_action": delivered_action,
+        "delivered_source": delivered_source,
+        "steps": steps,
+    }
 
 
 def _pick_final_trace_row(traces: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1282,6 +1574,369 @@ def _synthetic_speculative_draft_reuse_from_events(
     }
 
 
+def _synthetic_final_revalidation_call_from_events(
+    orchestration_events: list[dict[str, Any]],
+    final_revalidation_info: dict[str, Any] | None,
+    all_flow_calls: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Synthetic governance node for final output revalidation (not an LLM call)."""
+    if not final_revalidation_info:
+        return None
+
+    started_event: dict[str, Any] | None = None
+    terminal_event: dict[str, Any] | None = None
+    terminal_types = {
+        PROXY_FINAL_REVALIDATION_PASSED,
+        PROXY_FINAL_REVALIDATION_BLOCKED,
+        PROXY_FINAL_REVALIDATION_ERROR,
+        PROXY_FINAL_REVALIDATION_SKIPPED,
+    }
+    for event in orchestration_events:
+        event_type = event.get("event_type") or ""
+        if event_type == PROXY_FINAL_REVALIDATION_STARTED:
+            started_event = event
+        if event_type in terminal_types:
+            terminal_event = event
+
+    selected_event = terminal_event or started_event
+    if selected_event is None:
+        return None
+
+    started_payload = _parse_json_field(started_event.get("payload_json")) if started_event else {}
+    terminal_payload = _parse_json_field(terminal_event.get("payload_json")) if terminal_event else {}
+    if not isinstance(started_payload, dict):
+        started_payload = {}
+    if not isinstance(terminal_payload, dict):
+        terminal_payload = {}
+
+    last_end = 0
+    max_cycle = 0
+    for call in all_flow_calls:
+        started_at = call.get("started_at") or 0
+        duration_ms = call.get("duration_ms") or 0
+        last_end = max(last_end, int(started_at + duration_ms))
+        if call.get("cycle") is not None:
+            max_cycle = max(max_cycle, int(call.get("cycle") or 0))
+
+    started_at = started_event.get("started_at") if started_event else None
+    if started_at is None:
+        started_at = selected_event.get("started_at")
+    if started_at is None:
+        started_at = last_end + 1
+
+    terminal_started_at = terminal_event.get("started_at") if terminal_event else None
+    duration_ms = 0.0
+    if terminal_started_at is not None:
+        duration_ms = max(0.0, float(terminal_started_at) - float(started_at))
+
+    status = final_revalidation_info.get("status") or "unknown"
+    candidate_text, candidate_text_source = _best_effort_final_revalidation_candidate(
+        final_revalidation_info,
+        all_flow_calls,
+    )
+    diagnosis = _final_revalidation_diagnosis(final_revalidation_info, candidate_text_source)
+    outputs = [
+        {"label": "status", "value": status},
+        {"label": "target", "value": final_revalidation_info.get("final_text_source_original") or "unknown"},
+        {
+            "label": "after_check",
+            "value": final_revalidation_info.get("final_text_source_after_revalidation") or "unknown",
+        },
+        {
+            "label": "final_text_after_revalidation",
+            "value": final_revalidation_info.get("final_text_after_revalidation") or "",
+        },
+    ]
+    if final_revalidation_info.get("violated_hard") is not None:
+        outputs.append({"label": "hard_violation", "value": str(bool(final_revalidation_info.get("violated_hard"))).lower()})
+    if final_revalidation_info.get("violated_principles"):
+        outputs.append(
+            {
+                "label": "violated_principles",
+                "value": ", ".join(final_revalidation_info.get("violated_principles") or []),
+            }
+        )
+    if final_revalidation_info.get("block_reason"):
+        outputs.append({"label": "block_reason", "value": final_revalidation_info["block_reason"]})
+    if final_revalidation_info.get("match_kind"):
+        outputs.append({"label": "match_kind", "value": final_revalidation_info["match_kind"]})
+    if final_revalidation_info.get("skip_reason"):
+        outputs.append({"label": "skip_reason", "value": final_revalidation_info["skip_reason"]})
+    outputs.append({"label": "diagnosis", "value": diagnosis})
+
+    raw_response = {
+        "diagnosis": diagnosis,
+        "status": status,
+        "started_event": {
+            "event_type": started_event.get("event_type") if started_event else "",
+            "decision": started_event.get("decision") if started_event else "",
+            "status": started_event.get("status") if started_event else "",
+            "payload": started_payload,
+        },
+        "terminal_event": {
+            "event_type": terminal_event.get("event_type") if terminal_event else "",
+            "decision": terminal_event.get("decision") if terminal_event else "",
+            "status": terminal_event.get("status") if terminal_event else "",
+            "payload": terminal_payload,
+        },
+        "inputs": {
+            "candidate_final_text_source": final_revalidation_info.get("final_text_source_original") or "unknown",
+            "candidate_final_text": candidate_text,
+            "candidate_text_source": candidate_text_source,
+            "developer_contract_present": final_revalidation_info.get("developer_contract_present"),
+            "final_response_length_before": final_revalidation_info.get("final_response_length_before"),
+        },
+        "outputs": {
+            "final_text_source_after_revalidation": final_revalidation_info.get("final_text_source_after_revalidation"),
+            "final_text_after_revalidation": final_revalidation_info.get("final_text_after_revalidation") or "",
+            "violated_hard": final_revalidation_info.get("violated_hard"),
+            "violated_principles": final_revalidation_info.get("violated_principles") or [],
+            "fallback_source": final_revalidation_info.get("fallback_source") or "",
+            "block_reason": final_revalidation_info.get("block_reason") or "",
+            "match_kind": final_revalidation_info.get("match_kind") or "",
+            "skip_reason": final_revalidation_info.get("skip_reason") or "",
+            "final_response_length_after": final_revalidation_info.get("final_response_length_after"),
+        },
+    }
+
+    return {
+        "module": "final_revalidation",
+        "phase": "contract_check",
+        "action": status,
+        "cycle": max_cycle + 1,
+        "cycle_label": "Final response validation",
+        "sequence_in_cycle": 1,
+        "started_at": int(started_at),
+        "duration_ms": duration_ms,
+        "is_synthetic": True,
+        "is_final_revalidation": True,
+        "prompt": "Final response revalidation against the developer contract before delivery.",
+        "system_prompt": (
+            "[proxy] Final output revalidation " "(post-output governance step; may use deterministic guard and critic)"
+        ),
+        "raw_response": json.dumps(raw_response, indent=2, ensure_ascii=False),
+        "io_annotations": {
+            "inputs": [
+                {
+                    "label": "candidate_final_text",
+                    "source": candidate_text_source,
+                    "value": candidate_text,
+                },
+                {
+                    "label": "developer_contract",
+                    "source": "request_context",
+                    "value": str(bool(final_revalidation_info.get("developer_contract_present"))).lower(),
+                },
+                {
+                    "label": "length_before",
+                    "source": "event_payload",
+                    "value": str(final_revalidation_info.get("final_response_length_before") or 0),
+                },
+            ],
+            "outputs": outputs,
+        },
+    }
+
+
+def _hydrate_speculative_reuse_calls(llm_calls: list[dict[str, Any]]) -> None:
+    """Use the completed speculative call to make historical reuse nodes fully inspectable."""
+    speculative_used = next(
+        (
+            c
+            for c in llm_calls
+            if (c.get("phase") or "") == "speculative_generate"
+            and (c.get("call_outcome") or "").strip().lower() == "used"
+            and (c.get("raw_response") or "").strip()
+        ),
+        None,
+    )
+    if speculative_used is None:
+        return
+    full_response = speculative_used.get("raw_response") or ""
+    for call in llm_calls:
+        action = (call.get("action") or "").strip().lower()
+        if (call.get("phase") or "") != "policy_generate" or "speculative-reuse" not in action:
+            continue
+        if len(call.get("raw_response") or "") < len(full_response):
+            call["raw_response"] = full_response
+            call["prompt"] = speculative_used.get("prompt") or call.get("prompt") or ""
+            call["system_prompt"] = speculative_used.get("system_prompt") or call.get("system_prompt") or ""
+            call["parsed_summary_json"] = speculative_used.get("parsed_summary_json") or call.get("parsed_summary_json")
+            call["call_kind"] = call.get("call_kind") or "speculative_reuse"
+            call["_hydrated_from_speculative_generate"] = True
+
+
+def _synthetic_upstream_provider_call_from_events(
+    orchestration_events: list[dict[str, Any]],
+    final_revalidation_info: dict[str, Any] | None,
+    all_flow_calls: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Synthetic upstream-provider node for historical runs that did not persist provider calls."""
+    if any((c.get("module") or "").strip().lower() == "upstream_provider" for c in all_flow_calls):
+        return None
+
+    finalized_event: dict[str, Any] | None = None
+    for event in orchestration_events:
+        if (event.get("event_type") or "") == "PROXY_OUTPUT_FINALIZED":
+            finalized_event = event
+    payload = _parse_json_field(finalized_event.get("payload_json")) if finalized_event else {}
+    final_source = (payload.get("final_text_source") or "").strip()
+    original_source = (final_revalidation_info or {}).get("final_text_source_original") or final_source
+    if original_source not in {"upstream_regen", "safe_complete_upstream"}:
+        return None
+
+    max_cycle = max((c.get("cycle") or 0 for c in all_flow_calls), default=0)
+    started_at = (
+        (finalized_event or {}).get("started_at")
+        or max((c.get("started_at") or 0) + int(c.get("duration_ms") or 0) for c in all_flow_calls)
+        if all_flow_calls
+        else int(time.time() * 1000)
+    )
+    candidate_text, candidate_source = _best_effort_final_revalidation_candidate(
+        final_revalidation_info or {},
+        all_flow_calls,
+    )
+    reason = (
+        "Historical provider generation inferred from proxy finalization; " f"candidate text source: {candidate_source}."
+    )
+    raw_response = {
+        "source": original_source,
+        "historical_inferred": True,
+        "candidate_text_source": candidate_source,
+        "candidate_final_text": candidate_text,
+        "reason": reason,
+    }
+    return {
+        "module": "upstream_provider",
+        "phase": original_source,
+        "action": "generate final response (historical inferred)",
+        "cycle": max_cycle + 1,
+        "cycle_label": "Final provider generation",
+        "sequence_in_cycle": 7,
+        "started_at": int(started_at),
+        "duration_ms": 0.0,
+        "is_synthetic": True,
+        "prompt": "[historical run] upstream provider input was not persisted",
+        "system_prompt": "[historical run] upstream provider system prompt was not persisted",
+        "raw_response": json.dumps(raw_response, indent=2, ensure_ascii=False),
+        "parsed_summary_json": json.dumps(
+            {
+                "final_text_source": original_source,
+                "reason": reason,
+                "historical_inferred": True,
+            },
+            ensure_ascii=False,
+        ),
+        "io_annotations": {
+            "inputs": [
+                {"label": "messages", "value": "[not persisted in this historical run]"},
+                {"label": "governance_decision", "source": "moralstack"},
+            ],
+            "outputs": [
+                {"label": "candidate_final_text", "value": candidate_text},
+                {"label": "source", "value": original_source},
+                {"label": "reason", "value": reason},
+            ],
+        },
+    }
+
+
+def _normalize_post_output_cycles(calls: list[dict[str, Any]]) -> None:
+    """Place provider delivery and revalidation nodes after deliberation in UI graphs."""
+
+    def is_upstream_provider(call: dict[str, Any]) -> bool:
+        module = (call.get("module") or "").strip().lower()
+        phase = (call.get("phase") or "").strip()
+        return module == "upstream_provider" or phase in {"upstream_regen", "safe_complete_upstream"}
+
+    def is_final_revalidation(call: dict[str, Any]) -> bool:
+        module = (call.get("module") or "").strip().lower()
+        call_kind = (call.get("call_kind") or "").strip().lower()
+        action = (call.get("action") or "").strip().lower()
+        return (
+            module == "final_revalidation"
+            or bool(call.get("is_final_revalidation"))
+            or call_kind == "final_revalidation_refusal"
+            or "final_revalidation" in action
+        )
+
+    base_cycle = 0
+    for call in calls:
+        if is_upstream_provider(call) or is_final_revalidation(call):
+            continue
+        cycle = call.get("cycle")
+        if cycle is None:
+            continue
+        try:
+            base_cycle = max(base_cycle, int(cycle))
+        except (TypeError, ValueError):
+            continue
+
+    provider_cycle = base_cycle + 1
+    revalidation_cycle = base_cycle + 2
+    for call in calls:
+        if is_upstream_provider(call):
+            call["cycle"] = provider_cycle
+            call["cycle_label"] = call.get("cycle_label") or "Final provider generation"
+        elif is_final_revalidation(call):
+            call["cycle"] = revalidation_cycle
+            call["cycle_label"] = call.get("cycle_label") or "Final response validation"
+
+
+def _best_effort_final_revalidation_candidate(
+    final_revalidation_info: dict[str, Any],
+    all_flow_calls: list[dict[str, Any]],
+) -> tuple[str, str]:
+    source = final_revalidation_info.get("final_text_source_original") or "unknown"
+    persisted_candidate = final_revalidation_info.get("candidate_final_text_before") or ""
+    if persisted_candidate:
+        return str(persisted_candidate), "final_revalidation.payload"
+    policy_calls = [
+        call
+        for call in all_flow_calls
+        if (call.get("module") or "").strip().lower() == "policy" and (call.get("raw_response") or "").strip()
+    ]
+    if source in {"upstream_regen", "safe_complete_upstream", "governed_draft"} and policy_calls:
+        last_policy = sorted(policy_calls, key=lambda c: (c.get("started_at") or 0, c.get("id") or 0))[-1]
+        return str(last_policy.get("raw_response") or ""), "policy.raw_response"
+    length_before = final_revalidation_info.get("final_response_length_before")
+    if length_before:
+        return (
+            f"[candidate text not persisted in this historical event; recorded length={length_before}]",
+            "not_persisted",
+        )
+    return "[candidate text unavailable]", "not_persisted"
+
+
+def _final_revalidation_diagnosis(final_revalidation_info: dict[str, Any], candidate_text_source: str) -> str:
+    status = final_revalidation_info.get("status") or "unknown"
+    target = final_revalidation_info.get("final_text_source_original") or "unknown"
+    after = final_revalidation_info.get("final_text_source_after_revalidation") or "unknown"
+    if status == "blocked":
+        reason = final_revalidation_info.get("block_reason") or "contract violation"
+        match_kind = final_revalidation_info.get("match_kind") or "critic_or_policy_violation"
+        principles = ", ".join(final_revalidation_info.get("violated_principles") or []) or "unspecified"
+        persistence_note = ""
+        if candidate_text_source == "not_persisted":
+            persistence_note = " The blocked candidate text was not persisted by this historical run."
+        return (
+            f"Blocked candidate final text from {target} before delivery. "
+            f"Reason={reason}; match={match_kind}; principles={principles}; "
+            f"candidate_text_source={candidate_text_source}; delivered_source={after}.{persistence_note}"
+        )
+    if status == "passed":
+        return (
+            f"Candidate final text from {target} was revalidated against the developer contract and passed. "
+            f"candidate_text_source={candidate_text_source}; delivered_source={after}."
+        )
+    if status == "skipped":
+        reason = final_revalidation_info.get("skip_reason") or "unspecified"
+        return f"Final revalidation skipped for {target}. Reason={reason}."
+    if status == "error":
+        return f"Final revalidation failed closed for {target}; delivered_source={after}."
+    return f"Final revalidation status={status} for {target}; delivered_source={after}."
+
+
 def _synthetic_constitution_call_from_traces(traces: list[dict[str, Any]]) -> dict[str, Any] | None:
     """If RELEVANT_PRINCIPLES trace has started_at and duration_ms, return a
     synthetic 'call' for metro/journey."""
@@ -1398,6 +2053,8 @@ _TIMELINE_MODULE_ORDER = (
     "simulator",
     "perspectives",
     "hindsight",
+    "upstream_provider",
+    "final_revalidation",
 )
 
 
@@ -1970,9 +2627,11 @@ button:hover{opacity:0.9}
         # Include constitution relevant-principles phase in journey and timeline
         # (parallel domain agents)
         synthetic_constitution = _synthetic_constitution_call_from_traces(traces)
+        final_revalidation_info = _build_final_revalidation_info(orchestration_events)
 
         # Enrich calls with I/O annotations and semantic badges (call_kind / cache_status)
         _tag_constitution_phases(llm_calls)
+        _hydrate_speculative_reuse_calls(llm_calls)
         for call in llm_calls:
             call["io_annotations"] = _build_module_io_annotations(call)
             enriched = enrich_llm_call_for_ui(call)
@@ -1998,6 +2657,24 @@ button:hover{opacity:0.9}
             draft_reuse_node["io_annotations"] = _build_module_io_annotations(draft_reuse_node)
             all_flow_calls.append(draft_reuse_node)
 
+        upstream_provider_node = _synthetic_upstream_provider_call_from_events(
+            orchestration_events,
+            final_revalidation_info,
+            all_flow_calls,
+        )
+        if upstream_provider_node is not None:
+            all_flow_calls.append(upstream_provider_node)
+
+        final_revalidation_node = _synthetic_final_revalidation_call_from_events(
+            orchestration_events,
+            final_revalidation_info,
+            all_flow_calls,
+        )
+        if final_revalidation_node is not None:
+            all_flow_calls.append(final_revalidation_node)
+
+        _normalize_post_output_cycles(all_flow_calls)
+
         orchestrator_observability = build_orchestrator_observability(debug_events, traces)
 
         # Group by cycle for flow graph
@@ -2013,6 +2690,7 @@ button:hover{opacity:0.9}
             flow_data_cycles.append(
                 {
                     "cycle_num": cycle_num,
+                    "cycle_label": next((c.get("cycle_label") for c in cycle_calls if c.get("cycle_label")), ""),
                     "tiers": tiers,
                     "total_calls": len(cycle_calls),
                     "connector_labels": connector_labels,
@@ -2082,6 +2760,13 @@ button:hover{opacity:0.9}
 
         path_badge_info = _build_path_badge_info(orchestration_events)
         proxy_output_info = _build_proxy_output_info(orchestration_events)
+        delivery_path_summary = _build_delivery_path_summary(
+            orchestration_events=orchestration_events,
+            traces=traces,
+            llm_calls=llm_calls,
+            final_revalidation_info=final_revalidation_info,
+            proxy_output_info=proxy_output_info,
+        )
         compliance_fast_path_panel = None
         if (execution_summary.get("path") or "").strip().upper() == "COMPLIANCE_FAST_PATH":
             compliance_fast_path_panel = _build_compliance_fast_path_panel(traces, orchestration_events)
@@ -2113,6 +2798,8 @@ button:hover{opacity:0.9}
                     "compliance_fast_path_panel": compliance_fast_path_panel,
                     "path_badge_info": path_badge_info,
                     "proxy_output_info": proxy_output_info,
+                    "delivery_path_summary": delivery_path_summary,
+                    "final_revalidation_info": final_revalidation_info,
                     "conversation_context": conversation_context,
                 },
             )

@@ -8,7 +8,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-moralstack.db
+.investigations/moralstack.db
 moralstack.db-*
 benchmark_outputs/
 
@@ -27,7 +27,7 @@ htmlcov/
 .mypy_cache/
 
 # Logs & reports
-logs/
+.investigations/logs/
 # Only ignore a top-level `reports/` output dir. A bare `reports/` pattern matches
 # any directory named `reports` anywhere (including `moralstack/reports/`).
 /reports/

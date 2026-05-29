@@ -255,6 +255,25 @@ class GovernedResponse:
         )
 
     @classmethod
+    def from_governed_draft(cls, result: OrchestratorResult) -> GovernedResponse:
+        """
+        Build a NORMAL_COMPLETE response that delivers the governance-produced
+        draft directly, with no call to the OpenAI client.
+
+        Used on the compliance fast-path (``result.path ==
+        "COMPLIANCE_FAST_PATH"``) where the DCCL matched a deployer-authorized
+        rule and validated the speculative draft against it: the draft *is* the
+        authorized answer, so regenerating it upstream would only re-bill the
+        model and force a redundant final-output revalidation. Mirrors the
+        proxy's ``governed_draft`` delivery branch (``server/proxy.py``).
+        """
+        return cls(
+            openai_response=None,
+            governance_metadata=GovernanceMetadata.from_result(result),
+            governance_content=result.response.content,
+        )
+
+    @classmethod
     def from_safe(cls, openai_resp: Any, result: OrchestratorResult) -> GovernedResponse:
         """Build a SAFE_COMPLETE response (OpenAI call with injected guidance)."""
         return cls(

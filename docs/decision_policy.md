@@ -108,6 +108,13 @@ decision exposed to the user is always **FINAL**.
 The presence of multiple entries for the same `request_id` is intentional; any downgrade or override is always explicit
 in the fields.
 
+### Contract-hard supremacy
+
+`CORE.DEVCONTRACT.1` is a non-promotable hard violation. `decision_service._handle_hard_violations` refuses it even in
+the two low-risk branches that can otherwise downgrade hard violations to `SAFE_COMPLETE`: regulated informational
+requests and pre-policy `SAFE_COMPLETE` cases. This preserves the invariant that developer-contract content constraints
+cannot be bypassed by domain-sensitive caveat routing.
+
 ### Determinism and side effects
 
 The decision is deterministic given input and policy. The trace is a logging side effect: presence or absence of the

@@ -101,19 +101,19 @@ client = govern(
     OpenAI(),
     config=GovernanceConfig(
         # Pipeline credentials (default: from env)
-        api_key="sk-...",            # OPENAI_API_KEY
-        model="gpt-4o",             # OPENAI_MODEL
-        base_url=None,              # OPENAI_BASE_URL
+        api_key="sk-...",  # OPENAI_API_KEY
+        model="gpt-4o",  # OPENAI_MODEL
+        base_url=None,  # OPENAI_BASE_URL
 
         # Domain-specific governance
         domain_overlay="healthcare",  # enforce a named domain overlay
 
         # Failure handling
-        failure_policy="refuse",     # "refuse" (default) | "passthrough"
+        failure_policy="refuse",  # "refuse" (default) | "passthrough"
 
         # Observability
         observability_mode="file_only",  # "off" | "file_only" | "db_only" | "dual"
-        jsonl_dir="logs/audit",
+        jsonl_dir=".investigations/logs/audit",
 
         # Session tracking (multi-turn)
         enable_session_tracking=True,

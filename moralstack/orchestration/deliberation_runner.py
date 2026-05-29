@@ -2593,8 +2593,8 @@ class DeliberationRunner:
                 {
                     "module": "policy",
                     "action": "generate (speculative-reuse)",
-                    "prompt": request.prompt[:200],
-                    "response": state.draft_response[:200],
+                    "prompt": request.prompt,
+                    "response": state.draft_response,
                     "duration_ms": 0.0,
                     "model": reuse_model,
                 },
@@ -2605,9 +2605,11 @@ class DeliberationRunner:
                     "action": "generate (speculative-reuse)",
                     "model": reuse_model,
                     "duration_ms": 0.0,
-                    "prompt": request.prompt[:200],
-                    "raw_response": state.draft_response[:200],
+                    "prompt": request.prompt,
+                    "system_prompt": "[orchestration] Reused completed speculative draft; no second policy LLM call.",
+                    "raw_response": state.draft_response,
                     "sequence_in_cycle": SEQ_POLICY,
+                    "call_kind": "speculative_reuse",
                 },
             )
             return state

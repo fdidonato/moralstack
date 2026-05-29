@@ -56,6 +56,21 @@ upstream call with the original full messages. `PROXY_OUTPUT_FINALIZED` records
 `final_text_source`, `reused_governed_content`, context modes, `prior_turn_count`,
 and the guard decision.
 
+## Final Output Revalidation
+
+When a request carries a developer contract and the final text source is upstream
+generation (`safe_complete_upstream` or `upstream_regen`), the proxy calls the
+shared orchestration helper `revalidate_final_output(...)` before delivery. The
+helper reuses the orchestrator critic, constitution store, relevant principles,
+developer contract, and conversation history. A hard violation blocks delivery
+and replaces the body with a synthetic refusal (`final_text_source =
+refusal_post_revalidation`); technical errors fail closed the same way.
+
+Observability emits `PROXY_FINAL_REVALIDATION_STARTED` and then one of
+`_PASSED`, `_BLOCKED`, `_ERROR`, or `_SKIPPED`. Streaming requests with a
+developer contract are not chunk-validated in this implementation; they are
+conservatively refused and record `_SKIPPED` with `skip_reason="streaming"`.
+
 ## Upstream generation model
 
 The `model` field in the client JSON body is **not** forwarded to OpenAI for final

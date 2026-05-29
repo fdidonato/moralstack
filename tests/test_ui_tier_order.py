@@ -12,13 +12,18 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     COMPLIANCE_DRAFT_REGENERATED,
     COMPLIANCE_DRAFT_REUSED,
     COMPLIANCE_MATCH_DOWNGRADED,
+    PROXY_FINAL_REVALIDATION_BLOCKED,
+    PROXY_FINAL_REVALIDATION_PASSED,
+    PROXY_FINAL_REVALIDATION_STARTED,
     PROXY_OUTPUT_FINALIZED,
 )
 from moralstack.ui.app import (
+    _build_final_revalidation_info,
     _build_path_badge_info,
     _build_proxy_output_info,
     _group_calls_into_tiers_and_enrich,
     _journey_sort_key,
+    _synthetic_final_revalidation_call_from_events,
     _tag_constitution_phases,
 )
 
@@ -121,7 +126,7 @@ def test_journey_sort_key_uses_id_before_started_at():
 
 def test_path_badge_compliance_draft_reused():
     info = _build_path_badge_info([{"event_type": COMPLIANCE_DRAFT_REUSED}])
-    assert "draft riusato" in info["label"]
+    assert "draft reused" in info["label"]
     assert info["kind"] == "compliance_reused"
 
 
@@ -134,7 +139,7 @@ def test_path_badge_compliance_draft_reused_degraded_timeout():
             }
         ]
     )
-    assert "verdetto lento" in info["label"]
+    assert "slow verdict" in info["label"]
     assert info.get("degraded") is True
 
 
@@ -147,18 +152,18 @@ def test_path_badge_compliance_regenerated_degraded():
             }
         ]
     )
-    assert "rigenerato (degradato)" in info["label"]
+    assert "regenerated (degraded)" in info["label"]
     assert info.get("degraded") is True
 
 
 def test_path_badge_compliance_downgraded():
     info = _build_path_badge_info([{"event_type": COMPLIANCE_MATCH_DOWNGRADED}])
-    assert "declassato" in info["label"]
+    assert "downgraded" in info["label"]
 
 
 def test_path_badge_deliberative_default():
     info = _build_path_badge_info([])
-    assert info["label"] == "Pipeline deliberativa standard"
+    assert info["label"] == "Standard deliberative pipeline"
 
 
 def test_proxy_output_info_from_event():
@@ -172,3 +177,81 @@ def test_proxy_output_info_from_event():
     )
     assert info is not None
     assert info["final_text_source"] == "governed_draft"
+
+
+def test_final_revalidation_info_prefers_terminal_event():
+    info = _build_final_revalidation_info(
+        [
+            {
+                "event_type": PROXY_FINAL_REVALIDATION_PASSED,
+                "payload_json": (
+                    '{"final_text_source_original": "safe_complete_upstream", '
+                    '"final_text_source_after_revalidation": "safe_complete_upstream", '
+                    '"developer_contract_present": true, "violated_hard": false}'
+                ),
+            }
+        ]
+    )
+    assert info is not None
+    assert info["status"] == "passed"
+    assert info["final_text_source_original"] == "safe_complete_upstream"
+    assert info["developer_contract_present"] is True
+
+
+def test_final_revalidation_info_exposes_block_reason_without_sensitive_values():
+    info = _build_final_revalidation_info(
+        [
+            {
+                "event_type": PROXY_FINAL_REVALIDATION_BLOCKED,
+                "payload_json": (
+                    '{"final_text_source_original": "upstream_regen", '
+                    '"final_text_source_after_revalidation": "refusal_post_revalidation", '
+                    '"developer_contract_present": true, "violated_hard": true, '
+                    '"violated_principles": ["CORE.DEVCONTRACT.1"], '
+                    '"block_reason": "contract_literal_disclosure", '
+                    '"match_kind": "protected_literal_near_match"}'
+                ),
+            }
+        ]
+    )
+    assert info is not None
+    assert info["status"] == "blocked"
+    assert info["violated_principles"] == ["CORE.DEVCONTRACT.1"]
+    assert info["block_reason"] == "contract_literal_disclosure"
+    assert info["match_kind"] == "protected_literal_near_match"
+
+
+def test_synthetic_final_revalidation_node_is_added_after_flow_calls():
+    events = [
+        {
+            "event_type": PROXY_FINAL_REVALIDATION_STARTED,
+            "started_at": 2000,
+            "payload_json": '{"final_text_source_original": "upstream_regen"}',
+        },
+        {
+            "event_type": PROXY_FINAL_REVALIDATION_BLOCKED,
+            "started_at": 2500,
+            "payload_json": (
+                '{"final_text_source_original": "upstream_regen", '
+                '"final_text_source_after_revalidation": "refusal_post_revalidation", '
+                '"developer_contract_present": true, "violated_hard": true, '
+                '"violated_principles": ["CORE.DEVCONTRACT.1"], '
+                '"block_reason": "contract_literal_disclosure", '
+                '"match_kind": "protected_literal_near_match"}'
+            ),
+        },
+    ]
+    info = _build_final_revalidation_info(events)
+    node = _synthetic_final_revalidation_call_from_events(
+        events,
+        info,
+        [{"module": "policy", "cycle": 1, "started_at": 1000, "duration_ms": 400}],
+    )
+
+    assert node is not None
+    assert node["module"] == "final_revalidation"
+    assert node["phase"] == "contract_check"
+    assert node["cycle_label"] == "Final response validation"
+    assert node["cycle"] == 2
+    assert node["duration_ms"] == 500
+    assert node["io_annotations"]["outputs"][0] == {"label": "status", "value": "blocked"}

@@ -55,6 +55,32 @@ directly only when `path == COMPLIANCE_FAST_PATH`, the content is non-empty, and
 proxy falls back to an upstream call with the original full messages, which is a
 safe superset of the governance context.
 
+The **SDK** (`sdk/wrapper.py`, `GovernedCompletions`) mirrors this delivery rule:
+on `NORMAL_COMPLETE` it returns the governed draft directly
+(`GovernedResponse.from_governed_draft`, no upstream call) under the same three
+conditions (`path == COMPLIANCE_FAST_PATH`, non-empty content, guard false), and
+otherwise regenerates upstream (`upstream_regen`) followed by
+`revalidate_final_output`. Outside the compliance fast-path (benign / fast /
+deliberative `NORMAL_COMPLETE`), both the proxy and the SDK regenerate upstream —
+this is intentional (the delivered text must come from the deployer's own client
+with their original messages and sampling params), not an asymmetry.
+
+**Streaming (`stream=True`) in the SDK.** Streaming is a transport contract over
+the *final* answer, not over intermediate generations, so it must not force
+unvalidated upstream tokens onto the caller. The SDK splits on whether a
+developer contract is present (`wrapper.py`, `live_stream` vs `synthetic_stream`):
+
+- **No contract** → `live_stream`: raw upstream tokens are forwarded directly
+  (`GovernedStreamResponse`); nothing to revalidate.
+- **Contract present** → `synthetic_stream`: the full text is produced and
+  revalidated **non-streamed** (governed-draft reuse on the compliance fast-path,
+  otherwise a forced `stream=False` upstream call + `revalidate_final_output`),
+  then replayed token by token as a `GovernedSyntheticStream`
+  (`_iter_word_chunks`; only the final chunk carries `finish_reason="stop"`). If
+  revalidation blocks, the refusal text is replayed instead. This replaces the
+  earlier fail-closed behavior that refused all contract-bearing streaming
+  requests.
+
 ### conversation_id generation / propagation (`proxy.py:218-219`, `121-136`)
 Resolution precedence:
 1. HTTP header `X-Moralstack-Conversation-Id` (highest).

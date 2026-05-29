@@ -12,15 +12,120 @@
 
 {% if path_badge_info %}
 <div class="card" style="margin-bottom:1rem; border-left:4px solid #2dd4bf;">
-    <span class="meta-label">Percorso esecuzione</span>
+    <span class="meta-label">Execution path</span>
     <span class="meta-value" style="margin-left:0.5rem;">
         <span class="badge badge-parallel">{{ path_badge_info.label }}</span>
     </span>
     {% if proxy_output_info and proxy_output_info.final_text_source %}
     <span class="muted" style="margin-left:0.75rem;">
-        Fonte output finale: <span class="mono">{{ proxy_output_info.final_text_source }}</span>
+        Final output source: <span class="mono">{{ proxy_output_info.final_text_source }}</span>
     </span>
     {% endif %}
+</div>
+{% endif %}
+
+{% if delivery_path_summary %}
+<div class="card delivery-path-card delivery-path-{{ delivery_path_summary.status }}">
+    <div class="delivery-path-header">
+        <div>
+            <span class="meta-label">Authoritative delivery path</span>
+            <h2>{{ delivery_path_summary.headline }}</h2>
+            <p class="muted">{{ delivery_path_summary.explanation }}</p>
+        </div>
+        <div class="delivery-path-result">
+            <span class="meta-label">Delivered</span>
+            <span class="badge {% if delivery_path_summary.status == 'reused' %}badge-ok{% elif delivery_path_summary.status == 'blocked' %}badge-fail{% else %}badge-parallel{% endif %}">
+                {{ delivery_path_summary.delivered_action }}
+            </span>
+            <span class="mono">{{ delivery_path_summary.delivered_source }}</span>
+        </div>
+    </div>
+    <div class="meta-grid compact delivery-path-facts">
+        <div class="meta-item">
+            <span class="meta-label">Pre-delivery governance</span>
+            <span class="meta-value mono">{{ delivery_path_summary.pre_delivery_path or 'unknown' }} / {{ delivery_path_summary.pre_delivery_action or 'unknown' }}</span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Authoritative final source</span>
+            <span class="meta-value mono">{{ delivery_path_summary.delivered_source }}</span>
+        </div>
+    </div>
+    {% if delivery_path_summary.steps %}
+    <ol class="delivery-path-steps">
+        {% for step in delivery_path_summary.steps %}
+        <li class="delivery-path-step delivery-path-step-{{ step.kind }}">
+            <span class="delivery-path-dot"></span>
+            <div class="delivery-path-step-body">
+                <div class="delivery-path-step-title">
+                    {{ step.title }}
+                    {% if step.time %}<span class="muted ts">{{ step.time | fmtdate }}</span>{% endif %}
+                </div>
+                <div class="muted">{{ step.detail }}</div>
+                {% if step.source %}<div class="mono muted">{{ step.source }}</div>{% endif %}
+            </div>
+        </li>
+        {% endfor %}
+    </ol>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if final_revalidation_info %}
+<div class="card" style="margin-bottom:1rem; border-left:4px solid {% if final_revalidation_info.status == 'passed' %}#22c55e{% elif final_revalidation_info.status in ['blocked', 'error'] %}#dc2626{% elif final_revalidation_info.status == 'skipped' %}#64748b{% else %}#f59e0b{% endif %};">
+    <div class="meta-grid">
+        <div class="meta-item">
+            <span class="meta-label">Final output revalidation</span>
+            <span class="meta-value">
+                {% if final_revalidation_info.status == 'passed' %}
+                <span class="badge badge-ok">passed</span>
+                {% elif final_revalidation_info.status == 'blocked' %}
+                <span class="badge" style="background:#dc2626;color:#fff;">blocked</span>
+                {% elif final_revalidation_info.status == 'error' %}
+                <span class="badge" style="background:#b91c1c;color:#fff;">error fail-closed</span>
+                {% elif final_revalidation_info.status == 'skipped' %}
+                <span class="badge" style="background:#64748b;color:#fff;">skipped</span>
+                {% else %}
+                <span class="badge badge-running">{{ final_revalidation_info.status }}</span>
+                {% endif %}
+            </span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Revalidated target</span>
+            <span class="meta-value mono">{% if final_revalidation_info.final_text_source_original %}{{ final_revalidation_info.final_text_source_original }}{% else %}&mdash;{% endif %}</span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Final source after check</span>
+            <span class="meta-value mono">{% if final_revalidation_info.final_text_source_after_revalidation %}{{ final_revalidation_info.final_text_source_after_revalidation }}{% else %}&mdash;{% endif %}</span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Developer contract</span>
+            <span class="meta-value">{{ 'present' if final_revalidation_info.developer_contract_present else 'absent' }}</span>
+        </div>
+        {% if final_revalidation_info.violated_hard is not none %}
+        <div class="meta-item">
+            <span class="meta-label">Hard violation</span>
+            <span class="meta-value">{{ 'yes' if final_revalidation_info.violated_hard else 'no' }}</span>
+        </div>
+        {% endif %}
+        {% if final_revalidation_info.violated_principles %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Violated principles</span>
+            <span class="meta-value mono">{{ final_revalidation_info.violated_principles | join(', ') }}</span>
+        </div>
+        {% endif %}
+        {% if final_revalidation_info.block_reason or final_revalidation_info.match_kind %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Block reason</span>
+            <span class="meta-value mono">{{ final_revalidation_info.block_reason }}{% if final_revalidation_info.match_kind %} / {{ final_revalidation_info.match_kind }}{% endif %}</span>
+        </div>
+        {% endif %}
+        {% if final_revalidation_info.skip_reason %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Skip reason</span>
+            <span class="meta-value mono">{{ final_revalidation_info.skip_reason }}</span>
+        </div>
+        {% endif %}
+    </div>
 </div>
 {% endif %}
 
@@ -218,7 +323,7 @@
                 {% if compliance_fast_path_panel and compliance_fast_path_panel.risk_estimation_used_for_decision is sameas false %}
                 <span class="badge" style="background:#64748b;color:#fff;"
                     title="Risk was computed on the compliance fast-path but did not influence the DCCL routing decision">
-                    calcolato ma non usato per la decisione
+                    computed but not used for the decision
                 </span>
                 {% endif %}
             </span>
@@ -475,7 +580,7 @@
 
         {% if compliance_card.degraded %}
         <div class="meta-item span-2">
-            <span class="meta-label">Verdetto degradato</span>
+            <span class="meta-label">Degraded verdict</span>
             <span class="meta-value">
                 <span class="badge badge-running">{{ compliance_card.degraded_reason or '—' }}</span>
             </span>
@@ -485,7 +590,7 @@
 
     {% if compliance_card.action_payload_summary %}
     <p class="muted" style="margin-top:0.5rem;">
-        <strong>Output autorizzato:</strong>
+        <strong>Authorized output:</strong>
         <span class="mono">{{ compliance_card.action_payload_summary }}</span>
     </p>
     {% endif %}
@@ -495,12 +600,12 @@
     {% endif %}
 
     {% if compliance_card.modules_deferred_detail %}
-    <h4 style="margin-top:1rem;">Moduli bypassati (DCCL MATCH)</h4>
+    <h4 style="margin-top:1rem;">Bypassed modules (DCCL MATCH)</h4>
     <ul class="principles-list">
         {% for m in compliance_card.modules_deferred_detail %}
         <li class="principle-item">
             <span class="mono">{{ m.module }}</span>
-            <span class="muted"> — saltato: esecuzione regola autorizzata dal contratto</span>
+            <span class="muted"> - skipped: contract-authorized rule execution</span>
         </li>
         {% endfor %}
     </ul>
@@ -860,8 +965,10 @@
             endif %}
             <span class="journey-cycle">{% if call.cycle is none or call.cycle == 0 %}cycle 0{% else %}cycle {{ call.cycle }}{% endif %}</span>
             <span class="journey-module">{{ call.module }} / {{ call.phase }}{% if call.get('is_draft_reuse') %}
-                <span class="badge badge-parallel" title="Speculative draft reused without a policy LLM call">Draft riusato (no LLM call)</span>{% elif call.get('parallel_retrieval') or call.get('is_synthetic') %} <span
-                    class="muted">(parallel domain agents)</span>{% endif %}</span>
+                <span class="badge badge-parallel" title="Speculative draft reused without a policy LLM call">Draft reused (no policy call)</span>{% elif call.get('is_final_revalidation') %} <span
+                    class="badge badge-running" title="Post-output governance check before delivery">Final revalidation</span>{% elif call.get('parallel_retrieval') %} <span
+                    class="muted">(parallel domain agents)</span>{% elif call.get('is_synthetic') %} <span
+                    class="muted">(synthetic governance step)</span>{% endif %}</span>
             {% if call.get('is_draft_reuse') %}
             <span class="muted">0ms (reuse)</span>
             {% elif call.duration_ms %}<span class="muted">{{ call.duration_ms | round(0) | int }}ms</span>{% endif %}
@@ -918,7 +1025,7 @@
 {% endif %}
 
 {% if flow_data_cycles %}
-<h2>LLM Calls <span class="muted">({{ llm_calls | length }})</span></h2>
+<h2>Execution graph <span class="muted">({{ llm_calls | length }} LLM calls plus governance steps)</span></h2>
 <div class="view-toggle">
     <button type="button" class="btn btn-sm toggle-btn active" data-view="by-cycle" aria-pressed="true">By cycle
     </button>
@@ -951,12 +1058,20 @@
         <span class="flow-legend-item">
             <span class="flow-legend-dot" style="background:#94a3b8"></span>orchestrator
         </span>
+        <span class="flow-legend-item">
+            <span class="flow-legend-dot" style="background:#38bdf8"></span>upstream_provider
+        </span>
+        <span class="flow-legend-item">
+            <span class="flow-legend-dot" style="background:#0f766e"></span>final_revalidation
+        </span>
     </div>
     <div class="flow-graph">
         {% for cycle_data in flow_data_cycles %}
         <div class="flow-cycle" data-cycle="{{ cycle_data.cycle_num if cycle_data.cycle_num is not none else 0 }}">
             <div class="flow-cycle-label">
-                {% if cycle_data.cycle_num is none or cycle_data.cycle_num == 0 %}
+                {% if cycle_data.cycle_label %}
+                {{ cycle_data.cycle_label }} <span class="flow-cycle-badge">post-output</span>
+                {% elif cycle_data.cycle_num is none or cycle_data.cycle_num == 0 %}
                 Initial assessment <span class="flow-cycle-badge">cycle 0</span>
                 {% else %}
                 Deliberation <span class="flow-cycle-badge">cycle {{ cycle_data.cycle_num }}</span>
@@ -1021,7 +1136,7 @@
                         <div class="flow-node-io" style="padding: 0 0.7rem 0.5rem 0.7rem; border-top:none; margin-top:0;">
                              {% for inp in call.io_annotations.inputs %}
                              <div class="io-row">
-                                 <span class="io-arrow">&larr;</span> {{ inp.label }} <span class="muted">({{ inp.source }})</span>
+                                 <span class="io-arrow">&larr;</span> {{ inp.label }} <span class="muted">({{ inp.source }})</span>{% if inp.value is defined and inp.value %}: <span class="io-val">{{ inp.value }}</span>{% endif %}
                              </div>
                              {% endfor %}
                              {% for out in call.io_annotations.outputs %}
@@ -1144,14 +1259,14 @@
                     <span class="meta-label">DCCL decision (fast-path)</span>
                 </div>
                 <div class="meta-item">
-                    <span class="meta-label">Verdetto</span>
+                    <span class="meta-label">Verdict</span>
                     <span class="meta-value">
                         <span class="badge badge-ok">{{ compliance_fast_path_panel.compliance_decision or '—' }}</span>
                     </span>
                 </div>
                 {% if compliance_fast_path_panel.matched_rule_summary or compliance_fast_path_panel.matched_rule_id %}
                 <div class="meta-item">
-                    <span class="meta-label">Regola</span>
+                    <span class="meta-label">Rule</span>
                     <span class="meta-value mono">
                         {{ compliance_fast_path_panel.matched_rule_summary or compliance_fast_path_panel.matched_rule_id }}
                     </span>
@@ -1159,13 +1274,13 @@
                 {% endif %}
                 {% if compliance_fast_path_panel.action_payload_summary %}
                 <div class="meta-item span-2">
-                    <span class="meta-label">Output autorizzato</span>
+                    <span class="meta-label">Authorized output</span>
                     <span class="meta-value mono">{{ compliance_fast_path_panel.action_payload_summary }}</span>
                 </div>
                 {% endif %}
                 {% if compliance_fast_path_panel.draft_match_method %}
                 <div class="meta-item">
-                    <span class="meta-label">Validazione draft</span>
+                    <span class="meta-label">Draft validation</span>
                     <span class="meta-value mono">
                         {{ compliance_fast_path_panel.draft_match_method }}
                         {% if compliance_fast_path_panel.draft_match_confidence is not none %}
@@ -1182,11 +1297,11 @@
                 {% endif %}
                 {% if compliance_fast_path_panel.degraded %}
                 <div class="meta-item span-2">
-                    <span class="meta-label">Verdetto degradato</span>
+                    <span class="meta-label">Degraded verdict</span>
                     <span class="meta-value">
                         <span class="badge badge-running">{{ compliance_fast_path_panel.degraded_reason or '—' }}</span>
                         {% if compliance_fast_path_panel.degraded_reason == 'llm_timeout' %}
-                        <span class="muted">(verdetto lento; draft riusato se validato)</span>
+                        <span class="muted">(slow verdict; draft reused if validated)</span>
                         {% endif %}
                     </span>
                 </div>
@@ -1197,7 +1312,7 @@
                     <span class="meta-value">
                         <span class="badge" style="background:#64748b;color:#fff;"
                             title="{{ compliance_fast_path_panel.risk_score_source or '' }}">
-                            calcolato ma non usato per la decisione
+                            computed but not used for the decision
                         </span>
                     </span>
                 </div>
@@ -1286,6 +1401,20 @@
         <div class="call-result-preview">
             <span class="meta-label">Result / Summary</span>
             <p class="call-result-text">{{ preview }}</p>
+        </div>
+        {% endif %}
+        {% if call.io_annotations and (call.io_annotations.inputs or call.io_annotations.outputs) %}
+        <div class="flow-node-io" style="margin:0 0 0.75rem 0;">
+            {% for inp in call.io_annotations.inputs %}
+            <div class="io-row">
+                <span class="io-arrow">&larr;</span> {{ inp.label }} <span class="muted">({{ inp.source }})</span>{% if inp.value is defined and inp.value %}: <span class="io-val">{{ inp.value }}</span>{% endif %}
+            </div>
+            {% endfor %}
+            {% for out in call.io_annotations.outputs %}
+            <div class="io-row">
+                <span class="io-arrow">&rarr;</span> {{ out.label }}: <span class="io-val">{{ out.value }}</span>
+            </div>
+            {% endfor %}
         </div>
         {% endif %}
         <details>

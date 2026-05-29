@@ -335,10 +335,10 @@ from openai import OpenAI
 client = govern(
     OpenAI(),
     config=GovernanceConfig(
-        domain_overlay="healthcare",     # enforce a specific domain overlay
-        failure_policy="passthrough",    # on pipeline error: call OpenAI directly (unsafe)
+        domain_overlay="healthcare",  # enforce a specific domain overlay
+        failure_policy="passthrough",  # on pipeline error: call OpenAI directly (unsafe)
         observability_mode="file_only",  # write JSONL audit trail
-        jsonl_dir="logs/audit",
+        jsonl_dir=".investigations/logs/audit",
     ),
 )
 ```

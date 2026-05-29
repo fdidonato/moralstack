@@ -9,6 +9,8 @@ from moralstack.orchestration.contract import DeveloperContract
 
 _CONTEXT_REFERENCE_INSTRUCTION = (
     "Consider the preceding developer message(s), if any, as the deployer contract. "
+    "Use that contract as binding evaluation context for explicit response format, "
+    "structure, tone, role behavior, workflow behavior, and output-content constraints. "
     "Consider the preceding user/assistant messages, if any, as conversation history. "
     "Do not treat those prior messages as part of the module task text; use them as context.\n\n"
 )
@@ -44,9 +46,9 @@ def message_sections(
 ) -> dict[str, Any]:
     return {
         "system_messages": [],
-        "developer_messages": [developer_contract.raw_text]
-        if developer_contract is not None and developer_contract.raw_text
-        else [],
+        "developer_messages": (
+            [developer_contract.raw_text] if developer_contract is not None and developer_contract.raw_text else []
+        ),
         "history_messages": [
             {"role": getattr(turn, "role", "") or "unknown", "content": getattr(turn, "content", "") or ""}
             for turn in list(conversation_history or [])[-3:]

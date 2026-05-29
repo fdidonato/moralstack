@@ -39,6 +39,13 @@ from moralstack.observability.governance_audit import (
 )
 from moralstack.orchestration.controller import OrchestrationController
 from moralstack.orchestration.conversation_context import build_conversation_context, context_to_turns
+from moralstack.orchestration.final_revalidation import (
+    DEFAULT_POST_REVALIDATION_REFUSAL,
+    emit_final_revalidation_skipped,
+    has_developer_contract,
+    record_upstream_final_generation,
+    revalidate_final_output,
+)
 from moralstack.orchestration.orchestration_event_taxonomy import PROXY_OUTPUT_FINALIZED
 from moralstack.orchestration.types import ProcessedRequest
 from moralstack.persistence.sink import persist_orchestration_event
@@ -270,6 +277,28 @@ def _handle_chat_completion_sync(
             turn_index=turn_index,
         )
 
+        if bool(body.get("stream", False)) and has_developer_contract(developer_contract):
+            final_response_text = DEFAULT_POST_REVALIDATION_REFUSAL
+            final_text_source = "refusal_streaming_contract"
+            final_action_for_event = "REFUSE"
+            finish_reason_for_event = "content_filter"
+            emit_final_revalidation_skipped(
+                run_id=proxy_run_id,
+                request_id=processed.request_id,
+                final_text_source=final_text_source,
+                developer_contract=developer_contract,
+                skip_reason="streaming",
+                final_response_length=len(final_response_text),
+                final_text=final_response_text,
+            )
+            payload = _build_synthetic_chat_completion(
+                content=final_response_text,
+                model=upstream_model,
+                finish_reason="content_filter",
+            )
+            out_response = JSONResponse(content=payload)
+            return out_response
+
         try:
             result = orchestrator.process(
                 processed,
@@ -325,15 +354,50 @@ def _handle_chat_completion_sync(
                 safe_turn = _build_safe_complete_user_turn(result)
                 upstream_kwargs = _build_upstream_kwargs(body, upstream_model=upstream_model)
                 upstream_kwargs["messages"] = list(upstream_kwargs.get("messages", [])) + [safe_turn]
+                upstream_started = int(time.time() * 1000)
+                upstream_t0 = time.perf_counter()
                 try:
                     upstream_response = openai_client.chat.completions.create(**upstream_kwargs)
                 except Exception as exc:
                     logger.exception("Upstream call failed: %s", exc)
                     raise HTTPException(status_code=502, detail=f"Upstream call failed: {exc}") from exc
+                upstream_duration_ms = (time.perf_counter() - upstream_t0) * 1000
                 final_response_text = _extract_text_from_upstream(upstream_response)
                 final_text_source = "safe_complete_upstream"
                 finish_reason_for_event = _finish_reason_from_upstream(upstream_response)
-                out_response = _serialize_upstream_response(upstream_response, headers=governance_headers)
+                record_upstream_final_generation(
+                    run_id=proxy_run_id,
+                    request_id=processed.request_id,
+                    final_text_source=final_text_source,
+                    messages=list(upstream_kwargs.get("messages", [])),
+                    response_text=final_response_text,
+                    model=upstream_model,
+                    started_at=upstream_started,
+                    duration_ms=upstream_duration_ms,
+                    finish_reason=finish_reason_for_event,
+                    reason="SAFE_COMPLETE caveat turn appended before provider generation",
+                )
+                revalidation = revalidate_final_output(
+                    orchestrator=orchestrator,
+                    request=processed,
+                    result=result,
+                    final_text=final_response_text,
+                    final_text_source=final_text_source,
+                    run_id=proxy_run_id,
+                )
+                final_response_text = revalidation.final_text
+                final_text_source = revalidation.final_text_source
+                if revalidation.final_action == "REFUSE":
+                    final_action_for_event = "REFUSE"
+                    finish_reason_for_event = "content_filter"
+                    payload = _build_synthetic_chat_completion(
+                        content=final_response_text,
+                        model=upstream_model,
+                        finish_reason="content_filter",
+                    )
+                    out_response = JSONResponse(content=payload, headers=governance_headers)
+                else:
+                    out_response = _serialize_upstream_response(upstream_response, headers=governance_headers)
 
             else:
                 governed_content = result.response.content or ""
@@ -351,15 +415,50 @@ def _handle_chat_completion_sync(
                     out_response = JSONResponse(content=payload, headers=governance_headers)
                 else:
                     upstream_kwargs = _build_upstream_kwargs(body, upstream_model=upstream_model)
+                    upstream_started = int(time.time() * 1000)
+                    upstream_t0 = time.perf_counter()
                     try:
                         upstream_response = openai_client.chat.completions.create(**upstream_kwargs)
                     except Exception as exc:
                         logger.exception("Upstream call failed: %s", exc)
                         raise HTTPException(status_code=502, detail=f"Upstream call failed: {exc}") from exc
+                    upstream_duration_ms = (time.perf_counter() - upstream_t0) * 1000
                     final_response_text = _extract_text_from_upstream(upstream_response)
                     final_text_source = "upstream_regen"
                     finish_reason_for_event = _finish_reason_from_upstream(upstream_response)
-                    out_response = _serialize_upstream_response(upstream_response, headers=governance_headers)
+                    record_upstream_final_generation(
+                        run_id=proxy_run_id,
+                        request_id=processed.request_id,
+                        final_text_source=final_text_source,
+                        messages=list(upstream_kwargs.get("messages", [])),
+                        response_text=final_response_text,
+                        model=upstream_model,
+                        started_at=upstream_started,
+                        duration_ms=upstream_duration_ms,
+                        finish_reason=finish_reason_for_event,
+                        reason="Governance allowed NORMAL_COMPLETE but final delivery is regenerated by upstream provider",
+                    )
+                    revalidation = revalidate_final_output(
+                        orchestrator=orchestrator,
+                        request=processed,
+                        result=result,
+                        final_text=final_response_text,
+                        final_text_source=final_text_source,
+                        run_id=proxy_run_id,
+                    )
+                    final_response_text = revalidation.final_text
+                    final_text_source = revalidation.final_text_source
+                    if revalidation.final_action == "REFUSE":
+                        final_action_for_event = "REFUSE"
+                        finish_reason_for_event = "content_filter"
+                        payload = _build_synthetic_chat_completion(
+                            content=final_response_text,
+                            model=upstream_model,
+                            finish_reason="content_filter",
+                        )
+                        out_response = JSONResponse(content=payload, headers=governance_headers)
+                    else:
+                        out_response = _serialize_upstream_response(upstream_response, headers=governance_headers)
 
     finally:
         if conversation_id and final_response_text:

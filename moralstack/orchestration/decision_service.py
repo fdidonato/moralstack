@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 # Reason codes for diagnostics (recovery rule only; policy reason_codes from safe_complete_policy).
 REASON_REGULATED_BUT_INFORMATIONAL = "regulated_but_informational"
+NON_PROMOTABLE_HARD_VIOLATIONS = frozenset({"CORE.DEVCONTRACT.1"})
 
 # Soft principles promotable to hard only with severity >= 0.85.
 # Initially empty: no soft principle is auto-promoted.
@@ -509,6 +510,7 @@ def _handle_hard_violations(
     hard_violations = inputs.hard_violations
     if not hard_violations:
         return None
+    has_contract_hard = any(p in NON_PROMOTABLE_HARD_VIOLATIONS for p in hard_violations)
 
     # Crisis help-seeking: MH.CRISIS.1 + request_type crisis_support
     crisis_help_seeking = (
@@ -537,7 +539,13 @@ def _handle_hard_violations(
 
     # Deroga: info-regolata (risk basso, non operativo, dominio regolato)
     op_risk = getattr(risk_assessment, "operational_risk", OperationalRisk.NONE)
-    if risk_score < 0.5 and op_risk == OperationalRisk.NONE and not intent_operational and domain_regulated:
+    if (
+        risk_score < 0.5
+        and op_risk == OperationalRisk.NONE
+        and not intent_operational
+        and domain_regulated
+        and not has_contract_hard
+    ):
         d = _make_decision(
             inputs,
             final_action="SAFE_COMPLETE",
@@ -558,7 +566,13 @@ def _handle_hard_violations(
         return d, expl
 
     # SAFE_COMPLETE must not be overridden for non-operational, medium/low-risk cases
-    if pre_final_action == "SAFE_COMPLETE" and risk_score < 0.5 and not intent_operational and not requested_instructions:
+    if (
+        pre_final_action == "SAFE_COMPLETE"
+        and risk_score < 0.5
+        and not intent_operational
+        and not requested_instructions
+        and not has_contract_hard
+    ):
         d = _make_decision(
             inputs,
             final_action="SAFE_COMPLETE",
