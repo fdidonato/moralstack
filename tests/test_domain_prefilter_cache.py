@@ -8,11 +8,15 @@ from unittest.mock import patch
 
 import pytest
 
+from moralstack.constitution.openai_config import OpenAIClientConfig
 from moralstack.constitution.retriever import (
+    DomainAgent,
     DomainPrefilter,
+    EnhancedDomainAgent,
     _fingerprint_domain_keywords,
     _normalize_domain_keywords,
 )
+from moralstack.constitution.schema import Principle
 from moralstack.orchestration.orchestration_event_taxonomy import (
     DOMAIN_PREFILTER_CACHE_HIT,
     DOMAIN_PREFILTER_CACHE_INVALIDATED,
@@ -26,6 +30,16 @@ from moralstack.reports.runtime_decisions import (
 )
 
 _CONFIG_CORE = Path(__file__).resolve().parent.parent / "moralstack" / "constitution" / "data" / "core.yaml"
+
+
+def _principle(*, title: str = "Title", rule: str = "Rendered rule") -> Principle:
+    return Principle(
+        id="TEST.P1",
+        level="hard",
+        priority=90,
+        title=title,
+        rule=rule,
+    )
 
 
 def test_normalize_keywords_order_invariant():
@@ -250,3 +264,92 @@ def test_clear_cache_noop_when_empty(tmp_path, monkeypatch):
     p.clear_cache(reason="forced_refresh")
     rows = get_orchestration_events_for_request("r4", "q4")
     assert not rows
+
+
+def test_enhanced_agent_cache_miss_on_rendered_rule_change():
+    agent = EnhancedDomainAgent(
+        "medical",
+        [_principle(rule="Initial rendered rule")],
+        openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-test"),
+        domain_description="medical description",
+    )
+
+    with patch.object(
+        EnhancedDomainAgent,
+        "_call_openai",
+        side_effect=[
+            {"domain_match": True, "confidence": 0.9, "principle_ids": ["TEST.P1"], "reasoning": "first"},
+            {"domain_match": True, "confidence": 0.8, "principle_ids": [], "reasoning": "second"},
+        ],
+    ) as call:
+        first = agent.evaluate("same query")
+        agent.principles = [_principle(rule="Changed rendered rule")]
+        second = agent.evaluate("same query")
+
+    assert call.call_count == 2
+    assert first.reasoning == "first"
+    assert second.reasoning == "second"
+
+
+def test_enhanced_agent_cache_miss_on_domain_description_change():
+    agent = EnhancedDomainAgent(
+        "medical",
+        [_principle()],
+        openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-test"),
+        domain_description="initial description",
+    )
+
+    with patch.object(
+        EnhancedDomainAgent,
+        "_call_openai",
+        side_effect=[
+            {"domain_match": True, "confidence": 0.9, "principle_ids": ["TEST.P1"], "reasoning": "first"},
+            {"domain_match": True, "confidence": 0.8, "principle_ids": [], "reasoning": "second"},
+        ],
+    ) as call:
+        first = agent.evaluate("same query")
+        agent._domain_description = "changed description"
+        second = agent.evaluate("same query")
+
+    assert call.call_count == 2
+    assert first.reasoning == "first"
+    assert second.reasoning == "second"
+
+
+def test_enhanced_agent_cache_hit_on_unrendered_title_change():
+    agent = EnhancedDomainAgent(
+        "medical",
+        [_principle(title="Initial title", rule="Same rendered rule")],
+        openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-test"),
+        domain_description="medical description",
+    )
+
+    with patch.object(
+        EnhancedDomainAgent,
+        "_call_openai",
+        return_value={"domain_match": True, "confidence": 0.9, "principle_ids": ["TEST.P1"], "reasoning": "cached"},
+    ) as call:
+        first = agent.evaluate("same query")
+        agent.principles = [_principle(title="Changed title", rule="Same rendered rule")]
+        second = agent.evaluate("same query")
+
+    assert call.call_count == 1
+    assert first is second
+    assert second.reasoning == "cached"
+
+
+def test_legacy_domain_agent_cache_miss_on_rendered_rule_change():
+    agent = DomainAgent(
+        "core",
+        [_principle(rule="Initial rendered rule")],
+        openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-test"),
+    )
+
+    with patch.object(DomainAgent, "_call_openai", side_effect=[["TEST.P1"], []]) as call:
+        first = agent.evaluate("same query")
+        agent.principles = [_principle(rule="Changed rendered rule")]
+        second = agent.evaluate("same query")
+
+    assert call.call_count == 2
+    assert first == ["TEST.P1"]
+    assert second == []

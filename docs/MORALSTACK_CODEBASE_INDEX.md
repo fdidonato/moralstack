@@ -125,6 +125,9 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   conversation_history=…)` runs **three parallel mini-estimators** via a
   `ThreadPoolExecutor`: `estimate_intent`, `estimate_signals` (q1–q17),
   `estimate_operational`; merged by `calibration.merge_mini_estimator_results`.
+  The three real mini-estimator `llm_call` envelopes are built with the local
+  15-key risk payload and dispatched synchronously as one `router.route_batch`;
+  a synthetic `calibration_guard` row remains a separate single write.
 - `calibration.py` — `merge_mini_estimator_results`, `parse_risk_dict`, score
   calibration rules (defensive override, harm escalation, non-operational clamp,
   calibration guard).
@@ -136,6 +139,8 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 ### Constitution — `moralstack/constitution/`
 - `store.py` — `ConstitutionStore` (optional LLM-based principle matching).
 - `loader.py`, `schema.py`, `retriever.py`, `prompt_formatter.py`, `helpers.py`.
+  `retriever.py` domain-agent caches hash rendered OpenAI messages plus
+  generation params, not only principle ids/counts.
 - `data/core.yaml` — baseline constitution.
 - `data/overlays/*.yaml` — 21 domain overlays: children, coding, creative,
   customer_service, cybersecurity, education, emergency, enterprise, environment,
@@ -154,8 +159,8 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 ### Observability — `moralstack/observability/`
 - `service.py` — `ObservabilityService`, singleton via `get_obs()` / `obs`.
   `emit`/`emit_batch` are async fire-and-forget; `flush()` at request boundary.
-- `router.py` — dispatch by mode (`db_only` → SQLite, `file_only` → JSONL,
-  `dual` → both).
+- `router.py` — synchronous dispatch by mode (`db_only` → SQLite,
+  `file_only` → JSONL, `dual` → both), including `route_batch`.
 - `sinks/sqlite_sink.py` — schema + writers (`init_db`, `create_run`,
   `upsert_request`, `update_request_*`, `delete_*`). Tables in §8.
 - `sinks/jsonl_sink.py` — JSONL envelope writer.
@@ -426,7 +431,9 @@ See `docs/traces/openai_compatible_multiturn.md`.
 - Modes (`MORALSTACK_OBSERVABILITY_MODE`): `file_only` (default), `db_only`,
   `dual`. DB path via `MORALSTACK_OBSERVABILITY_DB_PATH` (legacy
   `MORALSTACK_DB_PATH`).
-- Async write queue + background worker; `flush()` at request/SDK boundary.
+- Async write queue + background worker for `ObservabilityService.emit*`;
+  direct `router.route*` dispatch is synchronous. `flush()` drains queued writes
+  at request/SDK boundary.
 - **SQLite tables** (`sinks/sqlite_sink.py:48-489`): `runs`, `requests`,
   `llm_calls`, `orchestration_events`, `decision_traces`, `debug_events`,
   `exports_cache`, `conversation_states`, `ledger_events`,

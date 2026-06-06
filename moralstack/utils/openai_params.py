@@ -24,13 +24,13 @@ MODELS_SUPPORTING_PREDICTED_OUTPUT = (
 )
 
 
-def uses_max_completion_tokens(model: str) -> bool:
+def uses_max_completion_tokens(model: str | None) -> bool:
     """True if model requires max_completion_tokens instead of max_tokens."""
     m = (model or "").lower()
     return any(m.startswith(p) for p in MODELS_REQUIRING_MAX_COMPLETION_TOKENS)
 
 
-def supports_predicted_output(model: str) -> bool:
+def supports_predicted_output(model: str | None) -> bool:
     """True if model supports the ``prediction`` parameter (speculative decoding).
 
     Predicted outputs speed up generation when the expected output is largely
@@ -41,7 +41,7 @@ def supports_predicted_output(model: str) -> bool:
     return any(m.startswith(p) for p in MODELS_SUPPORTING_PREDICTED_OUTPUT)
 
 
-def completion_tokens_param(model: str, max_tokens: int) -> dict[str, Any]:
+def completion_tokens_param(model: str | None, max_tokens: int) -> dict[str, Any]:
     """Returns the correct param dict for chat.completions.create."""
     if uses_max_completion_tokens(model):
         return {"max_completion_tokens": max_tokens}

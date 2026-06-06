@@ -17,6 +17,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, Iterator
 
 from moralstack.core.types import Turn, UserContext
+from moralstack.observability.phase0_timing import emit_phase0_timing, phase0_timing_enabled
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.conversation_context import build_conversation_context, context_to_turns
 from moralstack.orchestration.final_revalidation import (
@@ -319,15 +320,26 @@ class GovernedCompletions:
         scripts (the write queue uses a daemon thread that would otherwise be lost on
         process exit).
         """
+        phase0_started = time.perf_counter() if phase0_timing_enabled() else None
         try:
             return self._create_inner(**kwargs)
         finally:
+            flush_error: str | None = None
             try:
                 from moralstack.observability.service import get_obs
 
                 get_obs().flush()
-            except Exception:
+            except Exception as exc:
+                flush_error = type(exc).__name__
                 pass
+            if phase0_started is not None:
+                emit_phase0_timing(
+                    "sdk.governed_completions.create",
+                    (time.perf_counter() - phase0_started) * 1000,
+                    model=str(kwargs.get("model") or ""),
+                    stream=bool(kwargs.get("stream", False)),
+                    flush_error=flush_error,
+                )
 
     def _create_inner(
         self, **kwargs: Any

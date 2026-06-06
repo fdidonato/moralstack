@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from moralstack.models.policy import GenerationConfig, GenerationResult
 from moralstack.models.risk.estimator import LLMBasedRiskEstimator
+from moralstack.observability.context import set_current_cycle, set_current_request_id, set_current_run_id
 from moralstack.reports.runtime_decisions import enrich_llm_call_for_ui
 from moralstack.utils.json_utils import JSONParseError
 from moralstack.utils.llm_parse_contract import (
@@ -128,19 +129,25 @@ def test_parallel_mini_persist_parse_contract(monkeypatch):
 
     policy.generate = fake_gen
 
-    captured: list[dict] = []
+    captured_batches: list[list] = []
 
-    def capture_persist(**kwargs):
-        captured.append(dict(kwargs))
-        return True
+    def capture_batch(envelopes):
+        captured_batches.append(list(envelopes))
 
     est = LLMBasedRiskEstimator(policy=policy)
-    with patch("moralstack.models.risk.estimator.persist_llm_call", side_effect=capture_persist):
-        _estimation = est._parallel_mini_analysis("prompt")
+    set_current_run_id("run-parse-contract")
+    set_current_request_id("req-parse-contract")
+    set_current_cycle(0)
+    monkeypatch.setattr("moralstack.models.risk.estimator._obs_route_batch", capture_batch)
 
-    assert captured
+    _estimation = est._parallel_mini_analysis("prompt")
+
+    assert captured_batches
     mini_entries = [
-        c for c in captured if c.get("action") in {"estimate_intent", "estimate_signals", "estimate_operational"}
+        env.payload
+        for batch in captured_batches
+        for env in batch
+        if env.payload.get("action") in {"estimate_intent", "estimate_signals", "estimate_operational"}
     ]
     assert len(mini_entries) == 3
     summary = json.loads(mini_entries[0].get("parsed_summary_json") or "{}")

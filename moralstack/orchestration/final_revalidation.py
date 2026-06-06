@@ -114,9 +114,7 @@ def record_upstream_final_generation(
     prompt = sections.get("final_user_message") or ""
     system_prompt = "\n\n---\n\n".join(sections.get("system_messages") or [])
     if not prompt:
-        prompt = "\n\n".join(
-            f"{str(m.get('role') or 'unknown').upper()}:\n{str(m.get('content') or '')}" for m in messages
-        )
+        prompt = "\n\n".join(f"{str(m.get('role') or 'unknown').upper()}:\n{str(m.get('content') or '')}" for m in messages)
     parsed_summary = {
         "message_sections": sections,
         "final_text_source": final_text_source,
@@ -393,7 +391,7 @@ def revalidate_final_output(
             final_action="REFUSE",
             fallback_source=fallback_source,
             error=str(exc),
-    )
+        )
 
 
 def _message_sections_from_messages(messages: list[dict[str, Any]]) -> dict[str, Any]:

@@ -158,14 +158,16 @@ Shared steps:
    instances keyed by model id (`get_pooling_diagnostics()`).
 2. **LLM call(s) with retry** — each mini-call retries up to `max_retries`
    independently; observable persistence actions include `estimate_intent`, `estimate_signals`, `estimate_operational`.
-   Responses carry **`parse_contract`** metadata where persisted.
+   The three mini-estimator `llm_call` envelopes are persisted synchronously as one `router.route_batch(...)`
+   group, using the risk estimator's local 15-key payload shape. Responses carry **`parse_contract`**
+   metadata where persisted.
 3. **Parsing / calibration** — Merged JSON flows through `parse_risk_dict` /
    calibration helpers; output remains a `RiskParseResult`-compatible structure before crisis mapping.
 4. **Crisis post-processing** — `_post_process_crisis(parsed)` (help-seeking / crisis clamp).
 5. **Mapping** — `_to_risk_estimation(...)` fills `RiskEstimation`, including `stated_personal_bias`,
    `seeks_norm_circumvention`, `q13_protected_class_targeting`, and `estimation_mode`.
 
-Persistence of LLM calls is best-effort: if `moralstack.persistence.sink.persist_llm_call` is unavailable (e.g. import error), a debug log is emitted and execution continues.
+Persistence of LLM calls is best-effort and must not affect risk decisions. The three real mini-estimator rows are written as one synchronous batch; SQLite write failures roll back the whole mini-estimator group. The optional synthetic `calibration_guard` row remains a single synchronous write with `sequence_in_cycle=-8`.
 
 ### Prompt templates (`prompts.py`)
 

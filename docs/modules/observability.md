@@ -32,7 +32,7 @@ The `obs` export resolves each attribute access on the current `get_obs()` insta
 |---|---|
 | `events.py` | `EventEnvelope` (frozen dataclass), 10 `EVENT_*` constants, `make_envelope()` factory |
 | `service.py` | `get_obs()` thread-safe singleton `ObservabilityService`; `emit()` (async via queue), `emit_batch()`, `flush()`, `shutdown()`, `read_store` property |
-| `router.py` | Reads mode from config, dispatches envelope to sqlite_sink and/or jsonl_sink |
+| `router.py` | Reads mode from config, synchronously dispatches envelopes and batches to sqlite_sink and/or jsonl_sink |
 | `sqlite_sink.py` | SQLite schema, `SqliteUnitOfWork`, all lifecycle writes (`create_run`, `end_run`, `upsert_request`, …) + batch insert helpers |
 | `jsonl_sink.py` | Per-event-type JSONL under `logs/observability/`; thread-safe per-file locks |
 | `read_store.py` | `ReadStore` Protocol + `SqliteReadStore`; unique read contract for UI and reports |
@@ -64,6 +64,10 @@ obs.flush(timeout=30.0)
 run = obs.read_store.get_run("my-run")
 calls = obs.read_store.get_llm_calls_for_request("my-run", "req-1")
 ```
+
+Use `obs.emit(...)` / `obs.emit_batch(...)` for queued best-effort writes.
+Call `observability.router.route(...)` / `route_batch(...)` only when the
+producer deliberately needs synchronous sink dispatch.
 
 ---
 

@@ -27,6 +27,13 @@ Primary code: `moralstack/observability/*`, `moralstack/persistence/*`,
   `obs.flush(...)` explicitly before reading.
 - Context is carried via contextvars: `run_id`, `request_id`, `session_id`,
   `turn_number` (`observability/context.py`).
+- Producers that need synchronous success-path visibility call
+  `observability.router.route(...)` or `route_batch(...)` directly. The risk
+  estimator uses this route for its three real mini-estimator `llm_call` rows:
+  they are built with the local 15-key payload shape and dispatched as one
+  synchronous batch. The synthetic `calibration_guard` row remains a separate
+  synchronous single-envelope write. In SQLite, a failed mini-estimator batch
+  rolls back the whole three-row group.
 
 ## 2. Routing by mode (`observability/router.py:37-54`)
 
