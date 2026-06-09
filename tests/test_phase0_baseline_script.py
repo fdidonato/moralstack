@@ -21,8 +21,7 @@ def test_build_report_reads_sqlite_tokens_and_dccl(tmp_path):
     mod = _load_script_module()
     db_path = tmp_path / "obs.db"
     with sqlite3.connect(db_path) as conn:
-        conn.executescript(
-            """
+        conn.executescript("""
             CREATE TABLE requests (run_id TEXT, request_id TEXT);
             CREATE TABLE llm_calls (
                 run_id TEXT,
@@ -35,8 +34,7 @@ def test_build_report_reads_sqlite_tokens_and_dccl(tmp_path):
                 token_usage_json TEXT,
                 call_kind TEXT
             );
-            """
-        )
+            """)
         conn.execute("INSERT INTO requests VALUES ('r1', 'q1')")
         conn.execute(
             "INSERT INTO llm_calls VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

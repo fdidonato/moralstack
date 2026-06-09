@@ -152,8 +152,8 @@ See [docs/modules/openai_params.md](docs/modules/openai_params.md) for details a
 | Variable                       | Default                   | Description                                                    |
 |--------------------------------|---------------------------|----------------------------------------------------------------|
 | OPENAI_API_KEY                 | -                         | OpenAI API key (required)                                      |
-| OPENAI_MODEL                   | gpt-4o                    | Primary internal governance model. In SDK mode, this does **not** override the `model=` passed to `chat.completions.create(...)` for final response generation (see README SDK model resolution section). |
-| MORALSTACK_POLICY_REWRITE_MODEL | - (same as OPENAI_MODEL) | Internal policy `rewrite()` model at cycle 2+; SDK final response model is still controlled by `chat.completions.create(model=...)`. `.env.template` uses `gpt-4.1-nano`; set any lighter model to reduce latency (see [policy.md](docs/modules/policy.md)) |
+| OPENAI_MODEL                   | gpt-4o                    | Governed answer model: first-pass / speculative / compliance generation. Plan 1 (governed delivery): this **is** the model that produces the delivered answer; the `model=` passed to `chat.completions.create(...)` is only a requested alias and does not select the answer model (see README SDK model resolution section). |
+| MORALSTACK_POLICY_REWRITE_MODEL | - (same as OPENAI_MODEL) | Model for governed revisions (`policy.rewrite()`, cycle 2+). Fallback: the resolved policy model. `.env.template` uses `gpt-4.1-nano`; set any lighter model to reduce latency (see [policy.md](docs/modules/policy.md)) |
 | OPENAI_BASE_URL                | -                         | Base URL (proxy/enterprise)                                    |
 | OPENAI_TIMEOUT_MS              | 60000                     | Timeout in milliseconds                                        |
 | OPENAI_MAX_RETRIES             | 3                         | Retries on 429/503                                             |

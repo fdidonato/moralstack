@@ -46,11 +46,18 @@ non-deliberative). Response text is never read from the ledger (DAF-4); only gov
 
 `moralstack/orchestration/system_prompt_resolver.py` exposes `effective_system_for_request(...)`, composing the policy system prompt per request from the protected base, optional non-empty `DeveloperContract.raw_text`, and an optional mode suffix (`normal`, `safe_complete`, `constrained`). When no contract text is present, output matches the legacy single-turn byte strings. The suffix modes remain available for other call sites; **`DeliberationRunner` does not use `safe_complete` or `constrained` resolver modes for policy generation** (see below).
 
-`moralstack/orchestration/final_revalidation.py` is the shared final-output
-gate for proxy and SDK delivery. It validates upstream-generated text against
-the developer contract using the same critic and constitution store owned by
-orchestration, then returns PASS or a refusal-first fail-closed outcome. Delivery
-layers must call this helper rather than duplicating critic-call construction.
+**Governed delivery (Plan 1)**: `moralstack/orchestration/delivery.py`
+(`finalize_delivery` → `GovernedDelivery`) is the pure finalizer that turns an
+already-governed `OrchestratorResult` into the exact text to deliver. SDK and
+proxy serialize that text directly; the wrapped/upstream client is never called
+to generate a delivered answer. Blank/invalid governed content fails closed to a
+deterministic governed refusal (`governed_pipeline_refusal`). The finalizer makes
+no model call and performs no I/O.
+
+`moralstack/orchestration/final_revalidation.py` was the pre-Plan-1 shared
+final-output gate that validated **upstream-generated** text against the
+developer contract. It is **no longer invoked on the active delivery paths**
+(delivery is governed-only) and is retained for historical UI/report readers.
 
 **Compliance delivery guard**: On DCCL `MATCH`, a validated speculative draft can
 be reused only if its candidate context is aligned with the governance context.
@@ -63,7 +70,7 @@ routing or override Safety Override / hard-signal refusal.
 **Governance prompt placement (v0.4 Step 10)**:
 
 - **Internal policy (`DeliberationRunner`)**: `SAFE_COMPLETE_GENERATION_INSTRUCTION` and `CONSTRAINED_GENERATION_INSTRUCTION` from `moralstack/orchestration/_policy_helpers.py` are **prefixed onto the user-facing prompt** passed to `policy.generate` / `policy.rewrite`. The system string passed to the policy LLM is still composed with `effective_system_for_request(..., mode="normal")` (contract overlay only, no governance suffix from those constants).
-- **Python SDK (`moralstack/sdk/wrapper.py`)**: when `final_action == "SAFE_COMPLETE"`, governance guidance is sent as an **extra trailing message with `role="user"`** appended to `messages`. Existing system message content is not modified.
+- **Python SDK (`moralstack/sdk/wrapper.py`)**: Plan 1 governed delivery — the SDK delivers the governed pipeline text for every `final_action` and never calls the wrapped client to generate the answer. The SAFE_COMPLETE governance guidance is composed inside the governed pipeline (via the policy prompt above), not appended to a wrapped-client call. (`_build_safe_complete_user_turn` is retained as a pure helper but is no longer applied to delivery.)
 
 **Refusal context** (`moralstack/orchestration/refusal_context.py`):
 

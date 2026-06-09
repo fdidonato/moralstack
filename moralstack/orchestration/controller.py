@@ -1233,7 +1233,13 @@ class OrchestrationController:
         except Exception:
             _LOG.debug("record compliance_regenerate llm call failed", exc_info=True)
 
-        return text
+        # Output-protect the compliance-regenerated draft before it can be
+        # revalidated or delivered. Compliance regeneration goes through
+        # self.policy.generate but was previously returned without the
+        # canary/delimiter leakage scrub that every other governed generation
+        # path applies. _revalidate_draft therefore evaluates the cleaned text.
+        cleaned = self._output_protector.validate(text).cleaned
+        return cleaned
 
     def _revalidate_draft(
         self,

@@ -6,6 +6,10 @@ The MoralStack benchmark suite (`scripts/benchmark_moralstack.py`) compares Base
 curated dataset of ethical dilemmas. It evaluates **decision correctness** (policy-driven, language-agnostic) and *
 *response quality** via an LLM judge.
 
+The MoralStack answer under evaluation is always `Orchestrator.process(request).response.content` — the governed
+pipeline text (Plan 1 governed delivery). The benchmark does **not** add a second final-generation step against a
+wrapped/upstream client. The Baseline and judge OpenAI calls are independent and are not MoralStack-delivered answers.
+
 The judge evaluates both Baseline and MoralStack responses with two distinct signals: (1) `decision_correctness` (
 CORRECT/DEBATABLE/WRONG), (2) `response_quality_score` (0–10 conditioned on decision). The judge does **not** decide
 REFUSE/SAFE_COMPLETE/NORMAL_COMPLETE; that is determined by the policy layer.

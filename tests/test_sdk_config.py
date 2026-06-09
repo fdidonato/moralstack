@@ -1,5 +1,7 @@
 """Tests for moralstack.sdk.config — GovernanceConfig."""
 
+import pytest
+
 from moralstack.sdk.config import GovernanceConfig
 
 
@@ -23,20 +25,25 @@ class TestGovernanceConfigDefaults:
             api_key="sk-test",
             model="gpt-4o-mini",
             domain_overlay="healthcare",
-            failure_policy="passthrough",
+            failure_policy="refuse",
             enable_session_tracking=False,
         )
         assert cfg.api_key == "sk-test"
         assert cfg.model == "gpt-4o-mini"
         assert cfg.domain_overlay == "healthcare"
-        assert cfg.failure_policy == "passthrough"
+        assert cfg.failure_policy == "refuse"
         assert cfg.enable_session_tracking is False
 
     def test_failure_policy_values(self):
         cfg_refuse = GovernanceConfig(failure_policy="refuse")
-        cfg_pass = GovernanceConfig(failure_policy="passthrough")
         assert cfg_refuse.failure_policy == "refuse"
-        assert cfg_pass.failure_policy == "passthrough"
+
+    def test_passthrough_failure_policy_is_deprecated_and_mapped_to_refuse(self):
+        # Plan 1: passthrough delivery was removed; the deprecated value maps to
+        # a fail-closed refusal and emits a DeprecationWarning.
+        with pytest.warns(DeprecationWarning):
+            cfg = GovernanceConfig(failure_policy="passthrough")
+        assert cfg.failure_policy == "refuse"
 
     def test_observability_mode_values(self):
         for mode in ("off", "file_only", "db_only", "dual"):

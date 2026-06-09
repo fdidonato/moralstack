@@ -632,7 +632,11 @@ class DeliberationRunner:
         if self.policy is not None:
             try:
                 if speculative_draft:
-                    content = speculative_draft
+                    # Defensive output protection for any supplied draft. Normal
+                    # speculative drafts are already protected at generation, so
+                    # this is a no-op for them; it closes the gap for
+                    # compliance-regenerated drafts delivered through this path.
+                    content = self._output_protector.validate(speculative_draft).cleaned
                 else:
                     prompt_text = resolve_prompt_with_language(
                         request.prompt,

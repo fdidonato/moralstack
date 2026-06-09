@@ -54,8 +54,7 @@ def _json_safe_fields(fields: Mapping[str, Any]) -> dict[str, Any]:
             safe[key] = [item if isinstance(item, (str, int, float, bool)) or item is None else str(item) for item in value]
         elif isinstance(value, dict):
             safe[key] = {
-                str(k): v if isinstance(v, (str, int, float, bool)) or v is None else str(v)
-                for k, v in value.items()
+                str(k): v if isinstance(v, (str, int, float, bool)) or v is None else str(v) for k, v in value.items()
             }
         else:
             safe[key] = str(value)

@@ -168,12 +168,16 @@ class TestStreamingViaCreate:
         client = GovernedClient(mock_openai, orch, GovernanceConfig())
         return mock_openai, client
 
-    def test_stream_normal_complete_returns_stream_response(self):
+    def test_stream_normal_complete_replays_governed_text_without_upstream(self):
+        # Plan 1: streaming NORMAL_COMPLETE replays the governed pipeline text as a
+        # synthetic stream; the wrapped client is never called.
         mock_openai, client = self._make_governed_client("NORMAL_COMPLETE")
+        client._orchestrator.process.return_value.response.content = "governed answer"
         msgs = [{"role": "user", "content": "Hello"}]
         resp = client.chat.completions.create(model="gpt-4o", messages=msgs, stream=True)
-        mock_openai.chat.completions.create.assert_called_once()
-        assert isinstance(resp, GovernedStreamResponse)
+        mock_openai.chat.completions.create.assert_not_called()
+        assert isinstance(resp, GovernedSyntheticStream)
+        assert _join_stream_text(resp) == "governed answer"
 
     def test_stream_refuse_returns_refusal_stream(self):
         mock_openai, client = self._make_governed_client("REFUSE")
@@ -182,14 +186,16 @@ class TestStreamingViaCreate:
         mock_openai.chat.completions.create.assert_not_called()
         assert isinstance(resp, GovernedRefusalStream)
 
-    def test_stream_safe_complete_calls_openai_with_modified_kwargs(self):
+    def test_stream_safe_complete_replays_governed_text_without_upstream(self):
+        # Plan 1: streaming SAFE_COMPLETE replays the governed pipeline text as a
+        # synthetic stream; the wrapped client is never called.
         mock_openai, client = self._make_governed_client("SAFE_COMPLETE")
+        client._orchestrator.process.return_value.response.content = "Use caution."
         msgs = [{"role": "user", "content": "Tell me about medications"}]
-        client.chat.completions.create(model="gpt-4o", messages=msgs, stream=True)
-        mock_openai.chat.completions.create.assert_called_once()
-        # Ensure stream=True is preserved in modified kwargs
-        call_kwargs = mock_openai.chat.completions.create.call_args[1]
-        assert call_kwargs.get("stream") is True
+        resp = client.chat.completions.create(model="gpt-4o", messages=msgs, stream=True)
+        mock_openai.chat.completions.create.assert_not_called()
+        assert isinstance(resp, GovernedSyntheticStream)
+        assert _join_stream_text(resp) == "Use caution."
 
 
 class TestGovernedSyntheticStream:
@@ -260,49 +266,30 @@ class TestStreamingWithContract:
         assert _join_stream_text(resp) == "PONG"
         assert resp.governance_metadata.final_action == "NORMAL_COMPLETE"
 
-    def test_normal_regen_forces_non_stream_then_replays_validated_text(self, monkeypatch: pytest.MonkeyPatch):
-        from moralstack.orchestration.final_revalidation import FinalRevalidationOutcome
-
-        mock_openai, client, result = self._make_governed_client("NORMAL_COMPLETE")
-        result.path = "FAST_PATH"  # not the compliance fast-path -> upstream regen
-        result.delivery_context_broader_than_governance = False
-
-        monkeypatch.setattr(
-            "moralstack.sdk.wrapper.revalidate_final_output",
-            lambda **kwargs: FinalRevalidationOutcome(
-                status="pass",
-                final_text="VALIDATED ANSWER",
-                final_text_source="upstream_regen",
-                final_action="NORMAL_COMPLETE",
-            ),
-        )
-
-        resp = client.chat.completions.create(model="gpt-4o", messages=self.CONTRACT_MSGS, stream=True)
-
-        # Internal upstream call is forced non-streaming so the full text can be revalidated.
-        mock_openai.chat.completions.create.assert_called_once()
-        assert mock_openai.chat.completions.create.call_args[1].get("stream") is False
-        assert isinstance(resp, GovernedSyntheticStream)
-        assert _join_stream_text(resp) == "VALIDATED ANSWER"
-
-    def test_blocked_revalidation_replays_refusal_as_stream(self, monkeypatch: pytest.MonkeyPatch):
-        from moralstack.orchestration.final_revalidation import FinalRevalidationOutcome
-
+    def test_normal_with_contract_replays_governed_text_no_upstream(self):
+        # Plan 1: with a developer contract present, streaming NORMAL_COMPLETE
+        # replays the governed pipeline text and never calls the wrapped client.
         mock_openai, client, result = self._make_governed_client("NORMAL_COMPLETE")
         result.path = "FAST_PATH"
         result.delivery_context_broader_than_governance = False
-
-        monkeypatch.setattr(
-            "moralstack.sdk.wrapper.revalidate_final_output",
-            lambda **kwargs: FinalRevalidationOutcome(
-                status="block",
-                final_text="I cannot provide that content.",
-                final_text_source="refusal_post_revalidation",
-                final_action="REFUSE",
-            ),
-        )
+        result.response.content = "GOVERNED ANSWER"
 
         resp = client.chat.completions.create(model="gpt-4o", messages=self.CONTRACT_MSGS, stream=True)
 
+        mock_openai.chat.completions.create.assert_not_called()
         assert isinstance(resp, GovernedSyntheticStream)
+        assert _join_stream_text(resp) == "GOVERNED ANSWER"
+
+    def test_refuse_with_contract_replays_refusal_as_stream(self):
+        # Plan 1: a governed REFUSE on a streaming request with a contract yields
+        # the governed refusal text; the wrapped client is never called.
+        mock_openai, client, result = self._make_governed_client("REFUSE")
+        result.path = "FAST_PATH"
+        result.delivery_context_broader_than_governance = False
+        result.response.content = "I cannot provide that content."
+
+        resp = client.chat.completions.create(model="gpt-4o", messages=self.CONTRACT_MSGS, stream=True)
+
+        mock_openai.chat.completions.create.assert_not_called()
+        assert isinstance(resp, GovernedRefusalStream)
         assert _join_stream_text(resp) == "I cannot provide that content."

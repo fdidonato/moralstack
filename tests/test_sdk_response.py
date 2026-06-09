@@ -169,15 +169,17 @@ class TestGovernedResponse:
         assert isinstance(choices[0], _SyntheticChoice)
         assert choices[0].message.content == "No."
 
-    def test_from_passthrough_is_passthrough(self):
+    def test_from_passthrough_is_deprecated_fail_closed_refusal(self):
+        # Plan 1: from_passthrough is a deprecated fail-closed alias. It must never
+        # deliver passthrough; it returns a governed refusal with is_passthrough=False.
         openai_resp = MagicMock()
         err = RuntimeError("pipeline down")
-        resp = GovernedResponse.from_passthrough(openai_resp, err)
+        with pytest.warns(DeprecationWarning):
+            resp = GovernedResponse.from_passthrough(openai_resp, err)
 
-        assert resp.is_passthrough is True
-        assert resp.openai_response is openai_resp
-        assert resp.governance_metadata.final_action == "PASSTHROUGH"
-        assert "PIPELINE_ERROR" in resp.governance_metadata.reason_codes
+        assert resp.is_passthrough is False
+        assert resp.openai_response is None
+        assert resp.governance_metadata.final_action == "REFUSE"
 
     def test_from_pipeline_error_is_refusal(self):
         err = RuntimeError("critical failure")

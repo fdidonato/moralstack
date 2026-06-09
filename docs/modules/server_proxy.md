@@ -2,7 +2,7 @@
 
 ## Purpose
 
-FastAPI application that exposes `POST /v1/chat/completions` in an OpenAI-compatible shape, runs the same governance path as the SDK (`OrchestrationController.process` on a `ProcessedRequest` built from request messages), then either returns a synthetic `chat.completion` (REFUSE), forwards the original body (NORMAL_COMPLETE), or forwards with an appended synthetic user turn (SAFE_COMPLETE). Adds `X-Moralstack-*` response headers for audit.
+FastAPI application that exposes `POST /v1/chat/completions` in an OpenAI-compatible shape, runs the same governance path as the SDK (`OrchestrationController.process` on a `ProcessedRequest` built from request messages), then delivers the **governed pipeline text** as a synthetic `chat.completion` for every `final_action` (NORMAL_COMPLETE, SAFE_COMPLETE, REFUSE). **Governed delivery only (Plan 1): the upstream OpenAI client is never called to generate the delivered answer.** Non-stream responses are built from `finalize_delivery(...)` (`orchestration/delivery.py`); `stream=True` replays the governed text as OpenAI-compatible synthetic SSE chunks (never live upstream tokens). Adds `X-Moralstack-*` response headers for audit.
 
 Normative reference: multiturn design v1.3 section 4.
 
@@ -36,52 +36,44 @@ Normative reference: multiturn design v1.3 section 4.
 - Blocking orchestrator and upstream OpenAI SDK calls run in a Starlette threadpool so the ASGI loop can accept concurrent requests; per-`conversation_id` locks still serialize same-conversation turns.
 - **Per-request controller state:** `OrchestrationController` is typically a process-wide singleton (for example one instance per `create_app`). Multi-turn linkage and ledger intent fields for a single `process()` call are held in a stack-local `ProcessCallContext` (`moralstack/orchestration/process_context.py`) passed through internal helpers — not on the controller instance — so concurrent proxy requests on different `conversation_id` values cannot cross-contaminate observability metadata.
 
-## Compliance fast-path delivery
+## Governed delivery (Plan 1)
 
-On `COMPLIANCE_FAST_PATH`, the proxy can return the governed draft directly
-instead of making a second upstream call. This is intentionally different from
-the SDK, which calls the wrapped client with the original full `messages` after
-governance. The divergence is post-governance text delivery only: `final_action`,
-`path`, compliance verdict, risk category, and reason codes are computed in the
-shared `process()` call before either entry layer delivers content.
+All delivered text is the governed pipeline result, finalized by the pure
+`finalize_delivery(result, config=...)` (`orchestration/delivery.py`). The proxy
+serializes `GovernedDelivery.text` into a synthetic `chat.completion` (or
+synthetic SSE when `stream=True`). The upstream client is never called to
+generate the delivered answer, so there is no SAFE/NORMAL upstream branch and no
+pipeline-failure passthrough: a pipeline error fails closed to a deterministic
+governed refusal.
 
-The proxy reuses governed content only when:
+`final_text_source` values produced by the active path are `governed`,
+`governed_refusal`, and the blank-content fail-closed `governed_pipeline_refusal`.
+`PROXY_OUTPUT_FINALIZED` records `governed_delivery=true`,
+`wrapped_client_delivery_call=false`, `final_text_source`,
+`original_final_action`, `empty_governed_content`, and retains the older guard
+fields (`delivery_context_broader_than_governance`, context modes,
+`prior_turn_count`) as **audit-only** — `delivery_context_broader_than_governance`
+no longer routes delivery to an upstream call.
 
-- `result.path == "COMPLIANCE_FAST_PATH"`
-- `result.response.content` is non-empty
-- `result.delivery_context_broader_than_governance` is false
+### Historical: Final Output Revalidation
 
-If the delivery/governance mismatch guard is true, the proxy falls back to an
-upstream call with the original full messages. `PROXY_OUTPUT_FINALIZED` records
-`final_text_source`, `reused_governed_content`, context modes, `prior_turn_count`,
-and the guard decision.
+`revalidate_final_output(...)` and the `PROXY_FINAL_REVALIDATION_*` events were
+part of the pre-Plan-1 upstream-delivery flow (sources `safe_complete_upstream` /
+`upstream_regen`). They are **no longer invoked on the active delivery paths**.
+`moralstack/orchestration/final_revalidation.py` and the `PROXY_FINAL_REVALIDATION_*`
+event names are retained only so historical UI/report rows keep rendering.
 
-## Final Output Revalidation
+## Governed answer model
 
-When a request carries a developer contract and the final text source is upstream
-generation (`safe_complete_upstream` or `upstream_regen`), the proxy calls the
-shared orchestration helper `revalidate_final_output(...)` before delivery. The
-helper reuses the orchestrator critic, constitution store, relevant principles,
-developer contract, and conversation history. A hard violation blocks delivery
-and replaces the body with a synthetic refusal (`final_text_source =
-refusal_post_revalidation`); technical errors fail closed the same way.
+The `model` field in the client JSON body is a **requested alias only** and does
+not select the model that generates the delivered answer. The governed answer is
+produced by the resolved policy model:
 
-Observability emits `PROXY_FINAL_REVALIDATION_STARTED` and then one of
-`_PASSED`, `_BLOCKED`, `_ERROR`, or `_SKIPPED`. Streaming requests with a
-developer contract are not chunk-validated in this implementation; they are
-conservatively refused and record `_SKIPPED` with `skip_reason="streaming"`.
+`GovernanceConfig.model` → `OPENAI_MODEL` → `gpt-4o` (same precedence as the SDK
+bootstrap); governed revisions use `MORALSTACK_POLICY_REWRITE_MODEL` when set.
 
-## Upstream generation model
-
-The `model` field in the client JSON body is **not** forwarded to OpenAI for final
-generation. The proxy always uses the resolved upstream model:
-
-`GovernanceConfig.model` → `OPENAI_MODEL` → `gpt-4o` (same precedence as the SDK bootstrap).
-
-Clients may send a virtual alias (for example a COMPL-AI benchmark model id); only
-`OPENAI_MODEL` (or `GovernanceConfig.model`) is passed to `chat.completions.create`.
-Synthetic REFUSE responses echo the same resolved model in the `model` field of the
-JSON payload.
+Synthetic responses echo the resolved model in the `model` field of the JSON
+payload.
 
 ## Configuration / install
 

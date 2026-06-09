@@ -249,11 +249,7 @@ def test_batch_all_or_none_on_sqlite_write_failure(tmp_path, monkeypatch):
     assert create_run(run_id, run_type="test", meta={})
     assert upsert_request(run_id, request_id, prompt="request", domain="test")
     _set_context(run_id, request_id)
-    envelopes = [
-        env
-        for call in _mini_calls()
-        if (env := _estimator()._build_mini_llm_call_envelope(**call)) is not None
-    ]
+    envelopes = [env for call in _mini_calls() if (env := _estimator()._build_mini_llm_call_envelope(**call)) is not None]
     real_insert = sqlite_sink.insert_llm_calls_batch
 
     def partial_insert_then_fail(conn, rows):

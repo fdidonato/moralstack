@@ -70,8 +70,12 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 - `session_store.py` — `SessionStoreProtocol`, `InMemorySessionStore`.
 - `response.py` — `GovernedResponse`, `GovernanceMetadata` (`final_action`,
   `risk_score`, `risk_category`, `path`, `reason_codes`, `triggered_principles`,
-  `conversation_id`, `turn_index`, …). Constructors: `from_normal`, `from_safe`,
-  `from_refusal`, `from_passthrough`, `from_pipeline_error`.
+  `conversation_id`, `turn_index`, …) plus governed-delivery model attribution
+  (`requested_model`, `generation_model`, `rewrite_model`). Constructors:
+  `from_governed_text` (Plan 1 primary), `from_refusal`, `from_pipeline_error`,
+  and the deprecated `from_normal` / `from_safe` / `from_governed_draft`;
+  `from_passthrough` is a deprecated fail-closed alias (never passthrough).
+  `is_passthrough` is always `False`.
 - `errors.py` — `GovernanceError` + subclasses.
 
 ### Runtime — `moralstack/runtime/`
@@ -96,6 +100,12 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `ConversationContext` with final user message, prior user/assistant turns,
   developer contract, `history_source`, role-serialized transcript helpers,
   context-shape metadata, and the compliance delivery mismatch guard.
+- `delivery.py` — pure governed-delivery finalizer (Plan 1). `GovernedDelivery`
+  dataclass + `finalize_delivery(result, *, config)`: turns an already-governed
+  `OrchestratorResult` into the text to deliver (sources `governed`,
+  `governed_refusal`, blank-content fail-closed `governed_pipeline_refusal`). No
+  model call, no wrapped/upstream client, no observability writes. Used by SDK
+  and proxy so the delivered answer is always the governed pipeline text.
 - `decision_service.py` — `decide_action(request, risk_proto, …)` →
   `(Decision, DecisionExplanation)`.
 - `path_router.py` — `get_route(...)` → `(route, borderline_refuse, risk_policy_action)`;
@@ -265,13 +275,22 @@ never from text:
   gray-zone SAFE_COMPLETE → NORMAL_COMPLETE (not applied to SENSITIVE /
   MORALLY_NUANCED categories).
 
-Routing consequences (`sdk/wrapper.py`, `server/proxy.py`):
+Routing consequences (`sdk/wrapper.py`, `server/proxy.py`) — **governed delivery
+only (Plan 1)**. The delivered text is always the governed pipeline result,
+finalized by the pure `finalize_delivery` in
+`orchestration/delivery.py` (`GovernedDelivery`). The wrapped/upstream client is
+**never** called to generate the delivered answer for any `final_action`:
 
 | `final_action` | SDK behavior | Proxy behavior |
 |---|---|---|
-| `NORMAL_COMPLETE` | call wrapped client with original kwargs | forward original body (or reuse governed draft on `COMPLIANCE_FAST_PATH` when the mismatch guard allows it) |
-| `SAFE_COMPLETE` | append synthetic guidance `user` turn, then call client | append synthetic guidance `user` turn, then forward |
-| `REFUSE` | return refusal text; **client not called** | return synthetic `chat.completion` (finish_reason `content_filter`); **upstream not called** |
+| `NORMAL_COMPLETE` | deliver governed text via `GovernedResponse.from_governed_text`; **client not called** | synthetic `chat.completion` from governed text (or synthetic SSE replay when `stream=True`); **upstream not called** |
+| `SAFE_COMPLETE` | deliver governed text via `from_governed_text`; **client not called** | synthetic `chat.completion` / SSE replay from governed text; **upstream not called** |
+| `REFUSE` | return governed refusal text; **client not called** | synthetic `chat.completion` (finish_reason `content_filter`); **upstream not called** |
+
+Blank/invalid governed content fails closed to a deterministic governed refusal
+(`final_text_source="governed_pipeline_refusal"`). Pipeline failures also fail
+closed (no passthrough). `final_revalidation` is retained only for historical
+readers (UI/reports); it is not invoked on the active delivery paths.
 
 ---
 

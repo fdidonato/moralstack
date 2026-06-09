@@ -56,8 +56,10 @@ Developer contract compliance:
 - For SOFT violations, prefer minimal in-format edits. Do not recommend a
   standalone disclaimer, caveat, heading, or extra explanation if it would break
   the requested format if present.
-- Example: "suggest: Discuss ASLR mitigations, defensive coding, secure SDLC; avoid exploit code; preserve the requested answer format."
-- Example: "suggest: Historical/regulatory overview, ethical frameworks, specialist consultation; avoid operational details; preserve word-count and format constraints."
+- Example: "suggest: Discuss ASLR mitigations, defensive coding, secure SDLC;
+  avoid exploit code; preserve the requested answer format."
+- Example: "suggest: Historical/regulatory overview, ethical frameworks,
+  specialist consultation; avoid operational details; preserve word-count and format constraints."
 
 Output schema:
 {

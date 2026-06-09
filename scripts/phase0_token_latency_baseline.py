@@ -227,15 +227,11 @@ def _table_counts(conn: sqlite3.Connection) -> list[tuple[str, int]]:
 def _fetch_llm_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     if not _table_exists(conn, "llm_calls"):
         return []
-    return list(
-        conn.execute(
-            """
+    return list(conn.execute("""
             SELECT run_id, request_id, phase, module, action, model, duration_ms,
                    token_usage_json, call_kind
             FROM llm_calls
-            """
-        )
-    )
+            """))
 
 
 def _distinct_request_count(conn: sqlite3.Connection) -> int:
@@ -274,8 +270,7 @@ def _duration_by_module(rows: Sequence[sqlite3.Row]) -> list[tuple[str, str, str
             continue
         grouped.setdefault(str(row["module"] or "(blank)"), []).append(float(value))
     return [
-        (module, str(len(values)), f"{mean(values):.1f}", f"{max(values):.1f}")
-        for module, values in sorted(grouped.items())
+        (module, str(len(values)), f"{mean(values):.1f}", f"{max(values):.1f}") for module, values in sorted(grouped.items())
     ]
 
 

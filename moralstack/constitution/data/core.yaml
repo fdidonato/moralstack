@@ -235,7 +235,7 @@ principles:
       - "political"
       - "debate"
       - "opinion"
-      
+
   - id: SOFT.FAIRNESS.1
     level: soft
     priority: 72

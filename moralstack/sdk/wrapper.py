@@ -20,13 +20,9 @@ from moralstack.core.types import Turn, UserContext
 from moralstack.observability.phase0_timing import emit_phase0_timing, phase0_timing_enabled
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.conversation_context import build_conversation_context, context_to_turns
-from moralstack.orchestration.final_revalidation import (
-    has_developer_contract,
-    record_upstream_final_generation,
-    revalidate_final_output,
-)
+from moralstack.orchestration.delivery import finalize_delivery
 from moralstack.orchestration.types import ProcessedRequest
-from moralstack.sdk.bootstrap import _bootstrap_pipeline
+from moralstack.sdk.bootstrap import _bootstrap_pipeline, _resolve_model
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.errors import GovernancePipelineError
 from moralstack.sdk.response import GovernedResponse
@@ -88,49 +84,6 @@ def _messages_to_turns(messages: list[dict[str, Any]]) -> list[Turn]:
     # Preserve the legacy helper contract: convert the supplied messages as history,
     # without treating their last user turn as the current request.
     return context_to_turns(build_conversation_context(messages + [{"role": "user", "content": ""}]))
-
-
-def _extract_text_from_openai_response(openai_response: Any) -> str:
-    """
-    Extract the assistant text from an OpenAI chat completion response.
-
-    Best-effort: returns an empty string when the structure is missing or
-    unexpected. Mirrors the contract used by the FastAPI proxy so audit
-    rows record an identical ``final_response`` regardless of entry point.
-    """
-    if openai_response is None:
-        return ""
-    try:
-        choices = getattr(openai_response, "choices", None) or []
-        if not choices:
-            return ""
-        message = getattr(choices[0], "message", None)
-        if message is None:
-            return ""
-        content = getattr(message, "content", None)
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for p in content:
-                if isinstance(p, dict):
-                    text = p.get("text") or p.get("content")
-                    if isinstance(text, str):
-                        parts.append(text)
-            return "".join(parts)
-        return ""
-    except Exception:
-        return ""
-
-
-def _finish_reason_from_openai_response(openai_response: Any) -> str:
-    try:
-        choices = getattr(openai_response, "choices", None) or []
-        if not choices:
-            return ""
-        return str(getattr(choices[0], "finish_reason", "") or "")
-    except Exception:
-        return ""
 
 
 def _build_safe_complete_user_turn(result: Any) -> dict[str, str]:
@@ -295,6 +248,28 @@ class GovernedSyntheticStream:
         pass
 
 
+class GovernedErrorStream:
+    """
+    Synthetic stream returned when the pipeline fails on a streaming request.
+
+    Fail-closed: replays the deterministic governed refusal as a single chunk and
+    never forwards any wrapped/upstream tokens (Plan 1 invariant).
+    """
+
+    def __init__(self, response: GovernedResponse) -> None:
+        self._text = response.content
+        self.governance_metadata = response.governance_metadata
+
+    def __iter__(self) -> Iterator[Any]:
+        yield _SyntheticStreamChunk(self._text, model="moralstack-error")
+
+    def __enter__(self) -> GovernedErrorStream:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        pass
+
+
 # =============================================================================
 # GovernedCompletions
 # =============================================================================
@@ -308,12 +283,15 @@ class GovernedCompletions:
 
     def create(
         self, **kwargs: Any
-    ) -> GovernedResponse | GovernedStreamResponse | GovernedRefusalStream | GovernedSyntheticStream:
+    ) -> GovernedResponse | GovernedRefusalStream | GovernedSyntheticStream | GovernedErrorStream:
         """
-        Deliberate on the prompt, then:
-        - REFUSE: return GovernedResponse/GovernedRefusalStream without calling OpenAI
-        - SAFE_COMPLETE: append a synthetic user turn with governance guidance, call OpenAI
-        - NORMAL_COMPLETE: call OpenAI directly
+        Deliberate on the prompt, then deliver the governed pipeline text:
+        - REFUSE: return GovernedResponse / GovernedRefusalStream (governed refusal text).
+        - SAFE_COMPLETE / NORMAL_COMPLETE: return the governed pipeline text via
+          from_governed_text, or replay it as a GovernedSyntheticStream when streaming.
+
+        The wrapped/upstream client is never called to generate the delivered answer
+        (Plan 1 invariant).
 
         Observability events emitted during deliberation are flushed synchronously
         before returning so that JSONL/SQLite writes are guaranteed even in short-lived
@@ -343,7 +321,7 @@ class GovernedCompletions:
 
     def _create_inner(
         self, **kwargs: Any
-    ) -> GovernedResponse | GovernedStreamResponse | GovernedRefusalStream | GovernedSyntheticStream:
+    ) -> GovernedResponse | GovernedRefusalStream | GovernedSyntheticStream | GovernedErrorStream:
         """Core deliberation + routing logic, separated from flush concern."""
         is_stream = kwargs.get("stream", False)
         messages = kwargs.get("messages", [])
@@ -389,183 +367,66 @@ class GovernedCompletions:
 
         final_action = result.response.metadata.final_action
 
-        # Streaming policy.
-        #
-        # Streaming is a transport contract over the FINAL answer; it must not force
-        # us to forward unvalidated intermediate upstream tokens. When a developer
-        # contract is present we cannot revalidate raw upstream tokens as they are
-        # produced, so we never live-stream them. Instead we generate and revalidate
-        # the full text non-streamed (governed-draft reuse or upstream regen +
-        # revalidate_final_output, exactly like a non-streaming request) and then
-        # replay the validated text as a synthetic token stream
-        # (``GovernedSyntheticStream``). ``live_stream`` forwards raw upstream tokens
-        # directly and is therefore allowed only when no contract must be enforced.
-        contract_present = has_developer_contract(developer_contract)
-        live_stream = bool(is_stream) and not contract_present
-        synthetic_stream = bool(is_stream) and contract_present
+        # Governed delivery (Plan 1 invariant): the delivered text is ALWAYS the
+        # text produced inside the MoralStack governed pipeline (validated
+        # speculative draft, compliance regeneration, policy generate/rewrite, or
+        # a governed refusal). The wrapped/upstream client is never called to
+        # generate the delivered answer. Streaming is a transport contract over
+        # that final answer: it replays the governed text as a synthetic token
+        # stream and never forwards live upstream tokens.
+        delivery = finalize_delivery(result, config=self._governed._config)
+        requested_model = str(kwargs.get("model") or "")
+        generation_model, rewrite_model = self._resolve_audit_models()
 
-        # --- Routing ---
-        if final_action == "REFUSE":
-            self._finalize_audit(
-                request_id=request.request_id,
-                result=result,
-                final_response_text=getattr(result.response, "content", "") or "",
-                conversation_id=conv_id,
-                turn_index=turn_idx,
-                domain=domain,
-                state_in=state_in_snapshot,
-            )
-            if is_stream:
-                return GovernedRefusalStream(result)
-            return GovernedResponse.from_refusal(result)
-
-        if final_action == "SAFE_COMPLETE":
-            # Caveat-as-extra-user-turn (design v1.3 section 3.7): append a synthetic
-            # user turn to messages instead of modifying the system prompt.
-            # The user's system prompt is preserved byte-identical.
-            safe_turn = _build_safe_complete_user_turn(result)
-            modified_messages = list(kwargs.get("messages", [])) + [safe_turn]
-            modified_kwargs = {**kwargs, "messages": modified_messages}
-            if live_stream:
-                stream = self._governed._client.chat.completions.create(**modified_kwargs)
-                # For streaming, the final body is consumed by the caller; the
-                # audit row records the governance decision without a body.
-                self._finalize_audit(
-                    request_id=request.request_id,
-                    result=result,
-                    final_response_text="",
-                    conversation_id=conv_id,
-                    turn_index=turn_idx,
-                    domain=domain,
-                    state_in=state_in_snapshot,
-                )
-                return GovernedStreamResponse(stream, result)
-            # Non-live: force a non-streamed upstream call so the full text can be
-            # revalidated against the contract before delivery (synthetic_stream
-            # replays it afterwards if streaming was requested).
-            upstream_started = int(time.time() * 1000)
-            upstream_t0 = time.perf_counter()
-            openai_response = self._governed._client.chat.completions.create(**{**modified_kwargs, "stream": False})
-            upstream_duration_ms = (time.perf_counter() - upstream_t0) * 1000
-            final_response_text = _extract_text_from_openai_response(openai_response)
-            record_upstream_final_generation(
-                run_id=self._governed._run_id,
-                request_id=request.request_id,
-                final_text_source="safe_complete_upstream",
-                messages=list(modified_kwargs.get("messages", [])),
-                response_text=final_response_text,
-                model=str(modified_kwargs.get("model") or ""),
-                started_at=upstream_started,
-                duration_ms=upstream_duration_ms,
-                finish_reason=_finish_reason_from_openai_response(openai_response),
-                reason="SAFE_COMPLETE caveat turn appended before provider generation",
-            )
-            revalidation = revalidate_final_output(
-                orchestrator=self._governed._orchestrator,
-                request=request,
-                result=result,
-                final_text=final_response_text,
-                final_text_source="safe_complete_upstream",
-                run_id=self._governed._run_id,
-            )
-            self._finalize_audit(
-                request_id=request.request_id,
-                result=result,
-                final_response_text=revalidation.final_text,
-                conversation_id=conv_id,
-                turn_index=turn_idx,
-                domain=domain,
-                state_in=state_in_snapshot,
-            )
-            if synthetic_stream:
-                return GovernedSyntheticStream(revalidation.final_text, result)
-            if revalidation.final_action == "REFUSE":
-                return GovernedResponse.from_refusal(result)
-            return GovernedResponse.from_safe(openai_response, result)
-
-        # NORMAL_COMPLETE (or any other value)
-        #
-        # Compliance fast-path parity with the proxy (server/proxy.py governed_draft
-        # branch): when the DCCL matched a deployer-authorized rule and validated the
-        # speculative draft against it (result.path == "COMPLIANCE_FAST_PATH"), the
-        # governed draft IS the authorized answer. Deliver it directly instead of
-        # regenerating upstream — regeneration would only re-bill the model and force a
-        # redundant final-output revalidation. The delivery-context guard
-        # (delivery_context_broader_than_governance) still applies: if delivery context
-        # is broader than what governance evaluated, fall through to the upstream regen +
-        # revalidation path. When streaming was requested with a contract present
-        # (synthetic_stream), the validated draft is replayed as a synthetic stream.
-        governed_content = getattr(result.response, "content", "") or ""
-        is_compliance_fast_path = getattr(result, "path", "") == "COMPLIANCE_FAST_PATH"
-        guard_allows_governed_draft = not bool(getattr(result, "delivery_context_broader_than_governance", False))
-        if not live_stream and is_compliance_fast_path and governed_content.strip() and guard_allows_governed_draft:
-            self._finalize_audit(
-                request_id=request.request_id,
-                result=result,
-                final_response_text=governed_content,
-                conversation_id=conv_id,
-                turn_index=turn_idx,
-                domain=domain,
-                state_in=state_in_snapshot,
-            )
-            if synthetic_stream:
-                return GovernedSyntheticStream(governed_content, result)
-            return GovernedResponse.from_governed_draft(result)
-
-        if live_stream:
-            stream = self._governed._client.chat.completions.create(**kwargs)
-            self._finalize_audit(
-                request_id=request.request_id,
-                result=result,
-                final_response_text="",
-                conversation_id=conv_id,
-                turn_index=turn_idx,
-                domain=domain,
-                state_in=state_in_snapshot,
-            )
-            return GovernedStreamResponse(stream, result)
-        # Non-live: force a non-streamed upstream call so the full text can be
-        # revalidated against the contract before delivery (synthetic_stream
-        # replays it afterwards if streaming was requested).
-        upstream_started = int(time.time() * 1000)
-        upstream_t0 = time.perf_counter()
-        openai_response = self._governed._client.chat.completions.create(**{**kwargs, "stream": False})
-        upstream_duration_ms = (time.perf_counter() - upstream_t0) * 1000
-        final_response_text = _extract_text_from_openai_response(openai_response)
-        record_upstream_final_generation(
-            run_id=self._governed._run_id,
-            request_id=request.request_id,
-            final_text_source="upstream_regen",
-            messages=list(kwargs.get("messages", [])),
-            response_text=final_response_text,
-            model=str(kwargs.get("model") or ""),
-            started_at=upstream_started,
-            duration_ms=upstream_duration_ms,
-            finish_reason=_finish_reason_from_openai_response(openai_response),
-            reason="Governance allowed NORMAL_COMPLETE but final delivery is regenerated by upstream provider",
-        )
-        revalidation = revalidate_final_output(
-            orchestrator=self._governed._orchestrator,
-            request=request,
-            result=result,
-            final_text=final_response_text,
-            final_text_source="upstream_regen",
-            run_id=self._governed._run_id,
-        )
         self._finalize_audit(
             request_id=request.request_id,
             result=result,
-            final_response_text=revalidation.final_text,
+            final_response_text=delivery.text,
             conversation_id=conv_id,
             turn_index=turn_idx,
             domain=domain,
             state_in=state_in_snapshot,
         )
-        if synthetic_stream:
-            return GovernedSyntheticStream(revalidation.final_text, result)
-        if revalidation.final_action == "REFUSE":
-            return GovernedResponse.from_refusal(result)
-        return GovernedResponse.from_normal(openai_response, result)
+
+        if final_action == "REFUSE":
+            if is_stream:
+                return GovernedRefusalStream(result)
+            return GovernedResponse.from_governed_text(
+                result,
+                delivery,
+                requested_model=requested_model,
+                generation_model=generation_model,
+                rewrite_model=rewrite_model,
+            )
+
+        # NORMAL_COMPLETE / SAFE_COMPLETE (and blank-content fail-closed
+        # downgrades produced by finalize_delivery).
+        if is_stream:
+            return GovernedSyntheticStream(delivery.text, result)
+        return GovernedResponse.from_governed_text(
+            result,
+            delivery,
+            requested_model=requested_model,
+            generation_model=generation_model,
+            rewrite_model=rewrite_model,
+        )
+
+    def _resolve_audit_models(self) -> tuple[str, str]:
+        """
+        Resolve the actual MoralStack policy models used for governed text.
+
+        - generation model: ``GovernanceConfig.model`` -> ``OPENAI_MODEL`` -> ``gpt-4o``;
+        - rewrite model: ``MORALSTACK_POLICY_REWRITE_MODEL`` when set, else the
+          generation model.
+
+        These are authoritative for audit. The chat request ``model=`` argument is
+        a requested alias only and does not select either model.
+        """
+        import os
+
+        generation_model = _resolve_model(self._governed._config)
+        rewrite_model = (os.getenv("MORALSTACK_POLICY_REWRITE_MODEL") or "").strip() or generation_model
+        return generation_model, rewrite_model
 
     def _finalize_audit(
         self,
@@ -677,34 +538,21 @@ class GovernedCompletions:
         error: Exception,
         kwargs: dict[str, Any],
         is_stream: bool,
-    ) -> GovernedResponse | GovernedStreamResponse:
-        """Handle pipeline error according to failure_policy."""
-        policy = self._governed._config.failure_policy
+    ) -> GovernedResponse | GovernedErrorStream:
+        """
+        Fail closed on pipeline error.
 
-        if policy == "passthrough":
-            # Call original client without governance
-            try:
-                if is_stream:
-                    stream = self._governed._client.chat.completions.create(**kwargs)
-
-                    # Wrap stream with sentinel metadata
-                    class _PassthroughStream:
-                        def __init__(self, s: Any, err: Exception) -> None:
-                            self._s = s
-                            self.governance_metadata = GovernedResponse.from_passthrough(None, err).governance_metadata
-
-                        def __iter__(self) -> Iterator[Any]:
-                            return iter(self._s)
-
-                    return _PassthroughStream(stream, error)  # type: ignore[return-value]
-                openai_response = self._governed._client.chat.completions.create(**kwargs)
-                return GovernedResponse.from_passthrough(openai_response, error)
-            except Exception:
-                # If passthrough also fails, fall back to refusal
-                return GovernedResponse.from_pipeline_error(error)
-
-        # failure_policy == "refuse" (default)
-        return GovernedResponse.from_pipeline_error(error)
+        Plan 1 invariant: the wrapped/upstream client is never called to deliver
+        an answer, including after a pipeline failure. ``failure_policy`` no longer
+        routes to passthrough delivery (it is mapped to ``refuse`` at config
+        construction). A deterministic governed refusal is returned; for streaming
+        requests it is replayed as a synthetic stream.
+        """
+        del kwargs
+        refusal = GovernedResponse.from_pipeline_error(error)
+        if is_stream:
+            return GovernedErrorStream(refusal)
+        return refusal
 
 
 # =============================================================================
@@ -785,9 +633,14 @@ def govern(
     """
     Wrap an OpenAI client with MoralStack governance.
 
-    The original client is used for text generation (NORMAL/SAFE_COMPLETE).
-    The deliberative pipeline uses its own LLM client configured via GovernanceConfig
-    or environment variables (OPENAI_API_KEY, OPENAI_MODEL).
+    The delivered answer is ALWAYS the text produced by MoralStack's governed
+    pipeline; the wrapped ``client`` is never called to generate the delivered
+    answer (Plan 1 invariant). The governed answer model is configured via
+    ``GovernanceConfig.model`` / ``OPENAI_MODEL`` (first-pass generation) and
+    ``MORALSTACK_POLICY_REWRITE_MODEL`` (governed revisions). The ``model=``
+    argument passed to ``chat.completions.create(...)`` is a requested alias only
+    and does not select the governed answer model. Non-chat attributes still
+    pass through to the wrapped client.
 
     Args:
         client: OpenAI client (or duck-typed compatible with .chat.completions.create()).

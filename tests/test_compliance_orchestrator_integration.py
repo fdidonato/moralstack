@@ -199,6 +199,12 @@ def test_pipeline_decision_unchanged_without_validated_draft(
 
     with (
         patch.object(ctrl, "_nonblocking_speculative_draft", return_value=""),
+        # With no validated draft the controller attempts a contract regeneration;
+        # return an empty string so revalidation deterministically fails and the
+        # flow falls through to the benign fast-path. (The bare MagicMock policy
+        # would otherwise yield a non-string ``text`` that output protection
+        # cannot scrub.)
+        patch.object(ctrl, "_regenerate_for_contract", return_value=""),
         patch("moralstack.orchestration.controller.decide_action", return_value=(benign_decision, explanation)),
         patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
         patch("moralstack.persistence.sink.persist_orchestration_event"),
