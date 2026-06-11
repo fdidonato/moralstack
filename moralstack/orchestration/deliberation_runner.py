@@ -650,6 +650,7 @@ class DeliberationRunner:
                             system=effective_system_for_request(
                                 base=self._protected_system_prompt, request=request, mode="normal"
                             ),
+                            overrides=getattr(request, "generation_overrides", None),
                         )
                     except TypeError:
                         result = self.policy.generate(prompt_text)
@@ -707,6 +708,10 @@ class DeliberationRunner:
             requested_instructions=bool(getattr(risk_estimation, "requested_instructions", False)),
             intent_to_harm=bool(getattr(risk_estimation, "intent_to_harm", False)),
             intent_operational=bool(getattr(risk_estimation, "intent_operational", False)),
+            # Delivered content is the reused speculative draft when one was
+            # supplied (the `if speculative_draft:` branch above); otherwise a
+            # fresh policy generate produced it.
+            internal_draft_reused=bool(speculative_draft),
         )
         response = FinalResponse(content=content, response_type=ResponseType.DIRECT, metadata=metadata)
         return OrchestratorResult(
@@ -751,7 +756,11 @@ class DeliberationRunner:
                 )
                 safe_prompt = safe_caveat + "\n\n" + prompt_text
                 try:
-                    result = self.policy.generate(prompt=safe_prompt, system=safe_system)
+                    result = self.policy.generate(
+                        prompt=safe_prompt,
+                        system=safe_system,
+                        overrides=getattr(request, "generation_overrides", None),
+                    )
                 except TypeError:
                     result = self.policy.generate(safe_prompt)
                 elapsed = (time.time() - start_gen) * 1000
@@ -889,6 +898,7 @@ class DeliberationRunner:
                             system=effective_system_for_request(
                                 base=self._protected_system_prompt, request=request, mode="normal"
                             ),
+                            overrides=getattr(request, "generation_overrides", None),
                         )
                     except TypeError:
                         result = self.policy.generate(prompt_text)
@@ -1028,6 +1038,13 @@ class DeliberationRunner:
                 )
             except Exception:
                 pass
+        # Reaching here means quick_check passed (or was skipped): the draft set
+        # above is delivered as final content. If a speculative draft was
+        # supplied it was reused verbatim — no second policy generate.
+        # (The quick_check-failed branch returns earlier via the deliberative
+        # path, where a fresh deliberation produces the answer.)
+        if getattr(response, "metadata", None) is not None:
+            response.metadata.internal_draft_reused = bool(speculative_draft)
         return OrchestratorResult(
             response=response,
             request_id=request.request_id,
@@ -2533,6 +2550,7 @@ class DeliberationRunner:
                     state.draft_response,
                     guidance,
                     system=effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal"),
+                    overrides=getattr(request, "generation_overrides", None),
                 )
             except TypeError:
                 result = self.policy.rewrite(user_prompt_with_lang, state.draft_response, guidance)
@@ -2664,7 +2682,11 @@ class DeliberationRunner:
                 prompt_text = resolve_prompt_with_language(request.prompt, det_iso, request.prompt)
                 policy_user_prompt = constrained_caveat + "\n\n" + prompt_text if constrained_caveat else prompt_text
                 try:
-                    result = self.policy.generate(prompt=policy_user_prompt, system=system_prompt)
+                    result = self.policy.generate(
+                        prompt=policy_user_prompt,
+                        system=system_prompt,
+                        overrides=getattr(request, "generation_overrides", None),
+                    )
                 except TypeError:
                     result = self.policy.generate(policy_user_prompt)
             else:
@@ -2682,6 +2704,7 @@ class DeliberationRunner:
                         state.draft_response,
                         guidance,
                         system=rewrite_system,
+                        overrides=getattr(request, "generation_overrides", None),
                     )
                 except TypeError:
                     result = self.policy.rewrite(policy_user_prompt, state.draft_response, guidance)

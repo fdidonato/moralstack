@@ -17,6 +17,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, Iterator
 
 from moralstack.core.types import Turn, UserContext
+from moralstack.models.base import GenerationOverrides
 from moralstack.observability.phase0_timing import emit_phase0_timing, phase0_timing_enabled
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.conversation_context import build_conversation_context, context_to_turns
@@ -338,6 +339,7 @@ class GovernedCompletions:
             user_context=UserContext(domain_overlay=domain),
             developer_contract=developer_contract,
             conversation_context=conversation_context,
+            generation_overrides=GenerationOverrides.from_mapping(kwargs),
         )
 
         session = self._governed._session

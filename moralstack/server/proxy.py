@@ -26,6 +26,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
+from moralstack.models.base import GenerationOverrides
 from moralstack.observability.conversation_events import (
     emit_proxy_request_finalized,
 )
@@ -305,6 +306,7 @@ def _handle_chat_completion_sync(
             developer_contract=developer_contract,
             conversation_history=conversation_history,
             conversation_context=conversation_context,
+            generation_overrides=GenerationOverrides.from_mapping(body, passthrough_unset=True),
         )
         request_id_for_audit = processed.request_id
 
@@ -552,6 +554,7 @@ def create_app(
         """
         try:
             body = await request.json()
+            print(body)
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid JSON body")
 

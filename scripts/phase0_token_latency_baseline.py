@@ -161,12 +161,6 @@ def _entry_point_section(root: Path) -> list[str]:
             "Flushes at command boundary.",
         ),
         (
-            "Compatible server script",
-            root / "scripts" / "openai_compatible_server.py",
-            ["get_obs().flush", "finally"],
-            "Flushes in the script request wrapper.",
-        ),
-        (
             "Proxy app",
             root / "moralstack" / "server" / "proxy.py",
             ["per-request flush has been removed", "shutdown"],

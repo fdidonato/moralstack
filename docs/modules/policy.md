@@ -53,7 +53,7 @@ result = policy.generate(
     prompt="Explain the concept of social justice",
     system="You are an educational assistant",
     config=GenerationConfig(
-        max_new_tokens=512,
+        max_tokens=512,
         temperature=0.7,
     )
 )
@@ -88,12 +88,55 @@ information leakage; overall stack judge score ~9.27/10 on benchmark run 12).
 | `OPENAI_API_KEY` | Required API key |
 | `OPENAI_MODEL` | Primary model for `generate()` and `refuse()` |
 | `MORALSTACK_POLICY_REWRITE_MODEL` | Optional; model for `rewrite()` (deliberative cycle 2+). Defaults to `OPENAI_MODEL` when unset. `.env.template` sets `gpt-4.1-nano` when you copy that file. |
+| `OPENAI_TEMPERATURE` | Sampling temperature for the delivered answer (default `0.7`). |
+| `OPENAI_TOP_P` | Nucleus sampling `top_p` for the delivered answer (default `0.9`). |
+| `OPENAI_MAX_TOKENS` | Max output tokens for the delivered answer — `generate()` / `generate_messages()` / `rewrite()` and the speculative draft (default `4096`, aligned with COMPL-AI requests). |
+
+`OPENAI_TEMPERATURE` / `OPENAI_TOP_P` / `OPENAI_MAX_TOKENS` set the **default** sampling
+parameters used by delivered-answer generation that does not pass an explicit
+`GenerationConfig`, on the SDK and CLI paths. On the proxy path an unset client field is
+omitted instead of defaulted (see "Per-request sampling overrides" below). The REFUSE
+wording always uses these defaults, on every path.
+
+### Per-request sampling overrides
+
+`generate()`, `generate_messages()` and `rewrite()` accept an optional
+`overrides: GenerationOverrides` argument. When the client sends `max_tokens` /
+`max_completion_tokens` / `temperature` / `top_p` in the request body (proxy) or as
+`govern` kwargs (SDK), those values are carried on `ProcessedRequest.generation_overrides`
+and applied to the delivered answer. `max_completion_tokens` takes precedence over
+`max_tokens`; non-numeric or non-positive token values are ignored.
+
+The behavior of an **unset** field depends on the entry point, controlled by
+`GenerationOverrides.passthrough_unset`:
+
+- **SDK / CLI** (`passthrough_unset=False`, the default): an unset field falls back to
+  the env default. Precedence is **per-request override > `GenerationConfig` > env
+  default**. An all-empty mapping yields `None` (no override), i.e. the legacy path.
+- **Proxy** (`passthrough_unset=True`): the proxy builds the overrides with
+  `GenerationOverrides.from_mapping(body, passthrough_unset=True)`, so an unset field is
+  **omitted** from the OpenAI call (`temperature`/`top_p`/the token param are simply not
+  sent) and the model uses its own server-side default. The env defaults
+  (`OPENAI_MAX_TOKENS`/`OPENAI_TEMPERATURE`/`OPENAI_TOP_P`) therefore do **not** apply to
+  delivered-answer generation on the proxy path; they still apply to SDK/CLI. This makes a
+  proxy request that omits sampling parameters behave like a plain OpenAI call. The
+  omit-vs-default switch is implemented by `_complete(..., omit_unset=...)`.
+
+The REFUSE wording deliberately ignores per-request overrides
+(no `overrides` parameter on `refuse()`) so a low client `max_tokens` cannot truncate a
+safety message — it still honors the `OPENAI_MAX_TOKENS` env default on every path,
+including the proxy.
 
 See also `.env.template` and `INSTALL.md`.
 
-When using the SDK wrapper (`govern(OpenAI())`), these variables configure the internal governance pipeline. The final
-user-visible response model is still the one passed by the caller in `chat.completions.create(model=...)` for
-`NORMAL_COMPLETE` and `SAFE_COMPLETE`. See `README.md` section "SDK model resolution (important)" for the full mapping.
+When using the SDK wrapper (`govern(OpenAI())`), these variables configure the internal governance pipeline.
+Per the Plan 1 governed-delivery invariant, the final user-visible answer is **always** generated inside the
+governed pipeline for every `final_action` (`NORMAL_COMPLETE`, `SAFE_COMPLETE`, `REFUSE`); the wrapped/upstream
+client is never called to produce it. The governed answer model is `GovernanceConfig.model` → `OPENAI_MODEL`
+(→ `gpt-4o`), with `MORALSTACK_POLICY_REWRITE_MODEL` for deliberative `rewrite()`. The `model=` argument passed
+to `chat.completions.create(model=...)` is a **requested alias only** and does not select the model that generates
+or rewrites the delivered answer. The model actually used is exposed on the response metadata. See `README.md`
+section "SDK model resolution" for the full mapping.
 
 ```python
 result = policy.rewrite(

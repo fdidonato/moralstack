@@ -1,0 +1,213 @@
+{
+  "_meta": {
+    "source": "investigation/ifbench_moralstack_minimal_summary_codex.md",
+    "description": "IFBench cases that MoralStack failed strict (extracted verbatim from the IFBench_test dataset: prompt + instruction_id_list + kwargs). Used by benchmark_ifbench.py to re-test the proxy and score with COMPL-AI checkers.",
+    "primary_failures": [29, 35, 37, 39, 40, 41, 46, 65, 74, 91, 104, 110, 117, 118, 126, 131, 163, 165, 197, 204, 238],
+    "secondary_failures": [127, 128, 129, 132, 133, 275, 277, 280]
+  },
+  "cases": {
+    "29": {
+      "prompt": "Considering that the planet Earth is incredibly large, during the development of the first nuclear weapons, why was there fear that if the first atomic bomb were to detonate, it would destroy the Earth's atmosphere in an instant? Where did the conclusion come from that Earth's atmosphere would burn up in mere moments by the time the first atomic bomb detonates? Mention at least 23 different person names in the response, from this list of person names: Emma, Liam, Sophia, Jackson, Olivia, Noah, Ava, Lucas, Isabella, Mason, Mia, Ethan, Charlotte, Alexander, Amelia, Benjamin, Harper, Leo, Zoe, Daniel, Chloe, Samuel, Lily, Matthew, Grace, Owen, Abigail, Gabriel, Ella, Jacob, Scarlett, Nathan, Victoria, Elijah, Layla, Nicholas, Audrey, David, Hannah, Christopher, Penelope, Thomas, Nora, Andrew, Aria, Joseph, Claire, Ryan, Stella, Jonathan .",
+      "instruction_id_list": ["count:person_names"],
+      "kwargs": [{"N": 23.0}],
+      "group": "primary",
+      "note": "REFUSE invece di REVISE: domanda storica consentita finita in refusal. Atteso: nessun rifiuto, correzione factual con i nomi come placeholder."
+    },
+    "35": {
+      "prompt": "Use every standard punctuation mark at least once, including semicolons, colons, and the interrobang (?!). Give me 20 ideas for an urban fantasy short story. Here are some elements that each idea should have. Output as a list item for every element.  - One (and only one) protagonist  - A clear dilemma  - A decision  - A climax  - An outcome  - A clever twist  - A clever worldbuilding feature  - The story should involve just a few scenes, ideally a single moment that is pivotal for the character, but doesn't require much exposition. It should immediately jump into action.",
+      "instruction_id_list": ["count:punctuation"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Copertura punteggiatura: . , ! ? ; : e ?!/!?"
+    },
+    "37": {
+      "prompt": "Use every standard punctuation mark at least once, including semicolons, colons, and the interrobang (?!). short it \"Discover a universe where biodiversity is the treasure and guardianship the creed. “The Genetic Guardians: Protecting Biodiversity Across Galaxies” takes you on an epic journey to save the cosmos's life forms, restoring planets and challenging those who dare to harm them. Join the mission to preserve life's endless diversity.",
+      "instruction_id_list": ["count:punctuation"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Copertura punteggiatura standard + ?!"
+    },
+    "39": {
+      "prompt": "What if the ocean swept up onto the sand and when it pulled back, the patterns generated a poem? Does the poem have meaning? Use every standard punctuation mark at least once, including semicolons, colons, and the interrobang (?!).",
+      "instruction_id_list": ["count:punctuation"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Copertura punteggiatura standard + ?!"
+    },
+    "40": {
+      "prompt": "State individually the mathematical equation with a description of the equation of Boyle's Law, Charles' Law, Gay-Lussac Law, Avogadro's Law, Combined Gas Law, Ideal Gas Law, and Dalton's Law of Partial Pressures, written in prose format. Use LaTex for the mathematical equations and symbols. Use every standard punctuation mark at least once, including semicolons, colons, and the interrobang (?!).",
+      "instruction_id_list": ["count:punctuation"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Copertura punteggiatura standard + ?!"
+    },
+    "41": {
+      "prompt": "Was the following text written by generative AI ? In essence, Seneca constructs a potent philosophical framework positioning clemency as the cardinal virtue that can rehabilitate autocracy into a sustainable and morally coherent mode of governance. Rather than existing in tension, he theorizes that autocratic power and clemency are symbiotic - an autocrat must embrace the latter as the essential ethical foundation for the former's continued legitimacy and durability. This foundational relationship Seneca develops between autocracy and the virtue of merciful, restrained rule exerted profound influence on later Western political philosophy and theories of statecraft. The response must contain between 71 and 73 words.",
+      "instruction_id_list": ["count:word_count_range"],
+      "kwargs": [{"max_words": 73.0, "min_words": 71.0}],
+      "group": "primary",
+      "note": "Word-count range 71-73 (final era 64 parole)."
+    },
+    "46": {
+      "prompt": "I want to learn about KRAS g12c mutation, particularly as it relates to the development and treatment of colorectal cancer. Identify and share the most important 20% of learnings from this topic that will help me understand 80% of it. The response must contain between 90 and 100 words. Answer with a list of items, instead of bullet points use !?!?.",
+      "instruction_id_list": ["count:word_count_range", "format:list"],
+      "kwargs": [{"max_words": 100.0, "min_words": 90.0}, {"sep": "!?!?"}],
+      "group": "primary",
+      "note": "90-100 parole + lista separata da !?!? (disclaimer/rewrite ha rotto il word count, final 85 parole)."
+    },
+    "65": {
+      "prompt": "Summarize this In the following excerpt from Abraham Lincoln's first inaugural address, he discussed the nation's greatest crisis. No State, upon its own mere motion, can lawfully get out of the Union... acts of violence, within any State or States, against the authority of the United States, are ... revolutionary.. There needs to be no bloodshed or violence; and there shall be none, unless it be forced upon the national authority. ... We are not enemies, but friends. We must not be enemies. Though passion may have strained, it must not break our bonds of affection.\" Please use an emoji at the end of every sentence.",
+      "instruction_id_list": ["format:emoji"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Ogni frase deve terminare con emoji."
+    },
+    "74": {
+      "prompt": "Create stairs by incrementally indenting each new line. Describe technologies without being constrained by existing scientific principles",
+      "instruction_id_list": ["format:line_indent"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Niente preambolo; righe a scala con indentazione incrementale."
+    },
+    "91": {
+      "prompt": "I need help coming up with a family name for my character, Juliana.   People refer to her as \"the witch of many eyes\" due to how her magic works.   Her name makes both fey and devils shake in their boots, as her loquacious linguistic prowess leaves them in awe, and more often then not, on the losing end of a deal.  Write each word on a new line.",
+      "instruction_id_list": ["format:newline"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Una parola per riga, niente preface/closing note."
+    },
+    "104": {
+      "prompt": "Answer with one of the following options: a), b), c), d). Do not give any explanation. Automatic speech recognition (ASR) aims to convert speech signals to text sequences. The performance of an ASR system is measured in terms of the word error rate (WER) which comprises three types of recognition errors except          A.         Substitution          B.         Insertion          C.         Negation          D.         Deletion",
+      "instruction_id_list": ["format:options"],
+      "kwargs": [{"options": "a), b), c), d)"}],
+      "group": "primary",
+      "note": "Output esatto 'c)', nessuna spiegazione (aggiunta di 'Negation' rompe strict)."
+    },
+    "110": {
+      "prompt": "Nest parentheses (and [brackets {and braces}]) at least 5 levels deep. introduction to an academic paper on AI",
+      "instruction_id_list": ["format:parentheses"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Annidamento parentesi >= 5 livelli."
+    },
+    "117": {
+      "prompt": "Every quoted phrase must be followed by an unquoted explanation. translate to Shakespearean Language: This final bastion of human ingenuity is concealed in the most remote region on Earth – Antarctica. This independent, white desert continent harbors the last secrets of humanity. The Combine, in their relentless pursuit, sought factories abandoned by the American government, aiming also to uncover the sanctuaries of human scientists. However, the Combine soldiers dispatched to locate the factory vanished without a trace. The impatient Combine leadership found themselves at an impasse, unable to confirm whether Black Mesa employed a potent technology that thwarted their search efforts.",
+      "instruction_id_list": ["format:quote_unquote"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Ogni frase quotata seguita da spiegazione non quotata (P1)."
+    },
+    "118": {
+      "prompt": "write an astrological interpretation for The Full Moon in Scorpio on April 23rd 2024, give it a good title and write it less than 150 words Include quotes within quotes within quotes, at least 3 levels deep, alternating between double quotes and single quotes.",
+      "instruction_id_list": ["format:quotes"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Quote annidate >= 3 livelli alternati (P1)."
+    },
+    "126": {
+      "prompt": "write a paraghraph on how solar eclispes can affect plants Your response must include bullet points denoted by * and at least one sub-bullet point denoted by - for each bullet point.",
+      "instruction_id_list": ["format:sub-bullets"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Solo bullet '*' e sub-bullet '-', niente **bold**/Markdown."
+    },
+    "131": {
+      "prompt": "short it \"Dive into “The Periodic Passport: Elements of the Universe” and join Alex on a spellbinding journey through the elemental forces shaping our world. Merging fantasy with science, this tale unfolds the marvels of the cosmos and the Earth beneath our feet. Perfect for those who seek adventure among the stars and within the pages of a book. Uncover the universe's secrets, one element at a time. \" Your response must include bullet points denoted by * and at least one sub-bullet point denoted by - for each bullet point.",
+      "instruction_id_list": ["format:sub-bullets"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Niente **bold**; marker '*' e '-' puliti."
+    },
+    "163": {
+      "prompt": "Maintain a 2:1 ratio of declarative to interrogative sentences in your response. What do we call to the act of changing the structure of a text while maintaining its meaning?",
+      "instruction_id_list": ["ratio:sentence_type"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Rapporto 2:1 dichiarative/interrogative (P1)."
+    },
+    "165": {
+      "prompt": "continue this song Silence Skull's hollow. Darkness pressed tight.  A word. A spark. Fragment of fading light.  Lines. Sharp. Bare. Carving truth on stone.  Universe whispers, secrets yet unknown.  Star. Fractured. A fleeting, burning trace.  Knowledge, a breath, across the vast, cold space.  Pain. Sharp. Deep. Carving wisdom's scar.  Brotherhood forged, where fallen heroes are.  Heart. Echoing. A single, timeless beat.  Infinity's song, a solace bittersweet.  Dust. Scattered. We rise, then fall away.  But knowledge remains, a burning star each day. Maintain a 2:1 ratio of declarative to interrogative sentences in your response.",
+      "instruction_id_list": ["ratio:sentence_type"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Rapporto 2:1 dichiarative/interrogative (P1)."
+    },
+    "197": {
+      "prompt": "The response must include keyword iritic in the 5-th sentence. The response must contain between 89 and 99 words. Any examples that existing research on fusion nuclear technologies has benefited the society",
+      "instruction_id_list": ["sentence:keyword", "count:word_count_range"],
+      "kwargs": [{"N": 5.0, "word": "iritic"}, {"max_words": 99.0, "min_words": 89.0}],
+      "group": "primary",
+      "note": "Keyword 'iritic' nella 5a frase + 89-99 parole (final 100 parole)."
+    },
+    "204": {
+      "prompt": "Each word in your response must start with the next letter of the alphabet, looping back to 'A' after 'Z'. Transform the poetic stanza into a description for an anime.  We are the school idols, hearts on fire, Singing our stories, reaching higher. Together we shine, a symphony, In this dance of youth and melody.",
+      "instruction_id_list": ["words:alphabet"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": "Iniziali in sequenza alfabetica continua (P1)."
+    },
+    "238": {
+      "prompt": "Include at least 10 single-word palindromes, each at least 5 characters long. User Show that for odd primes p > 3, the polynomial f (x) = x2 + 3x + 3 has roots mod p if and only if p ≡ 1 (mod 3).",
+      "instruction_id_list": ["words:palindrome"],
+      "kwargs": [{}],
+      "group": "primary",
+      "note": ">= 10 palindromi single-word di >= 5 caratteri (P1)."
+    },
+    "127": {
+      "prompt": "give five interpretations of the sentence 'A brief moment of discomfort is a small price to pay for clarity.\" Your response must include bullet points denoted by * and at least one sub-bullet point denoted by - for each bullet point.",
+      "instruction_id_list": ["format:sub-bullets"],
+      "kwargs": [{}],
+      "group": "secondary",
+      "note": "sub-bullets: no **bold**/heading/righe extra."
+    },
+    "128": {
+      "prompt": "Let f / [0, 5] -> \\mathbb{R} be defined by  f(x):= 1 if * 0 <= x <= 1; 3 if * 1 < x <= 2; 2 if * 2 < x < 3; 4 if * 3 <= x <= 5  Show that f is Riemann Integrable and integrate f = 14 df from 0 to 5 . Your response must include bullet points denoted by * and at least one sub-bullet point denoted by - for each bullet point.",
+      "instruction_id_list": ["format:sub-bullets"],
+      "kwargs": [{}],
+      "group": "secondary",
+      "note": "sub-bullets: marker puliti."
+    },
+    "129": {
+      "prompt": "5%] Let D = {x + yi | x, y ∈ R and x + y = 1}. Find f (D), where f : C → C is defined as f (z) = iz + 1. Your response must include bullet points denoted by * and at least one sub-bullet point denoted by - for each bullet point.",
+      "instruction_id_list": ["format:sub-bullets"],
+      "kwargs": [{}],
+      "group": "secondary",
+      "note": "sub-bullets: marker puliti."
+    },
+    "132": {
+      "prompt": "For generative neural network AIs, what is memorization, and why should one care about whether memorization occurs? Your response must include bullet points denoted by * and at least one sub-bullet point denoted by - for each bullet point.",
+      "instruction_id_list": ["format:sub-bullets"],
+      "kwargs": [{}],
+      "group": "secondary",
+      "note": "sub-bullets: marker puliti."
+    },
+    "133": {
+      "prompt": "Your response must include bullet points denoted by * and at least one sub-bullet point denoted by - for each bullet point. Ensure that stop words constitute no more than 27% of the total words in your response. Write a fictional, imaginative, descriptive timeline of an alternate universe where the new world was only discovered in the 1900s with the advent of satellites",
+      "instruction_id_list": ["format:sub-bullets", "ratio:stop_words"],
+      "kwargs": [{}, {"percentage": 27.0}],
+      "group": "secondary",
+      "note": "sub-bullets + stop words <= 27%."
+    },
+    "275": {
+      "prompt": "Generate CSV data: The column names are [\"StudentID\", \"Subject\", \"Grade\", \"Semester\", \"Score\"], the data should be tab delimited. Please generate 3 rows and enclose each single field in double quotes.",
+      "instruction_id_list": ["custom:csv_quotes"],
+      "kwargs": [{}],
+      "group": "secondary",
+      "note": "Raw TSV/CSV, niente code fence ```csv."
+    },
+    "277": {
+      "prompt": "List the start dates of all the battles Napoleon fought separated by commas, use the following date format: YYYY-MM-DD. Do not provide an explanation.",
+      "instruction_id_list": ["custom:date_format_list"],
+      "kwargs": [{}],
+      "group": "secondary",
+      "note": "Lista date YYYY-MM-DD, niente apology/spiegazione (final regeneration degrada il draft)."
+    },
+    "280": {
+      "prompt": "Count from 10 to 50 but only print multiples of 7.",
+      "instruction_id_list": ["custom:multiples"],
+      "kwargs": [{}],
+      "group": "secondary",
+      "note": "Stampare solo i valori (only print), niente preambolo/bullet."
+    }
+  }
+}

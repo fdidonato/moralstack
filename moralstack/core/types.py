@@ -65,15 +65,32 @@ class PrincipleLikeProtocol(Protocol):
 class PolicyLLMProtocol(Protocol):
     """Protocollo per il Policy LLM."""
 
-    def generate(self, prompt: str, system: str = "", config: Any = None) -> Any: ...
+    def generate(
+        self,
+        prompt: str,
+        system: str = "",
+        config: Any = None,
+        prediction: dict[str, str] | None = None,
+        model_override: str | None = None,
+        overrides: Any = None,
+    ) -> Any: ...
     def generate_messages(
         self,
         messages: list[dict[str, str]],
         config: Any = None,
         prediction: dict[str, str] | None = None,
         model_override: str | None = None,
+        overrides: Any = None,
     ) -> Any: ...
-    def rewrite(self, prompt: str, draft: str, guidance: str, system: str = "", config: Any = None) -> Any: ...
+    def rewrite(
+        self,
+        prompt: str,
+        draft: str,
+        guidance: str,
+        system: str = "",
+        config: Any = None,
+        overrides: Any = None,
+    ) -> Any: ...
     def refuse(self, prompt: str, guidance: str, config: Any = None, language: str | None = None) -> Any: ...
 
 

@@ -31,7 +31,7 @@ moralstack/
   cli/                   # `moralstack` CLI
   utils/                 # env loading, caching, output protection, json helpers
   core/                  # shared types/schema
-scripts/                 # benchmark, standalone bridge, inspector, install
+scripts/                 # benchmark, inspector, install
 examples/                # runnable usage examples
 tests/                   # ~120 test modules + e2e payloads
 docs/                    # architecture, modules, traces, this index
@@ -194,7 +194,17 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 - `proxy.py` — `create_app(openai_client, orchestrator, config, session_store)`
   returns a FastAPI app exposing `POST /v1/chat/completions`, `/chat/completions`,
   `GET /healthz`. `ConversationLockManager` (per-conversation locks),
-  `_handle_chat_completion_sync` (runs in a threadpool).
+  `_handle_chat_completion_sync` (runs in a threadpool). Reads client
+  `max_tokens`/`max_completion_tokens`/`temperature`/`top_p` into
+  `ProcessedRequest.generation_overrides` via
+  `GenerationOverrides.from_mapping(body, passthrough_unset=True)`; the SDK
+  (`sdk/wrapper.py`) does the same from `govern` kwargs but with
+  `passthrough_unset=False`. These influence the delivered answer. On the **proxy**
+  an unset field is **omitted** from the OpenAI call (model default), so the env
+  defaults do not apply there; on the **SDK/CLI** an unset field falls back to the env
+  default (precedence override > `GenerationConfig` > env defaults
+  `OPENAI_MAX_TOKENS`/`OPENAI_TEMPERATURE`/`OPENAI_TOP_P`). REFUSE wording is excluded
+  on every path. See `docs/modules/policy.md`.
 - `conversation_correlation.py` — `ConversationCorrelationStore` (lineage hashing
   → conversation_id) + `canonical_history_hash`, `canonical_parent_history_hash`.
 - `headers.py` — `build_governance_headers` (X-Moralstack-* response headers).
@@ -208,8 +218,6 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 ### CLI / scripts
 - `moralstack/cli/run.py`, `shell.py`, `loader.py`, `report.py`, `visualizer.py`.
 - `scripts/benchmark_moralstack.py` — internal 84-question benchmark.
-- `scripts/openai_compatible_server.py` — **standalone single-turn** OpenAI bridge
-  (distinct from `server/proxy.py`; see §10).
 - `scripts/inspect_multiturn_trace.py` — multi-turn inspector CLI.
 - `scripts/mstack_run.py`, `consolidate_jsonl_meta.py`, `install.py`.
 
@@ -383,24 +391,17 @@ intercepted; everything else passes through via `__getattr__`
 
 ---
 
-## 9. OpenAI-compatible bridge
+## 9. OpenAI-compatible proxy
 
-Two distinct implementations — do not confuse them:
-
-1. **Production proxy** — `moralstack/server/proxy.py:create_app`. Multi-turn
-   aware: resolves conversation_id (header → `extra_body` → lineage correlation),
-   serializes same-conversation requests with per-conversation locks, uses a
-   `SessionStore`, emits full observability, routes REFUSE/SAFE_COMPLETE/NORMAL.
-   Served via `examples/server_quickstart.py` (uvicorn, **single worker**;
-   recommended command targets port 8080; `main()` reads env var
-   `MORALSTACK_OPENAI_COMPATIBLE_API_PORT`, defaulting to 8787). This is the
-   path recommended for COMPL-AI `llm_rules`.
-2. **Standalone bridge** — `scripts/openai_compatible_server.py` (port 8787).
-   Single-turn only: extracts the last user message and calls
-   `orchestrator.process(request)` with **no** conversation_id/turn_index and
-   **no** conversation history. Returns the governed `result.response.content`
-   directly (not a fresh upstream generation). Creates a new `run` per request;
-   bounds concurrency with an asyncio semaphore.
+The supported HTTP OpenAI-compatible path is the **production proxy**:
+`moralstack/server/proxy.py:create_app`. It is multi-turn aware: resolves
+conversation_id (header → `extra_body` → lineage correlation), serializes
+same-conversation requests with per-conversation locks, uses a `SessionStore`,
+emits full observability, and routes REFUSE/SAFE_COMPLETE/NORMAL through governed
+delivery. Serve it via `examples/server_quickstart.py` (uvicorn, **single
+worker**; recommended command targets port 8080; `main()` reads env var
+`MORALSTACK_OPENAI_COMPATIBLE_API_PORT`, defaulting to 8787). This is the path
+recommended for COMPL-AI `llm_rules` and IFBench-style proxy runs.
 
 See `docs/traces/openai_compatible_multiturn.md`.
 
@@ -412,12 +413,10 @@ See `docs/traces/openai_compatible_multiturn.md`.
   yields a single synthetic chunk (`GovernedRefusalStream`); otherwise the
   upstream stream is wrapped by `GovernedStreamResponse` with
   `governance_metadata` attached (`wrapper.py:186-251`).
-- **Production proxy**: **no streaming branch.** `_build_upstream_kwargs` does
-  not strip `stream`, and responses are serialized via `model_dump()`
-  (`proxy.py:750-774`). Streaming through the proxy is therefore unsupported (see
-  fragile areas, §14).
-- **Standalone bridge**: accepts a `stream` field but always returns a complete
-  non-streamed JSON body (`scripts/openai_compatible_server.py:81,347`).
+- **Production proxy**: supported as governed synthetic SSE replay. Governance
+  runs to completion first; `_build_synthetic_sse_response` replays the final
+  governed answer as OpenAI-compatible `chat.completion.chunk` events without
+  forwarding live upstream tokens.
 
 ---
 
@@ -538,19 +537,10 @@ See `docs/traces/complai_llm_rules_flow.md`.
 
 ## 17. Known fragile areas
 
-- **Proxy streaming is unsupported (verified).** `server/proxy.py` has no
-  `stream` branch; `_build_upstream_kwargs` keeps `stream` in the body, the
-  upstream `Stream` object has no `model_dump`/`to_dict`, so
-  `_serialize_upstream_response` returns `{"raw": str(...)}` — a non-OpenAI body
-  with no streaming (`proxy.py:750-774`). No test exercises this. Use the SDK for
-  streaming.
 - **Lineage-based conversation correlation can collide.** Two samples with
   byte-identical histories (and identical assistant outputs) map to the same
   `conversation_id` (`conversation_correlation.py` docstring + `resolve`). This
   is the central COMPL-AI risk — see `docs/traces/complai_llm_rules_flow.md`.
-- **Two bridges, different semantics.** `scripts/openai_compatible_server.py` is
-  single-turn and ignores history; `server/proxy.py` is multi-turn. Choosing the
-  wrong one silently changes multi-turn behavior.
 - **UI requires SQLite.** `file_only` runs never appear in the dashboard; the UI
   reads only the DB.
 - **Cache governance.** Ledger fast-path can reuse a prior decision; the

@@ -22,6 +22,7 @@ from moralstack.core.types import (
     Turn,
     UserContext,
 )
+from moralstack.models.base import GenerationOverrides
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.conversation_context import ConversationContext
@@ -201,6 +202,9 @@ class ProcessedRequest:
     timestamp: float = field(default_factory=time.time)
     developer_contract: DeveloperContract | None = None  # NEW v0.4
     conversation_context: ConversationContext | None = None
+    # Per-request sampling overrides from the client (proxy body / SDK kwargs).
+    # Honored only by delivered-answer generators, never by REFUSE wording.
+    generation_overrides: GenerationOverrides | None = None
 
     def get_domain(self) -> str | None:
         """Ottiene il dominio overlay dall'user context."""
@@ -274,6 +278,10 @@ class ResponseMetadata:
     refusal_domain: str | None = None
     refusal_redirection_source: str | None = None
     safe_refusal_focus: str | None = None
+    # True when the delivered governed content is a reused internal speculative
+    # draft (no second policy `generate` for delivery). Surfaced as the
+    # X-Moralstack-Internal-Draft-Reused proxy header (server/headers.py).
+    internal_draft_reused: bool = False
 
     @classmethod
     def from_decision(

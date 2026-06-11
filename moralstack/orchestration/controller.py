@@ -932,7 +932,10 @@ class OrchestrationController:
             start = time.time()
             try:
                 if messages is not None and hasattr(self.policy, "generate_messages"):
-                    result = self.policy.generate_messages(messages=messages)
+                    result = self.policy.generate_messages(
+                        messages=messages,
+                        overrides=getattr(request, "generation_overrides", None),
+                    )
                 else:
                     result = self.policy.generate(
                         prompt=prompt_text,
@@ -941,6 +944,7 @@ class OrchestrationController:
                             request=request,
                             mode="normal",
                         ),
+                        overrides=getattr(request, "generation_overrides", None),
                     )
             except TypeError:
                 result = self.policy.generate(prompt_text)
@@ -1281,7 +1285,7 @@ class OrchestrationController:
                 system=DCCL_DRAFT_MATCH_SYSTEM_PROMPT,
                 config=config,
                 model_override=get_dccl_llm_model(),
-            )  # type: ignore[call-arg]
+            )
         except TypeError:
             try:
                 result = self.policy.generate(prompt=prompt, system=DCCL_DRAFT_MATCH_SYSTEM_PROMPT)

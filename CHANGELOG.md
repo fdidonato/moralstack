@@ -373,7 +373,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added — Benchmark & infrastructure
 
-- **COMPL-AI benchmark path**: `scripts/openai_compatible_server.py` — OpenAI-compatible FastAPI bridge (`/v1/chat/completions`, `/chat/completions`) routing requests through MoralStack governance (env `MORALSTACK_OPENAI_COMPATIBLE_*`).
+- **COMPL-AI benchmark path**: `examples/server_quickstart.py` serving `moralstack.server.proxy.create_app` — OpenAI-compatible FastAPI proxy (`/v1/chat/completions`, `/chat/completions`) routing requests through MoralStack governance (env `MORALSTACK_OPENAI_COMPATIBLE_*`).
 - **Objective benchmark runner**: `scripts/benchmark_moralstack.py` — grounded-truth evaluation harness (expected actions/risk, parallel execution, markdown reports, optional judge model); aligns MoralStack scoring with `final_action`-only compliance semantics.
 - Constitution overlay `violent_crime.yaml` plus coordinated overlay YAML adjustments across domains.
 - `moralstack/orchestration/refusal_context.py` — refusal contextualization and grounding helpers wired through refusal assembly.

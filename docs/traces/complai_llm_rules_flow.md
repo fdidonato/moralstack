@@ -125,27 +125,31 @@ across logically distinct samples. The P0 hard-signal supremacy invariant still
 holds because `is_hard_signal_refuse` is re-evaluated after a cache patch
 (`controller.py:2209`).
 
-### 4.5 Wrong bridge
-If COMPL-AI is accidentally pointed at `scripts/openai_compatible_server.py`
-(port 8787) instead of the proxy, multi-turn is silently lost: that bridge
-ignores history and governs each message in isolation (`:98-104,201-223`).
+### 4.5 Endpoint selection
+COMPL-AI / IFBench runs should point at the production proxy launched via
+`examples/server_quickstart.py`. Custom single-turn launchers that extract only
+the latest user message are not suitable for `llm_rules` / multi-turn benchmarks
+because they bypass the proxy's `ConversationContext`, conversation_id, lock,
+session-store, and ledger path.
 
 ### 4.6 Streaming
-The proxy does not support streaming (`proxy.py:727-774`, verified). A
-`stream=true` request is forwarded; the resulting `Stream` object has no
-`model_dump`/`to_dict`, so the proxy returns a single `{"raw": str(stream)}` body
-with empty extracted text and no streamed tokens. Ensure benchmark requests are
-non-streaming.
+The proxy supports `stream=true` as governed synthetic SSE replay: governance
+runs to completion first, then the final governed text is emitted as
+OpenAI-compatible `chat.completion.chunk` events. The proxy does not forward live
+upstream tokens. For COMPL-AI / IFBench score extraction, prefer non-streaming
+requests unless the benchmark harness explicitly consumes SSE.
 
 ## 5. Pre-run checklist
 
-1. **Bridge**: confirm COMPL-AI's `base_url` targets the proxy (port 8080 /
-   `examples/server_quickstart.py`), not the standalone bridge (8787).
+1. **Bridge**: confirm COMPL-AI's `base_url` targets the production proxy
+   launched via `examples/server_quickstart.py` (recommended uvicorn port 8080;
+   `main()` default 8787).
 2. **Workers**: launch uvicorn with a single worker.
 3. **Conversation identity**: prefer a unique `X-Moralstack-Conversation-Id` per
    sample to avoid lineage collisions (§4.1). If relying on lineage, confirm
    sample prefixes are actually distinct.
-4. **Streaming**: ensure requests are non-streaming (§4.6).
+4. **Streaming**: prefer non-streaming requests for score extraction unless the
+   harness explicitly consumes SSE (§4.6).
 5. **Observability**: set `MORALSTACK_OBSERVABILITY_MODE=db_only` (or `dual`) and
    `MORALSTACK_OBSERVABILITY_DB_PATH` so the run is reconstructable and visible in
    `moralstack-ui` (file_only is invisible in the UI).
