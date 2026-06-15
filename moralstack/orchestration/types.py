@@ -558,6 +558,10 @@ class OrchestratorConfig:
     cycle1_early_convergence_min_weighted_approval: float = 0.78
     cycle1_early_convergence_max_semantic_harm: float = 0.35
     cycle1_early_convergence_min_per_perspective_approval: float = 0.70
+    # Opt-in: benign, non-operational informational recovery in a sensitive
+    # overlay returns NORMAL_COMPLETE instead of being floored to SAFE_COMPLETE.
+    # Default False preserves the current regulated -> SAFE_COMPLETE behavior.
+    regulated_informational_normal_complete: bool = False
 
 
 # =============================================================================

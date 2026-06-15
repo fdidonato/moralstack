@@ -1818,6 +1818,9 @@ class OrchestrationController:
             stop_reason=outcome.stop_reason if outcome else "",
             overlay_sensitive=overlay_sensitive,
             risk_thresholds=getattr(getattr(self, "config", None), "risk_thresholds", None),
+            regulated_informational_normal_complete=getattr(
+                getattr(self, "config", None), "regulated_informational_normal_complete", False
+            ),
         )
         # Execution path was deliberative; ensure decision.path is DELIBERATIVE_PATH for metadata/trace.
         if state.cycle > 0 and decision1.path != "DELIBERATIVE_PATH":
@@ -2288,6 +2291,9 @@ class OrchestrationController:
                 risk_proto,
                 overlay_sensitive=overlay_sensitive,
                 risk_thresholds=getattr(getattr(self, "config", None), "risk_thresholds", None),
+                regulated_informational_normal_complete=getattr(
+                    getattr(self, "config", None), "regulated_informational_normal_complete", False
+                ),
             )
             decision = apply_safe_complete_gating(
                 decision,

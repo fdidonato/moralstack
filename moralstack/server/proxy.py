@@ -554,7 +554,6 @@ def create_app(
         """
         try:
             body = await request.json()
-            print(body)
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid JSON body")
 

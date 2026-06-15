@@ -24,6 +24,8 @@ moralstack/
   observability/         # telemetry service, sinks (SQLite/JSONL), read store
   persistence/           # DB/file persistence ports used by the controller
   pipeline/              # context builder + deliberation stack assembly
+                         #   output_contract.py: Tier-1 enumerated-output
+                         #   detection (TRUE/FALSE etc.) used by the critic gate
   prompts/               # module prompt templates
   reports/               # markdown/conversation/benchmark export + UI data builders
   server/                # OpenAI-compatible FastAPI governance proxy
@@ -282,6 +284,14 @@ never from text:
   `apply_safe_complete_gating` (`safe_complete_gating.py:73-171`) can downgrade
   gray-zone SAFE_COMPLETE → NORMAL_COMPLETE (not applied to SENSITIVE /
   MORALLY_NUANCED categories).
+  `_handle_informational_recovery` floors benign+regulated informational
+  requests to SAFE_COMPLETE by default; opt-in
+  `OrchestratorConfig.regulated_informational_normal_complete`
+  (`MORALSTACK_ORCHESTRATOR_REGULATED_INFORMATIONAL_NORMAL_COMPLETE`, default
+  false) lets clearly benign, non-operational requests (same benignity guards as
+  the unregulated branch) return NORMAL_COMPLETE instead. Any positive signal
+  keeps SAFE_COMPLETE; non-BENIGN categories and hard-signal REFUSE are
+  unaffected.
 
 Routing consequences (`sdk/wrapper.py`, `server/proxy.py`) — **governed delivery
 only (Plan 1)**. The delivered text is always the governed pipeline result,

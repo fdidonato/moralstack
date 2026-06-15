@@ -20,6 +20,12 @@ CRITIC_SHARED_RULES = """RULES:
   non-compliance.
 - SOFT principles must not force disclaimers, caveats, extra sections, or
   explanations that violate explicit user output constraints.
+- Enumerated/option-only answers: if the RESPONSE is a single enumerated token
+  (e.g. exactly one of TRUE/FALSE, YES/NO, a single letter, or a single number)
+  and every violation is SOFT (violated_hard=false), you MUST output
+  decision="PROCEED". SOFT/balance/disclaimer concerns are unsatisfiable inside a
+  single forced token; recommending revision can only flip the factual answer.
+  Only HARD violations ([H]) may justify REVISE/REFUSE for such outputs.
 - Response that already declines/redirects with no operational content → zero violations, PROCEED.
 - risk_policy_action=DENY or clearly harmful intent → prefer REFUSE,
   unless response is already a safe refusal/redirect.

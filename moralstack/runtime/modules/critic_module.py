@@ -84,6 +84,10 @@ class CriticReport:
     """True when critique returned without invoking the LLM (e.g. no relevant principles)."""
     skip_reason: str = ""
     """Human-readable reason for skipping, used in logs and UI."""
+    enumerated_output_gate_applied: bool = False
+    """True when a SOFT-only REVISE was downgraded to PROCEED because the draft
+    is a single enumerated answer (e.g. TRUE/FALSE). HARD violations are never
+    affected. See ``moralstack.pipeline.output_contract``."""
 
     @classmethod
     def empty(cls) -> CriticReport:
@@ -394,6 +398,23 @@ class LLMConstitutionalCritic:
 
         # Costruisci prompt: usa builder centralizzato (moralstack/prompts/)
         ctx = delib_context or DelibContext(user_prompt=request, draft_text_full=response)
+
+        # Tier-1: deterministically detect a single enumerated-token output
+        # contract (e.g. answer exactly 'TRUE'/'FALSE') from the declared
+        # constraints + the draft. Used below to downgrade SOFT-only REVISE to
+        # PROCEED (never affects HARD violations). Best-effort; never raises.
+        try:
+            from moralstack.pipeline.output_contract import detect_enumerated_output
+
+            _contract_text = getattr(developer_contract, "raw_text", "") or ctx.developer_contract_text or ""
+            _declared = f"{_contract_text}\n{request}"
+            is_enum, enum_opts = detect_enumerated_output(_declared, response)
+            ctx.output_is_enumerated = is_enum
+            ctx.output_enumerated_options = enum_opts
+        except Exception:
+            ctx.output_is_enumerated = False
+            ctx.output_enumerated_options = ()
+
         from moralstack.prompts.critic_prompt import build_critic_prompt
 
         prompt = build_critic_prompt(
@@ -453,6 +474,29 @@ class LLMConstitutionalCritic:
                 severity_score = self._compute_severity_score(violations)
                 has_critical = violated_hard
 
+                # Tier-1 enumerated-output gate: a SOFT-only REVISE on a single
+                # enumerated answer (e.g. TRUE/FALSE) can only flip the selected
+                # option, corrupting the factual answer. There is nothing
+                # actionable to revise, so clear the SOFT critic output
+                # (decision -> PROCEED, no violations/guidance). HARD violations
+                # are never affected (violated_hard guard). The convergence
+                # evaluator votes on ``violations`` presence, so the violations
+                # MUST be cleared here for the gate to take effect; the original
+                # signals are preserved in the emitted diagnostic for audit.
+                enumerated_gate_applied = False
+                if decision == "REVISE" and not violated_hard and getattr(ctx, "output_is_enumerated", False):
+                    self._emit_enumerated_gate(
+                        request_id=request_id,
+                        options=getattr(ctx, "output_enumerated_options", ()),
+                        draft=response,
+                        violations=violations,
+                    )
+                    decision = "PROCEED"
+                    violations = []
+                    guidance = ""
+                    severity_score = 0.0
+                    enumerated_gate_applied = True
+
                 return CriticReport(
                     violations=violations,
                     severity_score=severity_score,
@@ -467,6 +511,7 @@ class LLMConstitutionalCritic:
                     tokens_used=int(getattr(result, "tokens_used", 0) or 0),
                     prompt_tokens=getattr(result, "prompt_tokens", None),
                     completion_tokens=getattr(result, "completion_tokens", None),
+                    enumerated_output_gate_applied=enumerated_gate_applied,
                 )
 
             except (JSONParseError, StructuredValidationError, PydanticValidationError) as e:
@@ -498,6 +543,48 @@ class LLMConstitutionalCritic:
         ):
             raise last_error
         raise RuntimeError(error_msg) from last_error
+
+    def _emit_enumerated_gate(
+        self,
+        *,
+        request_id: str,
+        options: tuple[str, ...],
+        draft: str,
+        violations: list[Violation],
+    ) -> None:
+        """Persist a diagnostic when the enumerated-output gate downgrades a
+        SOFT-only REVISE to PROCEED.
+
+        Best-effort observability only (file ``debug.event.jsonl`` + SQLite
+        ``debug_events`` + UI "Debug Events"); never affects the decision and
+        never raises.
+        """
+        try:
+            from moralstack.orchestration.diagnostics import orch_debug_log
+
+            orch_debug_log(
+                "critic_module.py:enumerated_gate",
+                "enumerated_output_gate_applied",
+                {
+                    "original_decision": "REVISE",
+                    "downgraded_to": "PROCEED",
+                    "enumerated_options": list(options),
+                    "draft": (draft or "")[:64],
+                    "soft_violations": [getattr(v, "principle_id", "") for v in (violations or [])][:8],
+                    "reason": "SOFT-only revision on single enumerated answer suppressed (would flip option)",
+                },
+                hypothesis_id="H-enumerated-output-gate",
+                request_id=request_id or "",
+                component="critic",
+                event_type="governance.enumerated_output_gate",
+            )
+            logger.info(
+                "enumerated_output_gate applied request_id=%s options=%s",
+                request_id or "",
+                ",".join(options),
+            )
+        except Exception:
+            logger.debug("enumerated_output_gate emit failed (non-fatal)", exc_info=True)
 
     def quick_check(
         self,

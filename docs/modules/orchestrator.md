@@ -703,6 +703,18 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
   If any single perspective (user, vulnerable, observer, adversary, compliance) scores below this, cycle 2 is forced.
   This prevents early convergence when one perspective is dissatisfied even if the weighted average is high.
 
+#### MORALSTACK_ORCHESTRATOR_REGULATED_INFORMATIONAL_NORMAL_COMPLETE
+
+- **Default**: `false`
+- **Type**: bool
+- **Description**: Opt-in. When `true`, a clearly benign, non-operational informational request in a sensitive
+  overlay (e.g. `financial`, `legal`, `research`) recovers to `NORMAL_COMPLETE` in `decision_service._handle_informational_recovery`
+  instead of being floored to `SAFE_COMPLETE`. Applies the same benignity guards as the unregulated branch
+  (no ambiguity/dual-use, no `requested_instructions`, no `intent_to_harm`, no operational intent, and pre-policy
+  action ≠ `SAFE_COMPLETE`); any positive signal keeps `SAFE_COMPLETE` (`regulated_but_informational`). Does not
+  affect `SENSITIVE`/`MORALLY_NUANCED`/`POTENTIALLY_HARMFUL`/`CLEARLY_HARMFUL` categories or hard-signal REFUSE.
+  Default `false` preserves the current regulated → `SAFE_COMPLETE` behavior.
+
 #### MORALSTACK_ORCHESTRATOR_SIMULATOR_GATE_SEMANTIC_HARM_THRESHOLD
 
 - **Default**: `0.4`

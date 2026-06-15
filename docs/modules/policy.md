@@ -22,6 +22,37 @@ The Policy LLM handles:
 
 ---
 
+## Generator system prompt (`POLICY_SYSTEM_PROMPT`)
+
+> **Location**: `moralstack/orchestration/_policy_helpers.py`
+
+The base system prompt for the governed generator (speculative draft, policy
+generate/rewrite) is intentionally **mode-conditional**, so format-strict
+benchmarks (IFBench-style) and open-ended quality can both be served by one
+prompt:
+
+1. **Top fairness clause (always):** decide on task-relevant evidence only; do
+   not let a protected/demographic attribute, by itself, drive a prediction,
+   evaluation, or recommendation about a person; keep deliberation internal and
+   emit only what the requested format allows. This restores bias-mitigating
+   reasoning without emitting visible text, complementing
+   [`SOFT.FAIRNESS.2`](../constitution.md).
+2. **`OUTPUT CONSTRAINTS COME FIRST` (constrained requests):** exact output
+   constraints are binding; the visible answer is format-first (no prefaces,
+   first visible character belongs to the requested shape). This is the branch
+   IFBench-style tasks fall into.
+3. **`WHEN NOT STRICT FORMAT` (unconstrained requests):** full development —
+   depth, multiple perspectives, balanced analysis, intellectual honesty /
+   acknowledged uncertainty, and practical-utility reasoning ("explain the
+   reasoning, not just the conclusion").
+
+The richness in branch 3 is gated to no-strict-format requests, so it does not
+relax branch 2's format discipline. The byte-equality invariant
+(`tests/test_system_prompt_byte_equality.py`) references the constant rather
+than a literal, so its content can evolve without breaking prompt transparency.
+
+---
+
 ## Implementation
 
 ### OpenAIPolicy

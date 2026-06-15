@@ -156,6 +156,19 @@ from hard violations or a refuse-vote majority. Stop reasons: `CONVERGED`,
 (`_evaluate_cycle1_early_convergence`) can stop after one cycle when critic is
 clean, perspectives are strongly aligned, and simulated harm is low.
 
+**Enumerated-output gate (Tier-1).** Before the critic's verdict feeds the
+convergence vote, `critique()` checks whether the output is a single enumerated
+answer (e.g. `answer exactly 'TRUE' or 'FALSE'`) via
+`pipeline/output_contract.py:detect_enumerated_output`. When the draft is such a
+token and the only violations are SOFT (`violated_hard == False`), a `REVISE`
+is downgraded to `PROCEED` and the soft `violations`/`guidance` are cleared —
+because the convergence evaluator votes `revise` on the *presence of
+violations* (`convergence_evaluator.py:345-350`), not on `decision`. This stops
+the revision loop from flipping a correct binary answer (observed on
+`boolq_contrast`). HARD violations are never affected. Each activation emits a
+best-effort `governance.enumerated_output_gate` diagnostic to
+`debug.event.jsonl`, the `debug_events` table, and the UI "Debug Events" panel.
+
 ## 10. Final action → model call or refusal
 
 Back in the entry layer:

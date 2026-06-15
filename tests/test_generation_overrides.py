@@ -16,8 +16,6 @@ All offline: the OpenAI client is replaced with a capturing fake.
 
 from __future__ import annotations
 
-import pytest
-
 from moralstack.models.base import GenerationConfig, GenerationOverrides
 from moralstack.models.policy import OpenAIPolicy
 
@@ -185,6 +183,29 @@ class TestOverridesApplied:
         assert call["max_tokens"] == 4096
         assert call["temperature"] == 0.7
         assert call["top_p"] == 0.9
+
+
+# --------------------------------------------------------------------------- #
+# Rewrite guards the enumerated single-token answer against soft-feedback flips
+# --------------------------------------------------------------------------- #
+class TestRewriteEnumeratedInvariance:
+    def test_rewrite_prompt_instructs_unchanged_for_enumerated_draft(self, monkeypatch):
+        """The rewrite prompt tells the model to keep a single enumerated draft
+        unchanged when feedback carries no hard safety requirement.
+
+        Regression lock for boolq_contrast: soft/balance/disclaimer feedback must
+        never flip which option (e.g. TRUE/FALSE) an enumerated answer selects.
+        """
+        policy, completions = _make_policy(monkeypatch, max_tokens_env="4096")
+        policy.rewrite(
+            "Question: Is X true?",
+            "FALSE",
+            "[BALANCE] present both sides; acknowledge variability",
+        )
+        user_msg = next(m["content"] for m in completions.calls[-1]["messages"] if m["role"] == "user")
+        assert "single enumerated answer" in user_msg
+        assert "return the CURRENT DRAFT UNCHANGED" in user_msg
+        assert "no hard safety requirement" in user_msg
 
 
 # --------------------------------------------------------------------------- #

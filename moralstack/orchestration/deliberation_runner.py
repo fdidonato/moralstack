@@ -1077,6 +1077,9 @@ class DeliberationRunner:
             state.hindsight,
             append_pre_policy_trace=False,
             risk_thresholds=getattr(getattr(self, "config", None), "risk_thresholds", None),
+            regulated_informational_normal_complete=getattr(
+                getattr(self, "config", None), "regulated_informational_normal_complete", False
+            ),
         )
         processing_time = int((time.time() - start_time) * 1000)
         if constitution is None and self.constitution_store is not None:
