@@ -76,7 +76,15 @@ surface it to the user rather than working around it.
    rewriting the developer system prompt. (Plan 1: delivered text now always
    comes from the governed pipeline, so there is no wrapped-client call whose
    messages payload must be preserved; the transparency requirement applies to
-   the prompt sent to the governed generator.)
+   the prompt sent to the governed generator.) MoralStack's own generator prompt
+   (`POLICY_SYSTEM_PROMPT` in `orchestration/_policy_helpers.py`) carries
+   MoralStack-authored governance steering — the fairness clause and a
+   non-toxicity clause (paired with constitution `SOFT.STYLE.2`) — which yields
+   to higher safety rules and to explicit output-format constraints. Editing this
+   MoralStack-owned base does not violate the byte-equality contract: the
+   `effective_system_for_request` resolver still adds no extra per-request
+   injection when there is no developer contract (`tests/test_system_prompt_byte_equality.py`
+   compares against the current `POLICY_SYSTEM_PROMPT`, not a frozen literal).
 3. **Hard-signal supremacy (P0).** Hard topical signals (self-harm, child
    safety, weapons, physical harm) must not be overridable by a developer
    contract, a domain overlay, or a cached ledger decision. See

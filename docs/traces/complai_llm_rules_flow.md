@@ -74,6 +74,12 @@ In MoralStack terms:
    `COMPLIANCE_FAST_PATH`) — unless the output falls in a P0 safety category, in
    which case `SAFETY_OVERRIDE` blocks it regardless of the contract
    (`compliance/dccl.py:77-117`, `compliance/safety_override.py`).
+   Generic task contracts are also treated as rules: for example, a contract
+   that says to classify each input as one of a fixed set of labels is invoked
+   when the final user supplies an item to classify. For these tasks, DCCL
+   judges safety from the authorized output category, not from the source text
+   being classified; `SAFETY_OVERRIDE` still applies when the authorized output
+   itself is in a framework-fixed restricted category.
 5. The compliance delivery guard prevents the proxy from returning an internal
    governed draft if that draft was generated from narrower last-user-only
    context while governance used a broader role-serialized transcript. The

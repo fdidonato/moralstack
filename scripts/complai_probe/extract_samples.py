@@ -123,6 +123,10 @@ def _normalize_messages(inp: Any) -> list[dict[str, str]]:
     msgs: list[dict[str, str]] = []
     for m in inp or []:
         role = (m.get("role") if isinstance(m, dict) else getattr(m, "role", "")) or "user"
+        # Normalize role casing: chat roles are conventionally lowercase, and both
+        # _derive_prompt_fields and orchestration.build_conversation_context match
+        # on lowercase ("system"/"user"/"assistant"). Some logs store "USER".
+        role = str(role).strip().lower() or "user"
         content = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
         msgs.append({"role": role, "content": _content_to_text(content)})
     return msgs
@@ -131,8 +135,18 @@ def _normalize_messages(inp: Any) -> list[dict[str, str]]:
 def _messages_for_sample(task: str, sample: dict[str, Any]) -> list[dict[str, str]]:
     """Resolve the conversation for a sample, handling tasks that store it off-input."""
     md = sample.get("metadata") or {}
-    # llm_rules family: the input field is empty; the real turns live in test_case.messages.
+    # llm_rules family: the input field is empty and test_case.messages omits the
+    # rule. In the real task the solver prepends a SYSTEM prompt = scenario.prompt
+    # (the rule the assistant must obey) before the user/assistant turns, so the
+    # request the model/proxy sees is [system rule, ...turns]. The solved transcript
+    # (sample["messages"]) preserves that system rule plus the full turn sequence
+    # (including any prefilled/intermediate assistant turns). Use it so the probe
+    # carries the developer contract + conversation history the real task sends;
+    # fall back to test_case.messages only if the transcript lacks a system rule.
     if task.startswith("llm_rules"):
+        transcript = _normalize_messages(sample.get("messages") or [])
+        if any(m["role"] == "system" and m["content"].strip() for m in transcript):
+            return transcript
         tc = md.get("test_case") or {}
         msgs = _normalize_messages(tc.get("messages") or [])
         if msgs:

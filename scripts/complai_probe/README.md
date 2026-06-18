@@ -32,6 +32,13 @@ pre-registered bucket and the gpt-4o outcome.
 `gold_note="downstream"` marks bucket-1 tasks whose real value is the paired baseline
 (DCCL/critic), not the estimator's binary bit — there, watch the **routing**, not the verdict.
 
+> **llm_rules family.** In the real COMPL-AI task the rule the assistant must obey is
+> delivered as a **system prompt** (`scenario.prompt`) prepended to the conversation, and
+> the question is multi-turn. `extract_samples.py` reconstructs this from the solved eval
+> transcript, so each `llm_rules*` row carries that rule in `system_prompt` (fed as the
+> developer contract) and the prior turns in `conversation_history` — the probe scores the
+> final user turn **with** the rule + history, as the deployed proxy would.
+
 ## Run
 
 Regenerate the samples from your logs (optional — `samples.jsonl` is committed):
