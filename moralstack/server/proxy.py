@@ -460,6 +460,7 @@ def _handle_chat_completion_sync(
             governance_headers=governance_headers_for_audit,
             state_in=state_in_for_audit,
             state_out=state_out_for_audit,
+            final_action=final_action_for_event,
         )
 
     if out_response is None:
@@ -707,6 +708,7 @@ def _finalize_request(
     governance_headers: dict[str, str] | None = None,
     state_in: Any | None = None,
     state_out: Any | None = None,
+    final_action: str | None = None,
 ) -> None:
     """
     Finalize an HTTP request: update the requests row with final_response and
@@ -743,6 +745,7 @@ def _finalize_request(
             conversation_id=conversation_id,
             turn_index=turn_index,
             domain=domain,
+            final_action_override=final_action,
         )
 
         # Step 13 — emit canonical proxy.request_finalized envelope.

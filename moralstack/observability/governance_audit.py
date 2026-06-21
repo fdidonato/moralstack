@@ -139,6 +139,7 @@ def finalize_governance_audit(
     conversation_id: str | None = None,
     turn_index: int | None = None,
     domain: str | None = None,
+    final_action_override: str | None = None,
     update_response: bool = True,
     update_domain: bool = True,
 ) -> dict[str, Any]:
@@ -191,6 +192,12 @@ def finalize_governance_audit(
             logger.debug("finalize_governance_audit: update_request_domain failed: %s", exc)
 
     meta = build_request_meta_from_result(result) if result is not None else {}
+    if final_action_override:
+        # Delivery may fail closed after orchestration (for example when a
+        # NORMAL_COMPLETE result contains only whitespace). Persist the action
+        # actually delivered, while the transport-specific event retains the
+        # original action separately for audit.
+        meta["final_action"] = final_action_override
     if meta:
         try:
             emit_request_meta_updated(

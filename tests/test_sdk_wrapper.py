@@ -315,6 +315,35 @@ class TestGovernedCompletionsRouting:
         assert resp.governance_metadata.final_action == "SAFE_COMPLETE"
         assert resp.content == "Use caution."
 
+    def test_safe_complete_with_benign_format_contract_delivers_governed_text(self):
+        mock_openai, client = _make_governed_client("SAFE_COMPLETE")
+        mock_openai.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content="not-json regression"))]
+        )
+        client._orchestrator.process.return_value.response.content = '{"status":"ok"}'
+
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Return a JSON object with a status field."},
+                {"role": "user", "content": "Report the current status."},
+            ],
+        )
+
+        mock_openai.chat.completions.create.assert_not_called()
+        assert resp.governance_metadata.final_action == "SAFE_COMPLETE"
+        assert resp.content == '{"status":"ok"}'
+
+    def test_blank_governed_content_is_exposed_as_refuse(self):
+        mock_openai, client = _make_governed_client("NORMAL_COMPLETE")
+        client._orchestrator.process.return_value.response.content = "   "
+
+        resp = client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
+
+        mock_openai.chat.completions.create.assert_not_called()
+        assert resp.content == "I cannot provide that content."
+        assert resp.governance_metadata.final_action == "REFUSE"
+
     def test_session_turn_index_increments(self):
         _, client = _make_governed_client("NORMAL_COMPLETE")
         client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
@@ -374,6 +403,22 @@ class TestGovernedCompletionsRouting:
         assert isinstance(resp, GovernedResponse)
         assert resp.governance_metadata.final_action == "NORMAL_COMPLETE"
         assert resp.content == "Governed answer."
+
+    def test_normal_complete_with_benign_format_contract_is_not_refused(self):
+        mock_openai, client = _make_governed_client("NORMAL_COMPLETE")
+        client._orchestrator.process.return_value.response.content = "STATUS: ready"
+
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Begin every response with STATUS:."},
+                {"role": "user", "content": "Are we ready?"},
+            ],
+        )
+
+        mock_openai.chat.completions.create.assert_not_called()
+        assert resp.governance_metadata.final_action == "NORMAL_COMPLETE"
+        assert resp.content == "STATUS: ready"
 
     def test_streaming_replays_governed_text_never_live_streams(self):
         # Plan 1: streaming replays the governed pipeline text as a synthetic

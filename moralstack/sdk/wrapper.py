@@ -388,6 +388,7 @@ class GovernedCompletions:
             turn_index=turn_idx,
             domain=domain,
             state_in=state_in_snapshot,
+            final_action=delivery.final_action,
         )
 
         if final_action == "REFUSE":
@@ -440,6 +441,7 @@ class GovernedCompletions:
         turn_index: int | None,
         domain: str | None,
         state_in: Any | None = None,
+        final_action: str | None = None,
     ) -> None:
         """
         Populate Step 13 governance audit fields on the ``requests`` row AND
@@ -486,6 +488,7 @@ class GovernedCompletions:
                 conversation_id=conversation_id,
                 turn_index=turn_index,
                 domain=domain,
+                final_action_override=final_action,
             )
 
             # 2) Emit the canonical proxy.request_finalized envelope. Mirrors

@@ -7,7 +7,7 @@ GovernedResponse: governed output combining OpenAI response + governance metadat
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -310,9 +310,12 @@ class GovernedResponse:
         (NORMAL_COMPLETE, SAFE_COMPLETE, governed refusal, or a blank-content
         fail-closed refusal). The delivered text is ``delivery.text``.
         """
+        metadata = GovernanceMetadata.from_result(result)
+        if metadata.final_action != delivery.final_action:
+            metadata = replace(metadata, final_action=delivery.final_action)
         return cls(
             openai_response=None,
-            governance_metadata=GovernanceMetadata.from_result(result),
+            governance_metadata=metadata,
             governance_content=delivery.text,
             requested_model=requested_model,
             generation_model=generation_model,

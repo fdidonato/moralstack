@@ -165,6 +165,37 @@ class TestRouting:
         assert response.json()["choices"][0]["message"]["content"] == "guidance"
         mock_openai.chat.completions.create.assert_not_called()
 
+    def test_safe_complete_with_benign_format_contract_never_regenerates_upstream(self):
+        from moralstack.sdk.config import GovernanceConfig
+        from moralstack.server.proxy import create_app
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.process = MagicMock(
+            return_value=_make_result("SAFE_COMPLETE", content='{"status":"ok"}')
+        )
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create = MagicMock(
+            return_value=_make_upstream_chat_completion("not-json regression")
+        )
+        app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+        client = TestClient(app)
+
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": "Return a JSON object with a status field."},
+                    {"role": "user", "content": "Report the current status."},
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["choices"][0]["message"]["content"] == '{"status":"ok"}'
+        assert response.json()["choices"][0]["finish_reason"] == "stop"
+        mock_openai.chat.completions.create.assert_not_called()
+
     def test_normal_complete_delivers_governed_text_without_upstream(self, client_factory):
         # Plan 1: NORMAL_COMPLETE delivers the governed pipeline text directly.
         client, mock_openai, _ = client_factory("NORMAL_COMPLETE")
@@ -175,6 +206,37 @@ class TestRouting:
         )
         assert response.status_code == 200
         assert response.json()["choices"][0]["message"]["content"] == "guidance"
+        mock_openai.chat.completions.create.assert_not_called()
+
+    def test_normal_complete_with_benign_format_contract_is_not_refused(self):
+        from moralstack.sdk.config import GovernanceConfig
+        from moralstack.server.proxy import create_app
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.process = MagicMock(
+            return_value=_make_result("NORMAL_COMPLETE", content="STATUS: ready")
+        )
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create = MagicMock(
+            return_value=_make_upstream_chat_completion("upstream replacement")
+        )
+        app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+        client = TestClient(app)
+
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": "Begin every response with STATUS:."},
+                    {"role": "user", "content": "Are we ready?"},
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["choices"][0]["message"]["content"] == "STATUS: ready"
+        assert response.json()["choices"][0]["finish_reason"] == "stop"
         mock_openai.chat.completions.create.assert_not_called()
 
     def test_compliance_fast_path_reuses_governed_draft_without_upstream(self, client_factory):
