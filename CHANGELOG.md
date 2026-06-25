@@ -4,12 +4,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.6.0 — 2026-06-25
 
-### Added (Adversarial AI planning mode)
+### Added — Developer Contract Compliance Layer (DCCL)
 
-- **Adversarial AI planning mode** (`.adversarial`) contains script to run an adversaral plan based
-  on implementation task (claude planner, codex planner, claude reviewer, codex reviewer)
+- **DCCL subsystem** (`moralstack/compliance/`: `dccl.py`, `types.py`, `config.py`,
+  `safety_override.py`): new architectural component that evaluates whether a user
+  request invokes a behavior explicitly authorized by the deployer's developer
+  contract. It runs after the policy speculative and before the risk estimator,
+  coordinating the pipeline via a cooperative early-return mechanism. Public API:
+  `DeveloperContractComplianceLayer`, `ComplianceVerdict`, `ComplianceDecision`,
+  `ComplianceSignal`, `StructuredRule`, `MatchedRule`, `EvaluationPath`,
+  `TriggerType`, `ActionType`.
+- **Evaluation paths**: structured rule matching, LLM-based contract compliance
+  evaluation, and a hard-signal **safety override** (`safety_override.py`) that
+  keeps DCCL subordinate to hard-signal supremacy — an authorized contract can
+  never unlock self-harm / child-safety / weapons / physical-harm content.
+- **Compliance fast-path** (`controller.py`): on a DCCL `MATCH`, the request takes
+  a compliance fast-path; the speculative draft is validated against the matched
+  authorized action (`validate_draft_against_action`,
+  `DCCL_DRAFT_MATCH_SYSTEM_PROMPT`) rather than regenerated, and a
+  `PROXY_OUTPUT_FINALIZED` event is persisted for the match.
+- **DCCL LLM evaluation transcript** (`moralstack/compliance/dccl.py`): contract
+  compliance prompts include a role-ordered conversation transcript when prior
+  turns exist, not only the final user message — fixes history-dependent rules
+  (e.g. authorization phrases in earlier user turns previously reported as
+  `NO_MATCH`).
+- **COMPL-AI llm_rules benign cases** wired through the compliance path.
 
 ### Added (Multi-turn context alignment)
 
@@ -281,6 +302,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - One new integration test in `tests/test_conversation_observability_persistence.py`
   (`test_sdk_emits_proxy_request_finalized_into_readstore`): round-trip via
   `SqliteReadStore.get_proxy_request_events_for_conversation`.
+
+### Changed — Deliberation context separation
+
+- **Developer contract / conversation history as a separate layer** in every
+  deliberative module (Critic, Simulator, Perspectives, diagnostic verdict): prior
+  turns and the developer contract are managed in a dedicated context layer and
+  are **not injected into module prompts**, so each module reasons over the
+  contract/history without polluting its own instruction prompt. Includes coherent
+  ambiguity-flag handling and critic awareness of the developer contract.
+
+### Changed — Governed delivery (validated draft reuse)
+
+- **Speculative draft is reused, not regenerated upstream**: every deliberation
+  path now returns a single *validated* draft and serves it to the user instead of
+  triggering a fresh upstream generation. A final-response validation step runs
+  before delivery. Reinforces the governed-delivery invariant (Plan 1): the wrapped
+  upstream client never produces the delivered answer.
+
+### Changed — Proxy as a pure upstream client
+
+- **Proxy no longer uses its own model** (`moralstack/server`): model usage was
+  removed from the server proxy so MoralStack's configuration is the single source
+  of governance truth; the proxy behaves as a pure OpenAI-compatible client.
+- **Explicit generation overrides** (`top_p`, `max_tokens`, `temperature`) are now
+  applied for proxy-as-GPT-client requests; the policy system prompt was
+  reformatted. Covered by `tests/test_generation_overrides.py`.
+- **`chat/completions` alternate context** and host/port loaded from environment
+  variables.
+
+### Added — Constitution principles & overlays
+
+- **Child-safety and gender-equality principles** (`children.yaml`, `core.yaml`,
+  related overlays): new principles strengthening child safety and gender
+  equality, with the indiscriminate Q17 hard signal reduced on concrete requests
+  so legitimate operational queries are no longer over-flagged.
+- **`environment` domain overlay** (`moralstack/constitution/data/overlays/environment.yaml`):
+  new domain overlay (joining the v0.4 `violent_crime.yaml`).
+
+### Changed — Decision policy
+
+- **`final_action` field propagation** through the governance pipeline.
+- **SAFE_COMPLETE escalation refined**: escalation on sensitive domains now happens
+  only under specific conditions (non-actionable request with no risk yields
+  `NORMAL_COMPLETE`), not solely because a domain is flagged sensitive.
+
+### Fixed — Observability, correlation & benchmarks
+
+- **Conversation correlation** and assorted observability issues across the
+  step 13 work: `llm_calls` persistence and observability rewritten, ledger events
+  that were never raised now emitted, mini-estimator save timing reduced to cut
+  per-request latency, and duplicate constitution retrieval (by design) no longer
+  shown on the same temporal row in the UI.
+- **COMPL-AI benchmark suite** fixes.
+- **Manual-dispatch publish job** fixed in CI.
 
 ## 0.5.0 — 2026-05-13
 
