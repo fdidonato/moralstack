@@ -11,7 +11,7 @@ class TestVersionIsDynamic:
     def test_pyproject_version_matches_package(self):
         """The package __version__ must match the pyproject declared version."""
         # The current rollout target is v0.4.0.
-        assert moralstack.__version__ == "0.5.0"
+        assert moralstack.__version__ == "0.6.0"
 
     def test_report_uses_current_version(self):
         """The report.py module references moralstack.__version__ dynamically (not hardcoded)."""
