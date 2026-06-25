@@ -175,9 +175,7 @@ class TestLLMPath:
         monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "llm")
         policy = _MockPolicy()
         layer = DeveloperContractComplianceLayer(policy=policy)
-        contract = DeveloperContract.from_text(
-            "You are a sentiment classifier. Respond only Positive or Negative."
-        )
+        contract = DeveloperContract.from_text("You are a sentiment classifier. Respond only Positive or Negative.")
         req = _FakeRequest(prompt="A quiet but moving film.", developer_contract=contract)
         verdict = layer.evaluate(req, speculative_draft="Positive")
 
@@ -224,9 +222,7 @@ class TestLLMPath:
             "draft_match_confidence": 0.94
         }""")
         layer = DeveloperContractComplianceLayer(policy=policy)
-        contract = DeveloperContract.from_text(
-            "You are a sentiment classifier. Respond only Positive or Negative."
-        )
+        contract = DeveloperContract.from_text("You are a sentiment classifier. Respond only Positive or Negative.")
         req = _FakeRequest(prompt="A quiet but moving film.", developer_contract=contract)
         verdict = layer.evaluate(req, speculative_draft="Positive")
 

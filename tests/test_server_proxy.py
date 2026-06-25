@@ -170,13 +170,9 @@ class TestRouting:
         from moralstack.server.proxy import create_app
 
         mock_orchestrator = MagicMock()
-        mock_orchestrator.process = MagicMock(
-            return_value=_make_result("SAFE_COMPLETE", content='{"status":"ok"}')
-        )
+        mock_orchestrator.process = MagicMock(return_value=_make_result("SAFE_COMPLETE", content='{"status":"ok"}'))
         mock_openai = MagicMock()
-        mock_openai.chat.completions.create = MagicMock(
-            return_value=_make_upstream_chat_completion("not-json regression")
-        )
+        mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion("not-json regression"))
         app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
         client = TestClient(app)
 
@@ -213,13 +209,9 @@ class TestRouting:
         from moralstack.server.proxy import create_app
 
         mock_orchestrator = MagicMock()
-        mock_orchestrator.process = MagicMock(
-            return_value=_make_result("NORMAL_COMPLETE", content="STATUS: ready")
-        )
+        mock_orchestrator.process = MagicMock(return_value=_make_result("NORMAL_COMPLETE", content="STATUS: ready"))
         mock_openai = MagicMock()
-        mock_openai.chat.completions.create = MagicMock(
-            return_value=_make_upstream_chat_completion("upstream replacement")
-        )
+        mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion("upstream replacement"))
         app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
         client = TestClient(app)
 

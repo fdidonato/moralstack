@@ -48,10 +48,7 @@ def _load_estimator_and_orchestrator(want_full: bool):
         from moralstack.sdk.config import GovernanceConfig
         from moralstack.utils.env_loader import load_env
     except Exception as e:  # pragma: no cover
-        sys.exit(
-            "Import failed. Run from the MoralStack repo root with deps installed "
-            f"(pip install -e .). Detail: {e}"
-        )
+        sys.exit("Import failed. Run from the MoralStack repo root with deps installed " f"(pip install -e .). Detail: {e}")
 
     load_env()
     config = GovernanceConfig()

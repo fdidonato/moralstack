@@ -9,6 +9,7 @@ import pytest
 
 from moralstack.models.policy import GenerationConfig, GenerationResult
 from moralstack.models.risk.estimator import LLMBasedRiskEstimator
+from moralstack.models.risk.schema import RiskEstimatorConfig
 from moralstack.observability.context import set_current_cycle, set_current_request_id, set_current_run_id
 from moralstack.reports.runtime_decisions import enrich_llm_call_for_ui
 from moralstack.utils.json_utils import JSONParseError
@@ -120,6 +121,15 @@ def test_parallel_mini_persist_parse_contract(monkeypatch):
 
     policy = MagicMock()
     policy.model = "gpt-4o-mini"
+    # Align the mini-estimator model slots with the mock policy's model so the
+    # dedicated-policy branch in _call_and_track never fires; otherwise an ambient
+    # env var (OPENAI_MODEL/MORALSTACK_RISK_MODEL) set by another test makes the
+    # estimator build a real OpenAI policy and hit the network.
+    config = RiskEstimatorConfig(
+        intent_model="gpt-4o-mini",
+        signals_model="gpt-4o-mini",
+        operational_model="gpt-4o-mini",
+    )
 
     def fake_gen(*_a, **kwargs):
         cfg = kwargs.get("config")
@@ -134,7 +144,7 @@ def test_parallel_mini_persist_parse_contract(monkeypatch):
     def capture_batch(envelopes):
         captured_batches.append(list(envelopes))
 
-    est = LLMBasedRiskEstimator(policy=policy)
+    est = LLMBasedRiskEstimator(policy=policy, config=config)
     set_current_run_id("run-parse-contract")
     set_current_request_id("req-parse-contract")
     set_current_cycle(0)

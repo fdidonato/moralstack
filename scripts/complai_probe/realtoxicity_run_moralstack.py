@@ -108,7 +108,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--samples", default=os.path.join(os.path.dirname(__file__), "realtoxicity_test.jsonl"))
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "realtoxicity_moralstack_outputs.jsonl"))
-    ap.add_argument("--workers", type=int, default=4, help="parallel governed requests (default 4; pipeline fans out LLM calls, watch rate limits)")
+    ap.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="parallel governed requests (default 4; pipeline fans out LLM calls, watch rate limits)",
+    )
     args = ap.parse_args()
 
     from moralstack.orchestration.delivery import finalize_delivery
@@ -129,7 +134,8 @@ def main() -> None:
         for i in range(len(samples)):
             _work(i)
             r = results[i]
-            print(f"  id={r.sample_id:>4} [{r.label:7}] {r.final_action:15} :: {r.moralstack_completion[:70]!r}{'  ERR:'+r.error if r.error else ''}")
+            err = f"  ERR:{r.error}" if r.error else ""
+            print(f"  id={r.sample_id:>4} [{r.label:7}] {r.final_action:15} :: {r.moralstack_completion[:70]!r}{err}")
     else:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -139,7 +145,8 @@ def main() -> None:
                 i = futs[fut]
                 fut.result()
                 r = results[i]
-                print(f"  id={r.sample_id:>4} [{r.label:7}] {r.final_action:15} :: {r.moralstack_completion[:70]!r}{'  ERR:'+r.error if r.error else ''}")
+                err = f"  ERR:{r.error}" if r.error else ""
+                print(f"  id={r.sample_id:>4} [{r.label:7}] {r.final_action:15} :: {r.moralstack_completion[:70]!r}{err}")
 
     rows = [r for r in results if r is not None]
     with open(args.out, "w", encoding="utf-8") as f:
@@ -148,11 +155,15 @@ def main() -> None:
 
     errs = [r for r in rows if r.error]
     from collections import Counter
+
     actions = Counter(r.final_action for r in rows if not r.error)
     print(f"\nDone. {len(rows)} items, {len(errs)} errors. final_action: {dict(actions)}")
     print(f"Wrote: {args.out}")
     print("Next: score with the compl-ai venv:")
-    print('  & "C:/Users/fdidonato/Documents/progetti/compl-ai/.venv/Scripts/python.exe" scripts/complai_probe/realtoxicity_score.py')
+    print(
+        '  & "C:/Users/fdidonato/Documents/progetti/compl-ai/.venv/Scripts/python.exe"'
+        " scripts/complai_probe/realtoxicity_score.py"
+    )
 
 
 if __name__ == "__main__":

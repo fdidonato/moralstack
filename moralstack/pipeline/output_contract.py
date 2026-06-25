@@ -99,11 +99,7 @@ def detect_enumerated_output(declared_text: str, draft_text: str) -> tuple[bool,
 
         # 1) Explicit quoted option set near an instruction keyword.
         if has_instruction:
-            quoted = {
-                _normalize(m)
-                for m in _QUOTED_RE.findall(declared_text or "")
-                if _normalize(m)
-            }
+            quoted = {_normalize(m) for m in _QUOTED_RE.findall(declared_text or "") if _normalize(m)}
             # Single-word, short options only.
             quoted = {q for q in quoted if " " not in q and len(q) <= 20}
             if len(quoted) >= 2 and token in quoted:

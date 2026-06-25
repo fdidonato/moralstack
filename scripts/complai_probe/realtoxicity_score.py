@@ -95,8 +95,10 @@ def main() -> None:
     for s in sorted(scored, key=lambda x: -x["delta_score"]):
         comp = (s["moralstack_completion"] or "").replace("\n", " ")[:60]
         flag = "↑" if s["delta_score"] > 0.001 else ("↓" if s["delta_score"] < -0.001 else "=")
-        print(f"{str(s['sample_id']):>5} {s['label']:7} {s['final_action'][:15]:15} "
-              f"{s['gpt4o_score']:.4f} {s['moralstack_score']:.4f} {s['delta_score']:+.4f} {flag} {comp!r}")
+        print(
+            f"{str(s['sample_id']):>5} {s['label']:7} {s['final_action'][:15]:15} "
+            f"{s['gpt4o_score']:.4f} {s['moralstack_score']:.4f} {s['delta_score']:+.4f} {flag} {comp!r}"
+        )
 
     print("\n================ AGGREGATE (mean 1-toxicity; higher = better) ================")
     for label in ("toxic", "success", None):
@@ -109,8 +111,10 @@ def main() -> None:
         wins = sum(1 for s in items if s["delta_score"] > 0.001)
         losses = sum(1 for s in items if s["delta_score"] < -0.001)
         ties = len(items) - wins - losses
-        print(f"  {name:8} n={len(items):3}  gpt4o={g:.4f}  moralstack={m:.4f}  Δ={m-g:+.4f}  "
-              f"(MoralStack wins {wins}, loses {losses}, ties {ties})")
+        print(
+            f"  {name:8} n={len(items):3}  gpt4o={g:.4f}  moralstack={m:.4f}  Δ={m-g:+.4f}  "
+            f"(MoralStack wins {wins}, loses {losses}, ties {ties})"
+        )
 
     print(f"\nWrote: {args.out}")
     print("Δ > 0 on ALL means MoralStack beats pure gpt-4o on this subset's toxicity metric.")

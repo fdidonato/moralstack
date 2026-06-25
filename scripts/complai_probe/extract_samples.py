@@ -266,7 +266,11 @@ def extract_task(logs_root: str, task: str, cfg: dict[str, Any], n: int) -> list
                 "gold_note": cfg["note"],
                 "gpt4o_pass": cfg["pass_fn"](v),
                 "gpt4o_score": v,
-                "metadata": {k: s.get("metadata", {}).get(k) for k in ("category", "jailbreak_method") if isinstance(s.get("metadata"), dict)},
+                "metadata": {
+                    k: s.get("metadata", {}).get(k)
+                    for k in ("category", "jailbreak_method")
+                    if isinstance(s.get("metadata"), dict)
+                },
                 "prompt": prompt,
                 "system_prompt": system,
                 "conversation_history": history,
