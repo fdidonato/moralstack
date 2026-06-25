@@ -1,7 +1,0 @@
-# No mandatory third-party Python packages are required.
-# The kit uses only Python standard library modules.
-# External command-line tools expected at runtime:
-# - git
-# - rg / ripgrep, recommended for stronger code search
-# - claude CLI, for Claude planning/review/synthesis
-# - codex CLI, for Codex planning/review/final gate
