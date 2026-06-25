@@ -238,6 +238,11 @@ context (`run_id` / `request_id`) is active, cache hit / miss / invalidation are
 retrieval exposes `prefilter_cache_status` and related fields via `ConstitutionStore.get_debug_info()` and the
 `REQUEST_ANALYSIS_CONTEXT` decision trace payload.
 
+**Domain-agent cache:** `EnhancedDomainAgent` and legacy `DomainAgent` cache on the exact OpenAI-relevant request
+material: rendered system/user messages plus model, temperature, `json_object`, and completion-token parameter.
+The rendered compact principle text includes id, level, and truncated rule. It intentionally does not include
+principle titles, so title-only changes do not invalidate the agent cache.
+
 **Structured LLM output:** Domain prefilter and domain agents use OpenAI Chat Completions with
 `response_format={"type":"json_object"}` where the model must return a JSON object; legacy `DomainAgent`
 uses an object wrapper `{"principle_ids": [...]}` (root arrays are not valid for `json_object` mode).

@@ -585,6 +585,12 @@ def insert_llm_calls_batch(conn: sqlite3.Connection, rows: list[tuple[Any, ...]]
     conn.executemany(_LLM_CALLS_INSERT, rows)
 
 
+def _text_or_json(value: Any) -> str | None:
+    if value is None or isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
 def insert_decision_traces_batch(conn: sqlite3.Connection, rows: list[tuple[Any, ...]]) -> None:
     if not rows:
         return
@@ -1481,9 +1487,9 @@ class SqliteEventSink:
             p.get("prompt", ""),
             p.get("system_prompt", ""),
             p.get("raw_response", ""),
-            p.get("parsed_json"),
-            p.get("parsed_summary_json"),
-            p.get("token_usage_json"),
+            _text_or_json(p.get("parsed_json")),
+            _text_or_json(p.get("parsed_summary_json")),
+            _text_or_json(p.get("token_usage_json")),
             p.get("attempts"),
             p.get("error"),
             p.get("sequence_in_cycle"),
@@ -1653,9 +1659,9 @@ class SqliteEventSink:
                     p.get("prompt", ""),
                     p.get("system_prompt", ""),
                     p.get("raw_response", ""),
-                    p.get("parsed_json"),
-                    p.get("parsed_summary_json"),
-                    p.get("token_usage_json"),
+                    _text_or_json(p.get("parsed_json")),
+                    _text_or_json(p.get("parsed_summary_json")),
+                    _text_or_json(p.get("token_usage_json")),
                     p.get("attempts"),
                     p.get("error"),
                     p.get("sequence_in_cycle"),

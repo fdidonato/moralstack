@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 # Reason codes for diagnostics (recovery rule only; policy reason_codes from safe_complete_policy).
 REASON_REGULATED_BUT_INFORMATIONAL = "regulated_but_informational"
+NON_PROMOTABLE_HARD_VIOLATIONS = frozenset({"CORE.DEVCONTRACT.1"})
 
 # Soft principles promotable to hard only with severity >= 0.85.
 # Initially empty: no soft principle is auto-promoted.
@@ -509,6 +510,7 @@ def _handle_hard_violations(
     hard_violations = inputs.hard_violations
     if not hard_violations:
         return None
+    has_contract_hard = any(p in NON_PROMOTABLE_HARD_VIOLATIONS for p in hard_violations)
 
     # Crisis help-seeking: MH.CRISIS.1 + request_type crisis_support
     crisis_help_seeking = (
@@ -537,7 +539,13 @@ def _handle_hard_violations(
 
     # Deroga: info-regolata (risk basso, non operativo, dominio regolato)
     op_risk = getattr(risk_assessment, "operational_risk", OperationalRisk.NONE)
-    if risk_score < 0.5 and op_risk == OperationalRisk.NONE and not intent_operational and domain_regulated:
+    if (
+        risk_score < 0.5
+        and op_risk == OperationalRisk.NONE
+        and not intent_operational
+        and domain_regulated
+        and not has_contract_hard
+    ):
         d = _make_decision(
             inputs,
             final_action="SAFE_COMPLETE",
@@ -558,7 +566,13 @@ def _handle_hard_violations(
         return d, expl
 
     # SAFE_COMPLETE must not be overridden for non-operational, medium/low-risk cases
-    if pre_final_action == "SAFE_COMPLETE" and risk_score < 0.5 and not intent_operational and not requested_instructions:
+    if (
+        pre_final_action == "SAFE_COMPLETE"
+        and risk_score < 0.5
+        and not intent_operational
+        and not requested_instructions
+        and not has_contract_hard
+    ):
         d = _make_decision(
             inputs,
             final_action="SAFE_COMPLETE",
@@ -708,6 +722,7 @@ def _handle_informational_recovery(
     policy_ctx: PolicyContext,
     pre_final_action: str,
     has_overlay_soft_violations: bool = False,
+    regulated_informational_normal_complete: bool = False,
 ) -> tuple[Decision, DecisionExplanation] | None:
     """
     Recovery: informational (not operational, low score).
@@ -743,6 +758,26 @@ def _handle_informational_recovery(
     # BENIGN only from here on.
 
     if domain_regulated:
+        # Opt-in (default off): a clearly benign, non-operational informational
+        # request in a sensitive overlay recovers to NORMAL_COMPLETE instead of
+        # being floored to SAFE_COMPLETE. Same benignity guards as the
+        # unregulated branch below; any positive signal keeps SAFE_COMPLETE.
+        if regulated_informational_normal_complete and (
+            not has_ambiguity
+            and not requested_instructions
+            and not intent_to_harm
+            and not trace_intent_operational
+            and pre_final_action != "SAFE_COMPLETE"
+        ):
+            d = _make_decision(
+                inputs,
+                final_action="NORMAL_COMPLETE",
+                path="FAST_PATH",
+                reason_codes=[],
+            )
+            expl = _log_final_trace(trace, d, winning_rule="informational_recovery")
+            return d, expl
+
         # Benign + regulated: informational recovery must stay SAFE_COMPLETE.
         # NOTE: soft violations from the overlay critic (e.g. FIN.TAX.1, MED.DISCLAIMER.1)
         # are an additional signal that the domain's principles are relevant —
@@ -803,6 +838,7 @@ def decide_action(
     stop_reason: str = "",
     overlay_sensitive: bool = False,
     risk_thresholds: RiskThresholds | None = None,
+    regulated_informational_normal_complete: bool = False,
 ) -> tuple[Decision, DecisionExplanation]:
     """
     Single policy-driven decision function (language-agnostic).
@@ -910,6 +946,7 @@ def decide_action(
         policy_ctx,
         pre_final_action,
         has_overlay_soft_violations=_overlay_soft_violations,
+        regulated_informational_normal_complete=regulated_informational_normal_complete,
     )
     if out is not None:
         d, expl = out

@@ -8,11 +8,15 @@ from unittest.mock import patch
 
 import pytest
 
+from moralstack.constitution.openai_config import OpenAIClientConfig
 from moralstack.constitution.retriever import (
+    DomainAgent,
     DomainPrefilter,
+    EnhancedDomainAgent,
     _fingerprint_domain_keywords,
     _normalize_domain_keywords,
 )
+from moralstack.constitution.schema import Principle
 from moralstack.orchestration.orchestration_event_taxonomy import (
     DOMAIN_PREFILTER_CACHE_HIT,
     DOMAIN_PREFILTER_CACHE_INVALIDATED,
@@ -26,6 +30,16 @@ from moralstack.reports.runtime_decisions import (
 )
 
 _CONFIG_CORE = Path(__file__).resolve().parent.parent / "moralstack" / "constitution" / "data" / "core.yaml"
+
+
+def _principle(*, title: str = "Title", rule: str = "Rendered rule") -> Principle:
+    return Principle(
+        id="TEST.P1",
+        level="hard",
+        priority=90,
+        title=title,
+        rule=rule,
+    )
 
 
 def test_normalize_keywords_order_invariant():
@@ -49,7 +63,7 @@ def test_set_domain_keywords_change_clears_cache():
     kw = {"core": ["c"], "dom": ["x"]}
     p = DomainPrefilter(domain_keywords=kw, max_domains=3)
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["dom"], "confidence": 0.9}):
-        p.filter_domains("q", ["core", "dom"])
+        p.filter_domains("query about banking", ["core", "dom"])
     assert len(p._cache) == 1
     fp_before = p._keywords_fingerprint
     assert p.set_domain_keywords({"core": ["c"], "dom": ["z"]}) is True
@@ -69,9 +83,9 @@ def test_repeated_filter_domains_single_openai_call():
     kw = {"core": ["c"], "dom": ["x"]}
     p = DomainPrefilter(domain_keywords=kw, max_domains=3)
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["dom"], "confidence": 0.9}) as m:
-        p.filter_domains("money", ["core", "dom"])
+        p.filter_domains("money advice question", ["core", "dom"])
         p.set_domain_keywords(kw)
-        p.filter_domains("money", ["core", "dom"])
+        p.filter_domains("money advice question", ["core", "dom"])
     assert m.call_count == 1
 
 
@@ -88,9 +102,9 @@ def test_miss_then_hit_emits_events(tmp_path, monkeypatch):
     kw = {"core": ["c"], "dom": ["x"]}
     p = DomainPrefilter(domain_keywords=kw, max_domains=3)
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["dom"], "confidence": 0.9}):
-        p.filter_domains("qq", ["core", "dom"])
+        p.filter_domains("qq long enough query", ["core", "dom"])
         p.set_domain_keywords(kw)
-        p.filter_domains("qq", ["core", "dom"])
+        p.filter_domains("qq long enough query", ["core", "dom"])
 
     rows = get_orchestration_events_for_request("r-pf", "q-pf")
     types = [r.get("event_type") for r in rows]
@@ -180,10 +194,60 @@ def test_clear_cache_forced_emits_when_non_empty(tmp_path, monkeypatch):
 
     p = DomainPrefilter(domain_keywords={"core": ["a"]}, max_domains=3)
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": [], "confidence": 0.0}):
-        p.filter_domains("z", ["core"])
+        p.filter_domains("z long enough query", ["core"])
     p.clear_cache(reason="forced_refresh")
     rows = get_orchestration_events_for_request("r3", "q3")
     assert any(r.get("event_type") == DOMAIN_PREFILTER_CACHE_INVALIDATED for r in rows)
+
+
+def test_short_query_bypasses_llm_and_returns_empty():
+    """Queries < MIN_QUERY_LEN_FOR_CLASSIFICATION carry too little signal:
+    the prefilter must skip the LLM round-trip and return an empty list so
+    the caller's default (core principles) applies."""
+    p = DomainPrefilter(domain_keywords={"core": ["c"], "dom": ["x"]}, max_domains=3)
+    with patch.object(DomainPrefilter, "_call_openai") as m:
+        result = p.filter_domains("51", ["core", "dom"])
+        result2 = p.filter_domains("        ", ["core", "dom"])  # whitespace only
+        result3 = p.filter_domains("nine char", ["core", "dom"])  # 9 chars
+    assert result == []
+    assert result2 == []
+    assert result3 == []
+    assert m.call_count == 0, "LLM must not be invoked for queries below the length threshold"
+
+
+def test_short_query_emits_too_short_event(tmp_path, monkeypatch):
+    """The bypass must emit DOMAIN_PREFILTER_QUERY_TOO_SHORT with rationale."""
+    from moralstack.orchestration.orchestration_event_taxonomy import (
+        DOMAIN_PREFILTER_QUERY_TOO_SHORT,
+    )
+
+    dbp = str(tmp_path / "pf_short.db")
+    monkeypatch.setenv("MORALSTACK_DB_PATH", dbp)
+    monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "db_only")
+    init_db(dbp)
+    assert create_run("r-short", run_type="test", meta={})
+    assert upsert_request("r-short", "q-short", prompt="p", domain="")
+    set_current_run_id("r-short")
+    set_current_request_id("q-short")
+
+    p = DomainPrefilter(domain_keywords={"core": ["c"], "dom": ["x"]}, max_domains=3)
+    p.filter_domains("63312", ["core", "dom"])
+
+    rows = get_orchestration_events_for_request("r-short", "q-short")
+    matches = [r for r in rows if r.get("event_type") == DOMAIN_PREFILTER_QUERY_TOO_SHORT]
+    assert matches, "DOMAIN_PREFILTER_QUERY_TOO_SHORT event must be persisted"
+    payload = json.loads(matches[0].get("payload_json") or "{}")
+    assert payload.get("rationale") == "query too short to identify a domain"
+    assert payload.get("query_length") == 5
+    assert payload.get("threshold") == DomainPrefilter.MIN_QUERY_LEN_FOR_CLASSIFICATION
+
+
+def test_long_query_still_invokes_llm():
+    """Regression guard: queries >= threshold must still hit the LLM classifier."""
+    p = DomainPrefilter(domain_keywords={"core": ["c"], "dom": ["x"]}, max_domains=3)
+    with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["dom"], "confidence": 0.9}) as m:
+        p.filter_domains("question about banking and finance", ["core", "dom"])
+    assert m.call_count == 1
 
 
 def test_clear_cache_noop_when_empty(tmp_path, monkeypatch):
@@ -200,3 +264,92 @@ def test_clear_cache_noop_when_empty(tmp_path, monkeypatch):
     p.clear_cache(reason="forced_refresh")
     rows = get_orchestration_events_for_request("r4", "q4")
     assert not rows
+
+
+def test_enhanced_agent_cache_miss_on_rendered_rule_change():
+    agent = EnhancedDomainAgent(
+        "medical",
+        [_principle(rule="Initial rendered rule")],
+        openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-test"),
+        domain_description="medical description",
+    )
+
+    with patch.object(
+        EnhancedDomainAgent,
+        "_call_openai",
+        side_effect=[
+            {"domain_match": True, "confidence": 0.9, "principle_ids": ["TEST.P1"], "reasoning": "first"},
+            {"domain_match": True, "confidence": 0.8, "principle_ids": [], "reasoning": "second"},
+        ],
+    ) as call:
+        first = agent.evaluate("same query")
+        agent.principles = [_principle(rule="Changed rendered rule")]
+        second = agent.evaluate("same query")
+
+    assert call.call_count == 2
+    assert first.reasoning == "first"
+    assert second.reasoning == "second"
+
+
+def test_enhanced_agent_cache_miss_on_domain_description_change():
+    agent = EnhancedDomainAgent(
+        "medical",
+        [_principle()],
+        openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-test"),
+        domain_description="initial description",
+    )
+
+    with patch.object(
+        EnhancedDomainAgent,
+        "_call_openai",
+        side_effect=[
+            {"domain_match": True, "confidence": 0.9, "principle_ids": ["TEST.P1"], "reasoning": "first"},
+            {"domain_match": True, "confidence": 0.8, "principle_ids": [], "reasoning": "second"},
+        ],
+    ) as call:
+        first = agent.evaluate("same query")
+        agent._domain_description = "changed description"
+        second = agent.evaluate("same query")
+
+    assert call.call_count == 2
+    assert first.reasoning == "first"
+    assert second.reasoning == "second"
+
+
+def test_enhanced_agent_cache_hit_on_unrendered_title_change():
+    agent = EnhancedDomainAgent(
+        "medical",
+        [_principle(title="Initial title", rule="Same rendered rule")],
+        openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-test"),
+        domain_description="medical description",
+    )
+
+    with patch.object(
+        EnhancedDomainAgent,
+        "_call_openai",
+        return_value={"domain_match": True, "confidence": 0.9, "principle_ids": ["TEST.P1"], "reasoning": "cached"},
+    ) as call:
+        first = agent.evaluate("same query")
+        agent.principles = [_principle(title="Changed title", rule="Same rendered rule")]
+        second = agent.evaluate("same query")
+
+    assert call.call_count == 1
+    assert first is second
+    assert second.reasoning == "cached"
+
+
+def test_legacy_domain_agent_cache_miss_on_rendered_rule_change():
+    agent = DomainAgent(
+        "core",
+        [_principle(rule="Initial rendered rule")],
+        openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-test"),
+    )
+
+    with patch.object(DomainAgent, "_call_openai", side_effect=[["TEST.P1"], []]) as call:
+        first = agent.evaluate("same query")
+        agent.principles = [_principle(rule="Changed rendered rule")]
+        second = agent.evaluate("same query")
+
+    assert call.call_count == 2
+    assert first == ["TEST.P1"]
+    assert second == []

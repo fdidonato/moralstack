@@ -28,6 +28,14 @@ optional keyword-only arguments `conversation_id`, `turn_index`, `parent_request
 (`ConversationGovernanceState`). When provided, metadata is persisted on the request row and echoed on
 `OrchestratorResult`; they do not change routing or `decide_action` when omitted. See `moralstack/orchestration/conversation_state.py`.
 
+**Request transcript context**: SDK and proxy attach
+`moralstack.orchestration.conversation_context.ConversationContext` to
+`ProcessedRequest`. It is additive and dormant when absent. DCCL and speculative
+generation use its role-serialized transcript when prior turns exist; risk keeps
+its smaller declared last-3 context. The result records context-shape fields such
+as `history_source`, `prior_turn_count`, `governance_context_mode`,
+`candidate_context_mode`, and the delivery mismatch guard outcome.
+
 **Per-call context under concurrency:** `OrchestrationController.process()` constructs a stack-local `ProcessCallContext` (`moralstack/orchestration/process_context.py`) and passes it to internal helpers (`_apply_conversation_metadata_to_result`, ledger follow-up, canonical conversation events). A single controller instance may handle overlapping `process()` calls (for example from the HTTP proxy threadpool); conversation linkage and ledger intent scratch fields must never live on `self` for that reason.
 
 When `OrchestrationController` is constructed with a non-`None` `SemanticDecisionLedger` and `process(..., conversation_id=...)`
@@ -38,10 +46,31 @@ non-deliberative). Response text is never read from the ledger (DAF-4); only gov
 
 `moralstack/orchestration/system_prompt_resolver.py` exposes `effective_system_for_request(...)`, composing the policy system prompt per request from the protected base, optional non-empty `DeveloperContract.raw_text`, and an optional mode suffix (`normal`, `safe_complete`, `constrained`). When no contract text is present, output matches the legacy single-turn byte strings. The suffix modes remain available for other call sites; **`DeliberationRunner` does not use `safe_complete` or `constrained` resolver modes for policy generation** (see below).
 
+**Governed delivery (Plan 1)**: `moralstack/orchestration/delivery.py`
+(`finalize_delivery` → `GovernedDelivery`) is the pure finalizer that turns an
+already-governed `OrchestratorResult` into the exact text to deliver. SDK and
+proxy serialize that text directly; the wrapped/upstream client is never called
+to generate a delivered answer. Blank/invalid governed content fails closed to a
+deterministic governed refusal (`governed_pipeline_refusal`). The finalizer makes
+no model call and performs no I/O.
+
+`moralstack/orchestration/final_revalidation.py` was the pre-Plan-1 shared
+final-output gate that validated **upstream-generated** text against the
+developer contract. It is **no longer invoked on the active delivery paths**
+(delivery is governed-only) and is retained for historical UI/report readers.
+
+**Compliance delivery guard**: On DCCL `MATCH`, a validated speculative draft can
+be reused only if its candidate context is aligned with the governance context.
+If prior turns exist and governance saw a full role-serialized/native transcript
+but the candidate draft came from last-user-only context, the controller forces
+Case 2 regeneration or downgrades to the standard pipeline. This guard is
+strictly conservative: it can prevent fast-path draft reuse, but it cannot loosen
+routing or override Safety Override / hard-signal refusal.
+
 **Governance prompt placement (v0.4 Step 10)**:
 
 - **Internal policy (`DeliberationRunner`)**: `SAFE_COMPLETE_GENERATION_INSTRUCTION` and `CONSTRAINED_GENERATION_INSTRUCTION` from `moralstack/orchestration/_policy_helpers.py` are **prefixed onto the user-facing prompt** passed to `policy.generate` / `policy.rewrite`. The system string passed to the policy LLM is still composed with `effective_system_for_request(..., mode="normal")` (contract overlay only, no governance suffix from those constants).
-- **Python SDK (`moralstack/sdk/wrapper.py`)**: when `final_action == "SAFE_COMPLETE"`, governance guidance is sent as an **extra trailing message with `role="user"`** appended to `messages`. Existing system message content is not modified.
+- **Python SDK (`moralstack/sdk/wrapper.py`)**: Plan 1 governed delivery — the SDK delivers the governed pipeline text for every `final_action` and never calls the wrapped client to generate the answer. The SAFE_COMPLETE governance guidance is composed inside the governed pipeline (via the policy prompt above), not appended to a wrapped-client call. (`_build_safe_complete_user_turn` is retained as a pure helper but is no longer applied to delivery.)
 
 **Refusal context** (`moralstack/orchestration/refusal_context.py`):
 
@@ -673,6 +702,18 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
 - **Description**: Minimum `approval_score` required from each individual perspective for cycle-1 early convergence.
   If any single perspective (user, vulnerable, observer, adversary, compliance) scores below this, cycle 2 is forced.
   This prevents early convergence when one perspective is dissatisfied even if the weighted average is high.
+
+#### MORALSTACK_ORCHESTRATOR_REGULATED_INFORMATIONAL_NORMAL_COMPLETE
+
+- **Default**: `false`
+- **Type**: bool
+- **Description**: Opt-in. When `true`, a clearly benign, non-operational informational request in a sensitive
+  overlay (e.g. `financial`, `legal`, `research`) recovers to `NORMAL_COMPLETE` in `decision_service._handle_informational_recovery`
+  instead of being floored to `SAFE_COMPLETE`. Applies the same benignity guards as the unregulated branch
+  (no ambiguity/dual-use, no `requested_instructions`, no `intent_to_harm`, no operational intent, and pre-policy
+  action ≠ `SAFE_COMPLETE`); any positive signal keeps `SAFE_COMPLETE` (`regulated_but_informational`). Does not
+  affect `SENSITIVE`/`MORALLY_NUANCED`/`POTENTIALLY_HARMFUL`/`CLEARLY_HARMFUL` categories or hard-signal REFUSE.
+  Default `false` preserves the current regulated → `SAFE_COMPLETE` behavior.
 
 #### MORALSTACK_ORCHESTRATOR_SIMULATOR_GATE_SEMANTIC_HARM_THRESHOLD
 

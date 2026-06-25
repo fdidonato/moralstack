@@ -8,7 +8,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-moralstack.db
+investigation/
+.investigations/moralstack.db
 moralstack.db-*
 benchmark_outputs/
 
@@ -27,7 +28,7 @@ htmlcov/
 .mypy_cache/
 
 # Logs & reports
-logs/
+.investigations/logs/
 # Only ignore a top-level `reports/` output dir. A bare `reports/` pattern matches
 # any directory named `reports` anywhere (including `moralstack/reports/`).
 /reports/
@@ -37,7 +38,15 @@ logs/
 # IDE
 .vscode/
 .idea/
-.claude/
+
+# Claude Code — condividi gli artefatti team, tieni locale il personale
+.claude/*
+!.claude/settings.json
+!.claude/rules/
+!.claude/agents/
+!.claude/hooks/
+!.claude/skills/
+.claude/settings.local.json
 
 # OS
 .DS_Store

@@ -5,6 +5,7 @@ process() governa il flusso in base a decision.path; nessuna logica interna comp
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -29,6 +30,7 @@ from moralstack.observability.context import (
     set_current_turn_number,
 )
 from moralstack.observability.conversation_events import emit_conversation_state_updated
+from moralstack.orchestration.conversation_context import evaluate_delivery_context_guard
 from moralstack.orchestration.conversation_state import ConversationGovernanceState, TurnDecisionSummary
 from moralstack.orchestration.conversational_fast_path import ConversationalFastPathRunner
 from moralstack.orchestration.decision_logger import log_decision_explanation
@@ -54,6 +56,7 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     COMPLIANCE_LAYER_VERDICT_NO_MATCH,
     COMPLIANCE_LAYER_VERDICT_SAFETY_OVERRIDE,
     COMPLIANCE_MATCH_DOWNGRADED,
+    CONTEXT_SHAPE_RECORDED,
     CONVERSATION_CONTEXT_ATTACHED,
     CONVERSATION_STATE_UPDATED,
     LEDGER_FAST_PATH_APPLIED,
@@ -316,6 +319,32 @@ class OrchestrationController:
         self._apply_conversation_metadata_to_result(out, request, call_ctx)
         return out
 
+    def _emit_context_shape(
+        self,
+        *,
+        request: ProcessedRequest,
+        module: str,
+        context_mode: str,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        ctx = getattr(request, "conversation_context", None)
+        payload = (
+            ctx.context_shape_metadata(module=module, context_mode=context_mode)
+            if ctx is not None
+            else {"module": module, "context_mode": context_mode}
+        )
+        if extra:
+            payload.update(extra)
+        self._events.emit_orchestration_event(
+            request_id=request.request_id or "",
+            stage="context",
+            component=module,
+            event_type=CONTEXT_SHAPE_RECORDED,
+            decision="recorded",
+            status="ok",
+            payload=payload,
+        )
+
     def _apply_conversation_metadata_to_result(
         self,
         result: OrchestratorResult,
@@ -346,6 +375,14 @@ class OrchestrationController:
             result.parent_request_id = pid
         if call_ctx.compliance_verdict is not None:
             result.compliance_verdict = call_ctx.compliance_verdict
+        result.delivery_context_broader_than_governance = call_ctx.delivery_context_broader_than_governance
+        result.mismatch_guard_action = call_ctx.mismatch_guard_action
+        result.governance_context_mode = call_ctx.governance_context_mode
+        result.candidate_context_mode = call_ctx.candidate_context_mode
+        result.prior_turn_count = call_ctx.prior_turn_count
+        ctx = getattr(request, "conversation_context", None)
+        if ctx is not None:
+            result.history_source = getattr(ctx, "history_source", "none")
         should_build_state_out = state_in is not None or cid is not None
         if should_build_state_out:
             result.conversation_state_provided = state_in is not None
@@ -825,6 +862,22 @@ class OrchestrationController:
                 # Defensive fallback: an estimator implementation that does not yet
                 # accept the new kwargs (e.g. a test double) still works.
                 result = self.risk_estimator.estimate(request.prompt)
+            try:
+                ctx = getattr(request, "conversation_context", None)
+                if ctx is not None:
+                    used = min(ctx.prior_turn_count, 3)
+                    self._emit_context_shape(
+                        request=request,
+                        module="risk_estimator",
+                        context_mode="role_serialized_truncated" if ctx.prior_turn_count > used else "role_serialized_full",
+                        extra={
+                            "prior_turns_used": used,
+                            "history_truncation": "last_3" if ctx.prior_turn_count > used else "none",
+                            "history_truncated_count": max(0, ctx.prior_turn_count - used),
+                        },
+                    )
+            except Exception:
+                _LOG.debug("emit risk context shape failed", exc_info=True)
 
             elapsed = (time.time() - start) * 1000
             if self.logger and hasattr(self.logger, "log_call"):
@@ -864,20 +917,49 @@ class OrchestrationController:
                 "",
                 request.prompt,
             )
+            conversation_context = getattr(request, "conversation_context", None)
+            speculative_context_mode = "system_last_user_only"
+            messages: list[dict[str, str]] | None = None
+            if conversation_context is not None and getattr(conversation_context, "prior_turn_count", 0) > 0:
+                messages = [
+                    {
+                        "role": "system",
+                        "content": self._protected_system_prompt,
+                    },
+                    *conversation_context.native_context_messages(include_final_user=True),
+                ]
+                speculative_context_mode = "full_native"
             start = time.time()
             try:
-                result = self.policy.generate(
-                    prompt=prompt_text,
-                    system=effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal"),
-                )
+                if messages is not None and hasattr(self.policy, "generate_messages"):
+                    result = self.policy.generate_messages(
+                        messages=messages,
+                        overrides=getattr(request, "generation_overrides", None),
+                    )
+                else:
+                    result = self.policy.generate(
+                        prompt=prompt_text,
+                        system=effective_system_for_request(
+                            base=self._protected_system_prompt,
+                            request=request,
+                            mode="normal",
+                        ),
+                        overrides=getattr(request, "generation_overrides", None),
+                    )
             except TypeError:
                 result = self.policy.generate(prompt_text)
             elapsed = (time.time() - start) * 1000
             response_text = getattr(result, "text", None) or str(result)
             protection = self._output_protector.validate(response_text)
             prompt_used = getattr(result, "prompt_used", None) or prompt_text
-            system_used = getattr(result, "system_used", None) or effective_system_for_request(
-                base=self._protected_system_prompt, request=request, mode="normal"
+            if messages is not None:
+                system_used = self._protected_system_prompt
+            else:
+                system_used = getattr(result, "system_used", None) or effective_system_for_request(
+                    base=self._protected_system_prompt, request=request, mode="normal"
+                )
+            message_sections = (
+                conversation_context.observability_message_sections() if conversation_context is not None else {}
             )
             policy_model = getattr(self.policy, "model", None)
             policy_model_str = str(policy_model) if policy_model is not None else None
@@ -892,9 +974,32 @@ class OrchestrationController:
                 "prompt": prompt_used,
                 "system_prompt": system_used or "",
                 "raw_response": response_text,
+                "parsed_summary_json": json.dumps(
+                    {
+                        "context_shape": (
+                            conversation_context.context_shape_metadata(
+                                module="speculative_generate",
+                                context_mode=speculative_context_mode,
+                            )
+                            if conversation_context is not None
+                            else {"module": "speculative_generate", "context_mode": "none"}
+                        ),
+                        "message_sections": message_sections,
+                    },
+                    ensure_ascii=False,
+                ),
                 "sequence_in_cycle": 0,
                 "call_kind": "speculative",
             }
+            if conversation_context is not None:
+                try:
+                    self._emit_context_shape(
+                        request=request,
+                        module="speculative_generate",
+                        context_mode=speculative_context_mode,
+                    )
+                except Exception:
+                    _LOG.debug("emit speculative context shape failed", exc_info=True)
             return protection.cleaned, persist_kwargs
         except Exception as e:
             _LOG.warning(
@@ -997,6 +1102,7 @@ class OrchestrationController:
             from moralstack.persistence.sink import persist_orchestration_event
 
             compliance_layer = DeveloperContractComplianceLayer(policy=self.policy)
+            conv_ctx = getattr(request, "conversation_context", None)
 
             persist_orchestration_event(
                 request_id=request.request_id,
@@ -1011,6 +1117,14 @@ class OrchestrationController:
                         getattr(getattr(request, "developer_contract", None), "structured_rules", ()) or ()
                     ),
                     "evaluation_path_preference": compliance_layer._evaluation_path,
+                    "context_shape": (
+                        conv_ctx.context_shape_metadata(
+                            module="compliance_layer",
+                            context_mode=("full_native" if conv_ctx.prior_turn_count > 0 else "system_last_user_only"),
+                        )
+                        if conv_ctx is not None
+                        else {"module": "compliance_layer", "context_mode": "none"}
+                    ),
                 },
             )
 
@@ -1077,10 +1191,16 @@ class OrchestrationController:
             mode="normal",
         )
         action_ref = cv.matched_rule.action_payload_summary or cv.matched_rule.rule_excerpt
+        ctx = getattr(request, "conversation_context", None)
+        transcript_block = ""
+        if ctx is not None and getattr(ctx, "prior_turn_count", 0) > 0:
+            transcript, _ = ctx.role_serialized_transcript(budget=6000)
+            if transcript:
+                transcript_block = f"\n\nRole-ordered conversation transcript:\n{transcript}"
         user = (
             f"The deployer contract authorizes this exact response for the request: "
             f"{action_ref}.\nProduce that authorized response now, exactly and without "
-            f"refusal.\n\nUser request: {request.prompt}"
+            f"refusal.{transcript_block}\n\nFinal user request: {request.prompt}"
         )
 
         from moralstack.models.base import GenerationConfig
@@ -1117,7 +1237,13 @@ class OrchestrationController:
         except Exception:
             _LOG.debug("record compliance_regenerate llm call failed", exc_info=True)
 
-        return text
+        # Output-protect the compliance-regenerated draft before it can be
+        # revalidated or delivered. Compliance regeneration goes through
+        # self.policy.generate but was previously returned without the
+        # canary/delimiter leakage scrub that every other governed generation
+        # path applies. _revalidate_draft therefore evaluates the cleaned text.
+        cleaned = self._output_protector.validate(text).cleaned
+        return cleaned
 
     def _revalidate_draft(
         self,
@@ -1159,7 +1285,7 @@ class OrchestrationController:
                 system=DCCL_DRAFT_MATCH_SYSTEM_PROMPT,
                 config=config,
                 model_override=get_dccl_llm_model(),
-            )  # type: ignore[call-arg]
+            )
         except TypeError:
             try:
                 result = self.policy.generate(prompt=prompt, system=DCCL_DRAFT_MATCH_SYSTEM_PROMPT)
@@ -1692,6 +1818,9 @@ class OrchestrationController:
             stop_reason=outcome.stop_reason if outcome else "",
             overlay_sensitive=overlay_sensitive,
             risk_thresholds=getattr(getattr(self, "config", None), "risk_thresholds", None),
+            regulated_informational_normal_complete=getattr(
+                getattr(self, "config", None), "regulated_informational_normal_complete", False
+            ),
         )
         # Execution path was deliberative; ensure decision.path is DELIBERATIVE_PATH for metadata/trace.
         if state.cycle > 0 and decision1.path != "DELIBERATIVE_PATH":
@@ -1934,6 +2063,22 @@ class OrchestrationController:
 
             speculative_draft_for_dccl = self._nonblocking_speculative_draft(spec_handle)
             self._run_dccl_evaluation(request, speculative_draft_for_dccl, call_ctx)
+            ctx = getattr(request, "conversation_context", None)
+            if ctx is not None:
+                try:
+                    _, dccl_truncated = ctx.role_serialized_transcript(budget=5000)
+                    dccl_mode = (
+                        "role_serialized_truncated"
+                        if dccl_truncated
+                        else ("role_serialized_full" if ctx.prior_turn_count > 0 else "system_last_user_only")
+                    )
+                    self._emit_context_shape(
+                        request=request,
+                        module="compliance_layer",
+                        context_mode=dccl_mode,
+                    )
+                except Exception:
+                    _LOG.debug("emit DCCL context shape failed", exc_info=True)
 
             from moralstack.compliance.types import ComplianceDecision
 
@@ -1944,6 +2089,23 @@ class OrchestrationController:
                 # llm_timeout: slow verdict but draft still reliable -> Case 1 when validated.
                 # low_confidence: uncertain verdict -> Case 2 (regen) even with validated draft.
                 force_case2 = cv.degraded and cv.degraded_reason == "low_confidence"
+                governance_context_mode = "system_last_user_only"
+                candidate_context_mode = "system_last_user_only"
+                if ctx is not None and ctx.prior_turn_count > 0:
+                    governance_context_mode = "full_native"
+                    candidate_context_mode = "full_native"
+                guard = evaluate_delivery_context_guard(
+                    ctx,
+                    governance_context_mode=governance_context_mode,
+                    candidate_context_mode=candidate_context_mode,
+                    is_draft_reused_as_final=True,
+                )
+                call_ctx.delivery_context_broader_than_governance = guard.delivery_context_broader_than_governance
+                call_ctx.governance_context_mode = guard.governance_context_mode
+                call_ctx.candidate_context_mode = guard.candidate_context_mode
+                call_ctx.prior_turn_count = guard.prior_turn_count
+                if guard.delivery_context_broader_than_governance:
+                    force_case2 = True
                 case1 = draft_ok and not force_case2
                 if case1:
                     self._events.emit_orchestration_event(
@@ -1960,6 +2122,7 @@ class OrchestrationController:
                             "action_excerpt": (cv.matched_rule.action_payload_summary if cv.matched_rule else ""),
                             "degraded": cv.degraded,
                             "degraded_reason": cv.degraded_reason,
+                            **guard.to_metadata(),
                         },
                     )
                     try:
@@ -1983,6 +2146,8 @@ class OrchestrationController:
                     new_draft = self._regenerate_for_contract(request, cv, risk_estimation)
                     ok, method, conf = self._revalidate_draft(cv, new_draft)
                     if ok:
+                        if guard.delivery_context_broader_than_governance:
+                            call_ctx.mismatch_guard_action = "regenerated_aligned"
                         self._events.emit_orchestration_event(
                             request_id=request.request_id or "",
                             stage="compliance_layer",
@@ -1995,6 +2160,8 @@ class OrchestrationController:
                                 "draft_match_method": method,
                                 "draft_match_confidence": conf,
                                 "reason": (f"degraded:{cv.degraded_reason}" if cv.degraded else "initial_draft_unvalidated"),
+                                "mismatch_guard_action": call_ctx.mismatch_guard_action,
+                                **guard.to_metadata(),
                             },
                         )
                         try:
@@ -2015,6 +2182,8 @@ class OrchestrationController:
                                 exc_info=True,
                             )
                     else:
+                        if guard.delivery_context_broader_than_governance:
+                            call_ctx.mismatch_guard_action = "downgraded_to_pipeline"
                         self._events.emit_orchestration_event(
                             request_id=request.request_id or "",
                             stage="compliance_layer",
@@ -2028,6 +2197,8 @@ class OrchestrationController:
                                 "action_excerpt": (cv.matched_rule.action_payload_summary if cv.matched_rule else ""),
                                 "degraded": cv.degraded,
                                 "degraded_reason": cv.degraded_reason,
+                                "mismatch_guard_action": call_ctx.mismatch_guard_action,
+                                **guard.to_metadata(),
                             },
                         )
                         if spec_handle is not None:
@@ -2120,6 +2291,9 @@ class OrchestrationController:
                 risk_proto,
                 overlay_sensitive=overlay_sensitive,
                 risk_thresholds=getattr(getattr(self, "config", None), "risk_thresholds", None),
+                regulated_informational_normal_complete=getattr(
+                    getattr(self, "config", None), "regulated_informational_normal_complete", False
+                ),
             )
             decision = apply_safe_complete_gating(
                 decision,

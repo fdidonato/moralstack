@@ -27,7 +27,7 @@ auditable layer.
 ## Architectural placement
 
 ```
-User request + developer_contract
+User request + developer_contract + ConversationContext
         │
         ▼
 Policy speculative (optional, parallel with risk when enabled)
@@ -121,7 +121,7 @@ StructuredRule(
 | Path | Env value | Behavior |
 |---|---|---|
 | **Structured** | `structured` | Deterministic match against `structured_rules` only. Contracts with only `raw_text` → `NO_MATCH`. |
-| **LLM** | `llm` | Single LLM call against `raw_text` + user prompt + speculative draft. |
+| **LLM** | `llm` | Single LLM call against `raw_text` + budgeted role-ordered transcript + final user prompt + speculative draft. |
 | **Hybrid** | `hybrid` (default) | Structured first; if `NO_MATCH` and `raw_text` is non-empty, fall back to LLM. |
 
 Structured matching supports `LITERAL` (exact equality) and `REGEX` (`re.fullmatch`).
@@ -150,6 +150,21 @@ On **MATCH**, the controller applies a three-case state machine before deliberat
 Case 2 covers degraded MATCH (`llm_timeout`, `low_confidence`) and missing or wrong
 speculative drafts (timing, paraphrase, or absent draft). Revalidation uses substring
 first; a targeted semantic LLM call runs only when substring fails.
+
+### Delivery/governance mismatch guard
+
+Before Case 1 can reuse a speculative draft as final content, the controller
+evaluates a conservative guard. It records `governance_context_mode`,
+`candidate_context_mode`, `prior_turn_count`,
+`delivery_context_broader_than_governance`, and `mismatch_guard_action`.
+
+The blocking condition is narrow: prior turns exist, the draft is being reused as
+final, the draft candidate was produced from `system_last_user_only`, and
+governance used `role_serialized_full` or `full_native`. When that happens, Case
+1 is forced into Case 2. Successful regeneration records
+`mismatch_guard_action="regenerated_aligned"`; failed validation records
+`"downgraded_to_pipeline"` and the standard pipeline continues. For non-reuse
+paths the guard is telemetry only.
 
 ## Safety Override
 
@@ -183,6 +198,8 @@ The LLM path uses a fixed system prompt (`_DCCL_LLM_SYSTEM_PROMPT` in `dccl.py`)
 that instructs the model to:
 
 - Identify literal rule invocation (not topical similarity)
+- Interpret the final user request in the role-ordered conversation transcript
+  supplied by `ConversationContext`
 - Emit structured JSON with verdict, excerpts, rationale, and confidence
 - When a speculative draft is present in the user prompt, also emit
   `draft_matches_action` and `draft_match_confidence` judging whether the draft
@@ -190,6 +207,12 @@ that instructs the model to:
   verbatim). If no draft was provided, set `draft_matches_action=false` and
   `draft_match_confidence=0.0`
 - Never authorize the seven safety-restricted categories
+
+The user-side prompt includes the deployer contract, a
+`ROLE-ORDERED CONVERSATION TRANSCRIPT` containing prior user/assistant turns plus
+the final user turn, an explicit truncation note, the final user request, and the
+speculative draft when one is available. If the transcript is budget-trimmed, the
+prompt instructs DCCL not to claim prior turns are absent.
 
 Post-LLM, keyword safety check runs again on `action_excerpt` (defense in depth).
 Draft validation uses the substring pre-check first; semantic fields are consulted
@@ -244,11 +267,15 @@ The DCCL emits the following event types:
 | `COMPLIANCE_DRAFT_REUSED` | Case 1: validated draft reused on fast-path |
 | `COMPLIANCE_DRAFT_REGENERATED` | Case 2: regen + revalidation succeeded |
 | `COMPLIANCE_MATCH_DOWNGRADED` | Case 3: MATCH fell through to deliberation |
+| `CONTEXT_SHAPE_RECORDED` | Context mode/counts/truncation recorded for DCCL and related LLM use |
 | `CONTRACT_STRUCTURE_PROSE_CONFLICT` | Structured/prose mismatch |
 
 All events flow through the standard observability infrastructure
 (`moralstack/observability/sink.py`), so they appear in the same SQLite tables /
 JSONL files as other module events, depending on `MORALSTACK_OBSERVABILITY_MODE`.
+Context-shape fields are stored in orchestration-event payload JSON and in
+LLM-call summary JSON where a DCCL LLM call is persisted; no dedicated SQLite
+columns are required.
 
 Verdict events (`COMPLIANCE_LAYER_VERDICT_*`) include, among other fields:
 

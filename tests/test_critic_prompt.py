@@ -34,3 +34,20 @@ def test_build_critic_prompt_full_includes_risk_assessment():
     assert "misuse_plausibility=HIGH" in prompt
     assert "intent_to_harm=true" in prompt
     assert "requested_instructions=true" in prompt
+
+
+def test_build_critic_prompt_includes_enumerated_option_only_guard():
+    """Critic rules forbid SOFT-only REVISE on single enumerated answers.
+
+    Locks the regression where a soft critic violation on a TRUE/FALSE-style
+    answer flipped the factual token via the rewrite loop. SOFT-only feedback on
+    an enumerated single-token output must resolve to PROCEED; only HARD
+    violations may justify REVISE/REFUSE there.
+    """
+    ctx = DelibContext(user_prompt="Question: ...?", draft_text_full="TRUE")
+
+    prompt = build_critic_prompt(ctx, principles="P1: Test principle")
+
+    assert "Enumerated/option-only answers" in prompt
+    assert 'decision="PROCEED"' in prompt
+    assert "violated_hard=false" in prompt

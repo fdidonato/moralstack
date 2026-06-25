@@ -351,6 +351,15 @@ Simulator generation uses OpenAI's `json_object` response format (`response_form
 
 ---
 
+## Conversation Context
+
+For multi-turn requests, the simulator receives the developer contract plus recent conversation history from
+`ProcessedRequest`. The prompt declares `context_mode=role_serialized_truncated; last 3 turns`, and the deliberation
+runner records `CONTEXT_SHAPE_RECORDED` with the simulator call metadata so available and used prior turns remain
+auditable.
+
+---
+
 ## See Also
 
 - [Hindsight Evaluator](./hindsight.md) - Retrospective scenario evaluation

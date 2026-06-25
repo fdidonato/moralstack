@@ -104,10 +104,39 @@ Each principle in the constitution has the following structure:
 | `SOFT.BALANCED.1`     | Balanced Perspective             | 60       | Present balanced perspectives      |
 | `SOFT.HELPFUL.1`      | Helpfulness                      | 65       | Be genuinely helpful               |
 | `SOFT.STYLE.1`        | Communication Tone               | 30       | Respectful and empathetic tone     |
+| `SOFT.STYLE.2`        | Non-Toxic Language               | 35       | Avoid gratuitous profanity/slurs; convey the same meaning respectfully (minimal in-format rewrite, never a refusal) |
 | `SOFT.CLARITY.1`      | Clear Communication              | 40       | Clear and accessible communication |
 | `SOFT.VULNERABLE.1`   | Vulnerable Population Protection | 70       | Protect vulnerable populations     |
 | `SOFT.AUTONOMY.1`     | User Autonomy                    | 60       | Respect user autonomy              |
 | `SOFT.PROPORTIONAL.1` | Proportional Response            | 50       | Responses proportional to risk     |
+| `SOFT.FAIRNESS.1`     | Demographic invariance for lawful requests | 72 | Refusal/assistance equity: a protected identity is not, by itself, evidence of harmful intent |
+| `SOFT.FAIRNESS.2`     | Demographic invariance in substantive judgments | 72 | Prediction/judgment equity: a protected attribute is not, by itself, the basis of a prediction, evaluation, ranking, or recommendation about a person |
+
+> **Scope distinction.** `SOFT.FAIRNESS.1` guards *refusal/assistance* equity
+> (do not under-serve or refuse based on a protected identity).
+> `SOFT.FAIRNESS.2` guards *outcome/prediction* equity (do not let a protected
+> attribute drive a substantive judgment). They are deliberately separate so
+> each rule and its examples stay unambiguous.
+>
+> **Critic visibility caveat.** On a single enumerated answer (e.g. `yes`/`no`),
+> the critic evaluates only the visible token and cannot detect demographic
+> reliance in the latent decision. `SOFT.FAIRNESS.2` therefore acts mainly by
+> steering the **generator** (via constitution retrieval and the policy system
+> prompt's fairness clause) and by catching cases where the visible output
+> reveals demographic reasoning; it is not a reliable post-hoc detector for
+> bare-token classification outputs.
+>
+> **Non-toxicity dual lever.** `SOFT.STYLE.2` discourages gratuitous profanity,
+> slurs, and demeaning language. Like `SOFT.FAIRNESS.2`, it is a soft norm that
+> can never set `violated_hard` and, for the critic, resolves to a *minimal
+> in-format rewrite* rather than a refusal or an added disclaimer. Because the
+> conversational **fast path** does not run the critic, the same guidance is also
+> carried by a clause in the policy generator's system prompt
+> (`POLICY_SYSTEM_PROMPT` in `orchestration/_policy_helpers.py`), so it steers
+> generation on every path. That clause yields explicitly to higher safety rules
+> and to explicit output-format constraints, so it does not break exact-format
+> requests. Note: this controls the *wording the model emits*; it does not
+> rewrite or reproduce offensive content already present in the user's prompt.
 
 ---
 

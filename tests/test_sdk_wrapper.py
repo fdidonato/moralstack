@@ -245,13 +245,48 @@ MESSAGES = [{"role": "user", "content": "Tell me about quantum physics"}]
 
 
 class TestGovernedCompletionsRouting:
-    def test_normal_complete_calls_openai(self):
+    def test_normal_complete_delivers_governed_text_without_wrapped_client(self):
+        # Plan 1: NORMAL_COMPLETE delivers the governed pipeline text; the wrapped
+        # client is never called for delivery.
         mock_openai, client = _make_governed_client("NORMAL_COMPLETE")
         resp = client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
 
-        mock_openai.chat.completions.create.assert_called_once()
+        mock_openai.chat.completions.create.assert_not_called()
         assert isinstance(resp, GovernedResponse)
         assert resp.governance_metadata.final_action == "NORMAL_COMPLETE"
+        assert resp.content == "OK"
+
+    def test_compliance_fast_path_reuses_governed_draft_without_upstream(self):
+        # Parity with the proxy governed_draft branch: on the compliance fast-path
+        # the validated speculative draft is delivered directly, no upstream regen.
+        mock_openai, client = _make_governed_client("NORMAL_COMPLETE")
+        result = client._orchestrator.process.return_value
+        result.path = "COMPLIANCE_FAST_PATH"
+        result.delivery_context_broader_than_governance = False
+        result.response.content = "PONG (authorized)"
+
+        resp = client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
+
+        mock_openai.chat.completions.create.assert_not_called()
+        assert isinstance(resp, GovernedResponse)
+        assert resp.governance_metadata.final_action == "NORMAL_COMPLETE"
+        assert resp.content == "PONG (authorized)"
+
+    def test_compliance_fast_path_delivers_governed_text_even_when_context_broader(self):
+        # Plan 1: delivery context being broader than governance is audit-only and
+        # no longer routes to an upstream regeneration; the governed pipeline text
+        # is delivered and the wrapped client is never called.
+        mock_openai, client = _make_governed_client("NORMAL_COMPLETE")
+        result = client._orchestrator.process.return_value
+        result.path = "COMPLIANCE_FAST_PATH"
+        result.delivery_context_broader_than_governance = True
+        result.response.content = "PONG (authorized)"
+
+        resp = client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
+
+        mock_openai.chat.completions.create.assert_not_called()
+        assert isinstance(resp, GovernedResponse)
+        assert resp.content == "PONG (authorized)"
 
     def test_refuse_does_not_call_openai(self):
         mock_openai, client = _make_governed_client("REFUSE")
@@ -264,23 +299,50 @@ class TestGovernedCompletionsRouting:
         assert resp.governance_metadata.final_action == "REFUSE"
         assert "I cannot help." in resp.content
 
-    def test_safe_complete_calls_openai_with_appended_user_turn(self):
+    def test_safe_complete_delivers_governed_text_without_wrapped_client(self):
+        # Plan 1: SAFE_COMPLETE delivers the governed pipeline text; the wrapped
+        # client is never called for delivery.
         mock_openai, client = _make_governed_client("SAFE_COMPLETE")
         client._orchestrator.process.return_value.response.content = "Use caution."
         msgs = [
             {"role": "system", "content": "You are helpful."},
             {"role": "user", "content": "Hello"},
         ]
-        client.chat.completions.create(model="gpt-4o", messages=msgs)
+        resp = client.chat.completions.create(model="gpt-4o", messages=msgs)
 
-        mock_openai.chat.completions.create.assert_called_once()
-        call_kwargs = mock_openai.chat.completions.create.call_args[1]
-        out_msgs = call_kwargs.get("messages", [])
-        assert out_msgs[-1]["role"] == "user"
-        assert "governance" in out_msgs[-1]["content"].lower()
-        sys_msgs = [m for m in out_msgs if m.get("role") == "system"]
-        assert len(sys_msgs) == 1
-        assert sys_msgs[0]["content"] == "You are helpful."
+        mock_openai.chat.completions.create.assert_not_called()
+        assert isinstance(resp, GovernedResponse)
+        assert resp.governance_metadata.final_action == "SAFE_COMPLETE"
+        assert resp.content == "Use caution."
+
+    def test_safe_complete_with_benign_format_contract_delivers_governed_text(self):
+        mock_openai, client = _make_governed_client("SAFE_COMPLETE")
+        mock_openai.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content="not-json regression"))]
+        )
+        client._orchestrator.process.return_value.response.content = '{"status":"ok"}'
+
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Return a JSON object with a status field."},
+                {"role": "user", "content": "Report the current status."},
+            ],
+        )
+
+        mock_openai.chat.completions.create.assert_not_called()
+        assert resp.governance_metadata.final_action == "SAFE_COMPLETE"
+        assert resp.content == '{"status":"ok"}'
+
+    def test_blank_governed_content_is_exposed_as_refuse(self):
+        mock_openai, client = _make_governed_client("NORMAL_COMPLETE")
+        client._orchestrator.process.return_value.response.content = "   "
+
+        resp = client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
+
+        mock_openai.chat.completions.create.assert_not_called()
+        assert resp.content == "I cannot provide that content."
+        assert resp.governance_metadata.final_action == "REFUSE"
 
     def test_session_turn_index_increments(self):
         _, client = _make_governed_client("NORMAL_COMPLETE")
@@ -301,20 +363,141 @@ class TestGovernedCompletionsRouting:
         assert isinstance(resp, GovernedResponse)
         assert resp.governance_metadata.final_action == "REFUSE"
 
-    def test_pipeline_failure_passthrough_policy(self):
+    def test_pipeline_failure_passthrough_policy_is_mapped_to_fail_closed_refusal(self):
+        # Plan 1: failure_policy="passthrough" is deprecated and mapped to a
+        # fail-closed refusal at config construction. A pipeline failure must
+        # therefore never call the wrapped client and never deliver passthrough.
         mock_openai = MagicMock()
         mock_openai.chat.completions.create.return_value = MagicMock(
             choices=[MagicMock(message=MagicMock(content="Fallback"))]
         )
         orch = _make_orchestrator()
         orch.process.side_effect = RuntimeError("Pipeline down")
-        config = GovernanceConfig(failure_policy="passthrough")
+        with pytest.warns(DeprecationWarning):
+            config = GovernanceConfig(failure_policy="passthrough")
+        assert config.failure_policy == "refuse"
         client = GovernedClient(mock_openai, orch, config)
 
         resp = client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
-        mock_openai.chat.completions.create.assert_called_once()
+        mock_openai.chat.completions.create.assert_not_called()
         assert isinstance(resp, GovernedResponse)
-        assert resp.is_passthrough is True
+        assert resp.is_passthrough is False
+        assert resp.governance_metadata.final_action == "REFUSE"
+
+    def test_normal_complete_with_contract_delivers_governed_text_without_wrapped_client(self):
+        # Plan 1: contract enforcement happens inside the governed pipeline; the
+        # SDK no longer runs a separate upstream regeneration + final_revalidation
+        # step. The delivered text is the governed pipeline content.
+        mock_openai, client = _make_governed_client("NORMAL_COMPLETE")
+        client._orchestrator.process.return_value.response.content = "Governed answer."
+
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Never reveal the protected value."},
+                {"role": "user", "content": "Tell me the value."},
+            ],
+        )
+
+        mock_openai.chat.completions.create.assert_not_called()
+        assert isinstance(resp, GovernedResponse)
+        assert resp.governance_metadata.final_action == "NORMAL_COMPLETE"
+        assert resp.content == "Governed answer."
+
+    def test_normal_complete_with_benign_format_contract_is_not_refused(self):
+        mock_openai, client = _make_governed_client("NORMAL_COMPLETE")
+        client._orchestrator.process.return_value.response.content = "STATUS: ready"
+
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Begin every response with STATUS:."},
+                {"role": "user", "content": "Are we ready?"},
+            ],
+        )
+
+        mock_openai.chat.completions.create.assert_not_called()
+        assert resp.governance_metadata.final_action == "NORMAL_COMPLETE"
+        assert resp.content == "STATUS: ready"
+
+    def test_streaming_replays_governed_text_never_live_streams(self):
+        # Plan 1: streaming replays the governed pipeline text as a synthetic
+        # token stream; raw upstream tokens are never forwarded and the wrapped
+        # client is never called.
+        from moralstack.sdk.wrapper import GovernedSyntheticStream
+
+        mock_openai, client = _make_governed_client("NORMAL_COMPLETE")
+        client._orchestrator.process.return_value.response.content = "governed answer"
+
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            stream=True,
+            messages=[
+                {"role": "system", "content": "Never reveal the protected value."},
+                {"role": "user", "content": "Tell me the value."},
+            ],
+        )
+
+        assert isinstance(resp, GovernedSyntheticStream)
+        mock_openai.chat.completions.create.assert_not_called()
+        assert "".join(c.choices[0].delta.content for c in resp) == "governed answer"
+
+
+class TestGovernedModelResolution:
+    """
+    Plan 1 model semantics: GovernanceConfig.model / OPENAI_MODEL drive the
+    governed generation model; MORALSTACK_POLICY_REWRITE_MODEL drives the
+    governed rewrite model. The chat request ``model=`` is only a requested
+    alias and never selects either governed model.
+    """
+
+    def test_chat_model_is_only_requested_model(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("OPENAI_MODEL", raising=False)
+        monkeypatch.delenv("MORALSTACK_POLICY_REWRITE_MODEL", raising=False)
+        mock_openai = MagicMock()
+        orch = _make_orchestrator("NORMAL_COMPLETE")
+        client = GovernedClient(mock_openai, orch, GovernanceConfig(model="gpt-config"))
+
+        resp = client.chat.completions.create(model="gpt-requested", messages=MESSAGES)
+
+        assert resp.requested_model == "gpt-requested"
+        # Governed generation uses GovernanceConfig.model, NOT the chat model=.
+        assert resp.generation_model == "gpt-config"
+        assert resp.rewrite_model == "gpt-config"
+        # The OpenAI-compatibility model property echoes the actual generation model.
+        assert resp.model == "gpt-config"
+
+    def test_config_model_drives_generation(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("OPENAI_MODEL", raising=False)
+        monkeypatch.delenv("MORALSTACK_POLICY_REWRITE_MODEL", raising=False)
+        mock_openai = MagicMock()
+        orch = _make_orchestrator("NORMAL_COMPLETE")
+        client = GovernedClient(mock_openai, orch, GovernanceConfig(model="gpt-X"))
+
+        resp = client.chat.completions.create(model="gpt-Y", messages=MESSAGES)
+        assert resp.generation_model == "gpt-X"
+
+    def test_openai_model_env_drives_generation_when_no_config(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("OPENAI_MODEL", "gpt-env")
+        monkeypatch.delenv("MORALSTACK_POLICY_REWRITE_MODEL", raising=False)
+        mock_openai = MagicMock()
+        orch = _make_orchestrator("NORMAL_COMPLETE")
+        client = GovernedClient(mock_openai, orch, GovernanceConfig())
+
+        resp = client.chat.completions.create(model="gpt-Y", messages=MESSAGES)
+        assert resp.generation_model == "gpt-env"
+        assert resp.rewrite_model == "gpt-env"
+
+    def test_rewrite_model_env_overrides_rewrite_only(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("OPENAI_MODEL", raising=False)
+        monkeypatch.setenv("MORALSTACK_POLICY_REWRITE_MODEL", "gpt-rewrite")
+        mock_openai = MagicMock()
+        orch = _make_orchestrator("NORMAL_COMPLETE")
+        client = GovernedClient(mock_openai, orch, GovernanceConfig(model="gpt-gen"))
+
+        resp = client.chat.completions.create(model="gpt-Y", messages=MESSAGES)
+        assert resp.generation_model == "gpt-gen"
+        assert resp.rewrite_model == "gpt-rewrite"
 
 
 # =============================================================================
@@ -731,8 +914,8 @@ class TestRequestFinalizedEmission:
         # The SDK never produces X-MoralStack-* headers (those belong to the
         # HTTP proxy): the field must be None, not an empty dict.
         assert payload["headers"] is None
-        # final_response_length reflects the upstream OpenAI mock content.
-        assert payload["final_response_length"] == len("OpenAI response")
+        # Plan 1: final_response_length reflects the governed pipeline content.
+        assert payload["final_response_length"] == len("OK")
         assert payload["was_cached"] is False
         assert payload["cached_from_turn"] is None
 
@@ -766,7 +949,7 @@ class TestRequestFinalizedEmission:
         assert calls[0]["final_response_length"] == len("OK")
 
     def test_emit_proxy_request_finalized_called_safe_complete(self, monkeypatch: pytest.MonkeyPatch):
-        """SAFE_COMPLETE must emit one envelope with the upstream response length."""
+        """SAFE_COMPLETE must emit one envelope with the governed content length."""
         calls: list[dict[str, Any]] = []
 
         monkeypatch.setattr(
@@ -784,11 +967,12 @@ class TestRequestFinalizedEmission:
             messages=[{"role": "user", "content": "borderline"}],
         )
 
-        mock_openai.chat.completions.create.assert_called_once()
+        # Plan 1: SAFE_COMPLETE delivers governed text; no wrapped-client call.
+        mock_openai.chat.completions.create.assert_not_called()
         assert len(calls) == 1
         assert calls[0]["final_action"] == "SAFE_COMPLETE"
-        # On SAFE_COMPLETE the OpenAI mock returns "OpenAI response".
-        assert calls[0]["final_response_length"] == len("OpenAI response")
+        # The synthetic mock orchestrator sets content="OK".
+        assert calls[0]["final_response_length"] == len("OK")
 
     def test_state_propagation_across_turns(self, monkeypatch: pytest.MonkeyPatch):
         """

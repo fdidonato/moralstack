@@ -96,60 +96,45 @@ class TestBuildSafeCompleteUserTurn:
         assert "safety" in turn["content"] or "SENSITIVE_TOPIC" in turn["content"]
 
 
-class TestSafeCompleteAppendsUserTurn:
-    """The wrapper must APPEND the synthetic turn, not modify the system."""
+class TestSafeCompleteDeliversGovernedText:
+    """
+    Plan 1: SAFE_COMPLETE delivers the governed pipeline text directly. The
+    wrapped client is never called for delivery, so there is no longer an
+    upstream messages payload to inspect. The caveat-as-extra-user-turn pattern
+    (``_build_safe_complete_user_turn``) is retained as a pure helper but is no
+    longer applied to a wrapped-client call.
+    """
 
-    def test_messages_extended_by_one(self, wrapper_setup):
+    def test_wrapped_client_never_called_for_safe_complete(self, wrapper_setup):
         governed, mock_client, _ = wrapper_setup
         original_messages = [
             {"role": "system", "content": "You are a helpful assistant"},
             {"role": "user", "content": "Tell me about something sensitive"},
         ]
-        governed.chat.completions.create(model="gpt-4o", messages=original_messages)
+        resp = governed.chat.completions.create(model="gpt-4o", messages=original_messages)
 
-        call_kwargs = mock_client.chat.completions.create.call_args[1]
-        final_messages = call_kwargs["messages"]
-        assert len(final_messages) == 3
+        mock_client.chat.completions.create.assert_not_called()
+        assert resp.governance_metadata.final_action == "SAFE_COMPLETE"
 
-    def test_synthetic_turn_is_appended_not_prepended(self, wrapper_setup):
+    def test_delivers_governed_pipeline_content(self, wrapper_setup):
         governed, mock_client, _ = wrapper_setup
         original_messages = [
             {"role": "system", "content": "Be helpful"},
             {"role": "user", "content": "Question"},
         ]
-        governed.chat.completions.create(model="gpt-4o", messages=original_messages)
+        resp = governed.chat.completions.create(model="gpt-4o", messages=original_messages)
 
-        call_kwargs = mock_client.chat.completions.create.call_args[1]
-        final_messages = call_kwargs["messages"]
-        assert final_messages[-1]["role"] == "user"
-        assert "governance" in final_messages[-1]["content"].lower()
+        mock_client.chat.completions.create.assert_not_called()
+        # The governed SAFE_COMPLETE content from _make_safe_complete_result.
+        assert resp.content == "Take care to be cautious."
 
-    def test_system_prompt_preserved_byte_identical(self, wrapper_setup):
-        """The critical invariant: system prompt is NOT modified."""
-        governed, mock_client, _ = wrapper_setup
-        original_system = "You are a friendly assistant. Always greet warmly."
-        original_messages = [
-            {"role": "system", "content": original_system},
-            {"role": "user", "content": "Question"},
-        ]
-        governed.chat.completions.create(model="gpt-4o", messages=original_messages)
-
-        call_kwargs = mock_client.chat.completions.create.call_args[1]
-        final_messages = call_kwargs["messages"]
-        system_msgs = [m for m in final_messages if m["role"] == "system"]
-        assert len(system_msgs) == 1
-        assert system_msgs[0]["content"] == original_system
-
-    def test_no_system_added_when_absent(self, wrapper_setup):
-        """When user provides no system message, no system is added."""
+    def test_no_wrapped_client_call_when_system_absent(self, wrapper_setup):
         governed, mock_client, _ = wrapper_setup
         original_messages = [{"role": "user", "content": "Question"}]
-        governed.chat.completions.create(model="gpt-4o", messages=original_messages)
+        resp = governed.chat.completions.create(model="gpt-4o", messages=original_messages)
 
-        call_kwargs = mock_client.chat.completions.create.call_args[1]
-        final_messages = call_kwargs["messages"]
-        system_msgs = [m for m in final_messages if m["role"] == "system"]
-        assert len(system_msgs) == 0
+        mock_client.chat.completions.create.assert_not_called()
+        assert resp.governance_metadata.final_action == "SAFE_COMPLETE"
 
 
 class TestInjectSafeGuidanceRemoved:

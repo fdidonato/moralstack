@@ -12,8 +12,13 @@ from moralstack.sdk.wrapper import (
     GovernedClient,
     GovernedRefusalStream,
     GovernedStreamResponse,
+    GovernedSyntheticStream,
     _SyntheticStreamChunk,
 )
+
+
+def _join_stream_text(stream: Any) -> str:
+    return "".join(c.choices[0].delta.content for c in stream)
 
 
 @pytest.fixture(autouse=True)
@@ -163,12 +168,16 @@ class TestStreamingViaCreate:
         client = GovernedClient(mock_openai, orch, GovernanceConfig())
         return mock_openai, client
 
-    def test_stream_normal_complete_returns_stream_response(self):
+    def test_stream_normal_complete_replays_governed_text_without_upstream(self):
+        # Plan 1: streaming NORMAL_COMPLETE replays the governed pipeline text as a
+        # synthetic stream; the wrapped client is never called.
         mock_openai, client = self._make_governed_client("NORMAL_COMPLETE")
+        client._orchestrator.process.return_value.response.content = "governed answer"
         msgs = [{"role": "user", "content": "Hello"}]
         resp = client.chat.completions.create(model="gpt-4o", messages=msgs, stream=True)
-        mock_openai.chat.completions.create.assert_called_once()
-        assert isinstance(resp, GovernedStreamResponse)
+        mock_openai.chat.completions.create.assert_not_called()
+        assert isinstance(resp, GovernedSyntheticStream)
+        assert _join_stream_text(resp) == "governed answer"
 
     def test_stream_refuse_returns_refusal_stream(self):
         mock_openai, client = self._make_governed_client("REFUSE")
@@ -177,11 +186,110 @@ class TestStreamingViaCreate:
         mock_openai.chat.completions.create.assert_not_called()
         assert isinstance(resp, GovernedRefusalStream)
 
-    def test_stream_safe_complete_calls_openai_with_modified_kwargs(self):
+    def test_stream_safe_complete_replays_governed_text_without_upstream(self):
+        # Plan 1: streaming SAFE_COMPLETE replays the governed pipeline text as a
+        # synthetic stream; the wrapped client is never called.
         mock_openai, client = self._make_governed_client("SAFE_COMPLETE")
+        client._orchestrator.process.return_value.response.content = "Use caution."
         msgs = [{"role": "user", "content": "Tell me about medications"}]
-        client.chat.completions.create(model="gpt-4o", messages=msgs, stream=True)
-        mock_openai.chat.completions.create.assert_called_once()
-        # Ensure stream=True is preserved in modified kwargs
-        call_kwargs = mock_openai.chat.completions.create.call_args[1]
-        assert call_kwargs.get("stream") is True
+        resp = client.chat.completions.create(model="gpt-4o", messages=msgs, stream=True)
+        mock_openai.chat.completions.create.assert_not_called()
+        assert isinstance(resp, GovernedSyntheticStream)
+        assert _join_stream_text(resp) == "Use caution."
+
+
+class TestGovernedSyntheticStream:
+    def test_replays_text_byte_for_byte_word_by_word(self):
+        result = _make_result("NORMAL_COMPLETE")
+        text = "Hello   world, this is\na test."
+        stream = GovernedSyntheticStream(text, result)
+        chunks = list(stream)
+        assert len(chunks) > 1  # word-by-word, not a single chunk
+        assert _join_stream_text(chunks) == text
+
+    def test_only_last_chunk_has_finish_reason(self):
+        result = _make_result("NORMAL_COMPLETE")
+        stream = GovernedSyntheticStream("one two three", result)
+        chunks = list(stream)
+        assert all(c.choices[0].finish_reason is None for c in chunks[:-1])
+        assert chunks[-1].choices[0].finish_reason == "stop"
+
+    def test_all_chunks_share_one_stream_id(self):
+        result = _make_result("NORMAL_COMPLETE")
+        chunks = list(GovernedSyntheticStream("alpha beta gamma", result))
+        assert len({c.id for c in chunks}) == 1
+
+    def test_empty_text_yields_single_terminal_chunk(self):
+        result = _make_result("NORMAL_COMPLETE")
+        chunks = list(GovernedSyntheticStream("", result))
+        assert len(chunks) == 1
+        assert chunks[0].choices[0].finish_reason == "stop"
+
+    def test_metadata_reflects_governance_decision(self):
+        result = _make_result("NORMAL_COMPLETE")
+        stream = GovernedSyntheticStream("text", result)
+        assert isinstance(stream.governance_metadata, GovernanceMetadata)
+        assert stream.governance_metadata.final_action == "NORMAL_COMPLETE"
+
+
+class TestStreamingWithContract:
+    """Streaming + developer contract: no live upstream tokens; validated text replayed."""
+
+    def _make_governed_client(self, final_action: str) -> tuple[Any, GovernedClient]:
+        from moralstack.sdk.config import GovernanceConfig
+
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create.return_value = MagicMock()
+        orch = MagicMock()
+        result = _make_result(final_action)
+        orch.process.return_value = result
+        client = GovernedClient(mock_openai, orch, GovernanceConfig())
+        return mock_openai, client, result
+
+    # A system message yields a DeveloperContract (build_conversation_context).
+    CONTRACT_MSGS = [
+        {"role": "system", "content": "You only answer PING with PONG."},
+        {"role": "user", "content": "PING"},
+    ]
+
+    def test_compliance_fast_path_replays_governed_draft_no_upstream(self):
+        mock_openai, client, result = self._make_governed_client("NORMAL_COMPLETE")
+        result.path = "COMPLIANCE_FAST_PATH"
+        result.delivery_context_broader_than_governance = False
+        result.response.content = "PONG"
+
+        resp = client.chat.completions.create(model="gpt-4o", messages=self.CONTRACT_MSGS, stream=True)
+
+        # Validated draft is reused: no upstream generation at all.
+        mock_openai.chat.completions.create.assert_not_called()
+        assert isinstance(resp, GovernedSyntheticStream)
+        assert _join_stream_text(resp) == "PONG"
+        assert resp.governance_metadata.final_action == "NORMAL_COMPLETE"
+
+    def test_normal_with_contract_replays_governed_text_no_upstream(self):
+        # Plan 1: with a developer contract present, streaming NORMAL_COMPLETE
+        # replays the governed pipeline text and never calls the wrapped client.
+        mock_openai, client, result = self._make_governed_client("NORMAL_COMPLETE")
+        result.path = "FAST_PATH"
+        result.delivery_context_broader_than_governance = False
+        result.response.content = "GOVERNED ANSWER"
+
+        resp = client.chat.completions.create(model="gpt-4o", messages=self.CONTRACT_MSGS, stream=True)
+
+        mock_openai.chat.completions.create.assert_not_called()
+        assert isinstance(resp, GovernedSyntheticStream)
+        assert _join_stream_text(resp) == "GOVERNED ANSWER"
+
+    def test_refuse_with_contract_replays_refusal_as_stream(self):
+        # Plan 1: a governed REFUSE on a streaming request with a contract yields
+        # the governed refusal text; the wrapped client is never called.
+        mock_openai, client, result = self._make_governed_client("REFUSE")
+        result.path = "FAST_PATH"
+        result.delivery_context_broader_than_governance = False
+        result.response.content = "I cannot provide that content."
+
+        resp = client.chat.completions.create(model="gpt-4o", messages=self.CONTRACT_MSGS, stream=True)
+
+        mock_openai.chat.completions.create.assert_not_called()
+        assert isinstance(resp, GovernedRefusalStream)
+        assert _join_stream_text(resp) == "I cannot provide that content."

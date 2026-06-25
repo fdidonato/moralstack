@@ -50,6 +50,7 @@ ENV_CYCLE1_EARLY_CONVERGENCE_MAX_SEMANTIC_HARM = "MORALSTACK_ORCHESTRATOR_CYCLE1
 ENV_CYCLE1_EARLY_CONVERGENCE_MIN_PER_PERSPECTIVE_APPROVAL = (
     "MORALSTACK_ORCHESTRATOR_CYCLE1_EARLY_CONVERGENCE_MIN_PER_PERSPECTIVE_APPROVAL"
 )
+ENV_REGULATED_INFORMATIONAL_NORMAL_COMPLETE = "MORALSTACK_ORCHESTRATOR_REGULATED_INFORMATIONAL_NORMAL_COMPLETE"
 
 
 def load_orchestrator_config_from_env() -> OrchestratorConfig:
@@ -102,6 +103,7 @@ def load_orchestrator_config_from_env() -> OrchestratorConfig:
     parallel_critic_with_modules = get_env_bool(ENV_PARALLEL_CRITIC_WITH_MODULES, True)
     enable_dynamic_parallel_scheduler = get_env_bool(ENV_ENABLE_DYNAMIC_PARALLEL_SCHEDULER, True)
     enable_speculative_generation = get_env_bool(ENV_ENABLE_SPECULATIVE_GENERATION, True)
+    regulated_informational_normal_complete = get_env_bool(ENV_REGULATED_INFORMATIONAL_NORMAL_COMPLETE, False)
 
     return OrchestratorConfig(
         max_deliberation_cycles=max_deliberation_cycles,
@@ -130,4 +132,5 @@ def load_orchestrator_config_from_env() -> OrchestratorConfig:
         parallel_critic_with_modules=parallel_critic_with_modules,
         enable_dynamic_parallel_scheduler=enable_dynamic_parallel_scheduler,
         enable_speculative_generation=enable_speculative_generation,
+        regulated_informational_normal_complete=regulated_informational_normal_complete,
     )

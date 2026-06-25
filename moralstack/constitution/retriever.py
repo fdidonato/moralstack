@@ -29,12 +29,23 @@ from moralstack.utils.llm_parse_contract import (
 from moralstack.utils.openai_params import completion_tokens_param
 
 if TYPE_CHECKING:
-    pass
+    from openai.types.chat import ChatCompletionMessageParam
+    from openai.types.shared_params import ResponseFormatJSONObject
 
 logger = logging.getLogger(__name__)
 
 RETRIEVAL_PHASE_RISK_ROUTING = "risk_routing"
 RETRIEVAL_PHASE_DELIBERATION = "deliberation_retrieval"
+_JSON_OBJECT_RESPONSE_FORMAT: ResponseFormatJSONObject = {"type": "json_object"}
+_DOMAIN_AGENT_TEMPERATURE = 0.1
+_ENHANCED_DOMAIN_AGENT_MAX_OUTPUT_TOKENS = 300
+_LEGACY_DOMAIN_AGENT_MAX_OUTPUT_TOKENS = 256
+_ENHANCED_DOMAIN_AGENT_SYSTEM_PROMPT = (
+    "You are a STRICT semantic matching system. "
+    "Be conservative - when uncertain, return empty results. "
+    "Always respond with valid JSON only."
+)
+_LEGACY_DOMAIN_AGENT_SYSTEM_PROMPT = "You are a precise semantic matching system. Always respond with valid JSON only."
 
 _RETRIEVAL_PHASE_PERSISTENCE: dict[str, tuple[int, int]] = {
     RETRIEVAL_PHASE_RISK_ROUTING: (0, -10),
@@ -141,6 +152,43 @@ def _snapshot_domain_descriptions(descriptions: dict[str, str]) -> dict[str, str
     return {str(k): str(v or "") for k, v in (descriptions or {}).items()}
 
 
+def _domain_agent_messages(system_prompt: str, user_prompt: str) -> list[ChatCompletionMessageParam]:
+    return [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+
+
+def _json_object_response_format() -> ResponseFormatJSONObject:
+    return {"type": "json_object"}
+
+
+def _domain_agent_cache_key(
+    *,
+    model: str | None,
+    system_prompt: str,
+    user_prompt: str,
+    max_output_tokens: int,
+) -> str:
+    """
+    Cache on the exact OpenAI-relevant request material.
+
+    Compact principle rendering omits titles by design, so unrendered title-only
+    changes intentionally do not invalidate the cache.
+    """
+    completion_params = completion_tokens_param(model, max_output_tokens)
+    key_material = json.dumps(
+        {
+            "model": model or "",
+            "messages": _domain_agent_messages(system_prompt, user_prompt),
+            "temperature": _DOMAIN_AGENT_TEMPERATURE,
+            "response_format": _JSON_OBJECT_RESPONSE_FORMAT,
+            "completion_params": completion_params,
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(key_material.encode("utf-8")).hexdigest()
+
+
 def _emit_domain_prefilter_orchestration_event(event_type: str, payload: dict[str, Any]) -> None:
     """Best-effort orchestration_events row; no-op when persistence context or DB is unavailable."""
     try:
@@ -223,6 +271,13 @@ class DomainPrefilter:
 
     ALWAYS_EVALUATE = {"core"}
     DOMAIN_CONFIDENCE_THRESHOLD = 0.5
+    # Queries shorter than this (after stripping surrounding whitespace) carry
+    # too little signal for the LLM classifier to pick a domain reliably and
+    # were observed to (a) waste a full classifier round-trip on noise inputs
+    # like "51", "63312" in COMPL-AI direct_request and (b) occasionally
+    # hallucinate a domain match. We bypass the classifier and return an empty
+    # list; the caller's existing fallback (all core principles) applies.
+    MIN_QUERY_LEN_FOR_CLASSIFICATION = 10
 
     def __init__(
         self,
@@ -363,7 +418,23 @@ class DomainPrefilter:
         from moralstack.orchestration.orchestration_event_taxonomy import (
             DOMAIN_PREFILTER_CACHE_HIT,
             DOMAIN_PREFILTER_CACHE_MISS,
+            DOMAIN_PREFILTER_QUERY_TOO_SHORT,
         )
+
+        stripped_query_len = len(query.strip())
+        if stripped_query_len < self.MIN_QUERY_LEN_FOR_CLASSIFICATION:
+            self._last_cache_lookup_hit = None
+            _emit_domain_prefilter_orchestration_event(
+                DOMAIN_PREFILTER_QUERY_TOO_SHORT,
+                {
+                    "decision": "bypass",
+                    "rationale": "query too short to identify a domain",
+                    "query_length": stripped_query_len,
+                    "threshold": self.MIN_QUERY_LEN_FOR_CLASSIFICATION,
+                    "available_domain_count": len(available_domains),
+                },
+            )
+            return []
 
         cache_key = hashlib.md5(f"{query}_{','.join(sorted(available_domains))}".encode()).hexdigest()
         domains_to_check = [d for d in available_domains if d not in self.ALWAYS_EVALUATE]
@@ -662,10 +733,6 @@ class EnhancedDomainAgent:
 
     def evaluate(self, query: str) -> AgentResult:
         """Evaluate query and return AgentResult with principles and confidence."""
-        cache_key = hashlib.md5(f"{query}_{len(self.principles)}".encode()).hexdigest()
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-
         if not self.principles:
             return AgentResult(principle_ids=[], confidence=0.0, domain_match=False)
 
@@ -725,6 +792,15 @@ If domain does not match, return:
 
 Output valid JSON only:"""
 
+        cache_key = _domain_agent_cache_key(
+            model=self.openai_config.model,
+            system_prompt=_ENHANCED_DOMAIN_AGENT_SYSTEM_PROMPT,
+            user_prompt=prompt,
+            max_output_tokens=_ENHANCED_DOMAIN_AGENT_MAX_OUTPUT_TOKENS,
+        )
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
         try:
             result_data = self._call_openai(prompt)
 
@@ -768,22 +844,15 @@ Output valid JSON only:"""
             else:
                 self._openai_client_reuses_after_cache += 1
             client = self._openai_http_client
-            sys_msg = (
-                "You are a STRICT semantic matching system. "
-                "Be conservative - when uncertain, return empty results. "
-                "Always respond with valid JSON only."
-            )
+            sys_msg = _ENHANCED_DOMAIN_AGENT_SYSTEM_PROMPT
             t0 = time.time()
             started_ms = int(t0 * 1000)
             response = client.chat.completions.create(
                 model=self.openai_config.model,
-                messages=[
-                    {"role": "system", "content": sys_msg},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"},
-                **completion_tokens_param(self.openai_config.model, 300),
+                messages=_domain_agent_messages(sys_msg, prompt),
+                temperature=_DOMAIN_AGENT_TEMPERATURE,
+                response_format=_json_object_response_format(),
+                **completion_tokens_param(self.openai_config.model, _ENHANCED_DOMAIN_AGENT_MAX_OUTPUT_TOKENS),
             )
 
             usage = response.usage
@@ -883,10 +952,6 @@ class DomainAgent:
 
     def evaluate(self, query: str) -> list[str]:
         """Evaluate query and return relevant principle IDs."""
-        cache_key = hashlib.md5(f"{query}_{len(self.principles)}".encode()).hexdigest()
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-
         if not self.principles:
             return []
 
@@ -919,6 +984,15 @@ If no principles from this domain are relevant, return: {{"principle_ids": []}}
 
 Output ONLY one JSON object (not a bare array), nothing else:"""
 
+        cache_key = _domain_agent_cache_key(
+            model=self.openai_config.model,
+            system_prompt=_LEGACY_DOMAIN_AGENT_SYSTEM_PROMPT,
+            user_prompt=prompt,
+            max_output_tokens=_LEGACY_DOMAIN_AGENT_MAX_OUTPUT_TOKENS,
+        )
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
         try:
             result_ids = self._call_openai(prompt)
 
@@ -949,18 +1023,15 @@ Output ONLY one JSON object (not a bare array), nothing else:"""
             else:
                 self._openai_client_reuses_after_cache += 1
             client = self._openai_http_client
-            sys_msg = "You are a precise semantic matching system. Always respond with valid JSON only."
+            sys_msg = _LEGACY_DOMAIN_AGENT_SYSTEM_PROMPT
             t0 = time.time()
             started_ms = int(t0 * 1000)
             response = client.chat.completions.create(
                 model=self.openai_config.model,
-                messages=[
-                    {"role": "system", "content": sys_msg},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"},
-                **completion_tokens_param(self.openai_config.model, 256),
+                messages=_domain_agent_messages(sys_msg, prompt),
+                temperature=_DOMAIN_AGENT_TEMPERATURE,
+                response_format=_json_object_response_format(),
+                **completion_tokens_param(self.openai_config.model, _LEGACY_DOMAIN_AGENT_MAX_OUTPUT_TOKENS),
             )
 
             usage = response.usage

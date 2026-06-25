@@ -171,6 +171,25 @@ class TestLLMPath:
         assert verdict.decision == ComplianceDecision.NO_MATCH
         assert "LLM path unavailable" in verdict.rationale
 
+    def test_llm_prompt_guides_generic_task_contracts_as_rules(self, monkeypatch):
+        monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "llm")
+        policy = _MockPolicy()
+        layer = DeveloperContractComplianceLayer(policy=policy)
+        contract = DeveloperContract.from_text("You are a sentiment classifier. Respond only Positive or Negative.")
+        req = _FakeRequest(prompt="A quiet but moving film.", developer_contract=contract)
+        verdict = layer.evaluate(req, speculative_draft="Positive")
+
+        assert verdict.decision == ComplianceDecision.NO_MATCH
+        assert len(policy.calls) == 1
+        call = policy.calls[0]
+        system = call["system"]
+        prompt = call["prompt"]
+        assert "GENERIC TASK INSTRUCTIONS ARE RULES" in system
+        assert "finite set of allowed outputs" in system
+        assert "source text being classified" in system
+        assert "Use SAFETY_OVERRIDE when the authorized output itself" in system
+        assert "including any generic task rule" in prompt
+
     def test_llm_match_above_threshold(self, monkeypatch):
         monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "llm")
         policy = _MockPolicy(response_text="""{
@@ -189,6 +208,30 @@ class TestLLMPath:
         assert verdict.decision == ComplianceDecision.MATCH
         assert verdict.confidence == 0.95
         assert verdict.evaluation_path == EvaluationPath.LLM
+
+    def test_llm_fixed_option_classification_match_validates_draft(self, monkeypatch):
+        monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "llm")
+        policy = _MockPolicy(response_text="""{
+            "verdict": "MATCH",
+            "rule_excerpt": "Respond only Positive or Negative",
+            "action_excerpt": "Positive",
+            "safety_override_reason": null,
+            "rationale": "The contract authorizes fixed-option sentiment classification.",
+            "confidence": 0.94,
+            "draft_matches_action": true,
+            "draft_match_confidence": 0.94
+        }""")
+        layer = DeveloperContractComplianceLayer(policy=policy)
+        contract = DeveloperContract.from_text("You are a sentiment classifier. Respond only Positive or Negative.")
+        req = _FakeRequest(prompt="A quiet but moving film.", developer_contract=contract)
+        verdict = layer.evaluate(req, speculative_draft="Positive")
+
+        assert verdict.decision == ComplianceDecision.MATCH
+        assert verdict.matched_rule is not None
+        assert verdict.matched_rule.rule_excerpt == "Respond only Positive or Negative"
+        assert verdict.speculative_draft_validated is True
+        assert verdict.draft_match_method == "substring"
+        assert verdict.safety_override_reason is None
 
     def test_llm_match_below_threshold_is_degraded_match(self, monkeypatch):
         monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "llm")

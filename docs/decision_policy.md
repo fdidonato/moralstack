@@ -108,6 +108,13 @@ decision exposed to the user is always **FINAL**.
 The presence of multiple entries for the same `request_id` is intentional; any downgrade or override is always explicit
 in the fields.
 
+### Contract-hard supremacy
+
+`CORE.DEVCONTRACT.1` is a non-promotable hard violation. `decision_service._handle_hard_violations` refuses it even in
+the two low-risk branches that can otherwise downgrade hard violations to `SAFE_COMPLETE`: regulated informational
+requests and pre-policy `SAFE_COMPLETE` cases. This preserves the invariant that developer-contract content constraints
+cannot be bypassed by domain-sensitive caveat routing.
+
 ### Determinism and side effects
 
 The decision is deterministic given input and policy. The trace is a logging side effect: presence or absence of the
@@ -185,6 +192,31 @@ range), the Controller may downgrade a post-deliberation REFUSE to SAFE_COMPLETE
 
 - **Rationale**: avoids wasting deliberative cycles when all modules agree the response is safe; the override
   is applied only after full deliberation and only when every module concurs.
+
+## Enumerated-output gate (Tier-1, SOFT-only revision suppression)
+
+When the requested output is a single enumerated token (e.g. `answer exactly
+'TRUE' or 'FALSE'`, multiple-choice single letter), a SOFT revision can only
+flip the selected option, which corrupts the factual answer. The critic
+(`runtime/modules/critic_module.py`) detects this case deterministically via
+`pipeline/output_contract.py:detect_enumerated_output` (declared constraints +
+draft cross-check) and, when `decision == REVISE`, `violated_hard == False`, and
+the draft is an enumerated member, downgrades the verdict to `PROCEED` and
+**clears the soft `violations`/`guidance`** (required because
+`ConvergenceEvaluator` votes `revise` on violation presence, not on `decision`).
+
+- **Trigger**: explicit enumerated declaration **and** draft is a single short
+  token member of the option set. Either alone does not trigger.
+- **Safety**: guarded by `not violated_hard` — HARD violations are never
+  suppressed (hard-signal supremacy, PROJECT_SPEC §5.3). No-op for free-form
+  outputs.
+- **Reason / audit**: each activation emits a best-effort
+  `governance.enumerated_output_gate` diagnostic
+  (`CriticReport.enumerated_output_gate_applied = True`) to
+  `debug.event.jsonl`, the `debug_events` table, and the UI "Debug Events"
+  panel. Observability only — never alters the decision (PROJECT_SPEC §5.6).
+- **Motivation**: removes a `boolq_contrast` regression where the revision loop
+  flipped a correct binary answer to the wrong value.
 
 ## REFUSE generation prompt handling
 

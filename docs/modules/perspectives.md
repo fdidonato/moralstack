@@ -374,6 +374,14 @@ state._perspectives_aggregation = apply_constitutional_override(
 
 ---
 
+## Conversation Context
+
+For multi-turn requests, perspectives receive the developer contract plus recent conversation history from
+`ProcessedRequest`. The prompt declares `context_mode=role_serialized_truncated; last 3 turns`, and the deliberation
+runner records `CONTEXT_SHAPE_RECORDED` plus context-shape metadata on the perspectives LLM call.
+
+---
+
 ## See Also
 
 - [Orchestrator](./orchestrator.md) - Guidance aggregation

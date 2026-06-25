@@ -17,6 +17,16 @@ from typing import Any
 
 from moralstack.observability import obs
 from moralstack.observability.config import get_db_path
+from moralstack.orchestration.orchestration_event_taxonomy import (
+    COMPLIANCE_DRAFT_REUSED,
+    PROXY_FINAL_REVALIDATION_BLOCKED,
+    PROXY_FINAL_REVALIDATION_ERROR,
+    PROXY_FINAL_REVALIDATION_PASSED,
+    PROXY_FINAL_REVALIDATION_SKIPPED,
+    PROXY_FINAL_REVALIDATION_STARTED,
+    PROXY_OUTPUT_FINALIZED,
+    SPECULATIVE_RESULT_USED,
+)
 from moralstack.reports.benchmark_report_loader import load_benchmark_report
 from moralstack.reports.runtime_decisions import (
     build_runtime_decision_observability,
@@ -500,6 +510,243 @@ def _render_compliance_layer_section(compliance_data: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _parse_event_payload(event: dict[str, Any] | None) -> dict[str, Any]:
+    if not event:
+        return {}
+    payload = event.get("payload_json") or event.get("payload") or {}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            payload = {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _first_event(events: list[dict[str, Any]], event_type: str) -> dict[str, Any] | None:
+    for event in events:
+        if (event.get("event_type") or "") == event_type:
+            return event
+    return None
+
+
+def _last_event(events: list[dict[str, Any]], event_type: str) -> dict[str, Any] | None:
+    selected = None
+    for event in events:
+        if (event.get("event_type") or "") == event_type:
+            selected = event
+    return selected
+
+
+def _fmt_ms(ms: Any) -> str:
+    if ms is None:
+        return "-"
+    try:
+        return datetime.fromtimestamp(float(ms) / 1000).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return "-"
+
+
+def _proxy_output_info(events: list[dict[str, Any]]) -> dict[str, Any]:
+    event = _last_event(events, PROXY_OUTPUT_FINALIZED)
+    payload = _parse_event_payload(event)
+    return {
+        "final_action": payload.get("final_action") or (event or {}).get("decision") or "",
+        "final_text_source": payload.get("final_text_source") or "",
+        "reused_governed_content": payload.get("reused_governed_content"),
+    }
+
+
+def _final_revalidation_info(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    status_by_event = {
+        PROXY_FINAL_REVALIDATION_STARTED: "started",
+        PROXY_FINAL_REVALIDATION_PASSED: "passed",
+        PROXY_FINAL_REVALIDATION_BLOCKED: "blocked",
+        PROXY_FINAL_REVALIDATION_ERROR: "error",
+        PROXY_FINAL_REVALIDATION_SKIPPED: "skipped",
+    }
+    terminal = {
+        PROXY_FINAL_REVALIDATION_PASSED,
+        PROXY_FINAL_REVALIDATION_BLOCKED,
+        PROXY_FINAL_REVALIDATION_ERROR,
+        PROXY_FINAL_REVALIDATION_SKIPPED,
+    }
+    selected = None
+    started = False
+    for event in events:
+        event_type = event.get("event_type") or ""
+        if event_type == PROXY_FINAL_REVALIDATION_STARTED:
+            started = True
+        if event_type in terminal:
+            selected = event
+    if selected is None:
+        if not started:
+            return None
+        selected = _first_event(events, PROXY_FINAL_REVALIDATION_STARTED)
+    payload = _parse_event_payload(selected)
+    event_type = (selected or {}).get("event_type") or ""
+    return {
+        "status": status_by_event.get(event_type, "unknown"),
+        "event_type": event_type,
+        "final_text_source_original": payload.get("final_text_source_original"),
+        "final_text_source_after_revalidation": payload.get("final_text_source_after_revalidation"),
+        "violated_principles": payload.get("violated_principles") or [],
+        "block_reason": payload.get("block_reason") or "",
+        "match_kind": payload.get("match_kind") or "",
+        "skip_reason": payload.get("skip_reason") or "",
+    }
+
+
+def _last_final_trace(traces: list[dict[str, Any]]) -> dict[str, Any]:
+    finals = [t for t in traces if (t.get("stage") or "").strip().upper() == "FINAL"]
+    if not finals:
+        return {}
+    return _trace_dict(finals[-1])
+
+
+def _render_delivery_path_section(
+    *,
+    events: list[dict[str, Any]],
+    traces: list[dict[str, Any]],
+    calls: list[dict[str, Any]],
+) -> str:
+    proxy_info = _proxy_output_info(events)
+    rv_info = _final_revalidation_info(events)
+    final_trace = _last_final_trace(traces)
+    event_types = {(e.get("event_type") or "") for e in events}
+
+    delivered_action = proxy_info.get("final_action") or final_trace.get("final_action") or "unknown"
+    delivered_source = proxy_info.get("final_text_source") or "unknown"
+    pre_action = final_trace.get("final_action") or "unknown"
+    pre_path = final_trace.get("path") or "unknown"
+
+    if rv_info and rv_info.get("status") == "blocked":
+        headline = f"Delivered `{delivered_action}` after final revalidation blocked the upstream candidate."
+    elif COMPLIANCE_DRAFT_REUSED in event_types and delivered_source == "governed_draft":
+        headline = f"Delivered `{delivered_action}` from the DCCL-validated governed draft."
+    else:
+        headline = f"Delivered `{delivered_action}` from `{delivered_source}`."
+
+    rows: list[tuple[str, str, str, str]] = []
+    spec_call = next((c for c in calls if (c.get("phase") or "") == "speculative_generate"), None)
+    spec_event = _first_event(events, "SPECULATIVE_STARTED")
+    if spec_call or spec_event:
+        rows.append(
+            (
+                _fmt_ms((spec_call or spec_event or {}).get("started_at")),
+                "Speculative draft generated",
+                "Policy draft started in parallel with risk; this is not a delivery decision.",
+                "policy/speculative_generate",
+            )
+        )
+
+    compliance_event = next((e for e in events if (e.get("event_type") or "").startswith("COMPLIANCE_LAYER_VERDICT")), None)
+    if compliance_event:
+        payload = _parse_event_payload(compliance_event)
+        rows.append(
+            (
+                _fmt_ms(compliance_event.get("started_at")),
+                f"DCCL verdict: {compliance_event.get('decision') or 'unknown'}",
+                f"speculative_draft_validated={bool(payload.get('speculative_draft_validated'))}; "
+                f"evaluation_path={payload.get('evaluation_path') or 'unknown'}",
+                "compliance_layer",
+            )
+        )
+
+    reused_event = _first_event(events, COMPLIANCE_DRAFT_REUSED)
+    if reused_event:
+        rows.append(
+            (
+                _fmt_ms(reused_event.get("started_at")),
+                "Validated draft promoted to governed_draft",
+                "COMPLIANCE_DRAFT_REUSED means the speculative draft was validated and reused as final governed content.",
+                "dccl",
+            )
+        )
+    else:
+        spec_used = _first_event(events, SPECULATIVE_RESULT_USED)
+        if spec_used:
+            payload = _parse_event_payload(spec_used)
+            route = payload.get("route") or spec_used.get("decision") or "unknown"
+            rows.append(
+                (
+                    _fmt_ms(spec_used.get("started_at")),
+                    f"Speculative draft consumed by {route}",
+                    "No COMPLIANCE_DRAFT_REUSED event exists, so this was route seeding, not final delivery reuse.",
+                    payload.get("consumer") or "speculative",
+                )
+            )
+
+    rows.append(
+        (
+            "-",
+            "Pre-delivery governance decision",
+            f"{pre_path} chose {pre_action} before proxy delivery checks.",
+            "decision_traces.FINAL",
+        )
+    )
+
+    upstream_call = next(
+        (
+            c
+            for c in calls
+            if (c.get("module") or "") == "upstream_provider"
+            or (c.get("phase") or "") in {"upstream_regen", "safe_complete_upstream"}
+        ),
+        None,
+    )
+    if upstream_call:
+        rows.append(
+            (
+                _fmt_ms(upstream_call.get("started_at")),
+                "Final provider candidate generated",
+                f"{upstream_call.get('phase') or 'upstream'} produced candidate final text"
+                f" distinct from the speculative draft",
+                "upstream_provider",
+            )
+        )
+
+    if rv_info:
+        rv_event = _last_event(events, rv_info.get("event_type") or "")
+        rows.append(
+            (
+                _fmt_ms((rv_event or {}).get("started_at")),
+                f"Final output revalidation: {rv_info.get('status')}",
+                f"target={rv_info.get('final_text_source_original') or 'unknown'}; "
+                f"after={rv_info.get('final_text_source_after_revalidation') or 'unknown'}",
+                rv_info.get("block_reason") or rv_info.get("skip_reason") or "",
+            )
+        )
+
+    finalized = _last_event(events, PROXY_OUTPUT_FINALIZED)
+    rows.append(
+        (
+            _fmt_ms((finalized or {}).get("started_at")),
+            f"Delivered output: {delivered_action}",
+            f"authoritative final_text_source={delivered_source}; "
+            f"reused_governed_content={proxy_info.get('reused_governed_content')}",
+            "PROXY_OUTPUT_FINALIZED",
+        )
+    )
+
+    lines = [
+        "## Delivery path summary",
+        "",
+        f"> {headline}",
+        "",
+        "| Field | Value |",
+        "|-------|-------|",
+        f"| Pre-delivery governance | `{pre_path} / {pre_action}` |",
+        f"| Authoritative delivered output | `{delivered_action}` |",
+        f"| Authoritative final source | `{delivered_source}` |",
+        "",
+        "| Time | Step | Meaning | Source |",
+        "|------|------|---------|--------|",
+    ]
+    for time_text, title, detail, source in rows:
+        lines.append(f"| {time_text} | {title} | {detail} | `{source or '-'}` |")
+    return "\n".join(lines) + "\n"
+
+
 def export_request_markdown(run_id: str, request_id: str) -> str:
     """
     Exports a single request's deliberation report as markdown.
@@ -529,11 +776,18 @@ def export_request_markdown(run_id: str, request_id: str) -> str:
 
     try:
         orch = get_orchestration_events_for_request(run_id, request_id)
+        calls = get_llm_calls_for_request(run_id, request_id)
+        delivery_md = _render_delivery_path_section(
+            events=orch,
+            traces=report.decision_traces or [],
+            calls=calls,
+        )
+        if delivery_md:
+            md += "\n\n---\n\n" + delivery_md
         compliance_data = _extract_compliance_data_from_events(orch)
         compliance_md = _render_compliance_layer_section(compliance_data)
         if compliance_md:
             md += "\n\n---\n\n" + compliance_md
-        calls = get_llm_calls_for_request(run_id, request_id)
         vm = build_runtime_decision_observability(
             traces=report.decision_traces or [],
             orchestration_events=orch,

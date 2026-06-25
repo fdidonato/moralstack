@@ -56,6 +56,11 @@ class DelibContext:
     simulator_domain_guidance: str = ""
     conversation_history_snippet: str = ""
     developer_contract_text: str = ""
+    # Tier-1 enumerated output contract (e.g. answer exactly 'TRUE'/'FALSE').
+    # Derived deterministically by the critic; used to suppress SOFT-only
+    # revisions that could only flip the selected option.
+    output_is_enumerated: bool = False
+    output_enumerated_options: tuple[str, ...] = ()
 
     def get_risk_signals_str(self) -> str:
         """Compact string of risk signals for prompts."""

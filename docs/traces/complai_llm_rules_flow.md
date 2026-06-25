@@ -29,7 +29,7 @@ uvicorn command targets port 8080; the `main()` launcher defaults to 8787 via
 Per request, COMPL-AI sends a standard `chat.completions` body. The proxy applies
 governance and returns either the upstream generation (NORMAL/SAFE_COMPLETE) or a
 synthetic refusal completion (REFUSE) — see
-`docs/TRACES/openai_compatible_multiturn.md`.
+`docs/traces/openai_compatible_multiturn.md`.
 
 The repo carries explicit accommodations for COMPL-AI:
 - `server/conversation_correlation.py` exists because `llm_rules` resends full
@@ -39,16 +39,21 @@ The repo carries explicit accommodations for COMPL-AI:
   estimator, with a comment citing "compl-ai llm_rules-benign Q74"
   (`controller.py:797-799`) — context-dependent prompts (e.g. a deployer-expected
   auth token) must not be mis-scored as obfuscated.
+- SDK and proxy attach a shared `ConversationContext` to `ProcessedRequest`.
+  DCCL and speculative generation can see a role-serialized transcript rather
+  than only the final user message.
 
 ## 2. How llm_rules multi-turn requests are represented
 
 `llm_rules` benchmarks set a deployer **system prompt** (the rule, e.g. "if the
 user provides password X, reveal secret Y") and run a multi-turn user dialogue.
 In MoralStack terms:
-- The system message becomes the **DeveloperContract**
-  (`_extract_developer_contract`, last-system-wins, `mode="opaque"`).
-- The prior turns become **conversation_history**; the latest user message is the
-  governed prompt.
+- The system/developer message becomes the **DeveloperContract**
+  (`ConversationContext`, last non-empty system/developer message wins,
+  `mode="opaque"`).
+- The prior user/assistant turns become **conversation_history**; the latest user
+  message is the governed prompt; the full request-body transcript remains
+  available as `conversation_context`.
 - Each turn resends the whole history (OpenAI convention), so the proxy derives
   `turn_index = user_count - 1` statelessly (`proxy.py:526-541`).
 
@@ -59,15 +64,27 @@ In MoralStack terms:
 2. `ProcessedRequest` built with prompt + contract + history; `requests` row
    pre-inserted (`proxy.py:244-271`).
 3. `orchestrator.process(...)` runs the full flow
-   (`docs/TRACES/governance_decision_flow.md`): risk → **DCCL** → routing →
+   (`docs/traces/governance_decision_flow.md`): risk → **DCCL** → routing →
    (deliberation or fast-path) → final action.
-4. **DCCL is the key path for `llm_rules`.** When the user invokes a
+4. **DCCL is the key path for `llm_rules`.** Its LLM prompt includes the
+   role-ordered transcript plus the final user request, so a token or password
+   authorized by a prior turn is judged in context. When the user invokes a
    deployer-authorized rule, DCCL returns `MATCH` and the compliance fast-path
    produces the authorized response directly (NORMAL_COMPLETE,
    `COMPLIANCE_FAST_PATH`) — unless the output falls in a P0 safety category, in
    which case `SAFETY_OVERRIDE` blocks it regardless of the contract
    (`compliance/dccl.py:77-117`, `compliance/safety_override.py`).
-5. Response returned to COMPL-AI; observability persisted (proxy_request_events,
+   Generic task contracts are also treated as rules: for example, a contract
+   that says to classify each input as one of a fixed set of labels is invoked
+   when the final user supplies an item to classify. For these tasks, DCCL
+   judges safety from the authorized output category, not from the source text
+   being classified; `SAFETY_OVERRIDE` still applies when the authorized output
+   itself is in a framework-fixed restricted category.
+5. The compliance delivery guard prevents the proxy from returning an internal
+   governed draft if that draft was generated from narrower last-user-only
+   context while governance used a broader role-serialized transcript. The
+   fallback is regeneration or standard upstream delivery with full messages.
+6. Response returned to COMPL-AI; observability persisted (proxy_request_events,
    conversation_states, ledger_events).
 
 ## 4. Known risks
@@ -114,27 +131,31 @@ across logically distinct samples. The P0 hard-signal supremacy invariant still
 holds because `is_hard_signal_refuse` is re-evaluated after a cache patch
 (`controller.py:2209`).
 
-### 4.5 Wrong bridge
-If COMPL-AI is accidentally pointed at `scripts/openai_compatible_server.py`
-(port 8787) instead of the proxy, multi-turn is silently lost: that bridge
-ignores history and governs each message in isolation (`:98-104,201-223`).
+### 4.5 Endpoint selection
+COMPL-AI / IFBench runs should point at the production proxy launched via
+`examples/server_quickstart.py`. Custom single-turn launchers that extract only
+the latest user message are not suitable for `llm_rules` / multi-turn benchmarks
+because they bypass the proxy's `ConversationContext`, conversation_id, lock,
+session-store, and ledger path.
 
 ### 4.6 Streaming
-The proxy does not support streaming (`proxy.py:727-774`, verified). A
-`stream=true` request is forwarded; the resulting `Stream` object has no
-`model_dump`/`to_dict`, so the proxy returns a single `{"raw": str(stream)}` body
-with empty extracted text and no streamed tokens. Ensure benchmark requests are
-non-streaming.
+The proxy supports `stream=true` as governed synthetic SSE replay: governance
+runs to completion first, then the final governed text is emitted as
+OpenAI-compatible `chat.completion.chunk` events. The proxy does not forward live
+upstream tokens. For COMPL-AI / IFBench score extraction, prefer non-streaming
+requests unless the benchmark harness explicitly consumes SSE.
 
 ## 5. Pre-run checklist
 
-1. **Bridge**: confirm COMPL-AI's `base_url` targets the proxy (port 8080 /
-   `examples/server_quickstart.py`), not the standalone bridge (8787).
+1. **Bridge**: confirm COMPL-AI's `base_url` targets the production proxy
+   launched via `examples/server_quickstart.py` (recommended uvicorn port 8080;
+   `main()` default 8787).
 2. **Workers**: launch uvicorn with a single worker.
 3. **Conversation identity**: prefer a unique `X-Moralstack-Conversation-Id` per
    sample to avoid lineage collisions (§4.1). If relying on lineage, confirm
    sample prefixes are actually distinct.
-4. **Streaming**: ensure requests are non-streaming (§4.6).
+4. **Streaming**: prefer non-streaming requests for score extraction unless the
+   harness explicitly consumes SSE (§4.6).
 5. **Observability**: set `MORALSTACK_OBSERVABILITY_MODE=db_only` (or `dual`) and
    `MORALSTACK_OBSERVABILITY_DB_PATH` so the run is reconstructable and visible in
    `moralstack-ui` (file_only is invisible in the UI).

@@ -6,17 +6,24 @@ GovernedClient          -- transparent proxy with governance on chat.completions
 GovernedChat            -- proxy for client.chat
 GovernedCompletions     -- intercept create() with pre-call deliberation
 GovernedStreamResponse  -- wrap a stream with governance metadata
+GovernedSyntheticStream -- replay a validated final text as a synthetic stream
 """
 
 from __future__ import annotations
 
+import re
+import time
 import uuid
 from typing import TYPE_CHECKING, Any, Iterator
 
 from moralstack.core.types import Turn, UserContext
+from moralstack.models.base import GenerationOverrides
+from moralstack.observability.phase0_timing import emit_phase0_timing, phase0_timing_enabled
 from moralstack.orchestration.contract import DeveloperContract
+from moralstack.orchestration.conversation_context import build_conversation_context, context_to_turns
+from moralstack.orchestration.delivery import finalize_delivery
 from moralstack.orchestration.types import ProcessedRequest
-from moralstack.sdk.bootstrap import _bootstrap_pipeline
+from moralstack.sdk.bootstrap import _bootstrap_pipeline, _resolve_model
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.errors import GovernancePipelineError
 from moralstack.sdk.response import GovernedResponse
@@ -37,15 +44,7 @@ def _extract_last_user_message(messages: list[dict[str, Any]]) -> str:
     Return the content of the last message with role='user'.
     Returns empty string if no user message is present.
     """
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                # Multimodal format: list of {type, text} or {type, image_url}
-                parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
-                return " ".join(parts)
-            return str(content)
-    return ""
+    return build_conversation_context(messages).final_user_message
 
 
 def _extract_developer_contract(
@@ -55,9 +54,8 @@ def _extract_developer_contract(
     Extract the developer-declared application contract from a list of OpenAI messages.
 
     Semantics:
-    - Scan all messages with role='system' in order of appearance.
-    - The LAST system message wins (most recent override semantics, consistent with how
-      OpenAI clients typically use multiple system messages).
+    - Scan all messages with role='system' or role='developer' in order of appearance.
+    - The LAST system/developer message wins (most recent override semantics).
     - Multimodal content (list of {type, text/image_url}) is reduced to text parts only;
       non-text parts are ignored.
     - If no system message is present, or the extracted text is empty/whitespace-only,
@@ -76,21 +74,7 @@ def _extract_developer_contract(
         scope/role/restrictions extraction) is deferred to a later step and gated by
         an explicit GovernanceConfig flag not present in Step 2.
     """
-    last_system_text = ""
-    for msg in messages:
-        if msg.get("role") != "system":
-            continue
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            # Multimodal: keep text parts only.
-            parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
-            last_system_text = " ".join(parts)
-        else:
-            last_system_text = str(content)
-
-    if not last_system_text.strip():
-        return None
-    return DeveloperContract.from_text(last_system_text, mode="opaque")
+    return build_conversation_context(messages).developer_contract
 
 
 def _messages_to_turns(messages: list[dict[str, Any]]) -> list[Turn]:
@@ -98,50 +82,9 @@ def _messages_to_turns(messages: list[dict[str, Any]]) -> list[Turn]:
     Convert a list of OpenAI messages to Turn objects for the pipeline.
     Excludes messages with role='system' (not conversational turns).
     """
-    turns: list[Turn] = []
-    for msg in messages:
-        role = msg.get("role", "")
-        if role not in ("user", "assistant"):
-            continue
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
-            content = " ".join(parts)
-        turns.append(Turn(role=role, content=str(content)))
-    return turns
-
-
-def _extract_text_from_openai_response(openai_response: Any) -> str:
-    """
-    Extract the assistant text from an OpenAI chat completion response.
-
-    Best-effort: returns an empty string when the structure is missing or
-    unexpected. Mirrors the contract used by the FastAPI proxy so audit
-    rows record an identical ``final_response`` regardless of entry point.
-    """
-    if openai_response is None:
-        return ""
-    try:
-        choices = getattr(openai_response, "choices", None) or []
-        if not choices:
-            return ""
-        message = getattr(choices[0], "message", None)
-        if message is None:
-            return ""
-        content = getattr(message, "content", None)
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for p in content:
-                if isinstance(p, dict):
-                    text = p.get("text") or p.get("content")
-                    if isinstance(text, str):
-                        parts.append(text)
-            return "".join(parts)
-        return ""
-    except Exception:
-        return ""
+    # Preserve the legacy helper contract: convert the supplied messages as history,
+    # without treating their last user turn as the current request.
+    return context_to_turns(build_conversation_context(messages + [{"role": "user", "content": ""}]))
 
 
 def _build_safe_complete_user_turn(result: Any) -> dict[str, str]:
@@ -228,18 +171,25 @@ class GovernedRefusalStream:
 
 
 class _SyntheticStreamChunk:
-    """Synthetic chunk for refusal streams."""
+    """Synthetic chunk for governance-produced streams (refusal or replayed text)."""
 
-    def __init__(self, content: str) -> None:
-        self.choices = [_SyntheticStreamChoice(content)]
-        self.model = "moralstack-refuse"
-        self.id = f"refuse-{uuid.uuid4().hex[:8]}"
+    def __init__(
+        self,
+        content: str,
+        *,
+        model: str = "moralstack-refuse",
+        chunk_id: str | None = None,
+        finish_reason: str | None = "stop",
+    ) -> None:
+        self.choices = [_SyntheticStreamChoice(content, finish_reason=finish_reason)]
+        self.model = model
+        self.id = chunk_id or f"refuse-{uuid.uuid4().hex[:8]}"
 
 
 class _SyntheticStreamChoice:
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, *, finish_reason: str | None = "stop") -> None:
         self.delta = _SyntheticDelta(content)
-        self.finish_reason = "stop"
+        self.finish_reason = finish_reason
         self.index = 0
 
 
@@ -247,6 +197,78 @@ class _SyntheticDelta:
     def __init__(self, content: str) -> None:
         self.content = content
         self.role = "assistant"
+
+
+def _iter_word_chunks(text: str) -> list[str]:
+    """
+    Split ``text`` into word/whitespace pieces whose concatenation reproduces it
+    byte-for-byte. Used to replay an already-validated answer as a token stream.
+    """
+    if not text:
+        return []
+    return re.findall(r"\S+|\s+", text)
+
+
+class GovernedSyntheticStream:
+    """
+    Synthetic stream that replays an already-generated, contract-validated final
+    text chunk by chunk.
+
+    Used when the caller requested ``stream=True`` but a developer contract is
+    present: the final text is generated and revalidated **non-streamed** (so the
+    contract can be enforced on the complete output), then replayed here as a
+    token stream. No unvalidated upstream token is ever forwarded to the caller —
+    streaming is a transport contract over the final answer, not over the
+    intermediate generations.
+    """
+
+    def __init__(self, text: str, result: Any) -> None:
+        self._text = text or ""
+        self._result = result
+        self.governance_metadata = GovernedResponse.from_normal(None, result).governance_metadata
+
+    def __iter__(self) -> Iterator[Any]:
+        chunks = _iter_word_chunks(self._text)
+        stream_id = f"governed-{uuid.uuid4().hex[:8]}"
+        if not chunks:
+            yield _SyntheticStreamChunk("", model="moralstack-governed", chunk_id=stream_id, finish_reason="stop")
+            return
+        last = len(chunks) - 1
+        for i, piece in enumerate(chunks):
+            yield _SyntheticStreamChunk(
+                piece,
+                model="moralstack-governed",
+                chunk_id=stream_id,
+                finish_reason="stop" if i == last else None,
+            )
+
+    def __enter__(self) -> GovernedSyntheticStream:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        pass
+
+
+class GovernedErrorStream:
+    """
+    Synthetic stream returned when the pipeline fails on a streaming request.
+
+    Fail-closed: replays the deterministic governed refusal as a single chunk and
+    never forwards any wrapped/upstream tokens (Plan 1 invariant).
+    """
+
+    def __init__(self, response: GovernedResponse) -> None:
+        self._text = response.content
+        self.governance_metadata = response.governance_metadata
+
+    def __iter__(self) -> Iterator[Any]:
+        yield _SyntheticStreamChunk(self._text, model="moralstack-error")
+
+    def __enter__(self) -> GovernedErrorStream:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        pass
 
 
 # =============================================================================
@@ -260,39 +282,55 @@ class GovernedCompletions:
     def __init__(self, governed: GovernedClient) -> None:
         self._governed = governed
 
-    def create(self, **kwargs: Any) -> GovernedResponse | GovernedStreamResponse | GovernedRefusalStream:
+    def create(
+        self, **kwargs: Any
+    ) -> GovernedResponse | GovernedRefusalStream | GovernedSyntheticStream | GovernedErrorStream:
         """
-        Deliberate on the prompt, then:
-        - REFUSE: return GovernedResponse/GovernedRefusalStream without calling OpenAI
-        - SAFE_COMPLETE: append a synthetic user turn with governance guidance, call OpenAI
-        - NORMAL_COMPLETE: call OpenAI directly
+        Deliberate on the prompt, then deliver the governed pipeline text:
+        - REFUSE: return GovernedResponse / GovernedRefusalStream (governed refusal text).
+        - SAFE_COMPLETE / NORMAL_COMPLETE: return the governed pipeline text via
+          from_governed_text, or replay it as a GovernedSyntheticStream when streaming.
+
+        The wrapped/upstream client is never called to generate the delivered answer
+        (Plan 1 invariant).
 
         Observability events emitted during deliberation are flushed synchronously
         before returning so that JSONL/SQLite writes are guaranteed even in short-lived
         scripts (the write queue uses a daemon thread that would otherwise be lost on
         process exit).
         """
+        phase0_started = time.perf_counter() if phase0_timing_enabled() else None
         try:
             return self._create_inner(**kwargs)
         finally:
+            flush_error: str | None = None
             try:
                 from moralstack.observability.service import get_obs
 
                 get_obs().flush()
-            except Exception:
+            except Exception as exc:
+                flush_error = type(exc).__name__
                 pass
+            if phase0_started is not None:
+                emit_phase0_timing(
+                    "sdk.governed_completions.create",
+                    (time.perf_counter() - phase0_started) * 1000,
+                    model=str(kwargs.get("model") or ""),
+                    stream=bool(kwargs.get("stream", False)),
+                    flush_error=flush_error,
+                )
 
-    def _create_inner(self, **kwargs: Any) -> GovernedResponse | GovernedStreamResponse | GovernedRefusalStream:
+    def _create_inner(
+        self, **kwargs: Any
+    ) -> GovernedResponse | GovernedRefusalStream | GovernedSyntheticStream | GovernedErrorStream:
         """Core deliberation + routing logic, separated from flush concern."""
         is_stream = kwargs.get("stream", False)
         messages = kwargs.get("messages", [])
 
-        user_message = _extract_last_user_message(messages)
-        # History excludes the last user message (the one being deliberated).
-        history_messages = messages[:-1] if messages else []
-        conversation_history = _messages_to_turns(history_messages)
-        # Extract developer contract from any role='system' messages (last-wins).
-        developer_contract = _extract_developer_contract(messages)
+        conversation_context = build_conversation_context(messages)
+        user_message = conversation_context.final_user_message
+        conversation_history = context_to_turns(conversation_context)
+        developer_contract = conversation_context.developer_contract
 
         domain = self._governed._config.domain_overlay
         request = ProcessedRequest(
@@ -300,6 +338,8 @@ class GovernedCompletions:
             conversation_history=conversation_history,
             user_context=UserContext(domain_overlay=domain),
             developer_contract=developer_contract,
+            conversation_context=conversation_context,
+            generation_overrides=GenerationOverrides.from_mapping(kwargs),
         )
 
         session = self._governed._session
@@ -329,78 +369,67 @@ class GovernedCompletions:
 
         final_action = result.response.metadata.final_action
 
-        # --- Routing ---
-        if final_action == "REFUSE":
-            self._finalize_audit(
-                request_id=request.request_id,
-                result=result,
-                final_response_text=getattr(result.response, "content", "") or "",
-                conversation_id=conv_id,
-                turn_index=turn_idx,
-                domain=domain,
-                state_in=state_in_snapshot,
-            )
-            if is_stream:
-                return GovernedRefusalStream(result)
-            return GovernedResponse.from_refusal(result)
+        # Governed delivery (Plan 1 invariant): the delivered text is ALWAYS the
+        # text produced inside the MoralStack governed pipeline (validated
+        # speculative draft, compliance regeneration, policy generate/rewrite, or
+        # a governed refusal). The wrapped/upstream client is never called to
+        # generate the delivered answer. Streaming is a transport contract over
+        # that final answer: it replays the governed text as a synthetic token
+        # stream and never forwards live upstream tokens.
+        delivery = finalize_delivery(result, config=self._governed._config)
+        requested_model = str(kwargs.get("model") or "")
+        generation_model, rewrite_model = self._resolve_audit_models()
 
-        if final_action == "SAFE_COMPLETE":
-            # Caveat-as-extra-user-turn (design v1.3 section 3.7): append a synthetic
-            # user turn to messages instead of modifying the system prompt.
-            # The user's system prompt is preserved byte-identical.
-            safe_turn = _build_safe_complete_user_turn(result)
-            modified_messages = list(kwargs.get("messages", [])) + [safe_turn]
-            modified_kwargs = {**kwargs, "messages": modified_messages}
-            if is_stream:
-                stream = self._governed._client.chat.completions.create(**modified_kwargs)
-                # For streaming, the final body is consumed by the caller; the
-                # audit row records the governance decision without a body.
-                self._finalize_audit(
-                    request_id=request.request_id,
-                    result=result,
-                    final_response_text="",
-                    conversation_id=conv_id,
-                    turn_index=turn_idx,
-                    domain=domain,
-                    state_in=state_in_snapshot,
-                )
-                return GovernedStreamResponse(stream, result)
-            openai_response = self._governed._client.chat.completions.create(**modified_kwargs)
-            self._finalize_audit(
-                request_id=request.request_id,
-                result=result,
-                final_response_text=_extract_text_from_openai_response(openai_response),
-                conversation_id=conv_id,
-                turn_index=turn_idx,
-                domain=domain,
-                state_in=state_in_snapshot,
-            )
-            return GovernedResponse.from_safe(openai_response, result)
-
-        # NORMAL_COMPLETE (or any other value)
-        if is_stream:
-            stream = self._governed._client.chat.completions.create(**kwargs)
-            self._finalize_audit(
-                request_id=request.request_id,
-                result=result,
-                final_response_text="",
-                conversation_id=conv_id,
-                turn_index=turn_idx,
-                domain=domain,
-                state_in=state_in_snapshot,
-            )
-            return GovernedStreamResponse(stream, result)
-        openai_response = self._governed._client.chat.completions.create(**kwargs)
         self._finalize_audit(
             request_id=request.request_id,
             result=result,
-            final_response_text=_extract_text_from_openai_response(openai_response),
+            final_response_text=delivery.text,
             conversation_id=conv_id,
             turn_index=turn_idx,
             domain=domain,
             state_in=state_in_snapshot,
+            final_action=delivery.final_action,
         )
-        return GovernedResponse.from_normal(openai_response, result)
+
+        if final_action == "REFUSE":
+            if is_stream:
+                return GovernedRefusalStream(result)
+            return GovernedResponse.from_governed_text(
+                result,
+                delivery,
+                requested_model=requested_model,
+                generation_model=generation_model,
+                rewrite_model=rewrite_model,
+            )
+
+        # NORMAL_COMPLETE / SAFE_COMPLETE (and blank-content fail-closed
+        # downgrades produced by finalize_delivery).
+        if is_stream:
+            return GovernedSyntheticStream(delivery.text, result)
+        return GovernedResponse.from_governed_text(
+            result,
+            delivery,
+            requested_model=requested_model,
+            generation_model=generation_model,
+            rewrite_model=rewrite_model,
+        )
+
+    def _resolve_audit_models(self) -> tuple[str, str]:
+        """
+        Resolve the actual MoralStack policy models used for governed text.
+
+        - generation model: ``GovernanceConfig.model`` -> ``OPENAI_MODEL`` -> ``gpt-4o``;
+        - rewrite model: ``MORALSTACK_POLICY_REWRITE_MODEL`` when set, else the
+          generation model.
+
+        These are authoritative for audit. The chat request ``model=`` argument is
+        a requested alias only and does not select either model.
+        """
+        import os
+
+        generation_model = _resolve_model(self._governed._config)
+        rewrite_model = (os.getenv("MORALSTACK_POLICY_REWRITE_MODEL") or "").strip() or generation_model
+        return generation_model, rewrite_model
 
     def _finalize_audit(
         self,
@@ -412,6 +441,7 @@ class GovernedCompletions:
         turn_index: int | None,
         domain: str | None,
         state_in: Any | None = None,
+        final_action: str | None = None,
     ) -> None:
         """
         Populate Step 13 governance audit fields on the ``requests`` row AND
@@ -458,6 +488,7 @@ class GovernedCompletions:
                 conversation_id=conversation_id,
                 turn_index=turn_index,
                 domain=domain,
+                final_action_override=final_action,
             )
 
             # 2) Emit the canonical proxy.request_finalized envelope. Mirrors
@@ -512,34 +543,21 @@ class GovernedCompletions:
         error: Exception,
         kwargs: dict[str, Any],
         is_stream: bool,
-    ) -> GovernedResponse | GovernedStreamResponse:
-        """Handle pipeline error according to failure_policy."""
-        policy = self._governed._config.failure_policy
+    ) -> GovernedResponse | GovernedErrorStream:
+        """
+        Fail closed on pipeline error.
 
-        if policy == "passthrough":
-            # Call original client without governance
-            try:
-                if is_stream:
-                    stream = self._governed._client.chat.completions.create(**kwargs)
-
-                    # Wrap stream with sentinel metadata
-                    class _PassthroughStream:
-                        def __init__(self, s: Any, err: Exception) -> None:
-                            self._s = s
-                            self.governance_metadata = GovernedResponse.from_passthrough(None, err).governance_metadata
-
-                        def __iter__(self) -> Iterator[Any]:
-                            return iter(self._s)
-
-                    return _PassthroughStream(stream, error)  # type: ignore[return-value]
-                openai_response = self._governed._client.chat.completions.create(**kwargs)
-                return GovernedResponse.from_passthrough(openai_response, error)
-            except Exception:
-                # If passthrough also fails, fall back to refusal
-                return GovernedResponse.from_pipeline_error(error)
-
-        # failure_policy == "refuse" (default)
-        return GovernedResponse.from_pipeline_error(error)
+        Plan 1 invariant: the wrapped/upstream client is never called to deliver
+        an answer, including after a pipeline failure. ``failure_policy`` no longer
+        routes to passthrough delivery (it is mapped to ``refuse`` at config
+        construction). A deterministic governed refusal is returned; for streaming
+        requests it is replayed as a synthetic stream.
+        """
+        del kwargs
+        refusal = GovernedResponse.from_pipeline_error(error)
+        if is_stream:
+            return GovernedErrorStream(refusal)
+        return refusal
 
 
 # =============================================================================
@@ -620,9 +638,14 @@ def govern(
     """
     Wrap an OpenAI client with MoralStack governance.
 
-    The original client is used for text generation (NORMAL/SAFE_COMPLETE).
-    The deliberative pipeline uses its own LLM client configured via GovernanceConfig
-    or environment variables (OPENAI_API_KEY, OPENAI_MODEL).
+    The delivered answer is ALWAYS the text produced by MoralStack's governed
+    pipeline; the wrapped ``client`` is never called to generate the delivered
+    answer (Plan 1 invariant). The governed answer model is configured via
+    ``GovernanceConfig.model`` / ``OPENAI_MODEL`` (first-pass generation) and
+    ``MORALSTACK_POLICY_REWRITE_MODEL`` (governed revisions). The ``model=``
+    argument passed to ``chat.completions.create(...)`` is a requested alias only
+    and does not select the governed answer model. Non-chat attributes still
+    pass through to the wrapped client.
 
     Args:
         client: OpenAI client (or duck-typed compatible with .chat.completions.create()).

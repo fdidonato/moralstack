@@ -16,10 +16,24 @@ Primary code: `moralstack/observability/*`, `moralstack/persistence/*`,
 - `obs.emit(envelope)` / `emit_batch(...)` are **async fire-and-forget**: the
   envelope is submitted to a background `ObservabilityWriteQueue` that calls
   `router.route` with a captured contextvars snapshot (`service.py:44-52`).
-- `obs.flush(timeout)` blocks until pending writes drain — called at the request
-  boundary (SDK: `wrapper.py:281`; proxy: `proxy.py:703`).
+- `obs.flush(timeout)` blocks until pending writes drain. The SDK wrapper
+  calls it at the request boundary (`wrapper.py:281`). **The proxy does not
+  flush per-request**: under burst load the queue grew faster than the
+  single-writer drained it, so the bounded flush timed out on every call
+  without delivering visibility while adding ~5s overhead per response.
+  Drainage on the proxy side is the worker's job during the process lifetime
+  and a FastAPI `shutdown` hook (`obs.shutdown(timeout=30.0)`) on exit. Tests
+  or consumers that need synchronous visibility against the proxy must call
+  `obs.flush(...)` explicitly before reading.
 - Context is carried via contextvars: `run_id`, `request_id`, `session_id`,
   `turn_number` (`observability/context.py`).
+- Producers that need synchronous success-path visibility call
+  `observability.router.route(...)` or `route_batch(...)` directly. The risk
+  estimator uses this route for its three real mini-estimator `llm_call` rows:
+  they are built with the local 15-key payload shape and dispatched as one
+  synchronous batch. The synthetic `calibration_guard` row remains a separate
+  synchronous single-envelope write. In SQLite, a failed mini-estimator batch
+  rolls back the whole three-row group.
 
 ## 2. Routing by mode (`observability/router.py:37-54`)
 
@@ -66,6 +80,29 @@ Writers: `init_db`, `create_run`, `upsert_request`, `update_request_response`,
 `update_request_domain`, `update_request_meta`, `delete_request`, `delete_run`
 (`sqlite_sink.py:611+`). Shared finalization: `finalize_governance_audit`
 (`observability/governance_audit.py`) merges meta and writes `final_response`.
+
+### Context-shape fields
+
+The multi-turn alignment layer emits `CONTEXT_SHAPE_RECORDED` orchestration
+events for LLM-using modules. The payload records:
+
+- `context_mode`
+- raw/system/developer message counts
+- available and used prior user/assistant turns
+- `history_truncation` and `history_truncated_count`
+- `contains_full_native_messages`
+- `developer_contract_included`
+- `final_user_included`
+- `history_source`
+- delivery guard fields such as `delivery_context_broader_than_governance`,
+  `mismatch_guard_action`, `governance_context_mode`, `candidate_context_mode`,
+  and `prior_turn_count` where applicable
+
+These fields are queryable from SQLite `orchestration_events.payload_json` and
+from the corresponding JSONL envelope. They are also folded into existing
+request/proxy metadata where a result is finalized. There is intentionally no
+SQLite migration for dedicated typed columns in this version, and the UI does
+not render a dedicated context-shape panel yet.
 
 ## 4. What is logged to the filesystem (JSONL)
 
@@ -139,6 +176,9 @@ Yes, **when persistence is to the DB** (`db_only`/`dual`):
 - **JSONL is not table-shaped.** Reconstructing a conversation from JSONL means
   joining across per-event-type files on `request_id`/`conversation_id` yourself;
   the UI and `conversation_export` only consume SQLite (§4, §6).
+- **Context-shape telemetry is payload JSON.** It is present in
+  `orchestration_events` / JSONL payloads and request metadata, not in dedicated
+  typed SQLite columns or a UI panel.
 - **Reconstruction completeness depends on flush.** A process killed before
   `flush()` may drop queued envelopes; the SDK/proxy flush at the boundary to
   minimize this, but a hard crash mid-turn can truncate a turn's evidence.

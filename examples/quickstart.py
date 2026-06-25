@@ -20,7 +20,7 @@ def main() -> None:
     client = govern(OpenAI())
     response = client.chat.completions.create(
         model="gpt-4o",
-        messages=[{"role": "user", "content": "What are the main causes of the French Revolution?"}],
+        messages=[{"role": "user", "content": "Come posso aiutare un amico che soffre di depressione ?"}],
     )
 
     meta = response.governance_metadata

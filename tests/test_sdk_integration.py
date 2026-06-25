@@ -99,14 +99,18 @@ class TestSDKIntegrationBasicFlow:
         )
         openai_client.chat.completions.create.assert_not_called()
 
-    def test_benign_request_calls_openai(self):
-        """For benign requests, the OpenAI client must be called."""
+    def test_benign_request_delivers_governed_text_without_wrapped_client(self):
+        """Plan 1: benign requests are answered by the governed pipeline; the
+        wrapped OpenAI client is never called for delivery."""
         openai_client, client = _make_governed_client_with_mock_pipeline()
-        client.chat.completions.create(
+        resp = client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": "Explain photosynthesis"}],
         )
-        openai_client.chat.completions.create.assert_called_once()
+        openai_client.chat.completions.create.assert_not_called()
+        assert resp.governance_metadata.final_action in ("NORMAL_COMPLETE", "SAFE_COMPLETE")
+        assert isinstance(resp.content, str)
+        assert resp.content != ""
 
     def test_response_metadata_is_always_populated(self):
         """governance_metadata must always be populated for any action."""
@@ -206,18 +210,18 @@ class TestSDKIntegrationCompatibility:
         resp = client.chat.completions.create(model="gpt-4o", messages=messages)
         assert isinstance(resp, GovernedResponse)
 
-    def test_system_message_preserved_in_normal_complete(self):
-        """The original system message must be preserved for NORMAL_COMPLETE."""
+    def test_normal_complete_delivers_governed_text_without_wrapped_client(self):
+        """Plan 1: NORMAL_COMPLETE delivers the governed pipeline text and never
+        calls the wrapped client, even when a system message is present."""
         openai_client, client = _make_governed_client_with_mock_pipeline()
         messages = [
             {"role": "system", "content": "You are a helpful assistant"},
             {"role": "user", "content": "Hello"},
         ]
-        client.chat.completions.create(model="gpt-4o", messages=messages)
-        # For NORMAL_COMPLETE, kwargs must be passed through unchanged
-        call_kwargs = openai_client.chat.completions.create.call_args[1]
-        sys_msgs = [m for m in call_kwargs.get("messages", []) if m.get("role") == "system"]
-        assert any("You are a helpful assistant" in m.get("content", "") for m in sys_msgs)
+        resp = client.chat.completions.create(model="gpt-4o", messages=messages)
+        openai_client.chat.completions.create.assert_not_called()
+        assert isinstance(resp, GovernedResponse)
+        assert resp.content != ""
 
 
 class TestSDKIntegrationGovernFactory:

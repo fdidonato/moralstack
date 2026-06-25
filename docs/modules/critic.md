@@ -78,6 +78,9 @@ class CriticReport:
     revision_guidance: str  # Revision instructions
     raw_response: str  # LLM response (debug)
     parse_attempts: int  # Parsing attempts
+    enumerated_output_gate_applied: bool  # True when a SOFT-only REVISE was
+                                          # downgraded to PROCEED on a single
+                                          # enumerated answer (see below)
 ```
 
 ### Violation
@@ -120,6 +123,62 @@ Flexible violations that result in **caveat or revision**:
 | `SOFT.HELPFUL.1`    | Usefulness            |
 | `SOFT.VULNERABLE.1` | Vulnerable protection |
 | `SOFT.BALANCED.1`   | Perspective balance   |
+
+---
+
+## Enumerated-Output Gate (Tier-1)
+
+> **Detection module**: `moralstack/pipeline/output_contract.py`
+> (`detect_enumerated_output`)
+
+Some requests declare that the answer MUST be exactly one token from a small
+fixed option set — e.g. boolq-style `answer exactly 'TRUE' or 'FALSE'`, or a
+multiple-choice `reply with a single letter`. For such outputs the only way a
+**SOFT** revision (balance/caveat/disclaimer feedback) can change the visible
+text is to *flip the selected option*, which corrupts the factual answer.
+This was observed on the `boolq_contrast` benchmark, where a correct draft was
+flipped to the wrong value by the revision loop.
+
+To prevent this, `critique()` derives a deterministic, LLM-free signal from the
+declared constraints (developer contract / system prompt + user turn)
+cross-checked against the produced draft:
+
+- `detect_enumerated_output(declared_text, draft_text)` returns
+  `(is_enumerated, options)`. It fires **only** when *both* hold: (a) the text
+  explicitly declares an enumerated answer set (quoted short tokens near an
+  answer instruction, or a well-known binary set such as TRUE/FALSE, YES/NO),
+  **and** (b) the draft is a single short token that is a member of that set.
+  Either condition alone is insufficient — this avoids false positives on
+  free-form answers that merely contain a word like "true".
+- The result is stored on `DelibContext.output_is_enumerated` /
+  `output_enumerated_options`.
+
+When the gate condition holds — `decision == "REVISE"`, `violated_hard == False`,
+and `output_is_enumerated == True` — the critic has nothing actionable to
+revise, so it **clears the SOFT output**: `decision → PROCEED`, `violations →
+[]`, `revision_guidance → ""`, `severity_score → 0.0`, and sets
+`enumerated_output_gate_applied = True`.
+
+**Why violations are cleared, not just the decision:** the
+`ConvergenceEvaluator` votes `revise` on the presence of `violations`
+(`convergence_evaluator.py`), *not* on `critique.decision`. Clearing the soft
+violations is therefore required for the gate to actually stop the rewrite.
+
+**Safety boundary:** the gate is guarded by `not violated_hard`, so HARD
+violations are never suppressed (preserves hard-signal supremacy, PROJECT_SPEC
+§5.3). It is a no-op for non-enumerated / free-form outputs.
+
+**Observability:** each activation emits a best-effort `orch_debug_log`
+diagnostic (`event_type=governance.enumerated_output_gate`, `component=critic`)
+carrying the detected options, the draft, and the suppressed soft violation IDs.
+It is persisted to `logs/observability/debug.event.jsonl` (file), the
+`debug_events` SQLite table (DB), and rendered in the UI "Debug Events" panel.
+The diagnostic never affects the decision (PROJECT_SPEC §5.6).
+
+A complementary defensive instruction in `policy.rewrite()` and the critic
+prompt rules asks the model to keep an enumerated draft unchanged under
+soft-only feedback, as belt-and-suspenders if a rewrite is still reached via
+another voter.
 
 ---
 
@@ -326,6 +385,14 @@ elif report.violations:
 else:
     decision = DecisionType.CONTINUE
 ```
+
+---
+
+## Conversation Context
+
+For multi-turn requests, the Critic receives the developer contract plus recent conversation history from `ProcessedRequest`.
+The prompt declares `context_mode=role_serialized_truncated; last 3 turns`, and the deliberation runner emits
+`CONTEXT_SHAPE_RECORDED` for the critic so observability can compare available prior turns with the history window used.
 
 ---
 

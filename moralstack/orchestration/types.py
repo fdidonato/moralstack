@@ -22,8 +22,10 @@ from moralstack.core.types import (
     Turn,
     UserContext,
 )
+from moralstack.models.base import GenerationOverrides
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.orchestration.contract import DeveloperContract
+from moralstack.orchestration.conversation_context import ConversationContext
 from moralstack.utils.output_protection import ProtectionResult
 
 # =============================================================================
@@ -199,6 +201,10 @@ class ProcessedRequest:
     user_context: UserContext = field(default_factory=UserContext)
     timestamp: float = field(default_factory=time.time)
     developer_contract: DeveloperContract | None = None  # NEW v0.4
+    conversation_context: ConversationContext | None = None
+    # Per-request sampling overrides from the client (proxy body / SDK kwargs).
+    # Honored only by delivered-answer generators, never by REFUSE wording.
+    generation_overrides: GenerationOverrides | None = None
 
     def get_domain(self) -> str | None:
         """Ottiene il dominio overlay dall'user context."""
@@ -272,6 +278,10 @@ class ResponseMetadata:
     refusal_domain: str | None = None
     refusal_redirection_source: str | None = None
     safe_refusal_focus: str | None = None
+    # True when the delivered governed content is a reused internal speculative
+    # draft (no second policy `generate` for delivery). Surfaced as the
+    # X-Moralstack-Internal-Draft-Reused proxy header (server/headers.py).
+    internal_draft_reused: bool = False
 
     @classmethod
     def from_decision(
@@ -460,6 +470,12 @@ class OrchestratorResult:
     conversation_governance_state_out: Any | None = None  # ConversationGovernanceState when set
     conversation_state_updated: bool = False
     compliance_verdict: ComplianceVerdict | None = None
+    delivery_context_broader_than_governance: bool = False
+    mismatch_guard_action: str = "none"
+    governance_context_mode: str = "none"
+    candidate_context_mode: str = "none"
+    prior_turn_count: int = 0
+    history_source: str = "none"
     """
     DCCL verdict from this turn, if the DCCL was invoked.
     None for backward-compatible scenarios (DCCL disabled or pre-Commit 2 call sites).
@@ -542,6 +558,10 @@ class OrchestratorConfig:
     cycle1_early_convergence_min_weighted_approval: float = 0.78
     cycle1_early_convergence_max_semantic_harm: float = 0.35
     cycle1_early_convergence_min_per_perspective_approval: float = 0.70
+    # Opt-in: benign, non-operational informational recovery in a sensitive
+    # overlay returns NORMAL_COMPLETE instead of being floored to SAFE_COMPLETE.
+    # Default False preserves the current regulated -> SAFE_COMPLETE behavior.
+    regulated_informational_normal_complete: bool = False
 
 
 # =============================================================================

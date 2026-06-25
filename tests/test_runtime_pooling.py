@@ -9,6 +9,7 @@ from moralstack.constitution.openai_config import OpenAIClientConfig
 from moralstack.constitution.retriever import DomainPrefilter
 from moralstack.models.risk.estimator import LLMBasedRiskEstimator
 from moralstack.models.risk.schema import RiskEstimatorConfig
+from moralstack.observability.context import set_current_cycle, set_current_request_id, set_current_run_id
 
 
 def _fake_completion_json_obj(content: str) -> MagicMock:
@@ -107,30 +108,39 @@ def test_persist_mini_llm_call_records_effective_model_not_main_policy():
     main.model = "gpt-4o-mini"
     main.tracker = None
     est = LLMBasedRiskEstimator(policy=main, config=RiskEstimatorConfig())
-    captured: list[str | None] = []
+    set_current_run_id("run-runtime-pooling")
+    set_current_request_id("req-runtime-pooling")
+    set_current_cycle(0)
 
-    def _cap(**kw):
-        captured.append(kw.get("model"))
-        return True
+    pooled_policy_env = est._build_mini_llm_call_envelope(
+        system_prompt="s",
+        prompt="p",
+        raw_response="{}",
+        action="estimate_intent",
+        duration_ms=1.0,
+        attempts=1,
+        llm_model="gpt-4o",
+        parse_contract={"ok": True},
+        token_usage_json='{"total_tokens":3}',
+        message_sections={"final_user_message": "p"},
+    )
+    main_policy_env = est._build_mini_llm_call_envelope(
+        system_prompt="s",
+        prompt="p",
+        raw_response="{}",
+        action="estimate_signals",
+        duration_ms=1.0,
+        attempts=1,
+    )
 
-    with patch("moralstack.models.risk.estimator.persist_llm_call", side_effect=_cap):
-        est._persist_mini_llm_call(
-            system_prompt="s",
-            prompt="p",
-            raw_response="{}",
-            action="estimate_intent",
-            duration_ms=1.0,
-            attempts=1,
-            llm_model="gpt-4o",
-        )
-        est._persist_mini_llm_call(
-            system_prompt="s",
-            prompt="p",
-            raw_response="{}",
-            action="estimate_signals",
-            duration_ms=1.0,
-            attempts=1,
-        )
+    assert pooled_policy_env is not None
+    assert main_policy_env is not None
+    assert pooled_policy_env.payload["model"] == "gpt-4o"
+    assert main_policy_env.payload["model"] == "gpt-4o-mini"
+    assert pooled_policy_env.payload["token_usage_json"] == '{"total_tokens":3}'
 
-    assert captured[0] == "gpt-4o"
-    assert captured[1] == "gpt-4o-mini"
+    summary = json.loads(pooled_policy_env.payload["parsed_summary_json"])
+    assert summary["mini_estimator"] == "estimate_intent"
+    assert summary["parse_contract"] == {"ok": True}
+    assert summary["message_sections"] == {"final_user_message": "p"}
+    assert pooled_policy_env.payload["sequence_in_cycle"] == -9

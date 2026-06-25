@@ -45,6 +45,11 @@ class ProcessCallContext:
     refresh_reason: str | None = None
 
     compliance_verdict: ComplianceVerdict | None = None
+    delivery_context_broader_than_governance: bool = False
+    mismatch_guard_action: str = "none"
+    governance_context_mode: str = "none"
+    candidate_context_mode: str = "none"
+    prior_turn_count: int = 0
 
 
 __all__ = ["ProcessCallContext"]

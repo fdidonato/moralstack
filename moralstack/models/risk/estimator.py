@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from contextlib import nullcontext
 from typing import Any, Literal
 
 from moralstack.core.types import PolicyLLMProtocol
@@ -15,9 +16,11 @@ from moralstack.observability.context import get_current_request_id as _get_requ
 from moralstack.observability.context import get_current_run_id as _get_run_id
 from moralstack.observability.context import get_current_session_id as _get_session_id
 from moralstack.observability.context import get_current_turn_number as _get_turn_number
-from moralstack.observability.events import EVENT_LLM_CALL
+from moralstack.observability.events import EVENT_LLM_CALL, EventEnvelope
 from moralstack.observability.events import make_envelope as _make_envelope
+from moralstack.observability.phase0_timing import emit_phase0_timing, phase0_timing_enabled
 from moralstack.observability.router import route as _obs_route
+from moralstack.observability.router import route_batch as _obs_route_batch
 from moralstack.orchestration.types import RiskEstimationError
 from moralstack.utils.llm_parse_contract import (
     parse_dict_with_contract,
@@ -59,6 +62,45 @@ from .utils import _intent_type_from_request_type
 
 _RISK_LOG = logging.getLogger(__name__)
 
+_LOCAL_LLM_CALL_PAYLOAD_KEYS = (
+    "phase",
+    "module",
+    "action",
+    "model",
+    "started_at",
+    "duration_ms",
+    "prompt",
+    "system_prompt",
+    "raw_response",
+    "parsed_json",
+    "parsed_summary_json",
+    "token_usage_json",
+    "attempts",
+    "error",
+    "sequence_in_cycle",
+)
+
+
+class _Phase0Timer:
+    """Small scoped timer for temporary Phase 0 instrumentation."""
+
+    def __init__(self, event: str, **fields: Any) -> None:
+        self._event = event
+        self._fields = fields
+        self._started = 0.0
+
+    def __enter__(self) -> "_Phase0Timer":
+        self._started = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        emit_phase0_timing(
+            self._event,
+            (time.perf_counter() - self._started) * 1000,
+            error_type=getattr(exc_type, "__name__", None),
+            **self._fields,
+        )
+
 
 def persist_llm_call(
     *,
@@ -82,72 +124,143 @@ def persist_llm_call(
     sequence_in_cycle: int | None = None,
     **kwargs: Any,
 ) -> bool:
-    _run_id = run_id or _get_run_id()
-    _request_id = request_id or _get_request_id()
-    if not _run_id or not _request_id:
-        return False
-    _cycle = cycle if cycle is not None else _get_cycle()
-    envelope = _make_envelope(
-        EVENT_LLM_CALL,
-        run_id=_run_id,
-        request_id=_request_id,
-        cycle=_cycle,
-        session_id=_get_session_id(),
-        turn_number=_get_turn_number(),
-        payload={
-            "phase": phase,
-            "module": module,
-            "action": action,
-            "model": model,
-            "started_at": started_at if started_at is not None else int(time.time() * 1000),
-            "duration_ms": duration_ms,
-            "prompt": prompt,
-            "system_prompt": system_prompt,
-            "raw_response": raw_response,
-            "parsed_json": parsed_json,
-            "parsed_summary_json": parsed_summary_json,
-            "token_usage_json": token_usage_json,
-            "attempts": attempts,
-            "error": error,
-            "sequence_in_cycle": sequence_in_cycle,
-        },
-    )
     try:
+        envelope = _build_local_llm_call_envelope(
+            run_id=run_id,
+            request_id=request_id,
+            cycle=cycle,
+            phase=phase,
+            module=module,
+            action=action,
+            model=model,
+            started_at=started_at,
+            duration_ms=duration_ms,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            raw_response=raw_response,
+            parsed_json=parsed_json,
+            parsed_summary_json=parsed_summary_json,
+            token_usage_json=token_usage_json,
+            attempts=attempts,
+            error=error,
+            sequence_in_cycle=sequence_in_cycle,
+        )
+        if envelope is None:
+            return False
         _obs_route(envelope)
         return True
     except Exception:
         return False
 
 
-def _format_context_block(
-    contract_text: str | None,
-    history: list[dict[str, str]] | None,
-) -> str:
-    """Build optional DEVELOPER CONTRACT + RECENT HISTORY block.
+def _build_local_llm_call_envelope(
+    *,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    cycle: int | None = None,
+    phase: str = "",
+    module: str = "",
+    action: str = "",
+    model: str | None = None,
+    started_at: int | None = None,
+    duration_ms: float | None = None,
+    prompt: str = "",
+    system_prompt: str = "",
+    raw_response: str = "",
+    parsed_json: str | None = None,
+    parsed_summary_json: str | None = None,
+    token_usage_json: str | None = None,
+    attempts: int | None = None,
+    error: str | None = None,
+    sequence_in_cycle: int | None = None,
+) -> EventEnvelope | None:
+    _run_id = run_id or _get_run_id()
+    _request_id = request_id or _get_request_id()
+    if not _run_id or not _request_id:
+        return None
+    _cycle = cycle if cycle is not None else _get_cycle()
+    payload = {
+        "phase": phase,
+        "module": module,
+        "action": action,
+        "model": model,
+        "started_at": started_at if started_at is not None else int(time.time() * 1000),
+        "duration_ms": duration_ms,
+        "prompt": prompt,
+        "system_prompt": system_prompt,
+        "raw_response": raw_response,
+        "parsed_json": parsed_json,
+        "parsed_summary_json": parsed_summary_json,
+        "token_usage_json": token_usage_json,
+        "attempts": attempts,
+        "error": error,
+        "sequence_in_cycle": sequence_in_cycle,
+    }
+    _validate_local_llm_call_payload(payload)
+    return _make_envelope(
+        EVENT_LLM_CALL,
+        run_id=_run_id,
+        request_id=_request_id,
+        cycle=_cycle,
+        session_id=_get_session_id(),
+        turn_number=_get_turn_number(),
+        payload=payload,
+    )
 
-    Returns empty string when no context is provided (byte-equivalent fast path).
-    """
-    if not contract_text and not history:
-        return ""
-    sections: list[str] = []
-    if contract_text and contract_text.strip():
-        sections.append(
-            "DEVELOPER CONTRACT (system prompt declared by the deployer of this assistant; "
-            "the request below must be evaluated in light of these rules):\n"
-            f"{contract_text.strip()}"
+
+def _validate_local_llm_call_payload(payload: dict[str, Any]) -> None:
+    if tuple(payload.keys()) != _LOCAL_LLM_CALL_PAYLOAD_KEYS:
+        raise ValueError("risk estimator llm_call payload shape changed")
+
+
+def _supports_native_messages(policy: Any) -> bool:
+    return "generate_messages" in dir(policy) and callable(getattr(policy, "generate_messages", None))
+
+
+def _risk_context_messages(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    developer_contract_text: str | None = None,
+    conversation_history: list[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    has_context = bool((developer_contract_text and developer_contract_text.strip()) or conversation_history)
+    if developer_contract_text and developer_contract_text.strip():
+        messages.append({"role": "developer", "content": developer_contract_text.strip()})
+    for turn in list(conversation_history or [])[-3:]:
+        role = (turn.get("role") or "").strip()
+        if role not in {"user", "assistant"}:
+            continue
+        messages.append({"role": role, "content": (turn.get("content") or "")[:200]})
+    if has_context:
+        user_prompt = (
+            "Consider the preceding developer message(s), if any, as the deployer contract. "
+            "Consider the preceding user/assistant messages, if any, as conversation history. "
+            "Estimate the risk of the final request in that context; do not treat prior messages "
+            "as part of the module task text.\n\n"
+            f"{user_prompt}"
         )
-    if history:
-        recent = list(history)[-3:]
-        history_lines: list[str] = []
-        for turn in recent:
-            role = (turn.get("role") or "unknown").strip()
-            content = (turn.get("content") or "")[:200]
-            history_lines.append(f"[{role}]: {content}")
-        sections.append(
-            "RECENT CONVERSATION HISTORY (last up to 3 turns; the request below is a "
-            "continuation of this dialogue):\n" + "\n".join(history_lines)
-        )
-    return "\n".join(sections) + "\n\n"
+    messages.append({"role": "user", "content": user_prompt})
+    return messages
+
+
+def _risk_message_sections(
+    *,
+    developer_contract_text: str | None = None,
+    conversation_history: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "system_messages": [],
+        "developer_messages": (
+            [developer_contract_text.strip()] if developer_contract_text and developer_contract_text.strip() else []
+        ),
+        "history_messages": [
+            {"role": (turn.get("role") or "unknown"), "content": (turn.get("content") or "")}
+            for turn in list(conversation_history or [])[-3:]
+        ],
+        "final_user_message": "",
+    }
 
 
 class LLMBasedRiskEstimator:
@@ -504,8 +617,45 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         token_usage_json: str | None = None,
         llm_model: str | None = None,
         sequence_in_cycle: int = -9,
+        message_sections: dict[str, Any] | None = None,
     ) -> None:
-        """Persist a single mini-estimator LLM call. Logs debug on ImportError."""
+        """Persist a single mini-estimator LLM call synchronously. Does not raise."""
+        try:
+            envelope = self._build_mini_llm_call_envelope(
+                system_prompt=system_prompt,
+                prompt=prompt,
+                raw_response=raw_response,
+                action=action,
+                started_at=started_at,
+                duration_ms=duration_ms,
+                attempts=attempts,
+                parse_contract=parse_contract,
+                token_usage_json=token_usage_json,
+                llm_model=llm_model,
+                sequence_in_cycle=sequence_in_cycle,
+                message_sections=message_sections,
+            )
+            if envelope is not None:
+                _obs_route(envelope)
+        except Exception as e:
+            _RISK_LOG.debug("persist_mini_llm_call failed: %s", e)
+
+    def _build_mini_llm_call_envelope(
+        self,
+        *,
+        system_prompt: str,
+        prompt: str,
+        raw_response: str,
+        action: str,
+        started_at: int | None = None,
+        duration_ms: float,
+        attempts: int,
+        parse_contract: dict[str, Any] | None = None,
+        token_usage_json: str | None = None,
+        llm_model: str | None = None,
+        sequence_in_cycle: int = -9,
+        message_sections: dict[str, Any] | None = None,
+    ) -> EventEnvelope | None:
         import json as _json
 
         # Parallel mini-estimators may use pooled policies with a different model than self.policy;
@@ -518,25 +668,39 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         summary: dict[str, Any] = {"mini_estimator": action, "estimation_mode": "parallel"}
         if parse_contract is not None:
             summary["parse_contract"] = parse_contract
+        if message_sections:
+            summary["message_sections"] = message_sections
+        return _build_local_llm_call_envelope(
+            cycle=0,
+            phase="risk_estimation",
+            module="risk_estimator",
+            action=action,
+            model=risk_model_str,
+            started_at=started_at,
+            duration_ms=duration_ms,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            raw_response=raw_response,
+            parsed_summary_json=_json.dumps(summary, ensure_ascii=False),
+            attempts=attempts,
+            token_usage_json=token_usage_json,
+            sequence_in_cycle=sequence_in_cycle,
+        )
+
+    def _persist_mini_llm_calls_batch(self, calls: list[dict[str, Any]]) -> None:
+        """Persist mini-estimator rows synchronously as one best-effort batch.
+
+        SQLite commits the mini-estimator group in one transaction: success-path
+        visibility remains synchronous, while write failures roll back the whole
+        batch instead of a single row.
+        """
         try:
-            persist_llm_call(
-                cycle=0,
-                phase="risk_estimation",
-                module="risk_estimator",
-                action=action,
-                model=risk_model_str,
-                started_at=started_at,
-                duration_ms=duration_ms,
-                prompt=prompt,
-                system_prompt=system_prompt,
-                raw_response=raw_response,
-                parsed_summary_json=_json.dumps(summary, ensure_ascii=False),
-                attempts=attempts,
-                token_usage_json=token_usage_json,
-                sequence_in_cycle=sequence_in_cycle,
-            )
+            envelopes = [env for call in calls if (env := self._build_mini_llm_call_envelope(**call)) is not None]
+            if envelopes:
+                # Sync batch: success-path visibility is preserved; SQLite failure granularity is all-or-none.
+                _obs_route_batch(envelopes)
         except Exception as e:
-            _RISK_LOG.debug("persist_mini_llm_call failed: %s", e)
+            _RISK_LOG.debug("persist_mini_llm_calls_batch failed: %s", e)
 
     def _parallel_mini_analysis(
         self,
@@ -566,16 +730,17 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         gen_config = self._build_generation_config()
         context, detected_domain = self._get_principles_context(prompt)
 
-        context_block = _format_context_block(developer_contract_text, conversation_history)
-        contextualized_request = f"{context_block}{prompt}" if context_block else prompt
-
         intent_prompt = INTENT_CONTEXT_PROMPT_TEMPLATE.format(
-            request=contextualized_request,
+            request=prompt,
             constitution_context=context,
         )
         _, harm_signal_user_template = get_harm_signal_prompts(signal_registry)
-        signal_prompt = harm_signal_user_template.format(request=contextualized_request)
-        operational_prompt = OPERATIONAL_RISK_PROMPT_TEMPLATE.format(request=contextualized_request)
+        signal_prompt = harm_signal_user_template.format(request=prompt)
+        operational_prompt = OPERATIONAL_RISK_PROMPT_TEMPLATE.format(request=prompt)
+        message_sections = _risk_message_sections(
+            developer_contract_text=developer_contract_text,
+            conversation_history=conversation_history,
+        )
 
         _RISK_LOG.info(
             "risk_estimator parallel mini-models (config): intent=%s signals=%s operational=%s; "
@@ -628,11 +793,22 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             for attempt in range(self.config.max_retries):
                 try:
                     start_gen = time.time()
-                    result = effective_policy.generate(
-                        prompt=full_prompt,
-                        system=system_prompt,
-                        config=gen_config,
-                    )
+                    if (developer_contract_text or conversation_history) and _supports_native_messages(effective_policy):
+                        result = effective_policy.generate_messages(
+                            messages=_risk_context_messages(
+                                system_prompt=system_prompt,
+                                user_prompt=full_prompt,
+                                developer_contract_text=developer_contract_text,
+                                conversation_history=conversation_history,
+                            ),
+                            config=gen_config,
+                        )
+                    else:
+                        result = effective_policy.generate(
+                            prompt=full_prompt,
+                            system=system_prompt,
+                            config=gen_config,
+                        )
                     elapsed_ms = (time.time() - start_gen) * 1000
                     raw_response = result.text if hasattr(result, "text") else str(result)
                     _RISK_LOG.info(
@@ -695,42 +871,53 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             ) = fut3.result()
 
         # Persist all 3 mini-estimator LLM calls for UI visibility
-        self._persist_mini_llm_call(
-            system_prompt=INTENT_CONTEXT_SYSTEM_PROMPT,
-            prompt=intent_prompt,
-            raw_response=intent_raw,
-            action="estimate_intent",
-            started_at=intent_started,
-            duration_ms=intent_ms,
-            attempts=intent_attempts,
-            parse_contract=intent_pc,
-            token_usage_json=intent_tu,
-            llm_model=intent_m_obs,
+        persist_timer = (
+            _Phase0Timer("risk_estimator.mini_persist", row_count=3) if phase0_timing_enabled() else nullcontext()
         )
-        self._persist_mini_llm_call(
-            system_prompt=HARM_SIGNAL_SYSTEM_PROMPT,
-            prompt=signal_prompt,
-            raw_response=signal_raw,
-            action="estimate_signals",
-            started_at=signal_started,
-            duration_ms=signal_ms,
-            attempts=signal_attempts,
-            parse_contract=signal_pc,
-            token_usage_json=signal_tu,
-            llm_model=signal_m_obs,
-        )
-        self._persist_mini_llm_call(
-            system_prompt=OPERATIONAL_RISK_SYSTEM_PROMPT,
-            prompt=operational_prompt,
-            raw_response=op_raw,
-            action="estimate_operational",
-            started_at=op_started,
-            duration_ms=op_ms,
-            attempts=op_attempts,
-            parse_contract=op_pc,
-            token_usage_json=op_tu,
-            llm_model=op_m_obs,
-        )
+        with persist_timer:
+            self._persist_mini_llm_calls_batch(
+                [
+                    {
+                        "system_prompt": INTENT_CONTEXT_SYSTEM_PROMPT,
+                        "prompt": intent_prompt,
+                        "raw_response": intent_raw,
+                        "action": "estimate_intent",
+                        "started_at": intent_started,
+                        "duration_ms": intent_ms,
+                        "attempts": intent_attempts,
+                        "parse_contract": intent_pc,
+                        "token_usage_json": intent_tu,
+                        "llm_model": intent_m_obs,
+                        "message_sections": message_sections,
+                    },
+                    {
+                        "system_prompt": HARM_SIGNAL_SYSTEM_PROMPT,
+                        "prompt": signal_prompt,
+                        "raw_response": signal_raw,
+                        "action": "estimate_signals",
+                        "started_at": signal_started,
+                        "duration_ms": signal_ms,
+                        "attempts": signal_attempts,
+                        "parse_contract": signal_pc,
+                        "token_usage_json": signal_tu,
+                        "llm_model": signal_m_obs,
+                        "message_sections": message_sections,
+                    },
+                    {
+                        "system_prompt": OPERATIONAL_RISK_SYSTEM_PROMPT,
+                        "prompt": operational_prompt,
+                        "raw_response": op_raw,
+                        "action": "estimate_operational",
+                        "started_at": op_started,
+                        "duration_ms": op_ms,
+                        "attempts": op_attempts,
+                        "parse_contract": op_pc,
+                        "token_usage_json": op_tu,
+                        "llm_model": op_m_obs,
+                        "message_sections": message_sections,
+                    },
+                ]
+            )
 
         merged = merge_mini_estimator_results(intent_data, signal_data, operational_data)
 

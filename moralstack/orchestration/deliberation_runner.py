@@ -34,6 +34,7 @@ from moralstack.orchestration.guidance_builder import build_aggregated_guidance
 from moralstack.orchestration.language_resolver import resolve_prompt_with_language
 from moralstack.orchestration.orchestration_event_taxonomy import (
     AGGREGATED_GUIDANCE_EVALUATED,
+    CONTEXT_SHAPE_RECORDED,
     CONVERGENCE_EVALUATED,
     CRITIC_SHORT_CIRCUIT_TRIGGERED,
     CRITIC_SKIPPED,
@@ -128,6 +129,72 @@ def _emit_aggregated_guidance_observability(
         )
     except Exception:
         _LOG.debug("emit AGGREGATED_GUIDANCE_EVALUATED failed", exc_info=True)
+
+
+def _context_shape_payload(request: ProcessedRequest, module: str) -> dict[str, Any]:
+    """Build a compact context-shape payload for deliberative modules."""
+    ctx = request.conversation_context
+    history = list(getattr(request, "conversation_history", None) or [])
+    prior_available = getattr(ctx, "prior_turn_count", len(history)) if ctx is not None else len(history)
+    used = min(int(prior_available or 0), 3)
+    if ctx is not None:
+        payload = ctx.context_shape_metadata(
+            module=module,
+            context_mode="role_serialized_truncated" if prior_available > used else "role_serialized_full",
+            prior_used=used,
+            history_truncation="last_3" if prior_available > used else "none",
+            history_truncated_count=max(0, prior_available - used),
+        )
+    else:
+        payload = {
+            "module": module,
+            "context_mode": "role_serialized_truncated" if len(history) > used else "role_serialized_full",
+            "raw_message_count": 0,
+            "system_message_count": 0,
+            "developer_message_count": 0,
+            "prior_user_available": sum(1 for t in history if getattr(t, "role", "") == "user"),
+            "prior_assistant_available": sum(1 for t in history if getattr(t, "role", "") == "assistant"),
+            "prior_turn_count": len(history),
+            "prior_turns_used": used,
+            "history_truncation": "last_3" if len(history) > used else "none",
+            "history_truncated_count": max(0, len(history) - used),
+            "contains_full_native_messages": False,
+            "developer_contract_included": getattr(request, "developer_contract", None) is not None,
+            "final_user_included": bool(getattr(request, "prompt", "")),
+            "history_source": "legacy_conversation_history" if history else "none",
+        }
+    if ctx is not None:
+        payload["message_sections"] = ctx.observability_message_sections()
+    else:
+        payload["message_sections"] = {
+            "system_messages": [],
+            "developer_messages": (
+                [getattr(getattr(request, "developer_contract", None), "raw_text", "") or ""]
+                if getattr(request, "developer_contract", None) is not None
+                else []
+            ),
+            "history_messages": [
+                {"role": getattr(t, "role", "") or "unknown", "content": getattr(t, "content", "") or ""}
+                for t in history[-3:]
+            ],
+            "final_user_message": getattr(request, "prompt", "") or "",
+        }
+    return payload
+
+
+def _emit_context_shape(request: ProcessedRequest, module: str, cycle: int) -> None:
+    try:
+        persist_orchestration_event(
+            cycle=cycle,
+            stage="context",
+            component=module,
+            event_type=CONTEXT_SHAPE_RECORDED,
+            decision="recorded",
+            status="ok",
+            payload=_context_shape_payload(request, module),
+        )
+    except Exception:
+        _LOG.debug("emit CONTEXT_SHAPE_RECORDED failed for %s", module, exc_info=True)
 
 
 def _policy_llm_model_for_action(policy: Any, action: str) -> str | None:
@@ -565,7 +632,11 @@ class DeliberationRunner:
         if self.policy is not None:
             try:
                 if speculative_draft:
-                    content = speculative_draft
+                    # Defensive output protection for any supplied draft. Normal
+                    # speculative drafts are already protected at generation, so
+                    # this is a no-op for them; it closes the gap for
+                    # compliance-regenerated drafts delivered through this path.
+                    content = self._output_protector.validate(speculative_draft).cleaned
                 else:
                     prompt_text = resolve_prompt_with_language(
                         request.prompt,
@@ -579,6 +650,7 @@ class DeliberationRunner:
                             system=effective_system_for_request(
                                 base=self._protected_system_prompt, request=request, mode="normal"
                             ),
+                            overrides=getattr(request, "generation_overrides", None),
                         )
                     except TypeError:
                         result = self.policy.generate(prompt_text)
@@ -636,6 +708,10 @@ class DeliberationRunner:
             requested_instructions=bool(getattr(risk_estimation, "requested_instructions", False)),
             intent_to_harm=bool(getattr(risk_estimation, "intent_to_harm", False)),
             intent_operational=bool(getattr(risk_estimation, "intent_operational", False)),
+            # Delivered content is the reused speculative draft when one was
+            # supplied (the `if speculative_draft:` branch above); otherwise a
+            # fresh policy generate produced it.
+            internal_draft_reused=bool(speculative_draft),
         )
         response = FinalResponse(content=content, response_type=ResponseType.DIRECT, metadata=metadata)
         return OrchestratorResult(
@@ -680,7 +756,11 @@ class DeliberationRunner:
                 )
                 safe_prompt = safe_caveat + "\n\n" + prompt_text
                 try:
-                    result = self.policy.generate(prompt=safe_prompt, system=safe_system)
+                    result = self.policy.generate(
+                        prompt=safe_prompt,
+                        system=safe_system,
+                        overrides=getattr(request, "generation_overrides", None),
+                    )
                 except TypeError:
                     result = self.policy.generate(safe_prompt)
                 elapsed = (time.time() - start_gen) * 1000
@@ -818,6 +898,7 @@ class DeliberationRunner:
                             system=effective_system_for_request(
                                 base=self._protected_system_prompt, request=request, mode="normal"
                             ),
+                            overrides=getattr(request, "generation_overrides", None),
                         )
                     except TypeError:
                         result = self.policy.generate(prompt_text)
@@ -957,6 +1038,13 @@ class DeliberationRunner:
                 )
             except Exception:
                 pass
+        # Reaching here means quick_check passed (or was skipped): the draft set
+        # above is delivered as final content. If a speculative draft was
+        # supplied it was reused verbatim — no second policy generate.
+        # (The quick_check-failed branch returns earlier via the deliberative
+        # path, where a fresh deliberation produces the answer.)
+        if getattr(response, "metadata", None) is not None:
+            response.metadata.internal_draft_reused = bool(speculative_draft)
         return OrchestratorResult(
             response=response,
             request_id=request.request_id,
@@ -989,6 +1077,9 @@ class DeliberationRunner:
             state.hindsight,
             append_pre_policy_trace=False,
             risk_thresholds=getattr(getattr(self, "config", None), "risk_thresholds", None),
+            regulated_informational_normal_complete=getattr(
+                getattr(self, "config", None), "regulated_informational_normal_complete", False
+            ),
         )
         processing_time = int((time.time() - start_time) * 1000)
         if constitution is None and self.constitution_store is not None:
@@ -2462,6 +2553,7 @@ class DeliberationRunner:
                     state.draft_response,
                     guidance,
                     system=effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal"),
+                    overrides=getattr(request, "generation_overrides", None),
                 )
             except TypeError:
                 result = self.policy.rewrite(user_prompt_with_lang, state.draft_response, guidance)
@@ -2526,8 +2618,8 @@ class DeliberationRunner:
                 {
                     "module": "policy",
                     "action": "generate (speculative-reuse)",
-                    "prompt": request.prompt[:200],
-                    "response": state.draft_response[:200],
+                    "prompt": request.prompt,
+                    "response": state.draft_response,
                     "duration_ms": 0.0,
                     "model": reuse_model,
                 },
@@ -2538,9 +2630,11 @@ class DeliberationRunner:
                     "action": "generate (speculative-reuse)",
                     "model": reuse_model,
                     "duration_ms": 0.0,
-                    "prompt": request.prompt[:200],
-                    "raw_response": state.draft_response[:200],
+                    "prompt": request.prompt,
+                    "system_prompt": "[orchestration] Reused completed speculative draft; no second policy LLM call.",
+                    "raw_response": state.draft_response,
                     "sequence_in_cycle": SEQ_POLICY,
+                    "call_kind": "speculative_reuse",
                 },
             )
             return state
@@ -2591,7 +2685,11 @@ class DeliberationRunner:
                 prompt_text = resolve_prompt_with_language(request.prompt, det_iso, request.prompt)
                 policy_user_prompt = constrained_caveat + "\n\n" + prompt_text if constrained_caveat else prompt_text
                 try:
-                    result = self.policy.generate(prompt=policy_user_prompt, system=system_prompt)
+                    result = self.policy.generate(
+                        prompt=policy_user_prompt,
+                        system=system_prompt,
+                        overrides=getattr(request, "generation_overrides", None),
+                    )
                 except TypeError:
                     result = self.policy.generate(policy_user_prompt)
             else:
@@ -2609,6 +2707,7 @@ class DeliberationRunner:
                         state.draft_response,
                         guidance,
                         system=rewrite_system,
+                        overrides=getattr(request, "generation_overrides", None),
                     )
                 except TypeError:
                     result = self.policy.rewrite(policy_user_prompt, state.draft_response, guidance)
@@ -2838,6 +2937,7 @@ class DeliberationRunner:
                     "related_event_id": None,
                 },
             )
+            _emit_context_shape(request, "critic", state.cycle)
             state.critiques.append(critique)
             # Propagate critic signals into DelibContext for downstream modules
             if delib_context is not None:
@@ -2942,6 +3042,7 @@ class DeliberationRunner:
                             "semantic_expected_harm": sem_harm,
                             "dominant_harm_types": dom_harms,
                             "worst_harm": worst,
+                            "context_shape": _context_shape_payload(request, "simulator"),
                         }
                     ),
                     "attempts": getattr(simulation, "parse_attempts", 1),
@@ -2949,6 +3050,7 @@ class DeliberationRunner:
                     "token_usage_json": _token_usage_json_from_result(simulation),
                 },
             )
+            _emit_context_shape(request, "simulator", state.cycle)
             state.simulations.append(simulation)
             from moralstack.orchestration.diagnostics import orch_debug_log
 
@@ -3044,11 +3146,13 @@ class DeliberationRunner:
                     "prompt": getattr(hindsight_result, "prompt", ""),
                     "system_prompt": getattr(hindsight_result, "system_prompt", ""),
                     "raw_response": getattr(hindsight_result, "raw_response", ""),
+                    "parsed_summary_json": json.dumps({"context_shape": _context_shape_payload(request, "hindsight")}),
                     "attempts": getattr(hindsight_result, "parse_attempts", 1),
                     "sequence_in_cycle": SEQ_HINDSIGHT,
                     "token_usage_json": _token_usage_json_from_result(hindsight_result),
                 },
             )
+            _emit_context_shape(request, "hindsight", state.cycle)
             state.hindsight = hindsight_result
             _emit_hindsight_diagnostic(
                 outcome="evaluate_ok",
@@ -3155,10 +3259,12 @@ class DeliberationRunner:
                     "prompt": "\n---\n".join(prompts_list) if prompts_list else "",
                     "system_prompt": "\n---\n".join(system_list) if system_list else "",
                     "raw_response": raw_resp,
+                    "parsed_summary_json": json.dumps({"context_shape": _context_shape_payload(request, "perspectives")}),
                     "sequence_in_cycle": SEQ_PERSPECTIVES,
                     "token_usage_json": _token_usage_json_from_result(result),
                 },
             )
+            _emit_context_shape(request, "perspectives", state.cycle)
             if getattr(result, "results", None):
                 state.perspectives = result.results
             else:

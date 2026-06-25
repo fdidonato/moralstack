@@ -4,23 +4,20 @@ How OpenAI-compatible requests arrive, how conversations are identified across
 turns, and what is persisted. Claims are grounded in the cited source.
 Path-specific caveats are noted inline.
 
-> **There are two bridges.** They behave differently. Pick deliberately.
+> **Supported path:** the production proxy built by
+> `moralstack/server/proxy.py:create_app` and launched via
+> `examples/server_quickstart.py`.
 
-| | Production proxy | Standalone bridge |
-|---|---|---|
-| File | `moralstack/server/proxy.py` (`create_app`) | `scripts/openai_compatible_server.py` |
-| Launch | `examples/server_quickstart.py` (uvicorn, **1 worker**; recommended command port **8080**; `main()` default **8787** via `MORALSTACK_OPENAI_COMPATIBLE_API_PORT`) | `python scripts/openai_compatible_server.py` (port **8787**) |
-| Multi-turn | yes (conversation_id, locks, session store) | **no** (single-turn) |
-| History used | yes (`conversation_history` built from messages[:-1]) | **no** (only last user message) |
-| Output | upstream generation (or governed draft on compliance fast-path) | governed `result.response.content` |
-| Observability | full (requests, events, proxy_request_events, conversation_states) | per-request `run`, governance events |
+| File | Launch | Multi-turn | History used | Output | Observability |
+|---|---|---|---|---|---|
+| `moralstack/server/proxy.py` (`create_app`) | `examples/server_quickstart.py` (uvicorn, **1 worker**; recommended command port **8080**; `main()` default **8787** via `MORALSTACK_OPENAI_COMPATIBLE_API_PORT`) | yes (conversation_id, locks, session store) | yes (`ConversationContext` + `conversation_history` built from the full request body) | governed pipeline text via `finalize_delivery` | full (requests, events, proxy_request_events, conversation_states) |
 
 The COMPL-AI `llm_rules` path uses the **production proxy** (per
 `examples/server_quickstart.py:12`).
 
 ---
 
-## A. Production proxy (`server/proxy.py`)
+## Production Proxy (`server/proxy.py`)
 
 ### Endpoints
 `POST /v1/chat/completions`, `POST /chat/completions`, `GET /healthz`
@@ -32,15 +29,41 @@ non-empty list, then dispatches `_handle_chat_completion_sync` via
 ### How messages arrive
 The full OpenAI body is received. `messages` is the entire client-sent history
 (OpenAI clients resend history every turn). The proxy:
-- builds `developer_contract` from the last `system` message,
-- builds `conversation_history` from `messages[:-1]` (when len>1),
-- extracts `user_prompt` from the last user message
-  (`proxy.py:244-252`).
+- builds one shared `ConversationContext` from the full message list,
+- derives `developer_contract` from the last non-empty `system`/`developer`
+  message in that context,
+- builds `conversation_history` from prior user/assistant turns before the final
+  user message,
+- extracts `user_prompt` from the final user message (`proxy.py:239-256`).
+- reads `max_tokens` / `max_completion_tokens` / `temperature` / `top_p` from the
+  body via `GenerationOverrides.from_mapping(body, passthrough_unset=True)` and attaches
+  them as `ProcessedRequest.generation_overrides`. These per-request sampling overrides
+  flow to the delivered answer (NORMAL_COMPLETE / SAFE_COMPLETE / rewrite /
+  speculative draft). Because the proxy uses `passthrough_unset=True`, a field the
+  client does **not** send is **omitted** from the OpenAI call (the model uses its own
+  default) — the env defaults (`OPENAI_MAX_TOKENS` / `OPENAI_TEMPERATURE` /
+  `OPENAI_TOP_P`) do not apply to delivered-answer generation on the proxy path, so a
+  request that omits sampling parameters behaves like a plain OpenAI call. REFUSE wording
+  is excluded and still honors the env default. The SDK path
+  (`sdk/wrapper.py:_create_inner`) instead uses `passthrough_unset=False`: an unset field
+  falls back to the env default (precedence **override > `GenerationConfig` > env
+  default**). See `docs/modules/policy.md`.
 
-**Full history is passed** into governance via `ProcessedRequest` (contract +
-history), but the upstream generation body is the client's original `messages`
-(minus `extra_body`, with the model forced to the configured upstream model)
-(`_build_upstream_kwargs`, `proxy.py:750-755`).
+**Full request-body history is attached** to governance via
+`ProcessedRequest.conversation_context` plus the legacy `conversation_history`
+field. DCCL and speculative generation can use a role-serialized transcript.
+
+### Governed Delivery
+
+After `controller.process(...)` returns, the proxy calls `finalize_delivery(...)`.
+The delivered text is always the text produced inside the MoralStack governed
+pipeline for NORMAL_COMPLETE, SAFE_COMPLETE, and REFUSE. The upstream OpenAI
+client is not called to generate the delivered answer.
+
+Empty governed content fails closed to a governed refusal
+(`final_text_source="governed_pipeline_refusal"`). The stale compliance delivery
+guard fields are retained as audit metadata, but they no longer route delivery to
+an upstream call. The SDK uses the same governed delivery invariant.
 
 ### conversation_id generation / propagation (`proxy.py:218-219`, `121-136`)
 Resolution precedence:
@@ -95,13 +118,11 @@ client's view.
   is serialized.
 
 ### Streaming implications
-The proxy has **no streaming branch** (verified). `_build_upstream_kwargs` keeps
-`stream` in the body, so `openai_client.chat.completions.create(stream=True)`
-returns a `Stream` object; that object has no `model_dump`/`to_dict`, so
-`_serialize_upstream_response` falls to `{"raw": str(stream)}` and
-`_extract_text_from_upstream` returns `""` (`proxy.py:727-774`). The client
-receives a single non-OpenAI JSON body and no streamed tokens. No test exercises
-this. Use the SDK directly for streaming.
+The proxy supports `stream=true` by replaying the already-governed final text as
+OpenAI-compatible synthetic SSE chunks. Governance runs to completion first, then
+`_build_synthetic_sse_response` emits `chat.completion.chunk` events whose delta
+contents concatenate to the governed answer, followed by `data: [DONE]`. It does
+not forward live upstream tokens.
 
 ### Response headers (proxy)
 `build_governance_headers` (`server/headers.py:40-54`) attaches, on every
@@ -117,31 +138,10 @@ other than `NO_CONTRACT` is present). REFUSE responses also set
   finalized with `final_response`/domain/meta (`_finalize_request`,
   `proxy.py:624-705`).
 - `PROXY_OUTPUT_FINALIZED` orchestration event with `final_text_source`
-  (`refusal` / `safe_complete_upstream` / `upstream_regen` / `governed_draft` /
-  `passthrough_on_error`) (`proxy.py:374-394`).
+  (`governed`, `governed_refusal`, or `governed_pipeline_refusal`) plus
+  governed-delivery audit markers (`proxy.py:374-394`).
 - `proxy_request_events` row via `emit_proxy_request_finalized` (posture in/out,
   cache hints, headers, response length) (`proxy.py:678-698`).
 - `conversation_states` + `ledger_events` from the controller (multi-turn).
 - `session_store.put(conversation_id, governance_state_out)` after a successful
   turn (`proxy.py:303-304`).
-
----
-
-## B. Standalone bridge (`scripts/openai_compatible_server.py`)
-
-- Endpoints: `POST /v1/chat/completions`, `/chat/completions`, plus `/`,
-  `/v1/models` (`:287-310`).
-- `_extract_prompt` returns the **last user message only**; history is discarded
-  (`:98-104`).
-- `_run_moralstack(prompt)` calls `orchestrator.process(request)` with **no**
-  conversation_id, turn_index, or conversation_state — every request is
-  single-turn (`:201-223`).
-- Returns the governed `result.response.content` as the assistant message and
-  echoes governance under `moralstack_metadata` (`:239-251,347-376`).
-- Concurrency bounded by an asyncio `Semaphore` (`MAX_INFLIGHT`, default 8); at
-  capacity → 503 with `Retry-After` (`:280-331`).
-- Creates a fresh `run` per request and flushes observability in `finally`
-  (`:214-237`).
-
-**Implication**: do not use this bridge for `llm_rules` / multi-turn benchmarks —
-it cannot see prior turns and will govern each message in isolation.

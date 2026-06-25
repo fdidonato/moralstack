@@ -94,6 +94,14 @@ def build_request_meta_from_result(result: Any) -> dict[str, Any]:
             meta["was_cached"] = bool(was_cached)
         if cached_from_turn is not None:
             meta["cached_from_turn"] = cached_from_turn
+        meta["delivery_context_broader_than_governance"] = bool(
+            getattr(result, "delivery_context_broader_than_governance", False)
+        )
+        meta["mismatch_guard_action"] = getattr(result, "mismatch_guard_action", "none")
+        meta["governance_context_mode"] = getattr(result, "governance_context_mode", "none")
+        meta["candidate_context_mode"] = getattr(result, "candidate_context_mode", "none")
+        meta["prior_turn_count"] = getattr(result, "prior_turn_count", 0)
+        meta["history_source"] = getattr(result, "history_source", "none")
     except Exception:
         logger.debug("build_request_meta_from_result: extraction failed (non-fatal)", exc_info=True)
     # Keep empty lists for reason_codes/triggered_principles so consumers can rely on stable shape.
@@ -131,6 +139,7 @@ def finalize_governance_audit(
     conversation_id: str | None = None,
     turn_index: int | None = None,
     domain: str | None = None,
+    final_action_override: str | None = None,
     update_response: bool = True,
     update_domain: bool = True,
 ) -> dict[str, Any]:
@@ -183,6 +192,12 @@ def finalize_governance_audit(
             logger.debug("finalize_governance_audit: update_request_domain failed: %s", exc)
 
     meta = build_request_meta_from_result(result) if result is not None else {}
+    if final_action_override:
+        # Delivery may fail closed after orchestration (for example when a
+        # NORMAL_COMPLETE result contains only whitespace). Persist the action
+        # actually delivered, while the transport-specific event retains the
+        # original action separately for audit.
+        meta["final_action"] = final_action_override
     if meta:
         try:
             emit_request_meta_updated(

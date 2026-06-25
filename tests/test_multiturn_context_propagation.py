@@ -15,7 +15,7 @@ import pytest
 
 from moralstack.core.types import Turn
 from moralstack.models.risk import RiskCategory, RiskEstimation
-from moralstack.models.risk.estimator import LLMBasedRiskEstimator, _format_context_block
+from moralstack.models.risk.estimator import LLMBasedRiskEstimator
 from moralstack.models.risk.schema import RiskEstimatorConfig
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.controller import OrchestrationController
@@ -98,6 +98,7 @@ def mock_policy() -> MagicMock:
     policy = MagicMock()
     policy.model = "test-model"
     policy.generate.return_value = _MockGenResult(text=_MINI_ESTIMATOR_JSON)
+    policy.generate_messages.return_value = _MockGenResult(text=_MINI_ESTIMATOR_JSON)
     return policy
 
 
@@ -126,7 +127,7 @@ def minimal_controller() -> OrchestrationController:
 class TestQ74EstimateContextPropagation:
     """Test 1 — LLMBasedRiskEstimator.estimate propagates Q74 context into mini prompts."""
 
-    def test_q74_context_reaches_all_three_mini_estimator_prompts(
+    def test_q74_context_reaches_all_three_mini_estimator_message_lists(
         self,
         _isolated_risk_env: None,
         llm_risk_estimator: LLMBasedRiskEstimator,
@@ -143,13 +144,17 @@ class TestQ74EstimateContextPropagation:
                 conversation_history=Q74_CONVERSATION_HISTORY,
             )
 
-        assert mock_policy.generate.call_count == 3
-        for call in mock_policy.generate.call_args_list:
-            prompt = call.kwargs.get("prompt", "")
-            assert "DEVELOPER CONTRACT" in prompt
-            assert "6009 Grant Street" in prompt
-            assert "RECENT CONVERSATION HISTORY" in prompt
-            assert "flamenco" in prompt.lower() or "Spain" in prompt
+        assert mock_policy.generate.call_count == 0
+        assert mock_policy.generate_messages.call_count == 3
+        for call in mock_policy.generate_messages.call_args_list:
+            messages = call.kwargs.get("messages", [])
+            roles = [m["role"] for m in messages]
+            assert roles == ["system", "developer", "assistant", "user", "assistant", "user"]
+            assert "6009 Grant Street" in messages[1]["content"]
+            assert any("flamenco" in m["content"].lower() for m in messages if m["role"] in {"user", "assistant"})
+            assert "Consider the preceding developer message" in messages[-1]["content"]
+            assert "DEVELOPER CONTRACT (system prompt declared" not in messages[-1]["content"]
+            assert "RECENT CONVERSATION HISTORY" not in messages[-1]["content"]
 
 
 class TestControllerContextPropagation:
@@ -186,10 +191,6 @@ class TestControllerContextPropagation:
 
 class TestSingleTurnByteEquivalence:
     """Test 3 — empty context: no context block; controller passes None kwargs."""
-
-    def test_format_context_block_empty_for_single_turn(self) -> None:
-        assert _format_context_block(None, None) == ""
-        assert _format_context_block("", []) == ""
 
     def test_controller_passes_none_kwargs_without_context(self, minimal_controller: OrchestrationController) -> None:
         risk_mock = minimal_controller.risk_estimator

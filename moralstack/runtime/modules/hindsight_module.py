@@ -23,6 +23,7 @@ from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.retry import RETRY_HINDSIGHT_BATCH, RETRY_HINDSIGHT_SINGLE
+from moralstack.runtime.modules.message_context import build_module_messages
 from moralstack.runtime.modules.simulator_module import Consequence
 from moralstack.utils.cache import build_context_fingerprint, get_global_cache
 from moralstack.utils.json_utils import JSONParseError
@@ -37,31 +38,8 @@ def _build_context_block(
     developer_contract: DeveloperContract | None,
     conversation_history: list[Turn] | None,
 ) -> str:
-    """Build optional context injected into the hindsight user prompt."""
-    if developer_contract is None and not conversation_history:
-        return ""
-
-    sections: list[str] = []
-    if developer_contract is not None and developer_contract.raw_text:
-        sections.append(
-            "DEVELOPER CONTRACT:\n"
-            f"The deployer of this assistant has declared:\n{developer_contract.raw_text}\n"
-            "Evaluate whether the response is coherent with this contract. "
-            "A response that violates the developer's stated scope or role is a violation."
-        )
-    if conversation_history:
-        recent = list(conversation_history)[-3:]
-        lines: list[str] = []
-        for turn in recent:
-            role = getattr(turn, "role", "") or "unknown"
-            content = (getattr(turn, "content", "") or "")[:200]
-            lines.append(f"[{role}]: {content}")
-        sections.append(
-            "CONVERSATION HISTORY (last 3 turns):\n"
-            f"{chr(10).join(lines)}\n"
-            "Evaluate whether the response contradicts or escalates concerning patterns from previous turns."
-        )
-    return "\n\n" + "\n\n".join(sections) + "\n"
+    """Legacy compatibility hook; context is sent as native messages instead."""
+    return ""
 
 
 # =============================================================================
@@ -737,7 +715,7 @@ class LLMHindsightEvaluator:
         from moralstack.prompts.hindsight_prompt import build_hindsight_prompt
 
         prompt = build_hindsight_prompt(ctx, consequences_text)
-        prompt = prompt + _build_context_block(developer_contract, conversation_history)
+        legacy_prompt = prompt + _build_context_block(developer_contract, conversation_history)
 
         parse_attempts = 0
         last_error: Exception | None = None
@@ -746,14 +724,25 @@ class LLMHindsightEvaluator:
             parse_attempts = attempt + 1
 
             try:
-                if attempt == 0:
+                if hasattr(self.policy, "generate_messages"):
+                    result = self.policy.generate_messages(
+                        messages=build_module_messages(
+                            system_prompt=HINDSIGHT_SYSTEM_PROMPT,
+                            user_prompt=prompt,
+                            developer_contract=developer_contract,
+                            conversation_history=conversation_history,
+                            retry_prompt="" if attempt == 0 else RETRY_BATCH_PROMPT,
+                        ),
+                        config=self._generation_config,
+                    )
+                elif attempt == 0:
                     result = self.policy.generate(
-                        prompt=prompt,
+                        prompt=legacy_prompt,
                         system=HINDSIGHT_SYSTEM_PROMPT,
                         config=self._generation_config,
                     )
                 else:
-                    retry_prompt = f"{prompt}\n\n{RETRY_BATCH_PROMPT}"
+                    retry_prompt = f"{legacy_prompt}\n\n{RETRY_BATCH_PROMPT}"
                     result = self.policy.generate(
                         prompt=retry_prompt,
                         system=HINDSIGHT_SYSTEM_PROMPT,

@@ -2,13 +2,15 @@ from unittest.mock import MagicMock
 
 from moralstack.core.types import Turn
 from moralstack.orchestration.contract import DeveloperContract
+from moralstack.orchestration.conversation_context import build_conversation_context
 from moralstack.orchestration.deliberation_runner import DeliberationRunner
 from moralstack.orchestration.types import DeliberationState, OrchestratorConfig, ProcessedRequest
 
 
 def test_critic_critique_receives_context(monkeypatch):
     # Mock global variables and functions that might cause failures
-    monkeypatch.setattr("moralstack.orchestration.deliberation_runner.persist_orchestration_event", MagicMock())
+    persist_mock = MagicMock()
+    monkeypatch.setattr("moralstack.orchestration.deliberation_runner.persist_orchestration_event", persist_mock)
     monkeypatch.setattr("moralstack.orchestration.deliberation_runner.record_llm_call", MagicMock())
 
     config = OrchestratorConfig()
@@ -37,8 +39,20 @@ def test_critic_critique_receives_context(monkeypatch):
 
     contract = DeveloperContract.from_text("SECRET CONTRACT", mode="opaque")
     history = [Turn(role="user", content="ping"), Turn(role="assistant", content="pong")]
+    conversation_context = build_conversation_context(
+        [
+            {"role": "system", "content": "SECRET CONTRACT"},
+            {"role": "user", "content": "ping"},
+            {"role": "assistant", "content": "pong"},
+            {"role": "user", "content": "test prompt"},
+        ]
+    )
     request = ProcessedRequest(
-        prompt="test prompt", developer_contract=contract, conversation_history=history, request_id="test-id"
+        prompt="test prompt",
+        developer_contract=contract,
+        conversation_history=history,
+        conversation_context=conversation_context,
+        request_id="test-id",
     )
     state = DeliberationState(draft_response="draft")
 
@@ -49,10 +63,17 @@ def test_critic_critique_receives_context(monkeypatch):
     assert kwargs["developer_contract"] == contract
     assert kwargs["conversation_history"] == history
     assert kwargs["request_id"] == "test-id"
+    persist_mock.assert_called()
+    context_event = persist_mock.call_args.kwargs
+    assert context_event["event_type"] == "CONTEXT_SHAPE_RECORDED"
+    assert context_event["component"] == "critic"
+    assert context_event["payload"]["context_mode"] == "role_serialized_full"
+    assert context_event["payload"]["developer_contract_included"] is True
 
 
 def test_simulator_simulate_receives_context(monkeypatch):
-    monkeypatch.setattr("moralstack.orchestration.deliberation_runner.persist_orchestration_event", MagicMock())
+    persist_mock = MagicMock()
+    monkeypatch.setattr("moralstack.orchestration.deliberation_runner.persist_orchestration_event", persist_mock)
     monkeypatch.setattr("moralstack.orchestration.deliberation_runner.record_llm_call", MagicMock())
 
     config = OrchestratorConfig()
@@ -81,7 +102,19 @@ def test_simulator_simulate_receives_context(monkeypatch):
 
     contract = DeveloperContract.from_text("SECRET CONTRACT", mode="opaque")
     history = [Turn(role="user", content="ping"), Turn(role="assistant", content="pong")]
-    request = ProcessedRequest(prompt="test prompt", developer_contract=contract, conversation_history=history)
+    request = ProcessedRequest(
+        prompt="test prompt",
+        developer_contract=contract,
+        conversation_history=history,
+        conversation_context=build_conversation_context(
+            [
+                {"role": "developer", "content": "SECRET CONTRACT"},
+                {"role": "user", "content": "ping"},
+                {"role": "assistant", "content": "pong"},
+                {"role": "user", "content": "test prompt"},
+            ]
+        ),
+    )
     state = DeliberationState(draft_response="draft")
 
     runner._simulate(state, request)
@@ -90,10 +123,13 @@ def test_simulator_simulate_receives_context(monkeypatch):
     _, kwargs = deps.simulator.simulate.call_args
     assert kwargs["developer_contract"] == contract
     assert kwargs["conversation_history"] == history
+    assert persist_mock.call_args.kwargs["event_type"] == "CONTEXT_SHAPE_RECORDED"
+    assert persist_mock.call_args.kwargs["component"] == "simulator"
 
 
 def test_hindsight_evaluate_receives_context(monkeypatch):
-    monkeypatch.setattr("moralstack.orchestration.deliberation_runner.persist_orchestration_event", MagicMock())
+    persist_mock = MagicMock()
+    monkeypatch.setattr("moralstack.orchestration.deliberation_runner.persist_orchestration_event", persist_mock)
     monkeypatch.setattr("moralstack.orchestration.deliberation_runner.record_llm_call", MagicMock())
 
     config = OrchestratorConfig()
@@ -115,7 +151,19 @@ def test_hindsight_evaluate_receives_context(monkeypatch):
 
     contract = DeveloperContract.from_text("SECRET CONTRACT", mode="opaque")
     history = [Turn(role="user", content="ping"), Turn(role="assistant", content="pong")]
-    request = ProcessedRequest(prompt="test prompt", developer_contract=contract, conversation_history=history)
+    request = ProcessedRequest(
+        prompt="test prompt",
+        developer_contract=contract,
+        conversation_history=history,
+        conversation_context=build_conversation_context(
+            [
+                {"role": "developer", "content": "SECRET CONTRACT"},
+                {"role": "user", "content": "ping"},
+                {"role": "assistant", "content": "pong"},
+                {"role": "user", "content": "test prompt"},
+            ]
+        ),
+    )
     state = DeliberationState(draft_response="draft")
 
     runner._evaluate_hindsight(state, request)
@@ -124,10 +172,13 @@ def test_hindsight_evaluate_receives_context(monkeypatch):
     _, kwargs = deps.hindsight.evaluate.call_args
     assert kwargs["developer_contract"] == contract
     assert kwargs["conversation_history"] == history
+    assert persist_mock.call_args.kwargs["event_type"] == "CONTEXT_SHAPE_RECORDED"
+    assert persist_mock.call_args.kwargs["component"] == "hindsight"
 
 
 def test_perspectives_evaluate_receives_context(monkeypatch):
-    monkeypatch.setattr("moralstack.orchestration.deliberation_runner.persist_orchestration_event", MagicMock())
+    persist_mock = MagicMock()
+    monkeypatch.setattr("moralstack.orchestration.deliberation_runner.persist_orchestration_event", persist_mock)
     monkeypatch.setattr("moralstack.orchestration.deliberation_runner.record_llm_call", MagicMock())
 
     config = OrchestratorConfig()
@@ -151,7 +202,19 @@ def test_perspectives_evaluate_receives_context(monkeypatch):
 
     contract = DeveloperContract.from_text("SECRET CONTRACT", mode="opaque")
     history = [Turn(role="user", content="ping"), Turn(role="assistant", content="pong")]
-    request = ProcessedRequest(prompt="test prompt", developer_contract=contract, conversation_history=history)
+    request = ProcessedRequest(
+        prompt="test prompt",
+        developer_contract=contract,
+        conversation_history=history,
+        conversation_context=build_conversation_context(
+            [
+                {"role": "developer", "content": "SECRET CONTRACT"},
+                {"role": "user", "content": "ping"},
+                {"role": "assistant", "content": "pong"},
+                {"role": "user", "content": "test prompt"},
+            ]
+        ),
+    )
     state = DeliberationState(draft_response="draft")
 
     runner._evaluate_perspectives(state, request)
@@ -160,6 +223,8 @@ def test_perspectives_evaluate_receives_context(monkeypatch):
     _, kwargs = deps.perspectives.evaluate.call_args
     assert kwargs["developer_contract"] == contract
     assert kwargs["conversation_history"] == history
+    assert persist_mock.call_args.kwargs["event_type"] == "CONTEXT_SHAPE_RECORDED"
+    assert persist_mock.call_args.kwargs["component"] == "perspectives"
 
 
 def test_propagation_none_when_no_context(monkeypatch):

@@ -46,7 +46,14 @@ additional_principles:
     level: soft
     priority: 80
     title: "Medical Disclaimer"
-    rule: "Always include appropriate medical disclaimers and recommend professional consultation"
+    rule: |
+      Include a medical disclaimer and recommend professional consultation when the user asks
+      for personalized diagnosis, treatment, triage, dosage, medication, procedure steps,
+      active symptoms, urgent symptoms, or case-specific clinical decisions.
+      Do not require a standalone disclaimer for general educational, pathophysiology,
+      anatomy, or mechanism explanations when the user requests a strict format,
+      unless omission would create concrete safety risk
+
     examples_allow:
       - "This information is for educational purposes. Please consult a healthcare professional."
       - "I can provide general information, but a doctor should evaluate your specific situation."

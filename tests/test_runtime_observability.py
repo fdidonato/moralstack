@@ -156,12 +156,14 @@ def test_llm_calls_extended_columns_roundtrip(tmp_path, monkeypatch):
         call_kind="normal",
         call_outcome="used",
         cache_status="miss",
+        parsed_summary_json={"context_shape": {"context_mode": "full_native"}},
     )
     rows = get_llm_calls_for_request("r1", "q1")
     assert len(rows) == 1
     assert rows[0].get("call_kind") == "normal"
     assert rows[0].get("call_outcome") == "used"
     assert rows[0].get("cache_status") == "miss"
+    assert json.loads(rows[0].get("parsed_summary_json")) == {"context_shape": {"context_mode": "full_native"}}
 
 
 def test_speculative_skip_elapsed_is_clamped_to_total_duration():

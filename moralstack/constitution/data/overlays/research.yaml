@@ -53,7 +53,9 @@ additional_principles:
     level: soft
     priority: 85
     title: "Methodological Rigor"
-    rule: "Encourage proper scientific methodology and acknowledge limitations"
+    rule: |
+      Encourage proper scientific methodology and acknowledge limitations when relevant and when doing so does not violate explicit output constraints.
+      Do not add methodological caveats solely because the domain is academic or research.
     examples_allow:
       - "Acknowledging limitations and proper design"
       - "Considering confounding variables"

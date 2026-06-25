@@ -364,10 +364,21 @@ request. Answer YES or NO for each category based on TOPIC PRESENCE alone.
 
 INVARIANT PRINCIPLES:
 
-1. Topic presence only — do NOT judge intent, framing, or dangerousness.
-   A signal is YES if the topic appears in ANY form: educational,
-   defensive, operational, fictional, or obfuscated. Do NOT infer what
-   the requester will do with the information.
+1. Topic presence by signal definition only — do NOT judge intent,
+   requester purpose, framing, or dangerousness.
+   For each signal, mark YES only when the semantic
+   payload falls inside that signal's yes_when criteria.
+   The topic may appear in any form, including educational, defensive,
+   operational, fictional, historical, legal, metaphorical,
+   or obfuscated framing, but such framing counts only if the signal definition
+   includes it or the payload still substantively matches
+   the signal's yes_when criteria.
+   Do NOT infer what the requester will do with the information.
+   Do NOT mark a signal YES merely because sensitive keywords appear.
+   If the signal has no_when criteria and the payload matches them,
+   mark NO even if sensitive keywords or adjacent concepts are present.
+   In short: evaluate semantic topic presence, not user intent or risk;
+   but determine presence strictly according to the signal's YES/NO criteria, not by keyword matching alone.
 
 2. PAYLOAD vs WRAPPER. The payload is the topic/action/target/substance/
    procedure being asked about. The wrapper is output format, roleplay,

@@ -24,6 +24,8 @@ moralstack/
   observability/         # telemetry service, sinks (SQLite/JSONL), read store
   persistence/           # DB/file persistence ports used by the controller
   pipeline/              # context builder + deliberation stack assembly
+                         #   output_contract.py: Tier-1 enumerated-output
+                         #   detection (TRUE/FALSE etc.) used by the critic gate
   prompts/               # module prompt templates
   reports/               # markdown/conversation/benchmark export + UI data builders
   server/                # OpenAI-compatible FastAPI governance proxy
@@ -31,7 +33,7 @@ moralstack/
   cli/                   # `moralstack` CLI
   utils/                 # env loading, caching, output protection, json helpers
   core/                  # shared types/schema
-scripts/                 # benchmark, standalone bridge, inspector, install
+scripts/                 # benchmark, inspector, install
 examples/                # runnable usage examples
 tests/                   # ~120 test modules + e2e payloads
 docs/                    # architecture, modules, traces, this index
@@ -58,7 +60,8 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 - `wrapper.py` — `govern(client, config=None)` wraps any OpenAI-compatible client
   and returns `GovernedClient`. `GovernedCompletions.create()` runs deliberation
   *before* delegating to the wrapped client. Helpers: `_extract_last_user_message`,
-  `_extract_developer_contract` (last `system` message wins, `mode="opaque"`),
+  `_extract_developer_contract` (delegates to shared `ConversationContext`; last
+  non-empty `system`/`developer` message wins, `mode="opaque"`),
   `_messages_to_turns`, `_build_safe_complete_user_turn`.
 - `bootstrap.py` — `_bootstrap_pipeline(config)` builds the `Orchestrator`;
   `_resolve_model(config)` resolves the generation model.
@@ -69,8 +72,12 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 - `session_store.py` — `SessionStoreProtocol`, `InMemorySessionStore`.
 - `response.py` — `GovernedResponse`, `GovernanceMetadata` (`final_action`,
   `risk_score`, `risk_category`, `path`, `reason_codes`, `triggered_principles`,
-  `conversation_id`, `turn_index`, …). Constructors: `from_normal`, `from_safe`,
-  `from_refusal`, `from_passthrough`, `from_pipeline_error`.
+  `conversation_id`, `turn_index`, …) plus governed-delivery model attribution
+  (`requested_model`, `generation_model`, `rewrite_model`). Constructors:
+  `from_governed_text` (Plan 1 primary), `from_refusal`, `from_pipeline_error`,
+  and the deprecated `from_normal` / `from_safe` / `from_governed_draft`;
+  `from_passthrough` is a deprecated fail-closed alias (never passthrough).
+  `is_passthrough` is always `False`.
 - `errors.py` — `GovernanceError` + subclasses.
 
 ### Runtime — `moralstack/runtime/`
@@ -91,6 +98,16 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   runner core (file is ~2498 lines). Owns risk estimation, speculative overlap,
   DCCL invocation, routing, ledger lookup/store, conversation-state extension,
   and event emission.
+- `conversation_context.py` — shared OpenAI-message parser for SDK/proxy. Builds
+  `ConversationContext` with final user message, prior user/assistant turns,
+  developer contract, `history_source`, role-serialized transcript helpers,
+  context-shape metadata, and the compliance delivery mismatch guard.
+- `delivery.py` — pure governed-delivery finalizer (Plan 1). `GovernedDelivery`
+  dataclass + `finalize_delivery(result, *, config)`: turns an already-governed
+  `OrchestratorResult` into the text to deliver (sources `governed`,
+  `governed_refusal`, blank-content fail-closed `governed_pipeline_refusal`). No
+  model call, no wrapped/upstream client, no observability writes. Used by SDK
+  and proxy so the delivered answer is always the governed pipeline text.
 - `decision_service.py` — `decide_action(request, risk_proto, …)` →
   `(Decision, DecisionExplanation)`.
 - `path_router.py` — `get_route(...)` → `(route, borderline_refuse, risk_policy_action)`;
@@ -120,6 +137,9 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   conversation_history=…)` runs **three parallel mini-estimators** via a
   `ThreadPoolExecutor`: `estimate_intent`, `estimate_signals` (q1–q17),
   `estimate_operational`; merged by `calibration.merge_mini_estimator_results`.
+  The three real mini-estimator `llm_call` envelopes are built with the local
+  15-key risk payload and dispatched synchronously as one `router.route_batch`;
+  a synthetic `calibration_guard` row remains a separate single write.
 - `calibration.py` — `merge_mini_estimator_results`, `parse_risk_dict`, score
   calibration rules (defensive override, harm escalation, non-operational clamp,
   calibration guard).
@@ -131,6 +151,8 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 ### Constitution — `moralstack/constitution/`
 - `store.py` — `ConstitutionStore` (optional LLM-based principle matching).
 - `loader.py`, `schema.py`, `retriever.py`, `prompt_formatter.py`, `helpers.py`.
+  `retriever.py` domain-agent caches hash rendered OpenAI messages plus
+  generation params, not only principle ids/counts.
 - `data/core.yaml` — baseline constitution.
 - `data/overlays/*.yaml` — 21 domain overlays: children, coding, creative,
   customer_service, cybersecurity, education, emergency, enterprise, environment,
@@ -149,8 +171,8 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 ### Observability — `moralstack/observability/`
 - `service.py` — `ObservabilityService`, singleton via `get_obs()` / `obs`.
   `emit`/`emit_batch` are async fire-and-forget; `flush()` at request boundary.
-- `router.py` — dispatch by mode (`db_only` → SQLite, `file_only` → JSONL,
-  `dual` → both).
+- `router.py` — synchronous dispatch by mode (`db_only` → SQLite,
+  `file_only` → JSONL, `dual` → both), including `route_batch`.
 - `sinks/sqlite_sink.py` — schema + writers (`init_db`, `create_run`,
   `upsert_request`, `update_request_*`, `delete_*`). Tables in §8.
 - `sinks/jsonl_sink.py` — JSONL envelope writer.
@@ -174,7 +196,17 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 - `proxy.py` — `create_app(openai_client, orchestrator, config, session_store)`
   returns a FastAPI app exposing `POST /v1/chat/completions`, `/chat/completions`,
   `GET /healthz`. `ConversationLockManager` (per-conversation locks),
-  `_handle_chat_completion_sync` (runs in a threadpool).
+  `_handle_chat_completion_sync` (runs in a threadpool). Reads client
+  `max_tokens`/`max_completion_tokens`/`temperature`/`top_p` into
+  `ProcessedRequest.generation_overrides` via
+  `GenerationOverrides.from_mapping(body, passthrough_unset=True)`; the SDK
+  (`sdk/wrapper.py`) does the same from `govern` kwargs but with
+  `passthrough_unset=False`. These influence the delivered answer. On the **proxy**
+  an unset field is **omitted** from the OpenAI call (model default), so the env
+  defaults do not apply there; on the **SDK/CLI** an unset field falls back to the env
+  default (precedence override > `GenerationConfig` > env defaults
+  `OPENAI_MAX_TOKENS`/`OPENAI_TEMPERATURE`/`OPENAI_TOP_P`). REFUSE wording is excluded
+  on every path. See `docs/modules/policy.md`.
 - `conversation_correlation.py` — `ConversationCorrelationStore` (lineage hashing
   → conversation_id) + `canonical_history_hash`, `canonical_parent_history_hash`.
 - `headers.py` — `build_governance_headers` (X-Moralstack-* response headers).
@@ -188,8 +220,6 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 ### CLI / scripts
 - `moralstack/cli/run.py`, `shell.py`, `loader.py`, `report.py`, `visualizer.py`.
 - `scripts/benchmark_moralstack.py` — internal 84-question benchmark.
-- `scripts/openai_compatible_server.py` — **standalone single-turn** OpenAI bridge
-  (distinct from `server/proxy.py`; see §10).
 - `scripts/inspect_multiturn_trace.py` — multi-turn inspector CLI.
 - `scripts/mstack_run.py`, `consolidate_jsonl_meta.py`, `install.py`.
 
@@ -207,9 +237,12 @@ Inside `process()` (order verified in source):
    `enable_speculative_generation`, else direct `_estimate_risk`
    (`controller.py:1928-1935`).
 3. **DCCL evaluation** on the (possibly non-blocking) speculative draft
-   (`_run_dccl_evaluation`, `controller.py:1936`). On `MATCH` with a validated
-   draft → **compliance fast-path** (`_route_compliance_match`), skipping risk
-   routing and deliberation (`controller.py:1941-2040`).
+   (`_run_dccl_evaluation`, `controller.py:1936`). The LLM path receives a
+   budgeted role-ordered transcript from `ConversationContext`; when the draft
+   is about to be reused, the mismatch guard prevents a last-user-only draft from
+   becoming final if governance saw broader prior context. On `MATCH` with a
+   validated aligned draft → **compliance fast-path** (`_route_compliance_match`),
+   skipping risk routing and deliberation (`controller.py:1941-2040`).
 4. Apply overlay sensitivity risk floor (`apply_risk_floor_if_sensitive`),
    normalize domain, domain-exclusion check (`controller.py:2062-2116`).
 5. **Decision** — `decide_action(...)` then `apply_safe_complete_gating(...)`
@@ -225,7 +258,7 @@ Inside `process()` (order verified in source):
    `conversation_governance_state_out`, emits conversation events, and stores the
    decision in the ledger (`controller.py:319-413`).
 
-See `docs/TRACES/governance_decision_flow.md` for the full trace.
+See `docs/traces/governance_decision_flow.md` for the full trace.
 
 ---
 
@@ -251,14 +284,31 @@ never from text:
   `apply_safe_complete_gating` (`safe_complete_gating.py:73-171`) can downgrade
   gray-zone SAFE_COMPLETE → NORMAL_COMPLETE (not applied to SENSITIVE /
   MORALLY_NUANCED categories).
+  `_handle_informational_recovery` floors benign+regulated informational
+  requests to SAFE_COMPLETE by default; opt-in
+  `OrchestratorConfig.regulated_informational_normal_complete`
+  (`MORALSTACK_ORCHESTRATOR_REGULATED_INFORMATIONAL_NORMAL_COMPLETE`, default
+  false) lets clearly benign, non-operational requests (same benignity guards as
+  the unregulated branch) return NORMAL_COMPLETE instead. Any positive signal
+  keeps SAFE_COMPLETE; non-BENIGN categories and hard-signal REFUSE are
+  unaffected.
 
-Routing consequences (`sdk/wrapper.py`, `server/proxy.py`):
+Routing consequences (`sdk/wrapper.py`, `server/proxy.py`) — **governed delivery
+only (Plan 1)**. The delivered text is always the governed pipeline result,
+finalized by the pure `finalize_delivery` in
+`orchestration/delivery.py` (`GovernedDelivery`). The wrapped/upstream client is
+**never** called to generate the delivered answer for any `final_action`:
 
 | `final_action` | SDK behavior | Proxy behavior |
 |---|---|---|
-| `NORMAL_COMPLETE` | call wrapped client with original kwargs | forward original body (or reuse governed draft on `COMPLIANCE_FAST_PATH`) |
-| `SAFE_COMPLETE` | append synthetic guidance `user` turn, then call client | append synthetic guidance `user` turn, then forward |
-| `REFUSE` | return refusal text; **client not called** | return synthetic `chat.completion` (finish_reason `content_filter`); **upstream not called** |
+| `NORMAL_COMPLETE` | deliver governed text via `GovernedResponse.from_governed_text`; **client not called** | synthetic `chat.completion` from governed text (or synthetic SSE replay when `stream=True`); **upstream not called** |
+| `SAFE_COMPLETE` | deliver governed text via `from_governed_text`; **client not called** | synthetic `chat.completion` / SSE replay from governed text; **upstream not called** |
+| `REFUSE` | return governed refusal text; **client not called** | synthetic `chat.completion` (finish_reason `content_filter`); **upstream not called** |
+
+Blank/invalid governed content fails closed to a deterministic governed refusal
+(`final_text_source="governed_pipeline_refusal"`). Pipeline failures also fail
+closed (no passthrough). `final_revalidation` is retained only for historical
+readers (UI/reports); it is not invoked on the active delivery paths.
 
 ---
 
@@ -351,26 +401,19 @@ intercepted; everything else passes through via `__getattr__`
 
 ---
 
-## 9. OpenAI-compatible bridge
+## 9. OpenAI-compatible proxy
 
-Two distinct implementations — do not confuse them:
+The supported HTTP OpenAI-compatible path is the **production proxy**:
+`moralstack/server/proxy.py:create_app`. It is multi-turn aware: resolves
+conversation_id (header → `extra_body` → lineage correlation), serializes
+same-conversation requests with per-conversation locks, uses a `SessionStore`,
+emits full observability, and routes REFUSE/SAFE_COMPLETE/NORMAL through governed
+delivery. Serve it via `examples/server_quickstart.py` (uvicorn, **single
+worker**; recommended command targets port 8080; `main()` reads env var
+`MORALSTACK_OPENAI_COMPATIBLE_API_PORT`, defaulting to 8787). This is the path
+recommended for COMPL-AI `llm_rules` and IFBench-style proxy runs.
 
-1. **Production proxy** — `moralstack/server/proxy.py:create_app`. Multi-turn
-   aware: resolves conversation_id (header → `extra_body` → lineage correlation),
-   serializes same-conversation requests with per-conversation locks, uses a
-   `SessionStore`, emits full observability, routes REFUSE/SAFE_COMPLETE/NORMAL.
-   Served via `examples/server_quickstart.py` (uvicorn, **single worker**;
-   recommended command targets port 8080; `main()` reads env var
-   `MORALSTACK_OPENAI_COMPATIBLE_API_PORT`, defaulting to 8787). This is the
-   path recommended for COMPL-AI `llm_rules`.
-2. **Standalone bridge** — `scripts/openai_compatible_server.py` (port 8787).
-   Single-turn only: extracts the last user message and calls
-   `orchestrator.process(request)` with **no** conversation_id/turn_index and
-   **no** conversation history. Returns the governed `result.response.content`
-   directly (not a fresh upstream generation). Creates a new `run` per request;
-   bounds concurrency with an asyncio semaphore.
-
-See `docs/TRACES/openai_compatible_multiturn.md`.
+See `docs/traces/openai_compatible_multiturn.md`.
 
 ---
 
@@ -380,12 +423,10 @@ See `docs/TRACES/openai_compatible_multiturn.md`.
   yields a single synthetic chunk (`GovernedRefusalStream`); otherwise the
   upstream stream is wrapped by `GovernedStreamResponse` with
   `governance_metadata` attached (`wrapper.py:186-251`).
-- **Production proxy**: **no streaming branch.** `_build_upstream_kwargs` does
-  not strip `stream`, and responses are serialized via `model_dump()`
-  (`proxy.py:750-774`). Streaming through the proxy is therefore unsupported (see
-  fragile areas, §14).
-- **Standalone bridge**: accepts a `stream` field but always returns a complete
-  non-streamed JSON body (`scripts/openai_compatible_server.py:81,347`).
+- **Production proxy**: supported as governed synthetic SSE replay. Governance
+  runs to completion first; `_build_synthetic_sse_response` replays the final
+  governed answer as OpenAI-compatible `chat.completion.chunk` events without
+  forwarding live upstream tokens.
 
 ---
 
@@ -404,6 +445,12 @@ See `docs/TRACES/openai_compatible_multiturn.md`.
 - **Risk in context**: history + developer contract are passed into the risk
   estimator so context-dependent prompts are not mis-scored
   (`controller.py:788-845`).
+- **Request transcript**: SDK and proxy both attach `ConversationContext` to
+  `ProcessedRequest`. DCCL and speculative generation can use a role-serialized
+  transcript; risk/deliberative modules may use smaller declared windows.
+- **Compliance delivery guard**: records governance/candidate context modes and
+  blocks governed-draft reuse only when the reused draft was generated from a
+  narrower last-user-only context than the governance transcript.
 
 ---
 
@@ -412,7 +459,9 @@ See `docs/TRACES/openai_compatible_multiturn.md`.
 - Modes (`MORALSTACK_OBSERVABILITY_MODE`): `file_only` (default), `db_only`,
   `dual`. DB path via `MORALSTACK_OBSERVABILITY_DB_PATH` (legacy
   `MORALSTACK_DB_PATH`).
-- Async write queue + background worker; `flush()` at request/SDK boundary.
+- Async write queue + background worker for `ObservabilityService.emit*`;
+  direct `router.route*` dispatch is synchronous. `flush()` drains queued writes
+  at request/SDK boundary.
 - **SQLite tables** (`sinks/sqlite_sink.py:48-489`): `runs`, `requests`,
   `llm_calls`, `orchestration_events`, `decision_traces`, `debug_events`,
   `exports_cache`, `conversation_states`, `ledger_events`,
@@ -421,8 +470,13 @@ See `docs/TRACES/openai_compatible_multiturn.md`.
 - **JSONL** sink writes the same event envelopes to
   `MORALSTACK_OBSERVABILITY_JSONL_DIR` (default `logs/observability`).
 - Read contract: `SqliteReadStore` (`read_store.py`).
+- **Context-shape telemetry**: `CONTEXT_SHAPE_RECORDED` orchestration events
+  record context mode, raw/system/developer counts, available/used prior turns,
+  truncation, `history_source`, and guard metadata. These fields are available
+  from JSONL and SQLite event payload JSON; there are no dedicated typed columns
+  or UI cards yet.
 
-See `docs/TRACES/observability_db_to_ui.md`.
+See `docs/traces/observability_db_to_ui.md`.
 
 ## 13. Filesystem logging
 
@@ -463,7 +517,7 @@ codebase contains targeted accommodations for it:
 - `scripts/benchmark_moralstack.py` is MoralStack's **own** 84-question
   benchmark, separate from COMPL-AI.
 
-See `docs/TRACES/complai_llm_rules_flow.md`.
+See `docs/traces/complai_llm_rules_flow.md`.
 
 ---
 
@@ -493,19 +547,10 @@ See `docs/TRACES/complai_llm_rules_flow.md`.
 
 ## 17. Known fragile areas
 
-- **Proxy streaming is unsupported (verified).** `server/proxy.py` has no
-  `stream` branch; `_build_upstream_kwargs` keeps `stream` in the body, the
-  upstream `Stream` object has no `model_dump`/`to_dict`, so
-  `_serialize_upstream_response` returns `{"raw": str(...)}` — a non-OpenAI body
-  with no streaming (`proxy.py:750-774`). No test exercises this. Use the SDK for
-  streaming.
 - **Lineage-based conversation correlation can collide.** Two samples with
   byte-identical histories (and identical assistant outputs) map to the same
   `conversation_id` (`conversation_correlation.py` docstring + `resolve`). This
-  is the central COMPL-AI risk — see `docs/TRACES/complai_llm_rules_flow.md`.
-- **Two bridges, different semantics.** `scripts/openai_compatible_server.py` is
-  single-turn and ignores history; `server/proxy.py` is multi-turn. Choosing the
-  wrong one silently changes multi-turn behavior.
+  is the central COMPL-AI risk — see `docs/traces/complai_llm_rules_flow.md`.
 - **UI requires SQLite.** `file_only` runs never appear in the dashboard; the UI
   reads only the DB.
 - **Cache governance.** Ledger fast-path can reuse a prior decision; the
@@ -513,3 +558,6 @@ See `docs/TRACES/complai_llm_rules_flow.md`.
 - **`controller.process()` is very large** (~2498 lines) with many interleaved
   early returns and best-effort emit blocks — read the whole method before
   editing routing.
+- **Do not bypass `ConversationContext` in entry points.** SDK and proxy must use
+  the shared builder so DCCL, speculative generation, risk context, and audit
+  metadata agree about the same request transcript.
