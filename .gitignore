@@ -38,7 +38,15 @@ htmlcov/
 # IDE
 .vscode/
 .idea/
-.claude/
+
+# Claude Code — condividi gli artefatti team, tieni locale il personale
+.claude/*
+!.claude/settings.json
+!.claude/rules/
+!.claude/agents/
+!.claude/hooks/
+!.claude/skills/
+.claude/settings.local.json
 
 # OS
 .DS_Store
