@@ -5,10 +5,13 @@ Fires when Claude tries to finish a turn. Acts only if code/tests were edited
 this session (per ``.claude/.session-edits.json`` written by
 ``format_on_edit.py``). Two jobs:
 
-1. **Verify (non-blocking).** Runs ``pre-commit run --files <edited code>`` and
-   reports the outcome to Claude via ``additionalContext``. Set
-   ``MSTACK_STOP_RUN_PYTEST=1`` to also run the full suite (raise the hook
-   ``timeout`` in settings.json accordingly — pytest is slow).
+1. **Verify (non-blocking).** Runs ``pre-commit run --files <edited code>`` and,
+   when code/tests changed, **auto-runs pytest scoped to the impacted test
+   files** (those edited directly plus ``tests/**/test_<module>*.py`` matching
+   the edited modules) so each turn self-verifies fast. The full suite (~3.5 min)
+   stays the ``pre-commit-verifier`` agent's job; set ``MSTACK_STOP_RUN_PYTEST=1``
+   to force it here instead (raise the hook ``timeout`` in settings.json — pytest
+   is slow). Outcome is reported to Claude via ``additionalContext``.
 2. **Docs gate (blocking).** If governance *behavior* files were edited without
    touching the matching docs (or the behavior-locking tests), emits
    ``{"decision": "block"}`` so Claude updates docs before finishing
@@ -72,6 +75,27 @@ def _edited_paths(project: Path, session_id: str) -> list[str]:
     return [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []
 
 
+def _related_tests(project: Path, code: list[str]) -> list[str]:
+    """Test files impacted by the edited code: edited tests themselves, plus
+    ``tests/**/test_<module-stem>*.py`` for each edited ``moralstack`` module."""
+    tests: set[str] = set()
+    tests_dir = project / "tests"
+    for rel in code:
+        if rel.startswith("tests/") and rel.endswith(".py"):
+            if (project / rel).exists():
+                tests.add(rel)
+            continue
+        stem = Path(rel).stem
+        if not stem or stem == "__init__":
+            continue
+        for match in tests_dir.glob(f"**/test_{stem}*.py"):
+            try:
+                tests.add(str(match.relative_to(project)).replace("\\", "/"))
+            except ValueError:
+                continue
+    return sorted(tests)
+
+
 def _run(args: list[str], project: Path, timeout: int) -> str:
     try:
         proc = subprocess.run(
@@ -127,12 +151,23 @@ def main() -> int:
     report = ["[Stop gate] verify (non-blocking):"]
     report.append("  pre-commit (changed files): " + _run([py, "-m", "pre_commit", "run", "--files", *code], project, 100))
     if os.environ.get("MSTACK_STOP_RUN_PYTEST", "").lower() in ("1", "true", "yes"):
-        report.append("  pytest (full suite): " + _run([py, "-m", "pytest", "-q", "--no-header"], project, 100))
+        report.append("  pytest (full suite): " + _run([py, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider"], project, 300))
     else:
-        report.append(
-            "  pytest: not run (set MSTACK_STOP_RUN_PYTEST=1, or run the "
-            "pre-commit-verifier agent before declaring done)."
-        )
+        related = _related_tests(project, code)
+        if related:
+            report.append(
+                f"  pytest (scoped, {len(related)} file/s): "
+                + _run([py, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider", *related], project, 150)
+            )
+            report.append(
+                "  full suite not run here — run the pre-commit-verifier agent "
+                "(or MSTACK_STOP_RUN_PYTEST=1) before declaring done."
+            )
+        else:
+            report.append(
+                "  pytest: no test file matched the edited modules; full suite "
+                "skipped (run the pre-commit-verifier agent before declaring done)."
+            )
     report_text = "\n".join(report)
 
     needs_docs = bool(behavior) and not (docs_touched or tests_touched)

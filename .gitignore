@@ -13,6 +13,11 @@ investigation/
 moralstack.db-*
 benchmark_outputs/
 
+# Runtime artifacts (DB, probe outputs, root logs) — never commit these
+/moralstack.db
+/logs/
+risk_probe_out.*
+
 # Virtual environments
 .venv/
 venv/
