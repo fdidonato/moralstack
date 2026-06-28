@@ -14,8 +14,10 @@ Primary code: `moralstack/observability/*`, `moralstack/persistence/*`,
 - Singleton `ObservabilityService` via `get_obs()` / `obs`
   (`observability/service.py:80-87`).
 - `obs.emit(envelope)` / `emit_batch(...)` are **async fire-and-forget**: the
-  envelope is submitted to a background `ObservabilityWriteQueue` that calls
-  `router.route` with a captured contextvars snapshot (`service.py:44-52`).
+  envelope is submitted to a background `ObservabilityWriteQueue`. The worker
+  drains FK-ordered windows through `router.route_window(...)` and owns a
+  persistent SQLite connection with `PRAGMA synchronous=NORMAL` scoped to that
+  worker connection only (`service.py`, `write_queue.py`, `router.py`).
 - `obs.flush(timeout)` blocks until pending writes drain. The SDK wrapper
   calls it at the request boundary (`wrapper.py:281`). **The proxy does not
   flush per-request**: under burst load the queue grew faster than the
@@ -27,13 +29,13 @@ Primary code: `moralstack/observability/*`, `moralstack/persistence/*`,
   `obs.flush(...)` explicitly before reading.
 - Context is carried via contextvars: `run_id`, `request_id`, `session_id`,
   `turn_number` (`observability/context.py`).
-- Producers that need synchronous success-path visibility call
-  `observability.router.route(...)` or `route_batch(...)` directly. The risk
-  estimator uses this route for its three real mini-estimator `llm_call` rows:
-  they are built with the local 15-key payload shape and dispatched as one
-  synchronous batch. The synthetic `calibration_guard` row remains a separate
-  synchronous single-envelope write. In SQLite, a failed mini-estimator batch
-  rolls back the whole three-row group.
+- High-frequency producers, including the risk estimator mini-calls, enqueue
+  through `obs.emit(...)` / `emit_batch(...)`; request-thread
+  `router.route(...)` / `route_batch(...)` is not used for that telemetry.
+- Audit-critical finalization is the synchronous exception:
+  `conversation_events.finalize_audit_sync(...)` writes `request.meta_updated`
+  and exactly-one `proxy.request_finalized` via resultful
+  `router.route_audit_sync(...)`.
 
 ## 2. Routing by mode (`observability/router.py:37-54`)
 
@@ -79,7 +81,8 @@ proxy both pre-insert it).
 Writers: `init_db`, `create_run`, `upsert_request`, `update_request_response`,
 `update_request_domain`, `update_request_meta`, `delete_request`, `delete_run`
 (`sqlite_sink.py:611+`). Shared finalization: `finalize_governance_audit`
-(`observability/governance_audit.py`) merges meta and writes `final_response`.
+(`observability/governance_audit.py`) writes `final_response`/domain, while
+`finalize_audit_sync` emits the synchronous meta/proxy audit envelopes.
 
 ### Context-shape fields
 
@@ -110,7 +113,10 @@ not render a dedicated context-shape panel yet.
 event_type** — `{jsonl_dir}/{event_type}.jsonl` — appending one line per event,
 where each line is `envelope.to_dict()` (the full `EventEnvelope`). Active in
 `file_only` and `dual`; per-file locks prevent interleaving; writes are
-synchronous (`flush`/`close` are no-ops). `scripts/consolidate_jsonl_meta.py`
+synchronous attempts (`flush`/`close` are no-ops). In `dual`, SQLite drives the
+route's persisted/failed identity and JSONL failures are counted separately; in
+`file_only`, JSONL drives the result but is not crash-durable.
+`scripts/consolidate_jsonl_meta.py`
 post-processes JSONL meta.
 
 **JSONL vs. SQLite shape**: both sinks consume the *same* `EventEnvelope` via
@@ -179,6 +185,8 @@ Yes, **when persistence is to the DB** (`db_only`/`dual`):
 - **Context-shape telemetry is payload JSON.** It is present in
   `orchestration_events` / JSONL payloads and request metadata, not in dedicated
   typed SQLite columns or a UI panel.
-- **Reconstruction completeness depends on flush.** A process killed before
-  `flush()` may drop queued envelopes; the SDK/proxy flush at the boundary to
-  minimize this, but a hard crash mid-turn can truncate a turn's evidence.
+- **Reconstruction completeness depends on flush/shutdown for high-frequency
+  telemetry.** A process killed before `flush()` / `shutdown()` may lose the last
+  queued telemetry window. Lifecycle upserts and decision-audit finalization are
+  synchronous; `file_only` finalization is synchronously attempted but not
+  crash-durable because JSONL has no fsync contract.

@@ -30,11 +30,11 @@ The `obs` export resolves each attribute access on the current `get_obs()` insta
 
 | Module | Responsibility |
 |---|---|
-| `events.py` | `EventEnvelope` (frozen dataclass), 10 `EVENT_*` constants, `make_envelope()` factory |
-| `service.py` | `get_obs()` thread-safe singleton `ObservabilityService`; `emit()` (async via queue), `emit_batch()`, `flush()`, `shutdown()`, `read_store` property |
-| `router.py` | Reads mode from config, synchronously dispatches envelopes and batches to sqlite_sink and/or jsonl_sink |
-| `sqlite_sink.py` | SQLite schema, `SqliteUnitOfWork`, all lifecycle writes (`create_run`, `end_run`, `upsert_request`, …) + batch insert helpers |
-| `jsonl_sink.py` | Per-event-type JSONL under `logs/observability/`; thread-safe per-file locks |
+| `events.py` | `EventEnvelope` (frozen dataclass), 16 canonical `EVENT_*` constants, `make_envelope()` factory |
+| `service.py` | `get_obs()` thread-safe singleton `ObservabilityService`; `emit()` / `emit_batch()` enqueue, `flush()`, `shutdown()`, `stats()`, `read_store` property |
+| `router.py` | Reads mode from config; `route_window()` is counted worker dispatch; `route_audit_sync()` is counted synchronous finalization dispatch |
+| `sqlite_sink.py` | SQLite schema, `SqliteUnitOfWork`, synchronous lifecycle writes, FK-ordered `write_window()` with per-envelope isolation, unique `proxy_request_events(run_id, request_id)` |
+| `jsonl_sink.py` | Per-event-type JSONL under `logs/observability/`; thread-safe per-file locks; counted `write_window()` |
 | `read_store.py` | `ReadStore` Protocol + `SqliteReadStore`; unique read contract for UI and reports |
 | `config.py` | Env var loader with backwards-compat fallback to legacy vars |
 | `context.py` | ContextVars for `run_id`, `request_id`, `cycle` |
@@ -65,9 +65,11 @@ run = obs.read_store.get_run("my-run")
 calls = obs.read_store.get_llm_calls_for_request("my-run", "req-1")
 ```
 
-Use `obs.emit(...)` / `obs.emit_batch(...)` for queued best-effort writes.
-Call `observability.router.route(...)` / `route_batch(...)` only when the
-producer deliberately needs synchronous sink dispatch.
+Use `obs.emit(...)` / `obs.emit_batch(...)` for queued best-effort telemetry.
+High-frequency producers should not call `router.route(...)` / `route_batch(...)`
+on the request thread. Decision-audit finalization uses
+`conversation_events.finalize_audit_sync(...)`, which routes through
+`router.route_audit_sync(...)` synchronously and returns a counted result.
 
 ---
 
@@ -109,7 +111,7 @@ class EventEnvelope:
 | `EVENT_LEDGER_STORE` | `ledger.store` | Semantic decision ledger store (Step 13) |
 | `EVENT_SESSION_STORE_GET` | `session_store.get` | SessionStore get (Step 13) |
 | `EVENT_SESSION_STORE_PUT` | `session_store.put` | SessionStore put (Step 13) |
-| `EVENT_PROXY_REQUEST_FINALIZED` | `proxy.request.finalized` | Per-request proxy finalisation summary (Step 13) |
+| `EVENT_PROXY_REQUEST_FINALIZED` | `proxy.request_finalized` | Per-request proxy finalisation summary (Step 13) |
 
 ---
 
@@ -162,6 +164,11 @@ logs/observability/
 
 ### `dual`
 Both SQLite and JSONL are written simultaneously. Useful for debugging or migration.
+
+For `route_window` / `route_audit_sync` accounting, `db_only` uses SQLite counts,
+`dual` uses SQLite as the persisted/failed identity and records JSONL counts
+separately, and `file_only` uses JSONL counts. JSONL finalization is
+synchronously attempted but not crash-durable.
 
 ---
 
@@ -218,7 +225,7 @@ When using the Python SDK (`govern()` / `GovernedClient`), observability context
 
 1. `GovernedClient.__init__` generates a session-scoped `run_id` (UUID4) and registers it via `set_current_run_id()`.
 2. If the active mode is `db_only` or `dual`, `init_db()` and `create_run()` are called to satisfy FK constraints for subsequent event inserts.
-3. At the end of every `chat.completions.create()` call **via the SDK wrapper**, `obs.flush()` is invoked inside a `try/finally` block to guarantee that all enqueued events are written to disk before the call returns — critical for short-lived scripts. The server proxy does *not* flush per-request (the bounded flush timed out under burst load and only added overhead); it relies on the background worker plus a process-shutdown drain via FastAPI's `shutdown` hook.
+3. At the end of every `chat.completions.create()` call **via the SDK wrapper**, `obs.flush()` is invoked inside a `try/finally` block to drain high-frequency queued telemetry for short-lived scripts. The server proxy does *not* flush per-request (the bounded flush timed out under burst load and only added overhead); it relies on the background worker plus a process-shutdown drain via FastAPI's `shutdown` hook. Final action metadata and `proxy.request_finalized` are synchronous on both SDK and proxy via `finalize_audit_sync`.
 
 ### Minimum working configuration
 
@@ -301,10 +308,12 @@ from moralstack.observability.conversation_events import (
 )
 ```
 
-All emitters are **best-effort**: they swallow failures and never block the
-hot governance path. They write in both `db_only` and `dual` modes; in
-`file_only` mode the same envelopes are appended under
-`logs/observability/<event_type>.jsonl`.
+Most emitters are **best-effort**: they swallow failures and enqueue without
+blocking the hot governance path. The finalization helper
+`finalize_audit_sync()` is the synchronous audit exception: it writes
+`request.meta_updated` and `proxy.request_finalized` through
+`route_audit_sync()`, counts failures in the returned result and `obs.stats()`,
+and still never raises into the caller.
 
 ### Read API
 

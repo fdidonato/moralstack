@@ -35,6 +35,7 @@ from moralstack.observability.events import (
     EVENT_SESSION_STORE_PUT,
     make_envelope,
 )
+from moralstack.observability.router import RouteResult
 
 logger = logging.getLogger(__name__)
 
@@ -473,6 +474,89 @@ def emit_proxy_request_finalized(
         logger.debug("emit_proxy_request_finalized failed", exc_info=True)
 
 
+def finalize_audit_sync(
+    *,
+    run_id: str,
+    request_id: str,
+    final_action: str | None,
+    final_response: str | None,
+    domain: str | None,
+    proxy_summary: Mapping[str, Any] | None,
+) -> RouteResult:
+    """
+    Synchronously persist final decision-audit envelopes.
+
+    This is the single owner for finalization-time ``request.meta_updated`` and
+    ``proxy.request_finalized`` emission. It routes through ``route_audit_sync``
+    so SQLite and JSONL both follow the configured observability mode, and it
+    never raises into the caller.
+    """
+    try:
+        if not run_id or not request_id:
+            return RouteResult()
+        safe_summary = _json_safe(dict(proxy_summary or {}))
+        if not isinstance(safe_summary, dict):
+            safe_summary = {}
+        metadata = safe_summary.get("metadata")
+        meta: dict[str, Any] = dict(metadata) if isinstance(metadata, dict) else {}
+        if final_action:
+            meta["final_action"] = final_action
+        if domain and "domain_overlay" not in meta:
+            meta["domain_overlay"] = domain
+
+        envelopes = []
+        if meta:
+            envelopes.append(
+                make_envelope(
+                    EVENT_REQUEST_META_UPDATED,
+                    run_id=run_id,
+                    request_id=request_id,
+                    payload={"meta": meta, "merge": True},
+                )
+            )
+
+        if safe_summary:
+            payload = dict(safe_summary)
+            emit_proxy = bool(payload.pop("_emit_proxy_request_finalized", True))
+            payload.setdefault("final_action", final_action)
+            payload.setdefault("domain", domain)
+            if "final_response_length" not in payload:
+                try:
+                    payload["final_response_length"] = len(final_response or "")
+                except Exception:
+                    payload["final_response_length"] = None
+            if emit_proxy:
+                conversation_id = payload.get("conversation_id")
+                turn_index = payload.get("turn_index")
+                envelopes.append(
+                    make_envelope(
+                        EVENT_PROXY_REQUEST_FINALIZED,
+                        run_id=run_id,
+                        request_id=request_id,
+                        session_id=conversation_id if isinstance(conversation_id, str) else None,
+                        turn_number=turn_index if isinstance(turn_index, int) else None,
+                        payload=payload,
+                    )
+                )
+        if not envelopes:
+            return RouteResult()
+        from moralstack.observability.router import route_audit_sync
+
+        return route_audit_sync(envelopes)
+    except Exception:
+        # Synchronous decision-audit failure (e.g. envelope construction): count it
+        # so obs.stats().finalize_failed reflects it, and log at ERROR — never raise
+        # into the caller (invariant #6).
+        logger.error("finalize_audit_sync failed", exc_info=True)
+        try:
+            from moralstack.observability.service import get_obs
+
+            get_obs().record_finalize_failure(1, "finalize_audit_sync failed")
+        except Exception:
+            logger.debug("finalize_audit_sync: record_finalize_failure failed", exc_info=True)
+        return RouteResult(failed=1, error="finalize_audit_sync failed")
+
+
 __all__ = [
     "emit_request_meta_updated",
     "emit_conversation_state_updated",
@@ -481,4 +565,5 @@ __all__ = [
     "emit_session_store_get",
     "emit_session_store_put",
     "emit_proxy_request_finalized",
+    "finalize_audit_sync",
 ]

@@ -13,7 +13,6 @@ import logging
 import threading
 from typing import Sequence
 
-from moralstack.observability import router
 from moralstack.observability.events import EventEnvelope
 from moralstack.observability.read_store import SqliteReadStore
 from moralstack.observability.write_queue import ObservabilityWriteQueue
@@ -26,7 +25,7 @@ class ObservabilityService:
     Central service for emitting observability events.
 
     emit() is non-blocking: it enqueues the envelope on a background thread
-    that calls router.route() with the captured contextvars snapshot.
+    that persists envelope windows through the observability router.
     emit_batch() similarly enqueues as a single unit.
 
     Use flush() at request boundary to wait for pending writes before
@@ -43,13 +42,19 @@ class ObservabilityService:
 
     def emit(self, envelope: EventEnvelope) -> None:
         """Fire-and-forget: enqueue envelope for async dispatch. Never raises."""
-        self._queue.submit(router.route, envelope)
+        try:
+            self._queue.submit_envelope(envelope)
+        except Exception as exc:
+            logger.warning("observability: emit failed: %s", exc)
 
     def emit_batch(self, envelopes: Sequence[EventEnvelope]) -> None:
         """Fire-and-forget batch emit. Never raises."""
-        if not envelopes:
-            return
-        self._queue.submit(router.route_batch, list(envelopes))
+        try:
+            if not envelopes:
+                return
+            self._queue.submit_batch(list(envelopes))
+        except Exception as exc:
+            logger.warning("observability: emit_batch failed: %s", exc)
 
     def flush(self, timeout: float = 30.0) -> None:
         """Block until all pending writes are flushed. Call at request boundary."""
@@ -58,6 +63,17 @@ class ObservabilityService:
     def shutdown(self, timeout: float = 30.0) -> None:
         """Drain the queue and stop the worker thread. Call at process shutdown."""
         self._queue.shutdown(timeout=timeout)
+
+    def stats(self) -> dict[str, object]:
+        """Return observability queue counters."""
+        return self._queue.stats()
+
+    def record_finalize_failure(self, count: int = 1, error: str | None = None) -> None:
+        """Count synchronous finalization failures. Never raises."""
+        try:
+            self._queue.record_finalize_failure(count, error)
+        except Exception:
+            logger.debug("observability: record_finalize_failure failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Read API

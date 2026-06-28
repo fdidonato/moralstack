@@ -26,9 +26,31 @@ import json
 
 import pytest
 
+from moralstack.observability import obs, router
+from moralstack.observability import service as service_module
+from moralstack.observability.service import get_obs
 from moralstack.persistence.db import create_run, init_db, upsert_request
 from moralstack.persistence.sink import persist_decision_trace, persist_llm_call
 from moralstack.reports.model import request_report_from_db
+
+
+@pytest.fixture(autouse=True)
+def _fresh_obs_singleton():
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
+    yield
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
 
 
 @pytest.fixture
@@ -122,6 +144,7 @@ class TestCycle0OrderingIsByStartedAt:
             phase="refusal",
         )
 
+        obs.flush(timeout=10.0)
         report = request_report_from_db(run_id, request_id)
         assert report is not None
         cycle0_phases = dict(report.phases_by_cycle).get(0, [])
@@ -186,6 +209,7 @@ class TestCycleGE1OrderingIsBySequenceInCycle:
             phase="policy_generate",
         )
 
+        obs.flush(timeout=10.0)
         report = request_report_from_db(run_id, request_id)
         assert report is not None
         cycle1_phases = dict(report.phases_by_cycle).get(1, [])

@@ -11,12 +11,21 @@ import json
 import logging
 import os
 import threading
+from dataclasses import dataclass
 from typing import Sequence
 
 from moralstack.observability.config import get_jsonl_dir
 from moralstack.observability.events import EventEnvelope
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class JsonlWindowResult:
+    written: int = 0
+    failed: int = 0
+    error: str | None = None
+
 
 _file_locks: dict[str, threading.Lock] = {}
 _locks_meta_lock = threading.Lock()
@@ -67,6 +76,26 @@ class JsonlEventSink:
                     len(batch),
                     e,
                 )
+
+    def write_window(self, envelopes: Sequence[EventEnvelope]) -> JsonlWindowResult:
+        """Append a result-counted window. Never raises."""
+        written = 0
+        failed = 0
+        first_error: str | None = None
+        for envelope in envelopes:
+            try:
+                self._write_line(envelope)
+                written += 1
+            except Exception as e:
+                failed += 1
+                if first_error is None:
+                    first_error = str(e)
+                logger.warning(
+                    "observability[jsonl]: write_window failed event_type=%s: %s",
+                    getattr(envelope, "event_type", "?"),
+                    e,
+                )
+        return JsonlWindowResult(written=written, failed=failed, error=first_error)
 
     def flush(self, timeout: float = 30.0) -> None:
         """No-op: writes are synchronous."""

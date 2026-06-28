@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import threading
 
-from moralstack.observability import obs
+import pytest
+
+from moralstack.observability import obs, router
+from moralstack.observability import service as service_module
 from moralstack.observability.events import EVENT_LLM_CALL, make_envelope
 from moralstack.observability.service import ObservabilityService, get_obs
 from moralstack.observability.sinks.sqlite_sink import (
@@ -14,6 +17,25 @@ from moralstack.observability.sinks.sqlite_sink import (
 )
 
 get_llm_calls_for_request = obs.read_store.get_llm_calls_for_request
+
+
+@pytest.fixture(autouse=True)
+def _fresh_obs_singleton():
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
+    yield
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
 
 
 def _env(run_id="r1", request_id="q1", event_type=EVENT_LLM_CALL, **payload_kwargs):

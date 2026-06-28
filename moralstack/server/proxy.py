@@ -27,9 +27,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from moralstack.models.base import GenerationOverrides
-from moralstack.observability.conversation_events import (
-    emit_proxy_request_finalized,
-)
+from moralstack.observability.conversation_events import finalize_audit_sync
 from moralstack.observability.governance_audit import (
     finalize_governance_audit,
 )
@@ -720,12 +718,13 @@ def _finalize_request(
         - Emit ``proxy.request_finalized`` with state in/out, posture in/out,
           cache hints, X-MoralStack headers and response length.
 
-    Visibility model: events are enqueued on the async observability worker;
-    the per-request flush has been removed because under bursty load (>20
-    concurrent requests) the queue grows faster than the single SQLite writer
-    drains it, causing the bounded flush to time out at its limit on every
-    request and adding pure overhead to the response. Drainage to disk is
-    handled by the background worker and a process-shutdown hook in create_app.
+    Visibility model: final response/domain, request.meta_updated, and
+    proxy.request_finalized are routed synchronously through finalize_audit_sync.
+    High-frequency telemetry remains queued on the async observability worker;
+    the per-request flush has been removed because under bursty load it added
+    overhead without reliably improving telemetry visibility. Drainage for that
+    queued telemetry is handled by the background worker and a process-shutdown
+    hook in create_app.
 
     Best-effort: never raises. Skipped silently when observability is not
     configured (proxy_run_id == "").
@@ -746,6 +745,7 @@ def _finalize_request(
             turn_index=turn_index,
             domain=domain,
             final_action_override=final_action,
+            emit_meta=False,
         )
 
         # Step 13 — emit canonical proxy.request_finalized envelope.
@@ -757,29 +757,36 @@ def _finalize_request(
                 response_len = len(final_response_text or "")
             except Exception:
                 response_len = None
-            emit_proxy_request_finalized(
+            summary = {
+                "conversation_id": conversation_id,
+                "turn_index": turn_index,
+                "final_action": (meta.get("final_action") if isinstance(meta, dict) else None),
+                "risk_score": (meta.get("risk_score") if isinstance(meta, dict) else None),
+                "path": (meta.get("path_taken") or meta.get("path") if isinstance(meta, dict) else None),
+                "domain": domain,
+                "posture_in": posture_in,
+                "posture_out": posture_out,
+                "state_provided": state_in is not None,
+                "state_updated": state_out is not None,
+                "was_cached": (meta.get("was_cached") if isinstance(meta, dict) else None),
+                "cached_from_turn": (meta.get("cached_from_turn") if isinstance(meta, dict) else None),
+                "final_response_length": response_len,
+                "headers": dict(governance_headers) if governance_headers else None,
+                "metadata": meta if meta else None,
+                "state_in": _state_summary_or_none(state_in),
+                "state_out": _state_summary_or_none(state_out),
+            }
+            final_action_value = summary.get("final_action")
+            finalize_audit_sync(
                 run_id=proxy_run_id,
                 request_id=request_id,
-                conversation_id=conversation_id,
-                turn_index=turn_index,
-                final_action=(meta.get("final_action") if isinstance(meta, dict) else None),
-                risk_score=(meta.get("risk_score") if isinstance(meta, dict) else None),
-                path=(meta.get("path_taken") or meta.get("path") if isinstance(meta, dict) else None),
+                final_action=final_action_value if isinstance(final_action_value, str) else None,
+                final_response=final_response_text or "",
                 domain=domain,
-                posture_in=posture_in,
-                posture_out=posture_out,
-                state_provided=state_in is not None,
-                state_updated=state_out is not None,
-                was_cached=(meta.get("was_cached") if isinstance(meta, dict) else None),
-                cached_from_turn=(meta.get("cached_from_turn") if isinstance(meta, dict) else None),
-                final_response_length=response_len,
-                headers=dict(governance_headers) if governance_headers else None,
-                metadata=meta if meta else None,
-                state_in=_state_summary_or_none(state_in),
-                state_out=_state_summary_or_none(state_out),
+                proxy_summary=summary,
             )
         except Exception as exc:
-            logger.debug("emit_proxy_request_finalized failed (non-fatal): %s", exc)
+            logger.debug("finalize_audit_sync failed (non-fatal): %s", exc)
 
         # Drainage of the async observability queue is the background worker's
         # job; a bounded per-request flush only added overhead under load (the

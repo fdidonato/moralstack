@@ -2,8 +2,8 @@
 Persistence write queue — async wrappers over moralstack.observability.
 
 Deprecated: use moralstack.observability.obs.emit() directly.
-The async_persist_* helpers construct an EventEnvelope and submit router.route()
-to the observability write queue (non-blocking, fire-and-forget).
+The async_persist_* helpers construct an EventEnvelope and call get_obs().emit()
+(non-blocking, fire-and-forget).
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from moralstack.observability import router
 from moralstack.observability.context import (
     get_current_cycle,
     get_current_request_id,
@@ -71,7 +70,7 @@ def async_persist_llm_call(**kwargs: Any) -> None:
             "related_event_id": kwargs.get("related_event_id"),
         },
     )
-    get_obs()._queue.submit(router.route, envelope)
+    get_obs().emit(envelope)
 
 
 def async_persist_decision_trace(**kwargs: Any) -> None:
@@ -93,7 +92,7 @@ def async_persist_decision_trace(**kwargs: Any) -> None:
             "created_at": kwargs.get("created_at", int(time.time() * 1000)),
         },
     )
-    get_obs()._queue.submit(router.route, envelope)
+    get_obs().emit(envelope)
 
 
 def async_persist_debug_event(**kwargs: Any) -> None:
@@ -110,4 +109,4 @@ def async_persist_debug_event(**kwargs: Any) -> None:
         turn_number=kwargs.get("turn_number") or get_current_turn_number(),
         payload=payload if isinstance(payload, dict) else {"payload": payload},
     )
-    get_obs()._queue.submit(router.route, envelope)
+    get_obs().emit(envelope)

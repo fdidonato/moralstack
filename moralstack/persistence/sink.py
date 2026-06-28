@@ -2,8 +2,8 @@
 Persistence sink — thin wrappers over moralstack.observability.
 
 Deprecated: use moralstack.observability directly.
-All persist_* functions are SYNCHRONOUS (preserving original semantics):
-they construct an EventEnvelope and call router.route() directly.
+All persist_* functions enqueue high-frequency telemetry asynchronously:
+they construct an EventEnvelope and call get_obs().emit*().
 The uow= parameter is accepted but ignored (atomicity is handled by SqliteEventSink).
 """
 
@@ -13,7 +13,6 @@ import logging
 import time
 from typing import Any
 
-from moralstack.observability import router
 from moralstack.observability.context import (
     get_current_cycle,
     get_current_request_id,
@@ -44,7 +43,7 @@ def _warn_uow_once() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Single-event persist functions (backwards-compatible, synchronous)
+# Single-event persist functions (backwards-compatible, async telemetry)
 # ---------------------------------------------------------------------------
 
 
@@ -74,7 +73,7 @@ def persist_llm_call(
     related_event_id: int | None = None,
     uow: Any = None,
 ) -> bool:
-    """Persists an LLM call synchronously via router.route(). Does not raise."""
+    """Enqueues an LLM call via get_obs().emit(). Does not raise."""
     if uow is not None:
         _warn_uow_once()
     run_id = run_id or get_current_run_id()
@@ -112,7 +111,9 @@ def persist_llm_call(
         },
     )
     try:
-        router.route(envelope)
+        from moralstack.observability.service import get_obs
+
+        get_obs().emit(envelope)
         return True
     except Exception as e:
         logger.warning("persistence: persist_llm_call failed: %s", e)
@@ -128,7 +129,7 @@ def persist_decision_trace(
     trace_json: str,
     uow: Any = None,
 ) -> bool:
-    """Persists a decision trace synchronously. Does not raise."""
+    """Enqueues a decision trace. Does not raise."""
     if uow is not None:
         _warn_uow_once()
     run_id = run_id or get_current_run_id()
@@ -149,7 +150,9 @@ def persist_decision_trace(
         },
     )
     try:
-        router.route(envelope)
+        from moralstack.observability.service import get_obs
+
+        get_obs().emit(envelope)
         return True
     except Exception as e:
         logger.warning("persistence: persist_decision_trace failed: %s", e)
@@ -163,7 +166,7 @@ def persist_debug_event(
     payload: dict[str, Any],
     uow: Any = None,
 ) -> bool:
-    """Persists a debug event synchronously. Does not raise."""
+    """Enqueues a debug event. Does not raise."""
     if uow is not None:
         _warn_uow_once()
     run_id = run_id or get_current_run_id()
@@ -178,7 +181,9 @@ def persist_debug_event(
         payload=payload,
     )
     try:
-        router.route(envelope)
+        from moralstack.observability.service import get_obs
+
+        get_obs().emit(envelope)
         return True
     except Exception as e:
         logger.warning("persistence: persist_debug_event failed: %s", e)
@@ -204,7 +209,7 @@ def persist_orchestration_event(
     payload: dict[str, Any] | None = None,
     uow: Any = None,
 ) -> int | None:
-    """Persists a single orchestration_event synchronously. Does not raise. Returns None."""
+    """Enqueues a single orchestration_event. Does not raise. Returns None."""
     if uow is not None:
         _warn_uow_once()
     run_id = run_id or get_current_run_id()
@@ -235,7 +240,9 @@ def persist_orchestration_event(
         },
     )
     try:
-        router.route(envelope)
+        from moralstack.observability.service import get_obs
+
+        get_obs().emit(envelope)
         return None  # row id no longer available after routing
     except Exception as e:
         logger.warning("persistence: persist_orchestration_event failed: %s", e)
@@ -243,7 +250,7 @@ def persist_orchestration_event(
 
 
 # ---------------------------------------------------------------------------
-# Batch persist functions (synchronous)
+# Batch persist functions (async telemetry)
 # ---------------------------------------------------------------------------
 
 
@@ -251,7 +258,7 @@ def persist_llm_calls_batch(
     entries: list[dict[str, Any]],
     uow: Any = None,
 ) -> bool:
-    """Batch persist LLM calls synchronously via router.route_batch(). Does not raise."""
+    """Batch enqueue LLM calls via get_obs().emit_batch(). Does not raise."""
     if uow is not None:
         _warn_uow_once()
     if not entries:
@@ -303,7 +310,9 @@ def persist_llm_calls_batch(
     if not envelopes:
         return True
     try:
-        router.route_batch(envelopes)
+        from moralstack.observability.service import get_obs
+
+        get_obs().emit_batch(envelopes)
         return True
     except Exception as e:
         logger.warning("persistence: persist_llm_calls_batch failed: %s", e)
@@ -314,7 +323,7 @@ def persist_decision_traces_batch(
     entries: list[dict[str, Any]],
     uow: Any = None,
 ) -> bool:
-    """Batch persist decision traces synchronously. Does not raise."""
+    """Batch enqueue decision traces. Does not raise."""
     if uow is not None:
         _warn_uow_once()
     if not entries:
@@ -348,7 +357,9 @@ def persist_decision_traces_batch(
     if not envelopes:
         return True
     try:
-        router.route_batch(envelopes)
+        from moralstack.observability.service import get_obs
+
+        get_obs().emit_batch(envelopes)
         return True
     except Exception as e:
         logger.warning("persistence: persist_decision_traces_batch failed: %s", e)
@@ -359,7 +370,7 @@ def persist_debug_events_batch(
     entries: list[dict[str, Any]],
     uow: Any = None,
 ) -> bool:
-    """Batch persist debug events synchronously. Does not raise."""
+    """Batch enqueue debug events. Does not raise."""
     if uow is not None:
         _warn_uow_once()
     if not entries:
@@ -386,7 +397,9 @@ def persist_debug_events_batch(
     if not envelopes:
         return True
     try:
-        router.route_batch(envelopes)
+        from moralstack.observability.service import get_obs
+
+        get_obs().emit_batch(envelopes)
         return True
     except Exception as e:
         logger.warning("persistence: persist_debug_events_batch failed: %s", e)
@@ -397,7 +410,7 @@ def persist_orchestration_events_batch(
     entries: list[dict[str, Any]],
     uow: Any = None,
 ) -> bool:
-    """Batch persist orchestration events synchronously. Does not raise."""
+    """Batch enqueue orchestration events. Does not raise."""
     if uow is not None:
         _warn_uow_once()
     if not entries:
@@ -440,7 +453,9 @@ def persist_orchestration_events_batch(
     if not envelopes:
         return True
     try:
-        router.route_batch(envelopes)
+        from moralstack.observability.service import get_obs
+
+        get_obs().emit_batch(envelopes)
         return True
     except Exception as e:
         logger.warning("persistence: persist_orchestration_events_batch failed: %s", e)

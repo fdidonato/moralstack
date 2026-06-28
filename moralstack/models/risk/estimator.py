@@ -19,8 +19,6 @@ from moralstack.observability.context import get_current_turn_number as _get_tur
 from moralstack.observability.events import EVENT_LLM_CALL, EventEnvelope
 from moralstack.observability.events import make_envelope as _make_envelope
 from moralstack.observability.phase0_timing import emit_phase0_timing, phase0_timing_enabled
-from moralstack.observability.router import route as _obs_route
-from moralstack.observability.router import route_batch as _obs_route_batch
 from moralstack.orchestration.types import RiskEstimationError
 from moralstack.utils.llm_parse_contract import (
     parse_dict_with_contract,
@@ -61,6 +59,21 @@ from .signals.registry import registry as signal_registry
 from .utils import _intent_type_from_request_type
 
 _RISK_LOG = logging.getLogger(__name__)
+
+
+def _obs_route(envelope: EventEnvelope) -> None:
+    """Enqueue one risk mini-call envelope. Never raises into risk estimation."""
+    from moralstack.observability.service import get_obs
+
+    get_obs().emit(envelope)
+
+
+def _obs_route_batch(envelopes: list[EventEnvelope]) -> None:
+    """Enqueue risk mini-call envelopes. Never raises into risk estimation."""
+    from moralstack.observability.service import get_obs
+
+    get_obs().emit_batch(envelopes)
+
 
 _LOCAL_LLM_CALL_PAYLOAD_KEYS = (
     "phase",
@@ -619,7 +632,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         sequence_in_cycle: int = -9,
         message_sections: dict[str, Any] | None = None,
     ) -> None:
-        """Persist a single mini-estimator LLM call synchronously. Does not raise."""
+        """Enqueue a single mini-estimator LLM call. Does not raise."""
         try:
             envelope = self._build_mini_llm_call_envelope(
                 system_prompt=system_prompt,
@@ -688,16 +701,10 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         )
 
     def _persist_mini_llm_calls_batch(self, calls: list[dict[str, Any]]) -> None:
-        """Persist mini-estimator rows synchronously as one best-effort batch.
-
-        SQLite commits the mini-estimator group in one transaction: success-path
-        visibility remains synchronous, while write failures roll back the whole
-        batch instead of a single row.
-        """
+        """Enqueue mini-estimator rows as one best-effort async batch."""
         try:
             envelopes = [env for call in calls if (env := self._build_mini_llm_call_envelope(**call)) is not None]
             if envelopes:
-                # Sync batch: success-path visibility is preserved; SQLite failure granularity is all-or-none.
                 _obs_route_batch(envelopes)
         except Exception as e:
             _RISK_LOG.debug("persist_mini_llm_calls_batch failed: %s", e)

@@ -76,6 +76,10 @@ def disable_observability_for_wrapper_tests(monkeypatch: pytest.MonkeyPatch) -> 
         "moralstack.observability.governance_audit.finalize_governance_audit",
         lambda **kwargs: {},
     )
+    monkeypatch.setattr(
+        "moralstack.observability.conversation_events.finalize_audit_sync",
+        lambda **kwargs: None,
+    )
 
 
 # =============================================================================
@@ -852,14 +856,14 @@ class TestCreateInnerPropagatesContract:
 
 class TestRequestFinalizedEmission:
     """
-    Verify that the SDK emits ``proxy.request_finalized`` after every
+    Verify that the SDK synchronously finalizes ``proxy.request_finalized`` after every
     ``create()`` so SDK-driven runs reach the same audit surface as the proxy
     HTTP entry point (the ``proxy_request_events`` table + the matching JSONL
     stream).
 
     Pattern: the autouse fixture in this module already neuters
     ``finalize_governance_audit`` (no-op) and the ObservabilityService
-    emit/flush; we therefore monkey-patch ``emit_proxy_request_finalized``
+    emit/flush; we therefore monkey-patch ``finalize_audit_sync``
     directly to capture invocations and stub ``finalize_governance_audit`` to
     return a known meta dict so we can assert downstream field propagation.
     """
@@ -880,7 +884,7 @@ class TestRequestFinalizedEmission:
             }
 
         monkeypatch.setattr(
-            "moralstack.observability.conversation_events.emit_proxy_request_finalized",
+            "moralstack.observability.conversation_events.finalize_audit_sync",
             _capture,
         )
         monkeypatch.setattr(
@@ -900,9 +904,10 @@ class TestRequestFinalizedEmission:
         )
 
         assert len(calls) == 1
-        payload = calls[0]
-        assert payload["run_id"] == client._run_id
-        assert payload["request_id"]
+        call = calls[0]
+        payload = call["proxy_summary"]
+        assert call["run_id"] == client._run_id
+        assert call["request_id"]
         assert payload["conversation_id"] == client._session.conversation_id
         assert payload["turn_index"] == 0
         assert payload["final_action"] == "NORMAL_COMPLETE"
@@ -924,7 +929,7 @@ class TestRequestFinalizedEmission:
         calls: list[dict[str, Any]] = []
 
         monkeypatch.setattr(
-            "moralstack.observability.conversation_events.emit_proxy_request_finalized",
+            "moralstack.observability.conversation_events.finalize_audit_sync",
             lambda **kw: calls.append(kw),
         )
         monkeypatch.setattr(
@@ -942,18 +947,18 @@ class TestRequestFinalizedEmission:
         # emitted with the refusal content from result.response.content.
         mock_openai.chat.completions.create.assert_not_called()
         assert len(calls) == 1
-        assert calls[0]["final_action"] == "REFUSE"
-        assert calls[0]["risk_score"] == 0.95
+        assert calls[0]["proxy_summary"]["final_action"] == "REFUSE"
+        assert calls[0]["proxy_summary"]["risk_score"] == 0.95
         # The synthetic mock orchestrator sets content="OK"; the SDK passes the
         # refusal text as final_response_text, so length matches that.
-        assert calls[0]["final_response_length"] == len("OK")
+        assert calls[0]["proxy_summary"]["final_response_length"] == len("OK")
 
     def test_emit_proxy_request_finalized_called_safe_complete(self, monkeypatch: pytest.MonkeyPatch):
         """SAFE_COMPLETE must emit one envelope with the governed content length."""
         calls: list[dict[str, Any]] = []
 
         monkeypatch.setattr(
-            "moralstack.observability.conversation_events.emit_proxy_request_finalized",
+            "moralstack.observability.conversation_events.finalize_audit_sync",
             lambda **kw: calls.append(kw),
         )
         monkeypatch.setattr(
@@ -970,9 +975,9 @@ class TestRequestFinalizedEmission:
         # Plan 1: SAFE_COMPLETE delivers governed text; no wrapped-client call.
         mock_openai.chat.completions.create.assert_not_called()
         assert len(calls) == 1
-        assert calls[0]["final_action"] == "SAFE_COMPLETE"
+        assert calls[0]["proxy_summary"]["final_action"] == "SAFE_COMPLETE"
         # The synthetic mock orchestrator sets content="OK".
-        assert calls[0]["final_response_length"] == len("OK")
+        assert calls[0]["proxy_summary"]["final_response_length"] == len("OK")
 
     def test_state_propagation_across_turns(self, monkeypatch: pytest.MonkeyPatch):
         """
@@ -992,7 +997,7 @@ class TestRequestFinalizedEmission:
 
         calls: list[dict[str, Any]] = []
         monkeypatch.setattr(
-            "moralstack.observability.conversation_events.emit_proxy_request_finalized",
+            "moralstack.observability.conversation_events.finalize_audit_sync",
             lambda **kw: calls.append(kw),
         )
         monkeypatch.setattr(
@@ -1021,10 +1026,10 @@ class TestRequestFinalizedEmission:
             model="gpt-4o",
             messages=[{"role": "user", "content": "Q1"}],
         )
-        assert calls[0]["state_provided"] is False
-        assert calls[0]["state_in"] is None
+        assert calls[0]["proxy_summary"]["state_provided"] is False
+        assert calls[0]["proxy_summary"]["state_in"] is None
         # state_updated must reflect the boolean we set on the result.
-        assert calls[0]["state_updated"] is True
+        assert calls[0]["proxy_summary"]["state_updated"] is True
 
         # Turn 1: session.current_state now returns the state stored at turn 0,
         # which the SDK captures as state_in_snapshot.
@@ -1036,10 +1041,10 @@ class TestRequestFinalizedEmission:
                 {"role": "user", "content": "Q2"},
             ],
         )
-        assert calls[1]["state_provided"] is True
+        assert calls[1]["proxy_summary"]["state_provided"] is True
         # state_in is a JSON-safe summary dict (state_summary_or_none(state_in)),
         # not the raw frozen dataclass.
-        assert isinstance(calls[1]["state_in"], dict)
-        assert calls[1]["state_in"].get("active_domain") == "general"
+        assert isinstance(calls[1]["proxy_summary"]["state_in"], dict)
+        assert calls[1]["proxy_summary"]["state_in"].get("active_domain") == "general"
         # posture_in is posture_of(state_in) = state.last_governance_posture.
-        assert calls[1]["posture_in"] == "NORMAL"
+        assert calls[1]["proxy_summary"]["posture_in"] == "NORMAL"
