@@ -81,7 +81,13 @@ def _is_secret_path(path: str) -> bool:
 
 def _is_doc_path(path: str) -> bool:
     lower = path.replace("\\", "/").lower()
-    return lower.endswith((".md", ".rst", ".txt")) or "/docs/" in lower or lower.startswith("docs/") or "/.claude/" in lower or lower.startswith(".claude/")
+    return (
+        lower.endswith((".md", ".rst", ".txt"))
+        or "/docs/" in lower
+        or lower.startswith("docs/")
+        or "/.claude/" in lower
+        or lower.startswith(".claude/")
+    )
 
 
 def _scan_content(text: str) -> list[str]:
@@ -100,7 +106,9 @@ def _check_edit(tool_input: dict) -> list[str]:
     msgs: list[str] = []
     path = tool_input.get("file_path")
     if isinstance(path, str) and path and _is_secret_path(path):
-        msgs.append(f"writing to a secret-bearing file ({_basename(path)}) — secrets must live in env vars, never in tracked files.")
+        msgs.append(
+            f"writing to a secret-bearing file ({_basename(path)}) — secrets must live in env vars, never in tracked files."
+        )
 
     if not (isinstance(path, str) and _is_doc_path(path)):
         chunks: list[str] = []

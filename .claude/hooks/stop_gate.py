@@ -151,7 +151,10 @@ def main() -> int:
     report = ["[Stop gate] verify (non-blocking):"]
     report.append("  pre-commit (changed files): " + _run([py, "-m", "pre_commit", "run", "--files", *code], project, 100))
     if os.environ.get("MSTACK_STOP_RUN_PYTEST", "").lower() in ("1", "true", "yes"):
-        report.append("  pytest (full suite): " + _run([py, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider"], project, 300))
+        report.append(
+            "  pytest (full suite): "
+            + _run([py, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider"], project, 300)
+        )
     else:
         related = _related_tests(project, code)
         if related:
