@@ -1,7 +1,7 @@
 """
 EventEnvelope and canonical event_type constants for MoralStack observability.
 
-All telemetry passes through EventEnvelope. The 10 canonical event_types map
+All telemetry passes through EventEnvelope. The 16 canonical event_types map
 directly to the existing SQLite tables (no schema changes required).
 """
 

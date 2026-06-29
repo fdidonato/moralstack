@@ -5,8 +5,8 @@ Contains the full SQLite schema (migrated from persistence/db.py), the
 SqliteUnitOfWork context manager, low-level batch insert helpers, all lifecycle
 write functions, and SqliteEventSink which maps EventEnvelope -> SQL rows.
 
-Schema is identical to the original persistence/db.py — existing databases are
-fully compatible with no migrations needed.
+Schema is compatible with the original persistence/db.py. Additive migrations
+are applied idempotently in init_db().
 """
 
 from __future__ import annotations
@@ -40,6 +40,32 @@ from moralstack.observability.events import (
 )
 
 logger = logging.getLogger(__name__)
+
+_FK_ORDER: dict[str, int] = {
+    EVENT_RUN_STARTED: 0,
+    EVENT_REQUEST_UPSERTED: 10,
+    EVENT_REQUEST_DOMAIN_UPDATED: 20,
+    EVENT_REQUEST_RESPONSE_UPDATED: 21,
+    EVENT_REQUEST_META_UPDATED: 22,
+    EVENT_ORCHESTRATION_EVENT: 30,
+    EVENT_LLM_CALL: 31,
+    EVENT_DECISION_TRACE: 32,
+    EVENT_CONVERSATION_STATE_UPDATED: 33,
+    EVENT_LEDGER_LOOKUP: 34,
+    EVENT_LEDGER_STORE: 35,
+    EVENT_SESSION_STORE_GET: 36,
+    EVENT_SESSION_STORE_PUT: 37,
+    EVENT_PROXY_REQUEST_FINALIZED: 38,
+    EVENT_DEBUG_EVENT: 39,
+    EVENT_RUN_ENDED: 100,
+}
+_LOCK_RETRY_DELAYS_S = (0.01, 0.025, 0.05, 0.1)
+
+
+def _is_sqlite_locked(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return "database is locked" in message or "database table is locked" in message
+
 
 # ---------------------------------------------------------------------------
 # Schema (unchanged from persistence/db.py)
@@ -648,6 +674,26 @@ def init_db(db_path: str | None = None) -> bool:
                 conn.commit()
             except Exception:
                 pass
+        try:
+            conn.execute("""
+                DELETE FROM proxy_request_events
+                WHERE id NOT IN (
+                    SELECT MAX(id)
+                    FROM proxy_request_events
+                    GROUP BY run_id, request_id
+                )
+                """)
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_proxy_request_events_run_request_unique
+                    ON proxy_request_events(run_id, request_id)
+                """)
+            conn.commit()
+        except Exception:
+            pass
         for _col, _sql in (
             ("sequence_in_cycle", "ALTER TABLE llm_calls ADD COLUMN sequence_in_cycle INTEGER"),
             ("call_kind", "ALTER TABLE llm_calls ADD COLUMN call_kind TEXT"),
@@ -672,24 +718,34 @@ def init_db(db_path: str | None = None) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def create_run(run_id: str, run_type: str, meta: dict[str, Any] | None = None) -> bool:
+def create_run(
+    run_id: str,
+    run_type: str,
+    meta: dict[str, Any] | None = None,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> bool:
     """Creates a run record. Returns True on success."""
-    if get_observability_mode() == "file_only":
+    if conn is None and get_observability_mode() == "file_only":
         return False
     path = get_db_path()
-    if not path:
+    if conn is None and not path:
         return False
-    conn = None
+    owns_conn = conn is None
     try:
-        conn = _get_connection(path)
+        if conn is None:
+            conn = _get_connection(path or "")
         conn.execute(
             "INSERT OR IGNORE INTO runs (run_id, run_type, started_at, ended_at, status, meta_json)"
             " VALUES (?, ?, ?, NULL, 'running', ?)",
             (run_id, run_type, int(time.time() * 1000), json.dumps(meta or {})),
         )
-        conn.commit()
+        if owns_conn:
+            conn.commit()
         return True
     except Exception as e:
+        if not owns_conn:
+            raise
         logger.warning("observability: create_run failed: %s", e)
         if conn is not None:
             try:
@@ -698,27 +754,31 @@ def create_run(run_id: str, run_type: str, meta: dict[str, Any] | None = None) -
                 pass
         return False
     finally:
-        if conn is not None:
+        if owns_conn and conn is not None:
             conn.close()
 
 
-def end_run(run_id: str, status: str = "ok") -> bool:
+def end_run(run_id: str, status: str = "ok", *, conn: sqlite3.Connection | None = None) -> bool:
     """Marks a run as ended. Returns True on success."""
-    if get_observability_mode() == "file_only":
+    if conn is None and get_observability_mode() == "file_only":
         return False
     path = get_db_path()
-    if not path:
+    if conn is None and not path:
         return False
-    conn = None
+    owns_conn = conn is None
     try:
-        conn = _get_connection(path)
+        if conn is None:
+            conn = _get_connection(path or "")
         conn.execute(
             "UPDATE runs SET ended_at = ?, status = ? WHERE run_id = ?",
             (int(time.time() * 1000), status, run_id),
         )
-        conn.commit()
+        if owns_conn:
+            conn.commit()
         return True
     except Exception as e:
+        if not owns_conn:
+            raise
         logger.warning("observability: end_run failed: %s", e)
         if conn is not None:
             try:
@@ -727,7 +787,7 @@ def end_run(run_id: str, status: str = "ok") -> bool:
                 pass
         return False
     finally:
-        if conn is not None:
+        if owns_conn and conn is not None:
             conn.close()
 
 
@@ -741,16 +801,18 @@ def upsert_request(
     conversation_id: str | None = None,
     turn_index: int | None = None,
     parent_request_id: str | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> bool:
     """Inserts or ignores a request row. Returns True on success."""
-    if get_observability_mode() == "file_only":
+    if conn is None and get_observability_mode() == "file_only":
         return False
     path = get_db_path()
-    if not path:
+    if conn is None and not path:
         return False
-    conn = None
+    owns_conn = conn is None
     try:
-        conn = _get_connection(path)
+        if conn is None:
+            conn = _get_connection(path or "")
         conn.execute(
             """
             INSERT OR IGNORE INTO requests (
@@ -770,9 +832,12 @@ def upsert_request(
                 parent_request_id,
             ),
         )
-        conn.commit()
+        if owns_conn:
+            conn.commit()
         return True
     except Exception as e:
+        if not owns_conn:
+            raise
         logger.warning("observability: upsert_request failed: %s", e)
         if conn is not None:
             try:
@@ -781,27 +846,42 @@ def upsert_request(
                 pass
         return False
     finally:
-        if conn is not None:
+        if owns_conn and conn is not None:
             conn.close()
 
 
-def update_request_response(run_id: str, request_id: str, final_response: str) -> bool:
+def update_request_response(
+    run_id: str,
+    request_id: str,
+    final_response: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> bool:
     """Updates final_response of a request. Returns True on success."""
-    if get_observability_mode() == "file_only":
+    if conn is None and get_observability_mode() == "file_only":
         return False
     path = get_db_path()
-    if not path:
+    if conn is None and not path:
         return False
-    conn = None
+    owns_conn = conn is None
     try:
-        conn = _get_connection(path)
-        conn.execute(
+        if conn is None:
+            conn = _get_connection(path or "")
+        cur = conn.execute(
             "UPDATE requests SET final_response = ? WHERE run_id = ? AND request_id = ?",
             (final_response, run_id, request_id),
         )
-        conn.commit()
+        if not owns_conn and cur.rowcount == 0:
+            # Audit path (windowed/sync): a matched-zero UPDATE means the parent
+            # requests row is missing, so the row was NOT persisted. Raise so the
+            # caller counts a failure instead of recording a phantom write.
+            raise RuntimeError(f"update_request_response: no requests row run_id={run_id} request_id={request_id}")
+        if owns_conn:
+            conn.commit()
         return True
     except Exception as e:
+        if not owns_conn:
+            raise
         logger.warning("observability: update_request_response failed: %s", e)
         if conn is not None:
             try:
@@ -810,27 +890,39 @@ def update_request_response(run_id: str, request_id: str, final_response: str) -
                 pass
         return False
     finally:
-        if conn is not None:
+        if owns_conn and conn is not None:
             conn.close()
 
 
-def update_request_domain(run_id: str, request_id: str, domain: str | None) -> bool:
+def update_request_domain(
+    run_id: str,
+    request_id: str,
+    domain: str | None,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> bool:
     """Updates domain of a request. Returns True on success."""
-    if get_observability_mode() == "file_only":
+    if conn is None and get_observability_mode() == "file_only":
         return False
     path = get_db_path()
-    if not path:
+    if conn is None and not path:
         return False
-    conn = None
+    owns_conn = conn is None
     try:
-        conn = _get_connection(path)
-        conn.execute(
+        if conn is None:
+            conn = _get_connection(path or "")
+        cur = conn.execute(
             "UPDATE requests SET domain = ? WHERE run_id = ? AND request_id = ?",
             (domain or "", run_id, request_id),
         )
-        conn.commit()
+        if not owns_conn and cur.rowcount == 0:
+            raise RuntimeError(f"update_request_domain: no requests row run_id={run_id} request_id={request_id}")
+        if owns_conn:
+            conn.commit()
         return True
     except Exception as e:
+        if not owns_conn:
+            raise
         logger.warning("observability: update_request_domain failed: %s", e)
         if conn is not None:
             try:
@@ -839,7 +931,7 @@ def update_request_domain(run_id: str, request_id: str, domain: str | None) -> b
                 pass
         return False
     finally:
-        if conn is not None:
+        if owns_conn and conn is not None:
             conn.close()
 
 
@@ -866,6 +958,7 @@ def update_request_meta(
     meta: dict[str, Any],
     *,
     merge: bool = True,
+    conn: sqlite3.Connection | None = None,
 ) -> bool:
     """
     Merge or replace governance metadata on the requests.meta_json column.
@@ -877,18 +970,23 @@ def update_request_meta(
         - Malformed / empty / non-object meta_json is treated as `{}`.
         - Always best-effort: returns False on any failure, never raises.
     """
-    if get_observability_mode() == "file_only":
+    if conn is None and get_observability_mode() == "file_only":
         return False
     path = get_db_path()
-    if not path:
+    if conn is None and not path:
         return False
     if not run_id or not request_id:
+        if conn is not None:
+            raise ValueError("update_request_meta requires run_id and request_id")
         return False
     if not isinstance(meta, dict):
+        if conn is not None:
+            raise TypeError("update_request_meta meta must be a dict")
         return False
-    conn: sqlite3.Connection | None = None
+    owns_conn = conn is None
     try:
-        conn = _get_connection(path)
+        if conn is None:
+            conn = _get_connection(path or "")
         if merge:
             row = conn.execute(
                 "SELECT meta_json FROM requests WHERE run_id = ? AND request_id = ?",
@@ -908,13 +1006,21 @@ def update_request_meta(
             merged_json = json.dumps(current, ensure_ascii=False, default=str)
         else:
             merged_json = json.dumps(meta, ensure_ascii=False, default=str)
-        conn.execute(
+        cur = conn.execute(
             "UPDATE requests SET meta_json = ? WHERE run_id = ? AND request_id = ?",
             (merged_json, run_id, request_id),
         )
-        conn.commit()
+        if not owns_conn and cur.rowcount == 0:
+            # Audit path: final_action travels in meta_json; a matched-zero UPDATE
+            # means the parent requests row is missing, so the decision was NOT
+            # persisted. Raise so the caller counts a failure (never a phantom write).
+            raise RuntimeError(f"update_request_meta: no requests row run_id={run_id} request_id={request_id}")
+        if owns_conn:
+            conn.commit()
         return True
     except Exception as e:
+        if not owns_conn:
+            raise
         logger.warning("observability: update_request_meta failed: %s", e)
         if conn is not None:
             try:
@@ -923,7 +1029,7 @@ def update_request_meta(
                 pass
         return False
     finally:
-        if conn is not None:
+        if owns_conn and conn is not None:
             conn.close()
 
 
@@ -965,24 +1071,47 @@ _PROXY_REQUEST_EVENTS_INSERT = """
         state_in_json, state_out_json, payload_json
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(run_id, request_id) DO UPDATE SET
+        conversation_id = excluded.conversation_id,
+        turn_index = excluded.turn_index,
+        created_at = excluded.created_at,
+        final_action = excluded.final_action,
+        risk_score = excluded.risk_score,
+        path = excluded.path,
+        domain = excluded.domain,
+        posture_in = excluded.posture_in,
+        posture_out = excluded.posture_out,
+        state_provided = excluded.state_provided,
+        state_updated = excluded.state_updated,
+        was_cached = excluded.was_cached,
+        cached_from_turn = excluded.cached_from_turn,
+        final_response_length = excluded.final_response_length,
+        headers_json = excluded.headers_json,
+        metadata_json = excluded.metadata_json,
+        state_in_json = excluded.state_in_json,
+        state_out_json = excluded.state_out_json,
+        payload_json = excluded.payload_json
 """
 
 
-def insert_conversation_state_event(payload: dict[str, Any]) -> bool:
+def insert_conversation_state_event(payload: dict[str, Any], *, conn: sqlite3.Connection | None = None) -> bool:
     """Insert one row into `conversation_states`. Best-effort, never raises."""
-    if get_observability_mode() == "file_only":
+    if conn is None and get_observability_mode() == "file_only":
         return False
     path = get_db_path()
-    if not path:
+    if conn is None and not path:
         return False
     run_id = (payload.get("run_id") or "").strip()
     request_id = (payload.get("request_id") or "").strip()
     conversation_id = (payload.get("conversation_id") or "").strip()
     if not run_id or not request_id or not conversation_id:
+        if conn is not None:
+            raise ValueError("conversation state event requires run_id, request_id, conversation_id")
         return False
-    conn: sqlite3.Connection | None = None
+    owns_conn = conn is None
     try:
-        conn = _get_connection(path)
+        if conn is None:
+            conn = _get_connection(path or "")
         conn.execute(
             _CONVERSATION_STATES_INSERT,
             (
@@ -1003,9 +1132,12 @@ def insert_conversation_state_event(payload: dict[str, Any]) -> bool:
                 payload.get("refresh_reason"),
             ),
         )
-        conn.commit()
+        if owns_conn:
+            conn.commit()
         return True
     except Exception as e:
+        if not owns_conn:
+            raise
         logger.warning("observability: insert_conversation_state_event failed: %s", e)
         if conn is not None:
             try:
@@ -1014,25 +1146,28 @@ def insert_conversation_state_event(payload: dict[str, Any]) -> bool:
                 pass
         return False
     finally:
-        if conn is not None:
+        if owns_conn and conn is not None:
             conn.close()
 
 
-def insert_ledger_event(payload: dict[str, Any]) -> bool:
+def insert_ledger_event(payload: dict[str, Any], *, conn: sqlite3.Connection | None = None) -> bool:
     """Insert one row into `ledger_events`. Best-effort, never raises."""
-    if get_observability_mode() == "file_only":
+    if conn is None and get_observability_mode() == "file_only":
         return False
     path = get_db_path()
-    if not path:
+    if conn is None and not path:
         return False
     run_id = (payload.get("run_id") or "").strip()
     operation = (payload.get("operation") or "").strip()
     outcome = (payload.get("outcome") or "").strip()
     if not run_id or not operation or not outcome:
+        if conn is not None:
+            raise ValueError("ledger event requires run_id, operation, outcome")
         return False
-    conn: sqlite3.Connection | None = None
+    owns_conn = conn is None
     try:
-        conn = _get_connection(path)
+        if conn is None:
+            conn = _get_connection(path or "")
         conn.execute(
             _LEDGER_EVENTS_INSERT,
             (
@@ -1056,9 +1191,12 @@ def insert_ledger_event(payload: dict[str, Any]) -> bool:
                 _json_or_none(payload.get("payload")),
             ),
         )
-        conn.commit()
+        if owns_conn:
+            conn.commit()
         return True
     except Exception as e:
+        if not owns_conn:
+            raise
         logger.warning("observability: insert_ledger_event failed: %s", e)
         if conn is not None:
             try:
@@ -1067,25 +1205,28 @@ def insert_ledger_event(payload: dict[str, Any]) -> bool:
                 pass
         return False
     finally:
-        if conn is not None:
+        if owns_conn and conn is not None:
             conn.close()
 
 
-def insert_session_store_event(payload: dict[str, Any]) -> bool:
+def insert_session_store_event(payload: dict[str, Any], *, conn: sqlite3.Connection | None = None) -> bool:
     """Insert one row into `session_store_events`. Best-effort, never raises."""
-    if get_observability_mode() == "file_only":
+    if conn is None and get_observability_mode() == "file_only":
         return False
     path = get_db_path()
-    if not path:
+    if conn is None and not path:
         return False
     conversation_id = (payload.get("conversation_id") or "").strip()
     operation = (payload.get("operation") or "").strip()
     outcome = (payload.get("outcome") or "").strip()
     if not conversation_id or not operation or not outcome:
+        if conn is not None:
+            raise ValueError("session store event requires conversation_id, operation, outcome")
         return False
-    conn: sqlite3.Connection | None = None
+    owns_conn = conn is None
     try:
-        conn = _get_connection(path)
+        if conn is None:
+            conn = _get_connection(path or "")
         conn.execute(
             _SESSION_STORE_EVENTS_INSERT,
             (
@@ -1100,9 +1241,12 @@ def insert_session_store_event(payload: dict[str, Any]) -> bool:
                 _json_or_none(payload.get("payload")),
             ),
         )
-        conn.commit()
+        if owns_conn:
+            conn.commit()
         return True
     except Exception as e:
+        if not owns_conn:
+            raise
         logger.warning("observability: insert_session_store_event failed: %s", e)
         if conn is not None:
             try:
@@ -1111,24 +1255,27 @@ def insert_session_store_event(payload: dict[str, Any]) -> bool:
                 pass
         return False
     finally:
-        if conn is not None:
+        if owns_conn and conn is not None:
             conn.close()
 
 
-def insert_proxy_request_event(payload: dict[str, Any]) -> bool:
+def insert_proxy_request_event(payload: dict[str, Any], *, conn: sqlite3.Connection | None = None) -> bool:
     """Insert one row into `proxy_request_events`. Best-effort, never raises."""
-    if get_observability_mode() == "file_only":
+    if conn is None and get_observability_mode() == "file_only":
         return False
     path = get_db_path()
-    if not path:
+    if conn is None and not path:
         return False
     run_id = (payload.get("run_id") or "").strip()
     request_id = (payload.get("request_id") or "").strip()
     if not run_id or not request_id:
+        if conn is not None:
+            raise ValueError("proxy request event requires run_id and request_id")
         return False
-    conn: sqlite3.Connection | None = None
+    owns_conn = conn is None
     try:
-        conn = _get_connection(path)
+        if conn is None:
+            conn = _get_connection(path or "")
         conn.execute(
             _PROXY_REQUEST_EVENTS_INSERT,
             (
@@ -1155,9 +1302,12 @@ def insert_proxy_request_event(payload: dict[str, Any]) -> bool:
                 _json_or_none(payload.get("payload")),
             ),
         )
-        conn.commit()
+        if owns_conn:
+            conn.commit()
         return True
     except Exception as e:
+        if not owns_conn:
+            raise
         logger.warning("observability: insert_proxy_request_event failed: %s", e)
         if conn is not None:
             try:
@@ -1166,7 +1316,7 @@ def insert_proxy_request_event(payload: dict[str, Any]) -> bool:
                 pass
         return False
     finally:
-        if conn is not None:
+        if owns_conn and conn is not None:
             conn.close()
 
 
@@ -1295,6 +1445,78 @@ class SqliteEventSink:
                     e,
                 )
 
+    def write_window(self, envelopes: Sequence[EventEnvelope], conn: sqlite3.Connection | None) -> Any:
+        """Write an FK-ordered envelope window on a caller-owned connection."""
+        from moralstack.observability.router import WindowResult
+
+        if not envelopes:
+            return WindowResult()
+        if conn is None:
+            return WindowResult(failed=len(envelopes), sqlite_failed=len(envelopes), error="missing sqlite connection")
+        ordered = self._ordered_for_fk(envelopes)
+        first_exc: Exception | None = None
+        for attempt, delay_s in enumerate((0.0, *_LOCK_RETRY_DELAYS_S)):
+            if delay_s:
+                time.sleep(delay_s)
+            try:
+                conn.execute("BEGIN")
+                for envelope in ordered:
+                    self._dispatch_raising(envelope, conn)
+                conn.commit()
+                return WindowResult(written=len(ordered), sqlite_written=len(ordered))
+            except Exception as exc:
+                first_exc = exc
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                if _is_sqlite_locked(exc) and attempt < len(_LOCK_RETRY_DELAYS_S):
+                    continue
+                break
+        logger.warning("observability[sqlite]: write_window transaction failed: %s", first_exc)
+
+        written = 0
+        failed = 0
+        first_error: str | None = None
+        for envelope in ordered:
+            envelope_written = False
+            last_exc: Exception | None = None
+            for attempt, delay_s in enumerate((0.0, *_LOCK_RETRY_DELAYS_S)):
+                if delay_s:
+                    time.sleep(delay_s)
+                try:
+                    conn.execute("BEGIN")
+                    self._dispatch_raising(envelope, conn)
+                    conn.commit()
+                    written += 1
+                    envelope_written = True
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    if _is_sqlite_locked(exc) and attempt < len(_LOCK_RETRY_DELAYS_S):
+                        continue
+                    break
+            if not envelope_written:
+                failed += 1
+                if first_error is None:
+                    first_error = str(last_exc)
+                logger.warning(
+                    "observability[sqlite]: write_window isolated failed event_type=%s: %s",
+                    getattr(envelope, "event_type", "?"),
+                    last_exc,
+                )
+        return WindowResult(
+            written=written,
+            failed=failed,
+            sqlite_written=written,
+            sqlite_failed=failed,
+            error=first_error,
+        )
+
     def flush(self, timeout: float = 30.0) -> None:
         """No-op: SQLite writes are synchronous within dispatch."""
 
@@ -1304,6 +1526,88 @@ class SqliteEventSink:
     # ------------------------------------------------------------------
     # Internal dispatch
     # ------------------------------------------------------------------
+
+    def _ordered_for_fk(self, envelopes: Sequence[EventEnvelope]) -> list[EventEnvelope]:
+        return [
+            ev
+            for _, ev in sorted(
+                enumerate(envelopes),
+                key=lambda item: (_FK_ORDER.get(getattr(item[1], "event_type", ""), 50), item[0]),
+            )
+        ]
+
+    def _dispatch_raising(self, envelope: EventEnvelope, conn: sqlite3.Connection) -> None:
+        et = envelope.event_type
+        p = envelope.payload
+
+        if et == EVENT_RUN_STARTED:
+            create_run(
+                run_id=envelope.run_id or p.get("run_id", ""),
+                run_type=p.get("run_type", "session"),
+                meta=p.get("meta"),
+                conn=conn,
+            )
+        elif et == EVENT_RUN_ENDED:
+            end_run(
+                run_id=envelope.run_id or p.get("run_id", ""),
+                status=p.get("status", "ok"),
+                conn=conn,
+            )
+        elif et == EVENT_REQUEST_UPSERTED:
+            upsert_request(
+                run_id=envelope.run_id or p.get("run_id", ""),
+                request_id=envelope.request_id or p.get("request_id", ""),
+                prompt=p.get("prompt", ""),
+                domain=p.get("domain"),
+                meta=p.get("meta"),
+                conversation_id=envelope.session_id or p.get("conversation_id"),
+                turn_index=envelope.turn_number if envelope.turn_number is not None else p.get("turn_index"),
+                parent_request_id=envelope.parent_event_id or p.get("parent_request_id"),
+                conn=conn,
+            )
+        elif et == EVENT_REQUEST_DOMAIN_UPDATED:
+            update_request_domain(
+                run_id=envelope.run_id or p.get("run_id", ""),
+                request_id=envelope.request_id or p.get("request_id", ""),
+                domain=p.get("domain"),
+                conn=conn,
+            )
+        elif et == EVENT_REQUEST_RESPONSE_UPDATED:
+            update_request_response(
+                run_id=envelope.run_id or p.get("run_id", ""),
+                request_id=envelope.request_id or p.get("request_id", ""),
+                final_response=p.get("final_response", ""),
+                conn=conn,
+            )
+        elif et == EVENT_REQUEST_META_UPDATED:
+            meta_payload = p.get("meta")
+            if not isinstance(meta_payload, dict):
+                raise TypeError("request.meta_updated payload.meta must be a dict")
+            update_request_meta(
+                run_id=envelope.run_id or p.get("run_id", ""),
+                request_id=envelope.request_id or p.get("request_id", ""),
+                meta=meta_payload,
+                merge=bool(p.get("merge", True)),
+                conn=conn,
+            )
+        elif et == EVENT_LLM_CALL:
+            self._write_llm_call_batch([envelope], conn=conn)
+        elif et == EVENT_ORCHESTRATION_EVENT:
+            self._write_orch_event_batch([envelope], conn=conn)
+        elif et == EVENT_DECISION_TRACE:
+            self._write_decision_trace_batch([envelope], conn=conn)
+        elif et == EVENT_DEBUG_EVENT:
+            self._write_debug_event_batch([envelope], conn=conn)
+        elif et == EVENT_CONVERSATION_STATE_UPDATED:
+            insert_conversation_state_event(self._build_conversation_state_payload(envelope), conn=conn)
+        elif et in (EVENT_LEDGER_LOOKUP, EVENT_LEDGER_STORE):
+            insert_ledger_event(self._build_ledger_event_payload(envelope), conn=conn)
+        elif et in (EVENT_SESSION_STORE_GET, EVENT_SESSION_STORE_PUT):
+            insert_session_store_event(self._build_session_store_event_payload(envelope), conn=conn)
+        elif et == EVENT_PROXY_REQUEST_FINALIZED:
+            insert_proxy_request_event(self._build_proxy_request_event_payload(envelope), conn=conn)
+        else:
+            raise ValueError(f"unsupported event_type for sqlite window: {et}")
 
     def _dispatch(self, envelope: EventEnvelope) -> None:
         et = envelope.event_type
@@ -1631,11 +1935,11 @@ class SqliteEventSink:
     # Batch writers
     # ------------------------------------------------------------------
 
-    def _write_llm_call_batch(self, batch: list[EventEnvelope]) -> None:
-        if get_observability_mode() == "file_only":
+    def _write_llm_call_batch(self, batch: list[EventEnvelope], conn: sqlite3.Connection | None = None) -> None:
+        if conn is None and get_observability_mode() == "file_only":
             return
         path = get_db_path()
-        if not path:
+        if conn is None and not path:
             return
         now = int(time.time() * 1000)
         rows = []
@@ -1643,6 +1947,8 @@ class SqliteEventSink:
             run_id = ev.run_id
             request_id = ev.request_id
             if not run_id or not request_id:
+                if conn is not None:
+                    raise ValueError("llm.call requires run_id and request_id")
                 continue
             p = ev.payload
             rows.append(
@@ -1672,13 +1978,19 @@ class SqliteEventSink:
                 )
             )
         if not rows:
+            if conn is not None and batch:
+                raise ValueError("llm.call window produced no rows")
             return
-        conn = None
+        owns_conn = conn is None
         try:
-            conn = _get_connection(path)
+            if conn is None:
+                conn = _get_connection(path or "")
             insert_llm_calls_batch(conn, rows)
-            conn.commit()
+            if owns_conn:
+                conn.commit()
         except Exception as e:
+            if not owns_conn:
+                raise
             logger.warning("observability[sqlite]: llm_call batch insert failed: %s", e)
             if conn:
                 try:
@@ -1686,14 +1998,14 @@ class SqliteEventSink:
                 except Exception:
                     pass
         finally:
-            if conn:
+            if owns_conn and conn:
                 conn.close()
 
-    def _write_orch_event_batch(self, batch: list[EventEnvelope]) -> None:
-        if get_observability_mode() == "file_only":
+    def _write_orch_event_batch(self, batch: list[EventEnvelope], conn: sqlite3.Connection | None = None) -> None:
+        if conn is None and get_observability_mode() == "file_only":
             return
         path = get_db_path()
-        if not path:
+        if conn is None and not path:
             return
         now = int(time.time() * 1000)
         rows = []
@@ -1701,6 +2013,8 @@ class SqliteEventSink:
             run_id = ev.run_id
             request_id = ev.request_id
             if not run_id or not request_id:
+                if conn is not None:
+                    raise ValueError("orchestration.event requires run_id and request_id")
                 continue
             p = ev.payload
             rows.append(
@@ -1723,13 +2037,19 @@ class SqliteEventSink:
                 )
             )
         if not rows:
+            if conn is not None and batch:
+                raise ValueError("orchestration.event window produced no rows")
             return
-        conn = None
+        owns_conn = conn is None
         try:
-            conn = _get_connection(path)
+            if conn is None:
+                conn = _get_connection(path or "")
             insert_orchestration_events_batch(conn, rows)
-            conn.commit()
+            if owns_conn:
+                conn.commit()
         except Exception as e:
+            if not owns_conn:
+                raise
             logger.warning("observability[sqlite]: orch_event batch insert failed: %s", e)
             if conn:
                 try:
@@ -1737,14 +2057,14 @@ class SqliteEventSink:
                 except Exception:
                     pass
         finally:
-            if conn:
+            if owns_conn and conn:
                 conn.close()
 
-    def _write_decision_trace_batch(self, batch: list[EventEnvelope]) -> None:
-        if get_observability_mode() == "file_only":
+    def _write_decision_trace_batch(self, batch: list[EventEnvelope], conn: sqlite3.Connection | None = None) -> None:
+        if conn is None and get_observability_mode() == "file_only":
             return
         path = get_db_path()
-        if not path:
+        if conn is None and not path:
             return
         now = int(time.time() * 1000)
         rows = []
@@ -1752,6 +2072,8 @@ class SqliteEventSink:
             run_id = ev.run_id
             request_id = ev.request_id
             if not run_id or not request_id:
+                if conn is not None:
+                    raise ValueError("decision.trace requires run_id and request_id")
                 continue
             p = ev.payload
             rows.append(
@@ -1765,13 +2087,19 @@ class SqliteEventSink:
                 )
             )
         if not rows:
+            if conn is not None and batch:
+                raise ValueError("decision.trace window produced no rows")
             return
-        conn = None
+        owns_conn = conn is None
         try:
-            conn = _get_connection(path)
+            if conn is None:
+                conn = _get_connection(path or "")
             insert_decision_traces_batch(conn, rows)
-            conn.commit()
+            if owns_conn:
+                conn.commit()
         except Exception as e:
+            if not owns_conn:
+                raise
             logger.warning("observability[sqlite]: decision_trace batch insert failed: %s", e)
             if conn:
                 try:
@@ -1779,32 +2107,40 @@ class SqliteEventSink:
                 except Exception:
                     pass
         finally:
-            if conn:
+            if owns_conn and conn:
                 conn.close()
 
-    def _write_debug_event_batch(self, batch: list[EventEnvelope]) -> None:
-        if get_observability_mode() == "file_only":
+    def _write_debug_event_batch(self, batch: list[EventEnvelope], conn: sqlite3.Connection | None = None) -> None:
+        if conn is None and get_observability_mode() == "file_only":
             return
         path = get_db_path()
-        if not path:
+        if conn is None and not path:
             return
         now = int(time.time() * 1000)
         rows = []
         for ev in batch:
             run_id = ev.run_id
             if not run_id:
+                if conn is not None:
+                    raise ValueError("debug.event requires run_id")
                 continue
             p = ev.payload
             payload_json = json.dumps(dict(p), ensure_ascii=False)
             rows.append((run_id, ev.request_id or "", now, payload_json))
         if not rows:
+            if conn is not None and batch:
+                raise ValueError("debug.event window produced no rows")
             return
-        conn = None
+        owns_conn = conn is None
         try:
-            conn = _get_connection(path)
+            if conn is None:
+                conn = _get_connection(path or "")
             insert_debug_events_batch(conn, rows)
-            conn.commit()
+            if owns_conn:
+                conn.commit()
         except Exception as e:
+            if not owns_conn:
+                raise
             logger.warning("observability[sqlite]: debug_event batch insert failed: %s", e)
             if conn:
                 try:
@@ -1812,5 +2148,5 @@ class SqliteEventSink:
                 except Exception:
                     pass
         finally:
-            if conn:
+            if owns_conn and conn:
                 conn.close()

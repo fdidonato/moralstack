@@ -108,16 +108,65 @@ class TestUpstreamModelOverride:
         assert response.json()["model"] == "gpt-4o-env-override"
         mock_openai.chat.completions.create.assert_not_called()
 
-    def test_refuse_synthetic_uses_upstream_model(self, client_factory, monkeypatch):
-        monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-env-override")
-        client, mock_openai, _ = client_factory("REFUSE")
+
+def test_final_action_persisted_synchronously(tmp_path, monkeypatch):
+    from moralstack.observability import router
+    from moralstack.observability import service as service_module
+    from moralstack.observability.service import get_obs
+    from moralstack.observability.sinks.sqlite_sink import _get_connection
+
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
+
+    db_path = str(tmp_path / "proxy-sync-finalization.db")
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", db_path)
+    monkeypatch.setenv("MORALSTACK_DB_PATH", db_path)
+
+    mock_orchestrator = MagicMock()
+    mock_orchestrator.process = MagicMock(return_value=_make_result("NORMAL_COMPLETE", content="sync guidance"))
+    mock_openai = MagicMock()
+    mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion())
+    app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+
+    with TestClient(app) as client:
         response = client.post(
             "/v1/chat/completions",
-            json={"model": "mstackcli", "messages": [{"role": "user", "content": "Q"}]},
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+            headers={"X-Moralstack-Conversation-Id": "conv-proxy-sync"},
         )
         assert response.status_code == 200
-        assert response.json()["model"] == "gpt-4o-env-override"
-        mock_openai.chat.completions.create.assert_not_called()
+
+        conn = _get_connection(db_path)
+        try:
+            requests = conn.execute("SELECT request_id, meta_json, final_response FROM requests").fetchall()
+            proxy_rows = conn.execute("SELECT request_id, final_action FROM proxy_request_events").fetchall()
+        finally:
+            conn.close()
+
+    assert len(requests) == 1
+    assert json.loads(requests[0]["meta_json"])["final_action"] == "NORMAL_COMPLETE"
+    assert requests[0]["final_response"] == "sync guidance"
+    assert len(proxy_rows) == 1
+    assert proxy_rows[0]["request_id"] == requests[0]["request_id"]
+    assert proxy_rows[0]["final_action"] == "NORMAL_COMPLETE"
+
+
+def test_refuse_synthetic_uses_upstream_model(client_factory, monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-env-override")
+    client, mock_openai, _ = client_factory("REFUSE")
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "mstackcli", "messages": [{"role": "user", "content": "Q"}]},
+    )
+    assert response.status_code == 200
+    assert response.json()["model"] == "gpt-4o-env-override"
+    mock_openai.chat.completions.create.assert_not_called()
 
 
 class TestHealthz:
@@ -1090,6 +1139,18 @@ class TestObservabilityPersistence:
         emits orchestration_events / llm_calls / decision_traces (which have FK
         constraints on requests).
         """
+        from moralstack.observability import router
+        from moralstack.observability import service as service_module
+        from moralstack.observability.service import get_obs
+
+        try:
+            get_obs().shutdown(timeout=1.0)
+        except Exception:
+            pass
+        service_module._obs_instance = None
+        router._sqlite_sink = None
+        router._jsonl_sink = None
+
         db_path = str(tmp_path / "test_orch_events.db")
         monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", db_path)
         monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
@@ -1138,6 +1199,8 @@ class TestObservabilityPersistence:
             headers={"X-Moralstack-Conversation-Id": "orch-events-test"},
         )
         assert response.status_code == 200
+
+        obs.flush(timeout=10.0)
 
         # Verify the orchestration_event row is in the DB (no FK violation).
         import sqlite3

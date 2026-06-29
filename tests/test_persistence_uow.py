@@ -6,6 +6,11 @@ Covers commit on success, rollback on exception, and batch insert.
 
 from __future__ import annotations
 
+import pytest
+
+from moralstack.observability import obs, router
+from moralstack.observability import service as service_module
+from moralstack.observability.service import get_obs
 from moralstack.persistence.context import (
     set_current_cycle,
     set_current_request_id,
@@ -25,6 +30,25 @@ from moralstack.persistence.sink import (
     persist_llm_call,
     persist_llm_calls_batch,
 )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_obs_singleton():
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
+    yield
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
 
 
 def test_uow_commit_on_success(tmp_path, monkeypatch):
@@ -65,6 +89,7 @@ def test_uow_commit_on_success(tmp_path, monkeypatch):
             uow=uow,
         )
 
+    obs.flush(timeout=10.0)
     calls = get_llm_calls_for_request(run_id, request_id)
     assert len(calls) == 2
     assert calls[0]["phase"] == "critic"
@@ -74,7 +99,7 @@ def test_uow_commit_on_success(tmp_path, monkeypatch):
 
 
 def test_uow_rollback_on_exception(tmp_path, monkeypatch):
-    """With SqliteUnitOfWork, persist_llm_call then raise; rollback; no data visible."""
+    """With SqliteUnitOfWork, persist_llm_call then raise; enqueued write remains visible after flush."""
     db_path = str(tmp_path / "uow_rollback.db")
     monkeypatch.setenv("MORALSTACK_DB_PATH", db_path)
     monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "db_only")
@@ -89,9 +114,8 @@ def test_uow_rollback_on_exception(tmp_path, monkeypatch):
     set_current_request_id(request_id)
     set_current_cycle(0)
 
-    # uow= is now ignored; persist_llm_call routes directly via SqliteEventSink
-    # and commits immediately. A subsequent exception does NOT roll back the
-    # already-committed write. Verify the write is visible regardless.
+    # uow= is now ignored; persist_llm_call enqueues telemetry outside the UoW.
+    # A subsequent exception does NOT roll back the already-enqueued write.
     try:
         with SqliteUnitOfWork() as uow:
             assert persist_llm_call(
@@ -107,8 +131,9 @@ def test_uow_rollback_on_exception(tmp_path, monkeypatch):
     except RuntimeError:
         pass
 
+    obs.flush(timeout=10.0)
     calls = get_llm_calls_for_request(run_id, request_id)
-    assert len(calls) == 1  # write committed immediately; exception does not roll back
+    assert len(calls) == 1  # write enqueued then flushed; exception does not roll back
 
 
 def test_persist_llm_calls_batch(tmp_path, monkeypatch):
@@ -157,6 +182,7 @@ def test_persist_llm_calls_batch(tmp_path, monkeypatch):
     ]
     assert persist_llm_calls_batch(entries) is True
 
+    obs.flush(timeout=10.0)
     calls = get_llm_calls_for_request(run_id, request_id)
     assert len(calls) == 3
     assert calls[0]["phase"] == "critic"
@@ -199,6 +225,7 @@ def test_persist_llm_calls_batch_with_uow(tmp_path, monkeypatch):
             uow=uow,
         )
 
+    obs.flush(timeout=10.0)
     calls = get_llm_calls_for_request(run_id, request_id)
     assert len(calls) == 2
 
@@ -225,6 +252,7 @@ def test_persist_decision_traces_batch(tmp_path, monkeypatch):
         ]
     )
 
+    obs.flush(timeout=10.0)
     traces = get_decision_traces_for_request(run_id, request_id)
     assert len(traces) == 2
     assert traces[0]["stage"] == "S1"
@@ -263,6 +291,7 @@ def test_uow_with_decision_trace(tmp_path, monkeypatch):
             uow=uow,
         )
 
+    obs.flush(timeout=10.0)
     traces = get_decision_traces_for_request(run_id, request_id)
     assert len(traces) == 1
     assert traces[0]["stage"] == "RELEVANT_PRINCIPLES"

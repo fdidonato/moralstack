@@ -142,6 +142,7 @@ def finalize_governance_audit(
     final_action_override: str | None = None,
     update_response: bool = True,
     update_domain: bool = True,
+    emit_meta: bool = True,
 ) -> dict[str, Any]:
     """
     Persist Step 13 governance audit fields on the ``requests`` row.
@@ -166,7 +167,7 @@ def finalize_governance_audit(
         return {}
 
     try:
-        from moralstack.observability.conversation_events import emit_request_meta_updated
+        from moralstack.observability.conversation_events import finalize_audit_sync
         from moralstack.observability.sinks.sqlite_sink import (
             update_request_domain,
             update_request_response,
@@ -198,15 +199,18 @@ def finalize_governance_audit(
         # actually delivered, while the transport-specific event retains the
         # original action separately for audit.
         meta["final_action"] = final_action_override
-    if meta:
+    if meta and emit_meta:
         try:
-            emit_request_meta_updated(
+            finalize_audit_sync(
                 run_id=run_id,
                 request_id=request_id,
-                meta=meta,
+                final_action=meta.get("final_action"),
+                final_response=final_response_text or "",
+                domain=domain,
+                proxy_summary={"metadata": meta, "_emit_proxy_request_finalized": False},
             )
         except Exception as exc:
-            logger.debug("finalize_governance_audit: emit_request_meta_updated failed: %s", exc)
+            logger.debug("finalize_governance_audit: finalize_audit_sync failed: %s", exc)
     # Stash linkage to help callers reuse without re-extracting.
     if conversation_id is not None and "conversation_id" not in meta:
         meta["conversation_id"] = conversation_id

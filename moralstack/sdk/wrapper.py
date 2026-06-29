@@ -469,9 +469,7 @@ class GovernedCompletions:
         if not run_id or not request_id:
             return
         try:
-            from moralstack.observability.conversation_events import (
-                emit_proxy_request_finalized,
-            )
+            from moralstack.observability.conversation_events import finalize_audit_sync
             from moralstack.observability.governance_audit import (
                 finalize_governance_audit,
                 posture_of,
@@ -489,6 +487,7 @@ class GovernedCompletions:
                 turn_index=turn_index,
                 domain=domain,
                 final_action_override=final_action,
+                emit_meta=False,
             )
 
             # 2) Emit the canonical proxy.request_finalized envelope. Mirrors
@@ -504,30 +503,37 @@ class GovernedCompletions:
                 response_len = None
 
             try:
-                emit_proxy_request_finalized(
-                    run_id=run_id,
-                    request_id=request_id,
-                    conversation_id=conversation_id,
-                    turn_index=turn_index,
-                    final_action=(meta.get("final_action") if isinstance(meta, dict) else None),
-                    risk_score=(meta.get("risk_score") if isinstance(meta, dict) else None),
-                    path=((meta.get("path_taken") or meta.get("path")) if isinstance(meta, dict) else None),
-                    domain=domain,
-                    posture_in=posture_of(state_in),
-                    posture_out=posture_of(state_out),
-                    state_provided=state_provided,
-                    state_updated=state_updated,
-                    was_cached=(meta.get("was_cached") if isinstance(meta, dict) else None),
-                    cached_from_turn=(meta.get("cached_from_turn") if isinstance(meta, dict) else None),
-                    final_response_length=response_len,
+                summary = {
+                    "conversation_id": conversation_id,
+                    "turn_index": turn_index,
+                    "final_action": (meta.get("final_action") if isinstance(meta, dict) else None),
+                    "risk_score": (meta.get("risk_score") if isinstance(meta, dict) else None),
+                    "path": ((meta.get("path_taken") or meta.get("path")) if isinstance(meta, dict) else None),
+                    "domain": domain,
+                    "posture_in": posture_of(state_in),
+                    "posture_out": posture_of(state_out),
+                    "state_provided": state_provided,
+                    "state_updated": state_updated,
+                    "was_cached": (meta.get("was_cached") if isinstance(meta, dict) else None),
+                    "cached_from_turn": (meta.get("cached_from_turn") if isinstance(meta, dict) else None),
+                    "final_response_length": response_len,
                     # The SDK does not produce X-MoralStack-* response headers
                     # (those belong to the HTTP proxy). Use None so the JSONL
                     # records ``headers: null`` and SQLite stores headers_json
                     # as NULL — unambiguous semantics for "no headers".
-                    headers=None,
-                    metadata=meta if meta else None,
-                    state_in=state_summary_or_none(state_in),
-                    state_out=state_summary_or_none(state_out),
+                    "headers": None,
+                    "metadata": meta if meta else None,
+                    "state_in": state_summary_or_none(state_in),
+                    "state_out": state_summary_or_none(state_out),
+                }
+                final_action_value = summary.get("final_action")
+                finalize_audit_sync(
+                    run_id=run_id,
+                    request_id=request_id,
+                    final_action=final_action_value if isinstance(final_action_value, str) else None,
+                    final_response=final_response_text,
+                    domain=domain,
+                    proxy_summary=summary,
                 )
             except Exception:
                 # Inner try keeps the meta merge from being undone if the emit

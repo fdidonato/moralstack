@@ -5,8 +5,12 @@ from __future__ import annotations
 import json
 import re
 
-from moralstack.observability import obs
+import pytest
+
+from moralstack.observability import obs, router
+from moralstack.observability import service as service_module
 from moralstack.observability.context import set_current_request_id, set_current_run_id
+from moralstack.observability.service import get_obs
 from moralstack.observability.sinks import sqlite_sink as db_module
 from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
 from moralstack.persistence.sink import (
@@ -25,6 +29,25 @@ from moralstack.reports.runtime_decisions import (
 
 get_orchestration_events_for_request = obs.read_store.get_orchestration_events_for_request
 get_llm_calls_for_request = obs.read_store.get_llm_calls_for_request
+
+
+@pytest.fixture(autouse=True)
+def _fresh_obs_singleton():
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
+    yield
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
 
 
 def test_orchestration_events_table_created(tmp_path, monkeypatch):
@@ -69,6 +92,7 @@ def test_orchestration_events_insert_and_order(tmp_path, monkeypatch):
             }
         ]
     )
+    obs.flush(timeout=10.0)
     rows = get_orchestration_events_for_request("run-a", "req-1")
     assert len(rows) == 2
     assert rows[0]["event_type"] == "PARALLEL_STRATEGY_SELECTED"
@@ -158,6 +182,7 @@ def test_llm_calls_extended_columns_roundtrip(tmp_path, monkeypatch):
         cache_status="miss",
         parsed_summary_json={"context_shape": {"context_mode": "full_native"}},
     )
+    obs.flush(timeout=10.0)
     rows = get_llm_calls_for_request("r1", "q1")
     assert len(rows) == 1
     assert rows[0].get("call_kind") == "normal"
@@ -291,6 +316,7 @@ def test_export_fast_path_refuse_contract_and_models(tmp_path, monkeypatch):
         status="ok",
         sequence=1,
     )
+    obs.flush(timeout=10.0)
     md = export_request_markdown("run-exp", "req-exp")
     assert "| **MoralStack policy (rewrite)** | gpt-4o |" in md
     assert "gpt-4o-mini" not in md

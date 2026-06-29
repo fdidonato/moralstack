@@ -18,7 +18,8 @@ from typing import Any
 
 import pytest
 
-from moralstack.observability import obs
+from moralstack.observability import obs, router
+from moralstack.observability import service as service_module
 from moralstack.observability.conversation_events import (
     emit_conversation_state_updated,
     emit_ledger_lookup,
@@ -27,8 +28,10 @@ from moralstack.observability.conversation_events import (
     emit_request_meta_updated,
     emit_session_store_get,
     emit_session_store_put,
+    finalize_audit_sync,
 )
 from moralstack.observability.read_store import SqliteReadStore
+from moralstack.observability.service import get_obs
 from moralstack.observability.sinks.sqlite_sink import (
     _get_connection,
     create_run,
@@ -46,6 +49,25 @@ class _DummyState:
 
     def to_summary_dict(self) -> dict[str, Any]:
         return dict(self._fields)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_obs_singleton():
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
+    yield
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
 
 
 def _setup_db(tmp_path, monkeypatch):
@@ -267,6 +289,154 @@ def test_proxy_request_finalized_round_trip(tmp_path, monkeypatch):
     assert headers["X-MoralStack-Final-Action"] == "NORMAL_COMPLETE"
 
 
+def test_finalize_audit_sync_writes_meta_and_proxy_without_flush(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    create_run("r6-sync", run_type="single", meta={})
+    upsert_request("r6-sync", "req-6-sync", prompt="?", conversation_id="conv-sync", turn_index=0)
+
+    finalize_audit_sync(
+        run_id="r6-sync",
+        request_id="req-6-sync",
+        final_action="NORMAL_COMPLETE",
+        final_response="hello",
+        domain="general",
+        proxy_summary={
+            "conversation_id": "conv-sync",
+            "turn_index": 0,
+            "final_action": "NORMAL_COMPLETE",
+            "risk_score": 0.1,
+            "path": "fast",
+            "domain": "general",
+            "metadata": {"final_action": "NORMAL_COMPLETE", "risk_score": 0.1},
+        },
+    )
+
+    rs = SqliteReadStore()
+    req = rs.get_request("r6-sync", "req-6-sync")
+    assert req is not None
+    assert json.loads(req["meta_json"])["final_action"] == "NORMAL_COMPLETE"
+    rows = rs.get_proxy_request_events_for_conversation("conv-sync")
+    assert len(rows) == 1
+    assert rows[0]["final_action"] == "NORMAL_COMPLETE"
+
+
+def test_proxy_request_finalized_no_duplicate(tmp_path, monkeypatch):
+    dbp = _setup_db(tmp_path, monkeypatch)
+    create_run("r6-dupe", run_type="single", meta={})
+    upsert_request("r6-dupe", "req-6-dupe", prompt="?", conversation_id="conv-dupe", turn_index=0)
+    summary = {
+        "conversation_id": "conv-dupe",
+        "turn_index": 0,
+        "final_action": "NORMAL_COMPLETE",
+        "risk_score": 0.1,
+        "path": "fast",
+        "domain": "general",
+        "metadata": {"final_action": "NORMAL_COMPLETE", "risk_score": 0.1},
+    }
+
+    finalize_audit_sync(
+        run_id="r6-dupe",
+        request_id="req-6-dupe",
+        final_action="NORMAL_COMPLETE",
+        final_response="hello",
+        domain="general",
+        proxy_summary=summary,
+    )
+    summary["risk_score"] = 0.2
+    finalize_audit_sync(
+        run_id="r6-dupe",
+        request_id="req-6-dupe",
+        final_action="NORMAL_COMPLETE",
+        final_response="hello",
+        domain="general",
+        proxy_summary=summary,
+    )
+
+    conn = _get_connection(dbp)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM proxy_request_events WHERE run_id = ? AND request_id = ?",
+            ("r6-dupe", "req-6-dupe"),
+        ).fetchall()
+    finally:
+        conn.close()
+    assert len(rows) == 1
+    assert rows[0]["risk_score"] == pytest.approx(0.2)
+
+
+def test_init_db_dedups_preexisting_proxy_duplicates_before_unique_index(tmp_path, monkeypatch):
+    """A pre-P2 DB can hold DUPLICATE proxy_request_events for one (run_id, request_id).
+    The migration must DELETE all but the latest (MAX(id)) BEFORE creating the UNIQUE
+    index, so re-running init_db on legacy data is idempotent and converges to one row
+    (Codex v4 diff-review required test — the existing no_duplicate test only covers
+    finalizing twice AFTER the index exists)."""
+    dbp = _setup_db(tmp_path, monkeypatch)
+    create_run("r-dupe-mig", run_type="single", meta={})
+    upsert_request("r-dupe-mig", "req-dupe-mig", prompt="?", conversation_id="conv-dupe-mig", turn_index=0)
+
+    conn = _get_connection(dbp)
+    try:
+        # Simulate a legacy DB: drop the unique index, then insert raw duplicates.
+        conn.execute("DROP INDEX IF EXISTS idx_proxy_request_events_run_request_unique")
+        for rs in (0.1, 0.2, 0.3):
+            conn.execute(
+                "INSERT INTO proxy_request_events (run_id, request_id, created_at, final_action, risk_score) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("r-dupe-mig", "req-dupe-mig", 1000, "NORMAL_COMPLETE", rs),
+            )
+        conn.commit()
+        before = conn.execute(
+            "SELECT COUNT(*) FROM proxy_request_events WHERE run_id=? AND request_id=?",
+            ("r-dupe-mig", "req-dupe-mig"),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert before == 3
+
+    # Re-run the migration: it must dedup to the latest row, then re-create the unique index.
+    assert init_db(dbp)
+
+    conn = _get_connection(dbp)
+    try:
+        rows = conn.execute(
+            "SELECT risk_score FROM proxy_request_events WHERE run_id=? AND request_id=?",
+            ("r-dupe-mig", "req-dupe-mig"),
+        ).fetchall()
+    finally:
+        conn.close()
+    assert len(rows) == 1
+    assert rows[0]["risk_score"] == pytest.approx(0.3)  # MAX(id) == last inserted survives
+
+
+def test_finalization_jsonl_parity_file_only(tmp_path, monkeypatch):
+    jsonl_dir = tmp_path / "jsonl"
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "file_only")
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_JSONL_DIR", str(jsonl_dir))
+    monkeypatch.delenv("MORALSTACK_OBSERVABILITY_DB_PATH", raising=False)
+
+    result = finalize_audit_sync(
+        run_id="r-jsonl",
+        request_id="req-jsonl",
+        final_action="SAFE_COMPLETE",
+        final_response="safe",
+        domain="general",
+        proxy_summary={
+            "conversation_id": "conv-jsonl",
+            "turn_index": 0,
+            "final_action": "SAFE_COMPLETE",
+            "metadata": {"final_action": "SAFE_COMPLETE"},
+        },
+    )
+
+    assert result.written == 2
+    meta_path = jsonl_dir / "request.meta_updated.jsonl"
+    proxy_path = jsonl_dir / "proxy.request_finalized.jsonl"
+    assert meta_path.is_file()
+    assert proxy_path.is_file()
+    assert "SAFE_COMPLETE" in meta_path.read_text(encoding="utf-8")
+    assert "SAFE_COMPLETE" in proxy_path.read_text(encoding="utf-8")
+
+
 def test_conversation_overview_and_ids_for_run(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     create_run("r7", run_type="single", meta={})
@@ -456,9 +626,23 @@ def test_sdk_emits_proxy_request_finalized_into_readstore(tmp_path, monkeypatch)
         model="gpt-4o",
         messages=[{"role": "user", "content": "Hi"}],
     )
-    obs.flush(timeout=10.0)
 
     assert "request_id" in captured
+
+    # SDK decision audit is SYNCHRONOUS (finalize_audit_sync), so the
+    # proxy.request_finalized row AND requests.meta final_action are readable
+    # WITHOUT flush — exactly like the HTTP proxy (Codex v4 diff-review required:
+    # the prior SDK tests monkeypatch finalize_audit_sync out / flush first, so
+    # SDK durability was unproven). This asserts it BEFORE any flush.
+    rs_sync = SqliteReadStore()
+    pre_flush_rows = rs_sync.get_proxy_request_events_for_conversation("conv-sdk-finalized-1")
+    assert len(pre_flush_rows) == 1
+    assert pre_flush_rows[0]["final_action"] == "NORMAL_COMPLETE"
+    req_row = rs_sync.get_request(client._run_id, captured["request_id"])
+    assert req_row is not None
+    assert json.loads(req_row["meta_json"])["final_action"] == "NORMAL_COMPLETE"
+
+    obs.flush(timeout=10.0)
 
     rs = SqliteReadStore()
     rows = rs.get_proxy_request_events_for_conversation("conv-sdk-finalized-1")

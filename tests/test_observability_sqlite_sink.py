@@ -18,6 +18,7 @@ from moralstack.observability.events import (
 )
 from moralstack.observability.sinks.sqlite_sink import (
     SqliteEventSink,
+    _get_connection,
     create_run,
     init_db,
     upsert_request,
@@ -142,6 +143,30 @@ def test_sqlite_sink_write_batch(tmp_path, monkeypatch):
 
     rows = get_llm_calls_for_request("run-4", "req-4")
     assert len(rows) == 3
+
+
+def test_write_window_uses_passed_connection(tmp_path, monkeypatch):
+    dbp = _setup(tmp_path, monkeypatch)
+    create_run("run-window", run_type="test", meta={})
+    upsert_request("run-window", "req-window", prompt="hi", domain="")
+    sink = SqliteEventSink()
+    assert not hasattr(sink, "_conn")
+    env = make_envelope(
+        EVENT_LLM_CALL,
+        run_id="run-window",
+        request_id="req-window",
+        payload={"phase": "test", "module": "mod", "action": "act", "prompt": "", "raw_response": ""},
+    )
+    conn = _get_connection(dbp)
+    try:
+        result = sink.write_window([env], conn)
+    finally:
+        conn.close()
+
+    assert result.written == 1
+    assert result.failed == 0
+    rows = get_llm_calls_for_request("run-window", "req-window")
+    assert len(rows) == 1
 
 
 def test_sqlite_sink_lifecycle_run_started(tmp_path, monkeypatch):

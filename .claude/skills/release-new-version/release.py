@@ -94,7 +94,7 @@ def bump_pyproject(pyproject: Path, new_version: str) -> str:
     if not match:
         raise ReleaseError(f'no `version = "..."` line found in {pyproject}')
     old_version = match.group(2)
-    new_text = text[: match.start()] + f'{match.group(1)}{new_version}{match.group(3)}' + text[match.end():]
+    new_text = text[: match.start()] + f"{match.group(1)}{new_version}{match.group(3)}" + text[match.end() :]
     pyproject.write_text(new_text, encoding="utf-8")
     return old_version
 
@@ -162,7 +162,7 @@ def update_changelog(changelog: Path, version: str, subjects: list[str], release
     unreleased = unreleased_re.search(text)
     if unreleased:
         new_heading = f"## {version} — {release_date}"
-        new_text = text[: unreleased.start()] + new_heading + text[unreleased.end():]
+        new_text = text[: unreleased.start()] + new_heading + text[unreleased.end() :]
         changelog.write_text(new_text, encoding="utf-8")
         return new_heading
 

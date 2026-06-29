@@ -1,4 +1,4 @@
-"""Tests for risk-estimator mini-call synchronous batch persistence."""
+"""Tests for risk-estimator mini-call async windowed persistence."""
 
 from __future__ import annotations
 
@@ -6,9 +6,13 @@ import json
 import sqlite3
 from unittest.mock import MagicMock
 
+import pytest
+
 import moralstack.models.risk.estimator as risk_estimator_module
 from moralstack.models.risk.estimator import LLMBasedRiskEstimator
 from moralstack.models.risk.schema import RiskEstimatorConfig
+from moralstack.observability import obs, router
+from moralstack.observability import service as service_module
 from moralstack.observability.context import (
     set_current_cycle,
     set_current_request_id,
@@ -18,8 +22,8 @@ from moralstack.observability.context import (
 )
 from moralstack.observability.events import EVENT_LLM_CALL, EventEnvelope
 from moralstack.observability.read_store import SqliteReadStore
-from moralstack.observability.sinks import sqlite_sink
-from moralstack.observability.sinks.sqlite_sink import SqliteEventSink, create_run, init_db, upsert_request
+from moralstack.observability.service import get_obs
+from moralstack.observability.sinks.sqlite_sink import SqliteEventSink, _get_connection, create_run, init_db, upsert_request
 
 LOCAL_LLM_CALL_PAYLOAD_KEYS = (
     "phase",
@@ -40,6 +44,25 @@ LOCAL_LLM_CALL_PAYLOAD_KEYS = (
 )
 
 GENERIC_ONLY_LLM_CALL_KEYS = {"call_kind", "call_outcome", "cache_status", "related_event_id"}
+
+
+@pytest.fixture(autouse=True)
+def _fresh_obs_singleton():
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
+    yield
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
 
 
 def _set_context(run_id: str = "run-risk-batch", request_id: str = "req-risk-batch") -> None:
@@ -111,14 +134,15 @@ def _capture_batch(monkeypatch) -> list[list[EventEnvelope]]:
     return batches
 
 
-def test_phase1_uses_router_route_batch_not_async_queue(monkeypatch):
+def test_risk_mini_calls_use_emit_batch_not_router_route_batch(monkeypatch):
+    """PROJECT_SPEC §7: P2 intentionally removes the old sync request-thread route_batch contract."""
     _set_context()
     batches = _capture_batch(monkeypatch)
 
-    def fail_async_queue():
-        raise AssertionError("risk mini-call persistence must not use ObservabilityService.emit_batch")
+    def fail_route_batch(*_args, **_kwargs):
+        raise AssertionError("risk mini-call persistence must not call router.route_batch on the request thread")
 
-    monkeypatch.setattr("moralstack.observability.service.get_obs", fail_async_queue)
+    monkeypatch.setattr("moralstack.observability.router.route_batch", fail_route_batch)
 
     _estimator()._persist_mini_llm_calls_batch(_mini_calls())
 
@@ -158,7 +182,7 @@ def test_three_mini_envelopes_have_local_15_key_payload(monkeypatch):
         assert summary["message_sections"] == call["message_sections"]
 
 
-def test_calibration_guard_uses_single_route_not_batch(monkeypatch):
+def test_calibration_guard_uses_single_emit_not_batch(monkeypatch):
     _set_context()
     routed: list[EventEnvelope] = []
     monkeypatch.setattr(risk_estimator_module, "_obs_route", routed.append)
@@ -212,6 +236,7 @@ def test_batch_sqlite_and_jsonl_readback(tmp_path, monkeypatch):
     _set_context(run_id, request_id)
 
     _estimator()._persist_mini_llm_calls_batch(_mini_calls())
+    obs.flush(timeout=10.0)
 
     rows = SqliteReadStore().get_llm_calls_for_request(run_id, request_id)
     assert [row["action"] for row in rows] == [
@@ -238,10 +263,10 @@ def test_batch_sqlite_and_jsonl_readback(tmp_path, monkeypatch):
     assert all(tuple(row["payload"].keys()) == LOCAL_LLM_CALL_PAYLOAD_KEYS for row in jsonl_rows)
 
 
-def test_batch_all_or_none_on_sqlite_write_failure(tmp_path, monkeypatch):
-    db_path = str(tmp_path / "risk-batch-failure.db")
-    run_id = "run-risk-batch-failure"
-    request_id = "req-risk-batch-failure"
+def test_write_window_isolates_bad_risk_envelope(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "risk-batch-window-isolation.db")
+    run_id = "run-risk-batch-window-isolation"
+    request_id = "req-risk-batch-window-isolation"
     monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", db_path)
     monkeypatch.setenv("MORALSTACK_DB_PATH", db_path)
     monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
@@ -250,16 +275,29 @@ def test_batch_all_or_none_on_sqlite_write_failure(tmp_path, monkeypatch):
     assert upsert_request(run_id, request_id, prompt="request", domain="test")
     _set_context(run_id, request_id)
     envelopes = [env for call in _mini_calls() if (env := _estimator()._build_mini_llm_call_envelope(**call)) is not None]
-    real_insert = sqlite_sink.insert_llm_calls_batch
-
-    def partial_insert_then_fail(conn, rows):
-        real_insert(conn, [rows[0]])
-        raise RuntimeError("injected batch failure")
-
-    monkeypatch.setattr(sqlite_sink, "insert_llm_calls_batch", partial_insert_then_fail)
-
-    SqliteEventSink().write_batch(envelopes)
+    bad = _estimator()._build_mini_llm_call_envelope(**_mini_calls()[0])
+    assert bad is not None
+    bad = EventEnvelope(
+        event_id=bad.event_id,
+        event_type=bad.event_type,
+        timestamp_ms=bad.timestamp_ms,
+        run_id=bad.run_id,
+        request_id=None,
+        cycle=bad.cycle,
+        session_id=bad.session_id,
+        turn_number=bad.turn_number,
+        parent_event_id=bad.parent_event_id,
+        audit_level=bad.audit_level,
+        payload=bad.payload,
+    )
+    conn = _get_connection(db_path)
+    try:
+        result = SqliteEventSink().write_window([envelopes[0], bad, envelopes[1]], conn)
+    finally:
+        conn.close()
 
     with sqlite3.connect(db_path) as conn:
         count = conn.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0]
-    assert count == 0
+    assert count == 2
+    assert result.written == 2
+    assert result.failed == 1

@@ -17,9 +17,31 @@ import json
 
 import pytest
 
+from moralstack.observability import obs, router
+from moralstack.observability import service as service_module
+from moralstack.observability.service import get_obs
 from moralstack.persistence.db import create_run, init_db, upsert_request
 from moralstack.persistence.sink import persist_decision_trace, persist_llm_call
 from moralstack.reports.model import request_report_from_db
+
+
+@pytest.fixture(autouse=True)
+def _fresh_obs_singleton():
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
+    yield
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
 
 
 @pytest.fixture
@@ -97,6 +119,7 @@ class TestTotalDurationWallClock:
             action="estimate_operational",
         )
 
+        obs.flush(timeout=10.0)
         report = request_report_from_db(run_id, request_id)
         assert report is not None
         assert report.total_duration_ms == 800.0, f"expected wall-clock merged 800ms, got {report.total_duration_ms}"
@@ -129,6 +152,7 @@ class TestPhaseDurationsWallClock:
             action="estimate",
         )
 
+        obs.flush(timeout=10.0)
         report = request_report_from_db(run_id, request_id)
         assert report is not None
         # phase_type key built as `module + " / " + phase`
@@ -163,6 +187,7 @@ class TestPhaseDurationsWallClock:
             action="critique",
         )
 
+        obs.flush(timeout=10.0)
         report = request_report_from_db(run_id, request_id)
         assert report is not None
         key = "critic / critique"

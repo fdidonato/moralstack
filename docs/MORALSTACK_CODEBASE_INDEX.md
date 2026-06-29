@@ -4,6 +4,10 @@
 > Snapshot of `main` at package version `0.5.0` (`pyproject.toml:7`).
 > The code is authoritative — verify a symbol still exists before relying on it.
 > Confidence and evidence for individual claims live in `docs/CODEBASE_FACTS.md`.
+>
+> For the AI agentic workflow (Claude orchestrates · Codex reviews · Cursor
+> implements) that consumes this index at planning time, see `docs/ai/` —
+> start from `docs/ai/AGENTIC_WORKFLOW.md`.
 
 ---
 
@@ -138,8 +142,8 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `ThreadPoolExecutor`: `estimate_intent`, `estimate_signals` (q1–q17),
   `estimate_operational`; merged by `calibration.merge_mini_estimator_results`.
   The three real mini-estimator `llm_call` envelopes are built with the local
-  15-key risk payload and dispatched synchronously as one `router.route_batch`;
-  a synthetic `calibration_guard` row remains a separate single write.
+  15-key risk payload and enqueued as one observability batch; a synthetic
+  `calibration_guard` row remains a separate single enqueue.
 - `calibration.py` — `merge_mini_estimator_results`, `parse_risk_dict`, score
   calibration rules (defensive override, harm escalation, non-operational clamp,
   calibration guard).
@@ -170,15 +174,18 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 
 ### Observability — `moralstack/observability/`
 - `service.py` — `ObservabilityService`, singleton via `get_obs()` / `obs`.
-  `emit`/`emit_batch` are async fire-and-forget; `flush()` at request boundary.
+  `emit`/`emit_batch` are async fire-and-forget via the worker queue; `flush()`
+  drains queued writes for read-after-write tests and short-lived SDK callers.
 - `router.py` — synchronous dispatch by mode (`db_only` → SQLite,
-  `file_only` → JSONL, `dual` → both), including `route_batch`.
+  `file_only` → JSONL, `dual` → both). `route_window` is counted for the worker;
+  `route_audit_sync` is counted and synchronous for finalization.
 - `sinks/sqlite_sink.py` — schema + writers (`init_db`, `create_run`,
-  `upsert_request`, `update_request_*`, `delete_*`). Tables in §8.
-- `sinks/jsonl_sink.py` — JSONL envelope writer.
+  `upsert_request`, `update_request_*`, `delete_*`) plus FK-ordered
+  `write_window` with per-envelope isolation. Tables in §8.
+- `sinks/jsonl_sink.py` — JSONL envelope writer with counted `write_window`.
 - `read_store.py` — `SqliteReadStore` (read contract used by UI & exports).
 - `conversation_events.py` — `emit_conversation_state_updated`,
-  `emit_proxy_request_finalized`.
+  `emit_proxy_request_finalized`, `finalize_audit_sync`.
 - `governance_audit.py` — `finalize_governance_audit`, `posture_of`,
   `state_summary_or_none`.
 - `context.py` — contextvars (`set_current_run_id`, `set_current_request_id`,
@@ -460,8 +467,16 @@ See `docs/traces/openai_compatible_multiturn.md`.
   `dual`. DB path via `MORALSTACK_OBSERVABILITY_DB_PATH` (legacy
   `MORALSTACK_DB_PATH`).
 - Async write queue + background worker for `ObservabilityService.emit*`;
-  direct `router.route*` dispatch is synchronous. `flush()` drains queued writes
-  at request/SDK boundary.
+  the worker owns a persistent SQLite connection and sets
+  `PRAGMA synchronous=NORMAL` on that connection only. `flush()` drains queued
+  writes for read-after-write callers. Lifecycle upserts and request finalization
+  remain synchronous request-thread writes.
+- Finalization uses `conversation_events.finalize_audit_sync` for both proxy and
+  SDK: it writes `request.meta_updated` plus exactly-one
+  `proxy.request_finalized` through resultful `router.route_audit_sync`. In
+  `dual`, SQLite drives persisted/failed semantics and JSONL failures are counted
+  separately; in `file_only`, JSONL drives the result and is synchronously
+  attempted, not crash-durable.
 - **SQLite tables** (`sinks/sqlite_sink.py:48-489`): `runs`, `requests`,
   `llm_calls`, `orchestration_events`, `decision_traces`, `debug_events`,
   `exports_cache`, `conversation_states`, `ledger_events`,

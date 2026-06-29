@@ -6,6 +6,11 @@ Verifies no truncation and correct ordering.
 
 from __future__ import annotations
 
+import pytest
+
+from moralstack.observability import obs, router
+from moralstack.observability import service as service_module
+from moralstack.observability.service import get_obs
 from moralstack.persistence.context import (
     set_current_cycle,
     set_current_request_id,
@@ -18,6 +23,25 @@ from moralstack.persistence.db import (
     upsert_request,
 )
 from moralstack.persistence.sink import persist_llm_call
+
+
+@pytest.fixture(autouse=True)
+def _fresh_obs_singleton():
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
+    yield
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
 
 
 def test_persistence_llm_calls_long_content(tmp_path, monkeypatch):
@@ -56,6 +80,7 @@ def test_persistence_llm_calls_long_content(tmp_path, monkeypatch):
         cycle=1,
     )
 
+    obs.flush(timeout=10.0)
     calls = get_llm_calls_for_request(run_id, request_id)
     assert len(calls) == 2
     assert calls[0]["prompt"] == long_str
@@ -109,6 +134,7 @@ def test_get_llm_calls_ordered_by_sequence_in_cycle(tmp_path, monkeypatch):
         sequence_in_cycle=1,
     )
 
+    obs.flush(timeout=10.0)
     calls = get_llm_calls_for_request(run_id, request_id)
     assert len(calls) == 2
     # Logical order: policy (1) before hindsight (5).

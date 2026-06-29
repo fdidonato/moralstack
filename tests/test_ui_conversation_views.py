@@ -44,15 +44,14 @@ def _reinstall_observability_service_writes() -> None:
     the class in a patched state. Re-applying the original logic here is
     independent of ObservabilityService.__dict__ contents at import time.
     """
-    from moralstack.observability import router as _obs_router
 
     def emit(self: ObservabilityService, envelope):  # type: ignore[no-untyped-def]
-        self._queue.submit(_obs_router.route, envelope)
+        self._queue.submit_envelope(envelope)
 
     def emit_batch(self: ObservabilityService, envelopes):  # type: ignore[no-untyped-def]
         if not envelopes:
             return
-        self._queue.submit(_obs_router.route_batch, list(envelopes))
+        self._queue.submit_batch(list(envelopes))
 
     def flush(self: ObservabilityService, timeout: float = 30.0) -> None:
         self._queue.flush(timeout=timeout)

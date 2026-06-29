@@ -17,6 +17,9 @@ from moralstack.constitution.retriever import (
     _normalize_domain_keywords,
 )
 from moralstack.constitution.schema import Principle
+from moralstack.observability import router
+from moralstack.observability import service as service_module
+from moralstack.observability.service import get_obs
 from moralstack.orchestration.orchestration_event_taxonomy import (
     DOMAIN_PREFILTER_CACHE_HIT,
     DOMAIN_PREFILTER_CACHE_INVALIDATED,
@@ -30,6 +33,32 @@ from moralstack.reports.runtime_decisions import (
 )
 
 _CONFIG_CORE = Path(__file__).resolve().parent.parent / "moralstack" / "constitution" / "data" / "core.yaml"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_obs_singleton():
+    """Reset the obs service + sink singletons around each test.
+
+    After P2 the worker owns a long-lived SQLite connection bound to the db_path
+    seen at first use; without this reset a stale worker connection (from another
+    test or the session :memory: fixture) would write children into the wrong DB
+    and trip foreign_keys=ON. Resetting binds a fresh worker to the per-test DB.
+    """
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
+    yield
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
 
 
 def _principle(*, title: str = "Title", rule: str = "Rendered rule") -> Principle:
@@ -106,6 +135,7 @@ def test_miss_then_hit_emits_events(tmp_path, monkeypatch):
         p.set_domain_keywords(kw)
         p.filter_domains("qq long enough query", ["core", "dom"])
 
+    get_obs().flush(timeout=5.0)
     rows = get_orchestration_events_for_request("r-pf", "q-pf")
     types = [r.get("event_type") for r in rows]
     assert types.count(DOMAIN_PREFILTER_CACHE_MISS) >= 1
@@ -126,10 +156,12 @@ def test_invalidate_only_when_keywords_change(tmp_path, monkeypatch):
     kw = {"core": ["c"], "dom": ["x"]}
     p = DomainPrefilter(domain_keywords=kw, max_domains=3)
     p.set_domain_keywords(kw)
+    get_obs().flush(timeout=5.0)
     rows = get_orchestration_events_for_request("r2", "q2")
     assert not any(r.get("event_type") == DOMAIN_PREFILTER_CACHE_INVALIDATED for r in rows)
 
     p.set_domain_keywords({"core": ["c"], "dom": ["y"]})
+    get_obs().flush(timeout=5.0)
     rows2 = get_orchestration_events_for_request("r2", "q2")
     assert any(r.get("event_type") == DOMAIN_PREFILTER_CACHE_INVALIDATED for r in rows2)
 
@@ -196,6 +228,7 @@ def test_clear_cache_forced_emits_when_non_empty(tmp_path, monkeypatch):
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": [], "confidence": 0.0}):
         p.filter_domains("z long enough query", ["core"])
     p.clear_cache(reason="forced_refresh")
+    get_obs().flush(timeout=5.0)
     rows = get_orchestration_events_for_request("r3", "q3")
     assert any(r.get("event_type") == DOMAIN_PREFILTER_CACHE_INVALIDATED for r in rows)
 
@@ -233,6 +266,7 @@ def test_short_query_emits_too_short_event(tmp_path, monkeypatch):
     p = DomainPrefilter(domain_keywords={"core": ["c"], "dom": ["x"]}, max_domains=3)
     p.filter_domains("63312", ["core", "dom"])
 
+    get_obs().flush(timeout=5.0)
     rows = get_orchestration_events_for_request("r-short", "q-short")
     matches = [r for r in rows if r.get("event_type") == DOMAIN_PREFILTER_QUERY_TOO_SHORT]
     assert matches, "DOMAIN_PREFILTER_QUERY_TOO_SHORT event must be persisted"
@@ -262,6 +296,7 @@ def test_clear_cache_noop_when_empty(tmp_path, monkeypatch):
 
     p = DomainPrefilter(domain_keywords={"core": ["a"]}, max_domains=3)
     p.clear_cache(reason="forced_refresh")
+    get_obs().flush(timeout=5.0)
     rows = get_orchestration_events_for_request("r4", "q4")
     assert not rows
 

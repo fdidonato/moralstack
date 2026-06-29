@@ -7,6 +7,9 @@ section structure (single source of truth for request/deliberation reports).
 
 import pytest
 
+from moralstack.observability import router
+from moralstack.observability import service as service_module
+from moralstack.observability.service import get_obs
 from moralstack.reports.model import (
     CallLogEntry,
     PhaseInfo,
@@ -58,6 +61,25 @@ def minimal_request_report():
         decision_traces=[],
         debug_events=[],
     )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_obs_singleton():
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
+    yield
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
 
 
 # -----------------------------------------------------------------------------
@@ -164,6 +186,7 @@ class TestRequestReportFromDbFastPathConverged:
         request_report_from_db yields report.converged=True (fallback for existing data)."""
         import json
 
+        from moralstack.observability import obs
         from moralstack.persistence.db import create_run, init_db, upsert_request
         from moralstack.persistence.sink import persist_decision_trace
         from moralstack.reports.model import request_report_from_db
@@ -194,6 +217,7 @@ class TestRequestReportFromDbFastPathConverged:
             trace_json=json.dumps(trace_payload),
         )
 
+        obs.flush(timeout=10.0)
         report = request_report_from_db(run_id, request_id)
         assert report is not None
         assert report.converged is True
