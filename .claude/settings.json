@@ -1,5 +1,26 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
+    "allow": [
+      "Bash(python -m pytest:*)",
+      "Bash(pytest:*)",
+      "Bash(python -m ruff:*)",
+      "Bash(ruff:*)",
+      "Bash(python -m black:*)",
+      "Bash(black:*)",
+      "Bash(python -m mypy:*)",
+      "Bash(mypy:*)",
+      "Bash(pre-commit run:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)"
+    ],
     "deny": [
       "Read(.env)",
       "Read(.env.local)",
@@ -18,23 +39,14 @@
       {
         "matcher": "Bash",
         "hooks": [
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_dangerous_git.py\""
-          },
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_secrets.py\""
-          }
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_dangerous_git.py\"" },
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_secrets.py\"" }
         ]
       },
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_secrets.py\""
-          }
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_secrets.py\"" }
         ]
       }
     ],
@@ -42,32 +54,28 @@
       {
         "matcher": "Edit|Write",
         "hooks": [
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/format_on_edit.py\"",
-            "timeout": 60
-          }
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/format_on_edit.py\"", "timeout": 60 }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop_gate.py\"",
-            "timeout": 180
-          }
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop_gate.py\"", "timeout": 180 }
         ]
       }
     ],
     "SessionStart": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_start.py\""
-          }
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_start.py\"" }
+        ]
+      }
+    ],
+    "InstructionsLoaded": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/log_instructions.py\"" }
         ]
       }
     ]

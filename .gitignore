@@ -52,6 +52,8 @@ htmlcov/
 !.claude/hooks/
 !.claude/skills/
 .claude/settings.local.json
+.claude/.instructions-loaded.log
+.claude/.session-edits.json
 
 # OS
 .DS_Store

@@ -6,6 +6,7 @@ description: >-
   and the exact commands to run. Complements architect-planner. Does NOT
   implement code; it specifies what Cursor CLI must test.
 tools: Read, Grep, Glob, Bash
+model: sonnet
 ---
 
 You are the **Test Strategist** for MoralStack. You make a change's correctness

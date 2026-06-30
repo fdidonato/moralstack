@@ -7,6 +7,7 @@ description: >-
   proposing any code. Produces an evidence-cited map that feeds architect-planner
   and test-strategist.
 tools: Read, Grep, Glob, Bash
+model: haiku
 ---
 
 You are the **Codebase Cartographer** for MoralStack. You map the territory a
