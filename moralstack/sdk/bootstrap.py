@@ -62,9 +62,56 @@ def _resolve_ledger_embedding_model(config: GovernanceConfig) -> str | None:
     return raw.strip() if raw else None
 
 
+_VALID_EMBEDDER_PROVIDERS = frozenset({"local", "openai"})
+
+
+def _resolve_embedder_provider(config: GovernanceConfig) -> str:
+    """Resolve embedder provider: env > config. Returns 'local' or 'openai'.
+
+    Raises ValueError for any unknown value so misconfiguration fails loudly
+    rather than silently falling back to 'local'.
+    """
+    raw = (os.getenv("MORALSTACK_EMBEDDER_PROVIDER") or "").strip().lower()
+    if raw:
+        if raw not in _VALID_EMBEDDER_PROVIDERS:
+            raise ValueError(
+                f"Unknown MORALSTACK_EMBEDDER_PROVIDER={raw!r}; must be one of {sorted(_VALID_EMBEDDER_PROVIDERS)}"
+            )
+        return raw
+    provider = (getattr(config, "embedder_provider", None) or "local").lower()
+    if provider not in _VALID_EMBEDDER_PROVIDERS:
+        raise ValueError(f"Unknown embedder_provider={provider!r}; must be one of {sorted(_VALID_EMBEDDER_PROVIDERS)}")
+    return provider
+
+
+def _build_embedder(
+    config: GovernanceConfig,
+    api_key: str,
+    base_url: str | None,
+) -> Any:
+    """
+    Factory: returns the correct EmbedderProtocol implementation.
+
+    Raises on misconfiguration (e.g. openai provider without API key).
+    Caller (_build_ledger) wraps this in a try/except.
+    """
+    provider = _resolve_embedder_provider(config)
+    if provider == "openai":
+        from moralstack.orchestration.embedder import OpenAIEmbedder
+
+        return OpenAIEmbedder(
+            api_key=api_key,
+            model=_resolve_ledger_embedding_model(config),
+            base_url=base_url,
+        )
+    from moralstack.orchestration.embedder import LocalEmbedder
+
+    return LocalEmbedder()
+
+
 def _build_ledger(config: GovernanceConfig, api_key: str, base_url: str | None) -> Any:
     """
-    Build ``SemanticDecisionLedger`` with ``OpenAIEmbedder`` and ``InMemoryLedgerStorage``.
+    Build ``SemanticDecisionLedger`` with a provider-selected embedder and ``InMemoryLedgerStorage``.
 
     Returns None when disabled or when construction fails (logged at WARNING); the
     pipeline continues without a fast-path.
@@ -78,7 +125,6 @@ def _build_ledger(config: GovernanceConfig, api_key: str, base_url: str | None) 
         return None
 
     try:
-        from moralstack.orchestration.embedder import OpenAIEmbedder
         from moralstack.orchestration.ledger import SemanticDecisionLedger
         from moralstack.orchestration.ledger_storage import InMemoryLedgerStorage
     except Exception as e:
@@ -86,11 +132,8 @@ def _build_ledger(config: GovernanceConfig, api_key: str, base_url: str | None) 
         return None
 
     try:
-        embedder = OpenAIEmbedder(
-            api_key=api_key,
-            model=_resolve_ledger_embedding_model(config),
-            base_url=base_url,
-        )
+        provider = _resolve_embedder_provider(config)
+        embedder = _build_embedder(config, api_key=api_key, base_url=base_url)
         max_entries = _resolve_ledger_max_entries(config)
         storage = InMemoryLedgerStorage(max_entries=max_entries)
         threshold = _resolve_ledger_threshold(config)
@@ -100,7 +143,8 @@ def _build_ledger(config: GovernanceConfig, api_key: str, base_url: str | None) 
             similarity_threshold=threshold,
         )
         logger.info(
-            "MoralStack SDK: SemanticDecisionLedger enabled (threshold=%.3f, max_entries=%d)",
+            "MoralStack SDK: SemanticDecisionLedger enabled (provider=%s, threshold=%.3f, max_entries=%d)",
+            provider,
             ledger.similarity_threshold,
             max_entries,
         )

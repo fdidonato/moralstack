@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """InstructionsLoaded: logga quali file istruzione vengono caricati. Fail-open."""
+
 from __future__ import annotations
+
 import datetime
 import json
 import os

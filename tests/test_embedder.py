@@ -14,6 +14,8 @@ import pytest
 from moralstack.orchestration.embedder import (
     DEFAULT_EMBEDDING_MODEL,
     EmbedderProtocol,
+    HashingEmbedder,
+    LocalEmbedder,
     OpenAIEmbedder,
     cosine_similarity,
 )
@@ -93,6 +95,21 @@ class TestEmbedderProtocolConformance:
 
         stub: EmbedderProtocol = StubEmbedder()  # Static type-check accepts this.
         assert stub.embed("anything") == [0.0]
+
+    def test_hashing_embedder_is_protocol_compliant(self) -> None:
+        assert hasattr(HashingEmbedder, "embed")
+        assert callable(HashingEmbedder.embed)
+
+    def test_local_embedder_is_protocol_compliant(self) -> None:
+        assert hasattr(LocalEmbedder, "embed")
+        assert callable(LocalEmbedder.embed)
+
+
+def test_default_similarity_threshold_calibration_assumption() -> None:
+    from moralstack.orchestration.ledger import DEFAULT_SIMILARITY_THRESHOLD
+
+    assert DEFAULT_SIMILARITY_THRESHOLD == 0.92
+    assert DEFAULT_EMBEDDING_MODEL == "text-embedding-3-small"
 
 
 # =============================================================================

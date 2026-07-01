@@ -7,7 +7,9 @@ instead of recomputed.
 
 Defines:
 - EmbedderProtocol: structural Protocol for any embedder.
-- OpenAIEmbedder: production implementation using OpenAI text-embedding-3-small.
+- HashingEmbedder: pure-Python deterministic feature-hashing embedder (zero deps).
+- LocalEmbedder: local embedder using fastembed when available, else HashingEmbedder.
+- OpenAIEmbedder: opt-in implementation using OpenAI text-embedding-3-small.
 - cosine_similarity: numpy-free pure function for similarity scoring.
 
 Normative reference: MORALSTACK_MULTITURN_DESIGN.md v1.3 §5.6.
@@ -100,6 +102,90 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 # Default OpenAI embedding model. Override with OPENAI_EMBEDDING_MODEL env var
 # or via the model= argument.
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_HASHING_DIM = 512
+DEFAULT_LOCAL_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+
+
+class HashingEmbedder:
+    """
+    Pure-Python deterministic feature-hashing embedder. Zero external dependencies.
+
+    Tokenizes text on whitespace (lowercased), hashes each token to a bucket index
+    (MD5 mod dim), accumulates term-frequency counts, and L2-normalizes. Produces
+    cosine_similarity = 1.0 for identical inputs; no cross-sentence semantic similarity.
+
+    Suitable for exact-duplicate / near-exact-duplicate detection. When semantic
+    equivalence across differently-worded queries is required, use LocalEmbedder
+    with fastembed or OpenAIEmbedder instead.
+    """
+
+    def __init__(self, dim: int = DEFAULT_HASHING_DIM) -> None:
+        if dim < 1:
+            raise ValueError(f"HashingEmbedder dim must be >= 1, got {dim}")
+        self._dim = dim
+
+    @property
+    def dim(self) -> int:
+        return self._dim
+
+    def embed(self, text: str) -> list[float]:
+        import hashlib
+
+        tokens = text.lower().split()
+        vec = [0.0] * self._dim
+        for token in tokens:
+            h = int(hashlib.md5(token.encode(), usedforsecurity=False).hexdigest(), 16)
+            vec[h % self._dim] += 1.0
+        norm = math.sqrt(sum(x * x for x in vec))
+        if norm > 0.0:
+            return [x / norm for x in vec]
+        return vec
+
+
+class _FastEmbedWrapper:
+    """Internal: wraps fastembed.TextEmbedding as EmbedderProtocol."""
+
+    def __init__(self, model_name: str) -> None:
+        from fastembed import TextEmbedding
+
+        self._model = TextEmbedding(model_name=model_name)
+
+    def embed(self, text: str) -> list[float]:
+        result = list(self._model.embed([text]))
+        return [float(x) for x in result[0]]
+
+
+class LocalEmbedder:
+    """
+    Local embedder. Uses fastembed when available; falls back to HashingEmbedder.
+
+    Configuration resolution priority:
+        1. Constructor argument (model).
+        2. MORALSTACK_LOCAL_EMBEDDING_MODEL environment variable.
+        3. DEFAULT_LOCAL_EMBEDDING_MODEL ("BAAI/bge-small-en-v1.5").
+
+    When fastembed is not installed the fallback HashingEmbedder captures
+    exact-duplicate and near-exact-duplicate cache hits. For genuine semantic
+    equivalence detection across differently-worded queries, install fastembed:
+        pip install moralstack[local-embeddings]
+    """
+
+    def __init__(self, model: str | None = None) -> None:
+        self._model_name = model or os.getenv("MORALSTACK_LOCAL_EMBEDDING_MODEL") or DEFAULT_LOCAL_EMBEDDING_MODEL
+        self._delegate: EmbedderProtocol
+        try:
+            self._delegate = _FastEmbedWrapper(self._model_name)
+            logger.info("LocalEmbedder: using fastembed model %r", self._model_name)
+        except ImportError:
+            self._delegate = HashingEmbedder()
+            logger.info(
+                "LocalEmbedder: fastembed not installed, using HashingEmbedder "
+                "(dim=%d). Install moralstack[local-embeddings] for semantic similarity.",
+                DEFAULT_HASHING_DIM,
+            )
+
+    def embed(self, text: str) -> list[float]:
+        return self._delegate.embed(text)
 
 
 class OpenAIEmbedder:
@@ -133,8 +219,7 @@ class OpenAIEmbedder:
         resolved_api_key = (api_key or os.getenv("OPENAI_API_KEY") or "").strip()
         if not resolved_api_key:
             raise ValueError(
-                "OPENAI_API_KEY is not set. Pass api_key= to OpenAIEmbedder or set "
-                "the OPENAI_API_KEY environment variable."
+                "OPENAI_API_KEY is not set. Pass api_key= to OpenAIEmbedder or set the OPENAI_API_KEY environment variable."
             )
         self._api_key = resolved_api_key
         self.model = model or os.getenv("OPENAI_EMBEDDING_MODEL") or DEFAULT_EMBEDDING_MODEL

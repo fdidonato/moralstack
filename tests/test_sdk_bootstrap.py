@@ -8,7 +8,9 @@ import pytest
 from moralstack.pipeline.deliberation_stack import DeliberationBuildMeta, DeliberationModules
 from moralstack.sdk.bootstrap import (
     _bootstrap_pipeline,
+    _build_ledger,
     _resolve_api_key,
+    _resolve_embedder_provider,
     _resolve_model,
 )
 from moralstack.sdk.config import GovernanceConfig
@@ -92,7 +94,11 @@ class TestBootstrapPipeline:
         )
         with patch("moralstack.sdk.bootstrap.build_deliberation_modules", return_value=(fake_modules, fake_meta)):
             with patch("moralstack.runtime.orchestrator.Orchestrator", return_value=MagicMock()):
-                _bootstrap_pipeline(cfg)
+                with patch(
+                    "moralstack.orchestration.embedder._FastEmbedWrapper.__init__",
+                    side_effect=ImportError("fastembed not installed"),
+                ):
+                    _bootstrap_pipeline(cfg)
 
 
 def test_bootstrap_creates_ledger_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -104,7 +110,11 @@ def test_bootstrap_creates_ledger_by_default(monkeypatch: pytest.MonkeyPatch) ->
 
     from moralstack.orchestration.ledger import SemanticDecisionLedger
 
-    orch = _bootstrap_pipeline(GovernanceConfig())
+    with patch(
+        "moralstack.orchestration.embedder._FastEmbedWrapper.__init__",
+        side_effect=ImportError("fastembed not installed"),
+    ):
+        orch = _bootstrap_pipeline(GovernanceConfig())
     assert orch.ledger is not None
     assert isinstance(orch.ledger, SemanticDecisionLedger)
     assert orch.ledger.similarity_threshold == 0.92
@@ -137,6 +147,81 @@ def test_bootstrap_respects_threshold_env(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.delenv("MORALSTACK_LEDGER_ENABLED", raising=False)
     monkeypatch.setenv("MORALSTACK_LEDGER_SIMILARITY_THRESHOLD", "0.85")
 
-    orch = _bootstrap_pipeline(GovernanceConfig())
+    with patch(
+        "moralstack.orchestration.embedder._FastEmbedWrapper.__init__",
+        side_effect=ImportError("fastembed not installed"),
+    ):
+        orch = _bootstrap_pipeline(GovernanceConfig())
     assert orch.ledger is not None
     assert orch.ledger.similarity_threshold == 0.85
+
+
+def test_build_ledger_uses_local_embedder_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MORALSTACK_LEDGER_ENABLED", raising=False)
+    from moralstack.orchestration.embedder import LocalEmbedder, OpenAIEmbedder
+
+    with patch(
+        "moralstack.orchestration.embedder._FastEmbedWrapper.__init__",
+        side_effect=ImportError("fastembed not installed"),
+    ):
+        ledger = _build_ledger(GovernanceConfig(), api_key="sk-x", base_url=None)
+    assert ledger is not None
+    assert isinstance(ledger._embedder, LocalEmbedder)
+    assert not isinstance(ledger._embedder, OpenAIEmbedder)
+
+
+def test_build_ledger_uses_openai_embedder_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MORALSTACK_LEDGER_ENABLED", raising=False)
+    from moralstack.orchestration.embedder import OpenAIEmbedder
+
+    with patch("openai.OpenAI"):
+        ledger = _build_ledger(
+            GovernanceConfig(embedder_provider="openai"),
+            api_key="sk-test",
+            base_url=None,
+        )
+    assert ledger is not None
+    assert isinstance(ledger._embedder, OpenAIEmbedder)
+
+
+def test_resolve_embedder_provider_env_overrides_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MORALSTACK_EMBEDDER_PROVIDER", "openai")
+    assert _resolve_embedder_provider(GovernanceConfig(embedder_provider="local")) == "openai"
+
+
+def test_resolve_embedder_provider_defaults_to_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MORALSTACK_EMBEDDER_PROVIDER", raising=False)
+    assert _resolve_embedder_provider(GovernanceConfig()) == "local"
+
+
+def test_bootstrap_local_embedder_does_not_require_embedder_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MORALSTACK_LEDGER_ENABLED", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with patch(
+        "moralstack.orchestration.embedder._FastEmbedWrapper.__init__",
+        side_effect=ImportError("fastembed not installed"),
+    ):
+        ledger = _build_ledger(GovernanceConfig(embedder_provider="local"), api_key="", base_url=None)
+    assert ledger is not None
+
+
+def test_bootstrap_ledger_embedder_type_is_local_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("moralstack.sdk.bootstrap.load_env", lambda: None)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy")
+    monkeypatch.delenv("MORALSTACK_LEDGER_ENABLED", raising=False)
+    from moralstack.orchestration.embedder import LocalEmbedder, OpenAIEmbedder
+
+    with patch(
+        "moralstack.orchestration.embedder._FastEmbedWrapper.__init__",
+        side_effect=ImportError("fastembed not installed"),
+    ):
+        orch = _bootstrap_pipeline(GovernanceConfig())
+    assert isinstance(orch.ledger._embedder, LocalEmbedder)
+    assert not isinstance(orch.ledger._embedder, OpenAIEmbedder)
+
+
+def test_build_ledger_openai_provider_without_api_key_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MORALSTACK_LEDGER_ENABLED", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    ledger = _build_ledger(GovernanceConfig(embedder_provider="openai"), api_key="", base_url=None)
+    assert ledger is None

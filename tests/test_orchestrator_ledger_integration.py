@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from moralstack.orchestration.controller import OrchestrationController
 from moralstack.orchestration.process_context import ProcessCallContext
 from moralstack.orchestration.types import (
@@ -223,3 +225,111 @@ class TestLedgerRoundTripHit:
         )
         assert result.is_hit is False
         assert result.reason == "intent_divergence"
+
+
+class TestDoubleEmbeddingEndToEnd:
+    def test_miss_then_store_with_precomputed_calls_embedder_exactly_twice(self) -> None:
+        from moralstack.orchestration.ledger import CachedDecision, SemanticDecisionLedger
+        from moralstack.orchestration.ledger_storage import InMemoryLedgerStorage
+
+        class _CountingStubEmbedder:
+            def __init__(self) -> None:
+                self.call_count = 0
+                self._vectors = {
+                    "first": [1.0, 0.0, 0.0],
+                    "second": [0.0, 1.0, 0.0],
+                }
+
+            def embed(self, text: str) -> list[float]:
+                self.call_count += 1
+                return list(self._vectors.get(text, [1.0, 0.0, 0.0]))
+
+        emb = _CountingStubEmbedder()
+        ledger = SemanticDecisionLedger(
+            embedder=emb,
+            storage=InMemoryLedgerStorage(),
+            similarity_threshold=0.99,
+        )
+        decision = CachedDecision(
+            final_action="NORMAL_COMPLETE",
+            risk_score=0.1,
+            governance_posture="NORMAL",
+        )
+        ledger.store(
+            prompt="first",
+            contract_hash="abc",
+            posture="NORMAL",
+            domain=None,
+            decision=decision,
+            intent_clarity="HIGH",
+            request_type="factual",
+            turn_index=1,
+        )
+        result = ledger.lookup(
+            prompt="second",
+            contract_hash="abc",
+            posture="NORMAL",
+            domain=None,
+            intent_clarity="HIGH",
+            request_type="factual",
+            turn_index=2,
+        )
+        assert result.reason == "below_threshold"
+        ledger.store(
+            prompt="second",
+            contract_hash="abc",
+            posture="NORMAL",
+            domain=None,
+            decision=decision,
+            intent_clarity="HIGH",
+            request_type="factual",
+            turn_index=2,
+            prompt_embedding=result.query_embedding,
+        )
+        assert emb.call_count == 2
+
+
+class TestLedgerDimMismatchPropagation:
+    def test_mixed_dim_entries_raise_valueerror_on_lookup(self) -> None:
+        from moralstack.orchestration.ledger import (
+            CachedDecision,
+            LedgerEntry,
+            LedgerKey,
+            SemanticDecisionLedger,
+        )
+        from moralstack.orchestration.ledger_storage import InMemoryLedgerStorage
+
+        class _ThreeDimEmbedder:
+            def embed(self, _text: str) -> list[float]:
+                return [1.0, 0.0, 0.0]
+
+        storage = InMemoryLedgerStorage()
+        key = LedgerKey(contract_hash="abc", posture="NORMAL", domain=None)
+        entry = LedgerEntry(
+            cached_decision=CachedDecision(
+                final_action="NORMAL_COMPLETE",
+                risk_score=0.1,
+                governance_posture="NORMAL",
+            ),
+            embedding=[1.0, 0.0],
+            original_prompt="stored",
+            intent_clarity="HIGH",
+            request_type="factual",
+            turn_index=1,
+        )
+        storage.put(key, entry)
+        ledger = SemanticDecisionLedger(
+            embedder=_ThreeDimEmbedder(),
+            storage=storage,
+            similarity_threshold=0.5,
+        )
+        with pytest.raises(ValueError, match="equally-sized"):
+            ledger.lookup(
+                prompt="query",
+                contract_hash="abc",
+                posture="NORMAL",
+                domain=None,
+                intent_clarity="HIGH",
+                request_type="factual",
+                turn_index=2,
+            )

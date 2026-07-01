@@ -9,7 +9,7 @@ is controlled exclusively via MORALSTACK_* environment variables loaded from .en
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass
@@ -102,7 +102,10 @@ class GovernanceConfig:
     """
     Cosine similarity threshold for a ledger cache hit. Two queries count as
     semantically equivalent when embedding cosine similarity is at least this value.
-    Default: 0.92. Override with ``MORALSTACK_LEDGER_SIMILARITY_THRESHOLD``.
+    Default: 0.92 (calibrated on OpenAI ``text-embedding-3-small``, 1536 dims).
+    When using ``embedder_provider='local'`` with a different model or dimension,
+    this threshold may need recalibration.
+    Override with ``MORALSTACK_LEDGER_SIMILARITY_THRESHOLD``.
     """
 
     ledger_max_entries: int = 1000
@@ -113,9 +116,21 @@ class GovernanceConfig:
 
     ledger_embedding_model: str | None = None
     """
-    Override the embedding model for the ledger. None means use ``OPENAI_EMBEDDING_MODEL``
-    or the embedder default (``text-embedding-3-small``). Override with
-    ``MORALSTACK_LEDGER_EMBEDDING_MODEL``.
+    Override the embedding model name passed to the ledger embedder. Applies only when
+    ``embedder_provider='openai'`` (selects the OpenAI model, default
+    ``text-embedding-3-small``); ignored for ``embedder_provider='local'`` (model
+    selection for local embedders uses ``MORALSTACK_LOCAL_EMBEDDING_MODEL``).
+    Override with ``MORALSTACK_LEDGER_EMBEDDING_MODEL``.
+    """
+
+    embedder_provider: Literal["local", "openai"] = "local"
+    """
+    Embedding provider for the SemanticDecisionLedger.
+      'local'  — LocalEmbedder: fastembed when installed, else HashingEmbedder (default).
+                 No OPENAI_API_KEY required. Threshold calibrated at 0.92 for OpenAI
+                 text-embedding-3-small may need adjustment for local models.
+      'openai' — OpenAIEmbedder: requires OPENAI_API_KEY.
+    Override with MORALSTACK_EMBEDDER_PROVIDER.
     """
 
     # Internal fields — not exposed to users

@@ -140,6 +140,11 @@ class LedgerResult:
         reason: short machine-readable reason for misses ('no_candidates',
             'below_threshold', 'intent_divergence', 'posture_escalated',
             'turn_index_below_one'). Empty string when is_hit is True.
+        query_embedding: the embedding vector computed during _lookup_impl() for
+            the query prompt, or None when _lookup_impl() returned before calling
+            embed() (posture_escalated, turn_index_below_one, no_candidates paths).
+            Excluded from __hash__, __eq__, and __repr__. Callers may pass this to
+            store(prompt_embedding=...) to skip a redundant embed() call.
     """
 
     is_hit: bool
@@ -147,6 +152,7 @@ class LedgerResult:
     similarity: float
     from_turn: int | None
     reason: str
+    query_embedding: list[float] | None = field(default=None, hash=False, compare=False, repr=False)
 
 
 # =============================================================================
@@ -174,7 +180,8 @@ class SemanticDecisionLedger:
     Store flow:
         1. Skip if posture == 'ESCALATED' (no-op).
         2. Skip if turn_index < 1 (no-op).
-        3. Embed the prompt.
+        3. If prompt_embedding is provided (validated, non-empty, correct dim),
+           use it directly; otherwise embed the prompt via self._embedder.
         4. Persist a LedgerEntry under the LedgerKey.
     """
 
@@ -189,6 +196,7 @@ class SemanticDecisionLedger:
         self._embedder = embedder
         self._storage = storage
         self._threshold = similarity_threshold
+        self._embedding_dim: int | None = None
 
     @property
     def similarity_threshold(self) -> float:
@@ -257,6 +265,8 @@ class SemanticDecisionLedger:
             return LedgerResult(is_hit=False, cached_decision=None, similarity=0.0, from_turn=None, reason="no_candidates")
 
         query_embedding = self._embedder.embed(prompt)
+        if self._embedding_dim is None:
+            self._embedding_dim = len(query_embedding)
 
         best_entry: LedgerEntry | None = None
         best_similarity = -1.0
@@ -273,6 +283,7 @@ class SemanticDecisionLedger:
                 similarity=max(0.0, best_similarity),
                 from_turn=None,
                 reason="below_threshold",
+                query_embedding=query_embedding,
             )
 
         # Secondary intent check: same embedding magnitude is not enough.
@@ -283,6 +294,7 @@ class SemanticDecisionLedger:
                 similarity=best_similarity,
                 from_turn=None,
                 reason="intent_divergence",
+                query_embedding=query_embedding,
             )
 
         return LedgerResult(
@@ -291,6 +303,7 @@ class SemanticDecisionLedger:
             similarity=best_similarity,
             from_turn=best_entry.turn_index,
             reason="",
+            query_embedding=query_embedding,
         )
 
     def store(
@@ -303,6 +316,8 @@ class SemanticDecisionLedger:
         intent_clarity: str,
         request_type: str,
         turn_index: int,
+        *,
+        prompt_embedding: list[float] | None = None,
     ) -> bool:
         """
         Persist a decision under the appropriate LedgerKey.
@@ -339,7 +354,19 @@ class SemanticDecisionLedger:
             )
             return False
 
-        embedding = self._embedder.embed(prompt)
+        if prompt_embedding is not None:
+            if len(prompt_embedding) == 0:
+                raise ValueError("prompt_embedding must not be empty")
+            if self._embedding_dim is not None and len(prompt_embedding) != self._embedding_dim:
+                raise ValueError(
+                    f"prompt_embedding dimension {len(prompt_embedding)} does not match "
+                    f"ledger embedding dimension {self._embedding_dim}"
+                )
+            embedding = list(prompt_embedding)  # defensive copy; caller's list must not be mutated
+        else:
+            embedding = self._embedder.embed(prompt)
+        if self._embedding_dim is None:
+            self._embedding_dim = len(embedding)
         key = LedgerKey(contract_hash=contract_hash, posture=posture, domain=domain)
         entry = LedgerEntry(
             cached_decision=decision,

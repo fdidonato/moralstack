@@ -68,9 +68,12 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   non-empty `system`/`developer` message wins, `mode="opaque"`),
   `_messages_to_turns`, `_build_safe_complete_user_turn`.
 - `bootstrap.py` — `_bootstrap_pipeline(config)` builds the `Orchestrator`;
-  `_resolve_model(config)` resolves the generation model.
+  `_resolve_model(config)` resolves the generation model; `_build_ledger(config)`
+  wires `SemanticDecisionLedger` with a provider-selected embedder (`LocalEmbedder`
+  by default, `OpenAIEmbedder` when `embedder_provider="openai"` or
+  `MORALSTACK_EMBEDDER_PROVIDER=openai`).
 - `config.py` — `GovernanceConfig` (domain_overlay, failure_policy,
-  observability_mode, jsonl_dir, enable_session_tracking, …).
+  observability_mode, jsonl_dir, enable_session_tracking, `embedder_provider`, …).
 - `session.py` — `SessionState`: per-client conversation_id + turn counter,
   wraps a `SessionStore`.
 - `session_store.py` — `SessionStoreProtocol`, `InMemorySessionStore`.
@@ -122,8 +125,14 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 - `convergence.py`, `convergence_evaluator.py` — convergence engine.
 - `conversation_state.py` — `ConversationGovernanceState`, `TurnDecisionSummary`.
 - `conversational_fast_path.py` — `ConversationalFastPathRunner` (cache-driven skip).
+- `embedder.py` — `EmbedderProtocol`, `HashingEmbedder` (pure-Python fallback),
+  `LocalEmbedder` (fastembed when installed, else `HashingEmbedder`; default via
+  `GovernanceConfig.embedder_provider="local"`), `OpenAIEmbedder` (opt-in OpenAI),
+  `cosine_similarity`. Provider selection: config `embedder_provider` or env
+  `MORALSTACK_EMBEDDER_PROVIDER`; optional dep `moralstack[local-embeddings]`.
 - `ledger.py`, `ledger_storage.py` — `SemanticDecisionLedger`, `CachedDecision`,
-  `LedgerResult`.
+  `LedgerResult` (`query_embedding` carries the lookup-time vector for reuse in
+  `store(prompt_embedding=…)`, eliminating double-embedding on miss→store).
 - `refusal_handler.py`, `refusal_context.py`, `safe_refusal_generator.py` — refusal text.
 - `response_assembler.py` — `ResponseAssembler` builds the `FinalResponse`.
 - `speculative_overlap.py` — `SpeculativeOverlapHandle` (parallel draft + risk).

@@ -680,6 +680,12 @@ class OrchestrationController:
             if isinstance(meta_request_type, str):
                 request_type = meta_request_type
 
+        # Reuse embedding computed during lookup to avoid a second embed() call.
+        prompt_embedding: list[float] | None = None
+        lookup_result = call_ctx.ledger_lookup
+        if lookup_result is not None:
+            prompt_embedding = getattr(lookup_result, "query_embedding", None)
+
         try:
             self._ledger.store(
                 prompt=request.prompt,
@@ -690,6 +696,7 @@ class OrchestrationController:
                 intent_clarity=intent_clarity,
                 request_type=request_type,
                 turn_index=turn_index,
+                prompt_embedding=prompt_embedding,
             )
         except Exception as e:
             # The ledger is best-effort; a store failure must never break the response flow.

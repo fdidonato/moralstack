@@ -2,6 +2,7 @@
 
 import pytest
 
+from moralstack.sdk.bootstrap import _resolve_embedder_provider
 from moralstack.sdk.config import GovernanceConfig
 
 
@@ -58,3 +59,18 @@ class TestGovernanceConfigDefaults:
         cfg = GovernanceConfig()
         cfg.api_key = "sk-new"
         assert cfg.api_key == "sk-new"
+
+
+class TestGovernanceConfigEmbedderProvider:
+    def test_embedder_provider_defaults_to_local(self) -> None:
+        assert GovernanceConfig().embedder_provider == "local"
+
+    def test_embedder_provider_accepts_openai(self) -> None:
+        assert GovernanceConfig(embedder_provider="openai").embedder_provider == "openai"
+
+    def test_embedder_provider_rejects_invalid_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("MORALSTACK_EMBEDDER_PROVIDER", raising=False)
+        cfg = GovernanceConfig()
+        object.__setattr__(cfg, "embedder_provider", "sagemaker")
+        with pytest.raises(ValueError, match="sagemaker"):
+            _resolve_embedder_provider(cfg)

@@ -130,11 +130,23 @@ When a `SemanticDecisionLedger` is configured and `conversation_id` is set:
   ELEVATED if sensitive overlay, else NORMAL), contract hash, intent_clarity,
   request_type, turn index.
 - `_lookup_cached_decision(...)` → `LedgerResult` recorded on `call_ctx`.
+  `LedgerResult.query_embedding` carries the vector computed during lookup (None
+  on early-skip paths where `embed()` is never called).
 - On a hit, `ConversationalFastPathRunner.is_safe_to_apply(...)` gates reuse. If
   safe: `apply_cached_decision(...)` patches `decision` and `route`, re-evaluates
   `hard_signal_refuse`, sets `ledger_hit_applied=True`, emits
   `LEDGER_FAST_PATH_APPLIED`. If not safe: emits `LEDGER_FAST_PATH_NOT_APPLIED`
-  with a gate reason and deliberation proceeds.
+  with a gate reason and deliberation proceeds. On a hit the controller does NOT
+  call `_maybe_store_in_ledger()` (deliberation is bypassed).
+- On a miss, the embedding computed during lookup is reused in `_maybe_store_in_ledger()`
+  via `prompt_embedding=call_ctx.ledger_lookup.query_embedding`, avoiding a redundant
+  `embed()` call. On `no_candidates` misses, `query_embedding` is None and `store()`
+  calls `embed()` normally.
+
+**Embedder provider** (as of v0.6.1): `GovernanceConfig.embedder_provider` selects
+the implementation (`"local"` default → `LocalEmbedder` with fastembed or
+`HashingEmbedder` fallback; `"openai"` → `OpenAIEmbedder`). `OPENAI_API_KEY` is not
+required for the embedder when `embedder_provider="local"`.
 
 ## 9. Dispatch (`controller.py:2345-end`)
 
@@ -240,4 +252,5 @@ Emitted across the flow (DB rows + JSONL envelopes per observability mode):
   the proxy flushes in `_finalize_request` (`proxy.py:702-703`).
 - `_apply_conversation_metadata_to_result` (controller.py:319-413) builds
   `conversation_governance_state_out` and stores the decision in the ledger via
-  `_maybe_store_in_ledger`.
+  `_maybe_store_in_ledger` (reuses `call_ctx.ledger_lookup.query_embedding` when
+  available to skip the second `embed()` call).
