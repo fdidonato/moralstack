@@ -3,8 +3,8 @@
   Shared helpers for the MoralStack AI agentic workflow scripts (PowerShell).
 
 .DESCRIPTION
-  DRY helpers used by run_codex_plan_review.ps1, run_codex_diff_review.ps1,
-  run_cursor_implementation.ps1, collect_git_diff.ps1. Dot-source this file:
+  DRY helpers used by run_cursor_implementation.ps1, collect_git_diff.ps1.
+  Dot-source this file:
 
       . "$PSScriptRoot\_common.ps1"
 
@@ -32,17 +32,6 @@ function Confirm-Dir {
         New-Item -ItemType Directory -Force -Path $Path | Out-Null
     }
     return (Resolve-Path -LiteralPath $Path).Path
-}
-
-function Resolve-CodexCmd {
-    <#
-      Resolve the Codex CLI. Override with $env:CODEX_CMD (default: 'codex').
-      Returns the command string, or $null if not found.
-    #>
-    $cmd = if ($env:CODEX_CMD) { $env:CODEX_CMD } else { "codex" }
-    $found = Get-Command $cmd -ErrorAction SilentlyContinue
-    if ($found) { return $cmd }
-    return $null
 }
 
 function Resolve-CursorAgentCmd {

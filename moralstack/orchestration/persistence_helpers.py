@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from moralstack.persistence.write_queue import (
+from moralstack.observability.emit_helpers import (
     async_persist_decision_trace,
     async_persist_llm_call,
 )

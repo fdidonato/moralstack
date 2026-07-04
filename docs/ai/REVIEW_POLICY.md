@@ -1,8 +1,8 @@
 # Review policy — what blocks, what doesn't, when to proceed
 
 This policy governs how Codex's findings (plan review and diff review) gate the
-workflow. The coordinator agents classify every finding into one of four buckets
-and **never hide a blocker**.
+workflow. `/ai-review-plan-with-codex` and `/ai-review-diff-with-codex`
+classify every finding into one of four buckets and **never hide a blocker**.
 
 ## Classification
 

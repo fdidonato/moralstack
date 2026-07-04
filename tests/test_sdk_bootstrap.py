@@ -69,9 +69,10 @@ class TestBootstrapPipeline:
 
     def test_raises_pipeline_error_on_module_failure(self):
         cfg = GovernanceConfig(api_key="sk-test")
-        with patch("moralstack.sdk.bootstrap.build_deliberation_modules", side_effect=RuntimeError("OpenAI down")):
-            with pytest.raises(GovernancePipelineError, match="deliberation modules"):
-                _bootstrap_pipeline(cfg)
+        with patch("moralstack.sdk.bootstrap.load_env", return_value=False):
+            with patch("moralstack.sdk.bootstrap.build_deliberation_modules", side_effect=RuntimeError("OpenAI down")):
+                with pytest.raises(GovernancePipelineError, match="deliberation modules"):
+                    _bootstrap_pipeline(cfg)
 
     def test_api_key_present_does_not_raise_config_error(self):
         cfg = GovernanceConfig(api_key="sk-test")
@@ -92,13 +93,14 @@ class TestBootstrapPipeline:
             hindsight_model="gpt-4o",
             perspectives_model="gpt-4o",
         )
-        with patch("moralstack.sdk.bootstrap.build_deliberation_modules", return_value=(fake_modules, fake_meta)):
-            with patch("moralstack.runtime.orchestrator.Orchestrator", return_value=MagicMock()):
-                with patch(
-                    "moralstack.orchestration.embedder._FastEmbedWrapper.__init__",
-                    side_effect=ImportError("fastembed not installed"),
-                ):
-                    _bootstrap_pipeline(cfg)
+        with patch("moralstack.sdk.bootstrap.load_env", return_value=False):
+            with patch("moralstack.sdk.bootstrap.build_deliberation_modules", return_value=(fake_modules, fake_meta)):
+                with patch("moralstack.runtime.orchestrator.Orchestrator", return_value=MagicMock()):
+                    with patch(
+                        "moralstack.orchestration.embedder._FastEmbedWrapper.__init__",
+                        side_effect=ImportError("fastembed not installed"),
+                    ):
+                        _bootstrap_pipeline(cfg)
 
 
 def test_bootstrap_creates_ledger_by_default(monkeypatch: pytest.MonkeyPatch) -> None:

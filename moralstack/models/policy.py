@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from moralstack.models.base import GenerationConfig, GenerationOverrides, GenerationResult
+from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
 from moralstack.utils.openai_params import (
     completion_tokens_param,
     supports_predicted_output,
@@ -177,10 +178,10 @@ class OpenAIPolicy:
         prediction: dict[str, str] | None = None,
         model_override: str | None = None,
         omit_unset: bool = False,
-    ) -> tuple[str, int, str, int, int]:
+    ) -> tuple[str, int, str, int, int, TokenUsageSource]:
         """
         Completions call with retry on transient errors (429/503/timeout).
-        Returns (text, tokens_used, finish_reason, prompt_tokens, completion_tokens).
+        Returns (text, tokens_used, finish_reason, prompt_tokens, completion_tokens, token_usage_source).
         Uses classifier and jittered backoff.
 
         Args:
@@ -236,17 +237,14 @@ class OpenAIPolicy:
                 response = self.client.chat.completions.create(**kwargs)
                 choice = response.choices[0]
                 text = (choice.message.content or "").strip()
-                usage = response.usage
-                tokens = usage.total_tokens if usage else 0
-                prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
-                completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
-                if prompt_tokens is None or completion_tokens is None:
-                    prompt_tokens = int(tokens * 0.7) if tokens else 0
-                    completion_tokens = tokens - prompt_tokens if tokens else 0
+                token_usage = TokenUsage.from_openai_usage(response.usage)
+                tokens = token_usage.total_tokens
+                prompt_tokens = token_usage.input_tokens
+                completion_tokens = token_usage.output_tokens
                 if self._cost_tracker is not None and hasattr(self._cost_tracker, "add_call"):
                     self._cost_tracker.add_call(effective_model, prompt_tokens, completion_tokens)
                 reason = choice.finish_reason or "stop"
-                return text, tokens, reason, prompt_tokens, completion_tokens
+                return text, tokens, reason, prompt_tokens, completion_tokens, token_usage.source
             except Exception as e:
                 last_error = e
                 if classify_provider_error(e) == "transient" and attempt < self._max_retries - 1:
@@ -327,7 +325,7 @@ class OpenAIPolicy:
                 response_format = getattr(config, "response_format", None)
             max_tokens, temperature, top_p = self._apply_overrides(overrides, max_tokens, temperature, top_p)
 
-        text, tokens_used, finish_reason, p_tok, c_tok = self._complete(
+        text, tokens_used, finish_reason, p_tok, c_tok, source = self._complete(
             messages,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -346,6 +344,7 @@ class OpenAIPolicy:
             system_used=system if system else None,
             prompt_tokens=p_tok,
             completion_tokens=c_tok,
+            token_usage_source=source,
         )
 
     def generate_messages(
@@ -382,7 +381,7 @@ class OpenAIPolicy:
                 response_format = getattr(config, "response_format", None)
             max_tokens, temperature, top_p = self._apply_overrides(overrides, max_tokens, temperature, top_p)
 
-        text, tokens_used, finish_reason, p_tok, c_tok = self._complete(
+        text, tokens_used, finish_reason, p_tok, c_tok, source = self._complete(
             messages,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -402,6 +401,7 @@ class OpenAIPolicy:
             messages_used=messages,
             prompt_tokens=p_tok,
             completion_tokens=c_tok,
+            token_usage_source=source,
         )
 
     def rewrite(

@@ -13,8 +13,9 @@ import logging
 import threading
 from typing import Sequence
 
-from moralstack.observability.events import EventEnvelope
+from moralstack.observability.events import EVENT_LLM_CALL, EventEnvelope
 from moralstack.observability.read_store import SqliteReadStore
+from moralstack.observability.request_token_accumulator import record_llm_call_usage
 from moralstack.observability.write_queue import ObservabilityWriteQueue
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,21 @@ class ObservabilityService:
 
     def emit(self, envelope: EventEnvelope) -> None:
         """Fire-and-forget: enqueue envelope for async dispatch. Never raises."""
+        if envelope.event_type == EVENT_LLM_CALL and envelope.run_id and envelope.request_id:
+            if envelope.payload.get("billable_provider_call", True):
+                try:
+                    token_json = envelope.payload.get("token_usage_json")
+                    if token_json is not None and not isinstance(token_json, str):
+                        import json as _json
+
+                        token_json = _json.dumps(token_json)
+                    record_llm_call_usage(
+                        envelope.run_id,
+                        envelope.request_id,
+                        token_json if isinstance(token_json, str) else None,
+                    )
+                except Exception:
+                    logger.debug("token usage accumulation failed", exc_info=True)
         try:
             self._queue.submit_envelope(envelope)
         except Exception as exc:
@@ -49,6 +65,22 @@ class ObservabilityService:
 
     def emit_batch(self, envelopes: Sequence[EventEnvelope]) -> None:
         """Fire-and-forget batch emit. Never raises."""
+        for envelope in envelopes:
+            if envelope.event_type == EVENT_LLM_CALL and envelope.run_id and envelope.request_id:
+                if envelope.payload.get("billable_provider_call", True):
+                    try:
+                        token_json = envelope.payload.get("token_usage_json")
+                        if token_json is not None and not isinstance(token_json, str):
+                            import json as _json
+
+                            token_json = _json.dumps(token_json)
+                        record_llm_call_usage(
+                            envelope.run_id,
+                            envelope.request_id,
+                            token_json if isinstance(token_json, str) else None,
+                        )
+                    except Exception:
+                        logger.debug("token usage accumulation failed", exc_info=True)
         try:
             if not envelopes:
                 return

@@ -10,15 +10,15 @@ import pytest
 from moralstack.observability import obs, router
 from moralstack.observability import service as service_module
 from moralstack.observability.context import set_current_request_id, set_current_run_id
-from moralstack.observability.service import get_obs
-from moralstack.observability.sinks import sqlite_sink as db_module
-from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
-from moralstack.persistence.sink import (
+from moralstack.observability.emit_helpers import (
     persist_decision_trace,
     persist_llm_call,
     persist_orchestration_event,
     persist_orchestration_events_batch,
 )
+from moralstack.observability.service import get_obs
+from moralstack.observability.sinks import sqlite_sink as db_module
+from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
 from moralstack.reports.markdown_export import export_request_markdown
 from moralstack.reports.runtime_decisions import (
     build_execution_strategy,
@@ -163,7 +163,7 @@ def test_build_execution_strategy_from_risk_trace():
 
 def test_llm_calls_extended_columns_roundtrip(tmp_path, monkeypatch):
     """Nullable llm_calls semantic columns persist and read back."""
-    from moralstack.persistence.sink import persist_llm_call
+    from moralstack.observability.emit_helpers import persist_llm_call
 
     dbp = str(tmp_path / "lc.db")
     monkeypatch.setenv("MORALSTACK_DB_PATH", dbp)

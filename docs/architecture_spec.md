@@ -1247,7 +1247,7 @@ def handle_error(error: MoralStackError, state: DeliberationState) -> FinalRespo
 ### 7.4 Logging policy
 
 - **No silent failure**: Every caught exception in the critical path (orchestration, controller, response assembler, deliberation runner) is logged with an appropriate level (warning for fallback/degradation, error for critical failure).
-- **Structured context**: When available, logs include `request_id` and `run_id` (from `moralstack.persistence.context`) so that failures can be correlated with requests and runs.
+- **Structured context**: When available, logs include `request_id` and `run_id` (from `moralstack.observability.context`) so that failures can be correlated with requests and runs.
 - **Implementation**: Orchestration code uses module loggers and includes `request_id`/`run_id` in log messages.
 
 ### 7.5 Provider error classification and retry

@@ -10,13 +10,14 @@ FIX PERFORMANCE: Aggiunto caching per evitare ricalcolo su input identici.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, cast
 
 from moralstack.core.types import PolicyLLMProtocol, Turn
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
+from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.retry import RETRY_SIMULATOR
 from moralstack.prompts.simulator_prompt import (
@@ -122,6 +123,8 @@ class SimulationResult:
     tokens_used: int = 0
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    token_usage_source: TokenUsageSource = "unknown"
+    from_cache: bool = False
 
     @classmethod
     def empty(cls) -> SimulationResult:
@@ -352,7 +355,7 @@ class LLMConsequenceSimulator:
                 context_fingerprint=context_fingerprint,
             )
             if cached_result is not None:
-                return cast(SimulationResult, cached_result)
+                return replace(cast(SimulationResult, cached_result), from_cache=True)
 
         k = num_scenarios or self.config.default_num_scenarios
         k = max(1, min(k, 10))  # Limita range
@@ -415,9 +418,11 @@ class LLMConsequenceSimulator:
         tokens_used = 0
         prompt_tokens: int | None = None
         completion_tokens: int | None = None
+        attempt_token_usage: TokenUsage | None = None
 
         for attempt in range(self.config.max_retries):
             parse_attempts = attempt + 1
+            attempt_token_usage = None
 
             try:
                 if hasattr(self.policy, "generate_messages"):
@@ -446,7 +451,8 @@ class LLMConsequenceSimulator:
                     )
 
                 raw_response = result.text
-                tokens_used = int(getattr(result, "tokens_used", 0) or 0)
+                attempt_token_usage = TokenUsage.from_generation_result(result)
+                tokens_used = attempt_token_usage.total_tokens
                 prompt_tokens = getattr(result, "prompt_tokens", None)
                 completion_tokens = getattr(result, "completion_tokens", None)
 
@@ -462,20 +468,25 @@ class LLMConsequenceSimulator:
                     tokens_used=tokens_used,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    token_usage_source=attempt_token_usage.source,
                 )
             except (JSONParseError, Exception) as e:
                 last_error = e
-                if attempt > 0:
+                if attempt_token_usage is not None:
                     try:
-                        from moralstack.persistence.write_queue import async_persist_llm_call
+                        from moralstack.observability.emit_helpers import async_persist_llm_call
 
                         async_persist_llm_call(
                             phase="simulator_retry",
                             module="simulator",
-                            action=f"retry_attempt_{parse_attempts}",
-                            prompt=f"Retry reason: {e!s}",
+                            action=f"retry_failed_attempt_{parse_attempts}",
+                            prompt=f"Retry reason: {str(e)[:200]}",
                             raw_response=raw_response or "",
                             duration_ms=0.0,
+                            attempts=parse_attempts,
+                            call_outcome="retry_failed",
+                            billable_provider_call=True,
+                            token_usage_json=attempt_token_usage.to_json(),
                         )
                     except Exception:
                         pass
@@ -514,6 +525,7 @@ class LLMConsequenceSimulator:
         total_completion_tokens = 0
         has_prompt_tokens = False
         has_completion_tokens = False
+        seed_token_usages: list[TokenUsage] = []
 
         # Seleziona seed appropriati
         selected_seeds = self._select_seeds(num_scenarios)
@@ -528,6 +540,8 @@ class LLMConsequenceSimulator:
 
             for attempt in range(self.config.max_retries):
                 total_attempts += 1
+                attempt_token_usage: TokenUsage | None = None
+                seed_raw_response = ""
 
                 try:
                     if hasattr(self.policy, "generate_messages"):
@@ -555,9 +569,11 @@ class LLMConsequenceSimulator:
                             config=self._generation_config,
                         )
 
-                    raw_responses.append(result.text)
+                    seed_raw_response = result.text
+                    attempt_token_usage = TokenUsage.from_generation_result(result)
+                    raw_responses.append(seed_raw_response)
                     prompts_used.append(prompt if attempt == 0 else f"{prompt}\n\n{RETRY_PROMPT}")
-                    total_tokens_used += int(getattr(result, "tokens_used", 0) or 0)
+                    total_tokens_used += attempt_token_usage.total_tokens
                     pt = getattr(result, "prompt_tokens", None)
                     if pt is not None:
                         total_prompt_tokens += int(pt)
@@ -566,14 +582,34 @@ class LLMConsequenceSimulator:
                     if ct is not None:
                         total_completion_tokens += int(ct)
                         has_completion_tokens = True
-                    parsed = parse_simulator_response(result.text)
+                    parsed = parse_simulator_response(seed_raw_response)
+                    seed_token_usages.append(attempt_token_usage)
                     consequences.extend(parsed)
                     break
-                except (JSONParseError, Exception):
+                except (JSONParseError, Exception) as e:
+                    if attempt_token_usage is not None:
+                        try:
+                            from moralstack.observability.emit_helpers import async_persist_llm_call
+
+                            async_persist_llm_call(
+                                phase="simulator_retry",
+                                module="simulator",
+                                action=f"retry_failed_attempt_{attempt + 1}",
+                                prompt=f"Retry reason: {str(e)[:200]}",
+                                raw_response=seed_raw_response or "",
+                                duration_ms=0.0,
+                                attempts=attempt + 1,
+                                call_outcome="retry_failed",
+                                billable_provider_call=True,
+                                token_usage_json=attempt_token_usage.to_json(),
+                            )
+                        except Exception:
+                            pass
                     continue
 
         if not consequences:
             raise RuntimeError(f"Simulator produced no valid structured output after {total_attempts} attempts")
+        combined_source = TokenUsage.combine(seed_token_usages).source if seed_token_usages else "missing"
         return self._build_result(
             consequences=consequences,
             raw_response="\n---\n".join(raw_responses),
@@ -583,6 +619,7 @@ class LLMConsequenceSimulator:
             tokens_used=total_tokens_used,
             prompt_tokens=(total_prompt_tokens if has_prompt_tokens else None),
             completion_tokens=(total_completion_tokens if has_completion_tokens else None),
+            token_usage_source=combined_source,
         )
 
     def _select_seeds(self, num_scenarios: int) -> list[str]:
@@ -617,6 +654,7 @@ class LLMConsequenceSimulator:
         tokens_used: int = 0,
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
+        token_usage_source: TokenUsageSource = "unknown",
     ) -> SimulationResult:
         """
         Costruisce SimulationResult con metriche aggregate.
@@ -670,6 +708,7 @@ class LLMConsequenceSimulator:
             tokens_used=tokens_used,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            token_usage_source=token_usage_source,
         )
 
 

@@ -62,6 +62,10 @@ class ReadStore(Protocol):
 
     def get_llm_calls_for_request(self, run_id: str, request_id: str) -> list[dict[str, Any]]: ...
 
+    def get_token_usage_totals(self, run_id: str, request_id: str) -> dict[str, Any] | None: ...
+
+    def get_token_usage_breakdown(self, run_id: str, request_id: str) -> list[dict[str, Any]]: ...
+
     def get_decision_traces_for_request(self, run_id: str, request_id: str) -> list[dict[str, Any]]: ...
 
     def get_orchestration_events_for_request(self, run_id: str, request_id: str) -> list[dict[str, Any]]: ...
@@ -285,6 +289,70 @@ class SqliteReadStore:
             return [dict(r) for r in rows]
         except Exception as e:
             logger.warning("observability[read_store]: get_llm_calls_for_request failed: %s", e)
+            return []
+
+    def get_token_usage_totals(self, run_id: str, request_id: str) -> dict[str, Any] | None:
+        path = get_db_path()
+        if not path:
+            return None
+        try:
+            conn = _get_connection(path)
+            if not _table_exists(conn, "request_token_usage"):
+                conn.close()
+                return None
+            row = conn.execute(
+                """
+                SELECT input_tokens, output_tokens, total_tokens, llm_call_count,
+                       missing_usage_count, estimated_usage_count,
+                       usage_may_be_incomplete, incomplete_reason
+                FROM request_token_usage
+                WHERE run_id = ? AND request_id = ?
+                """,
+                (run_id, request_id),
+            ).fetchone()
+            conn.close()
+            if not row:
+                return None
+            return {
+                "input_tokens": int(row["input_tokens"] or 0),
+                "output_tokens": int(row["output_tokens"] or 0),
+                "total_tokens": int(row["total_tokens"] or 0),
+                "llm_call_count": int(row["llm_call_count"] or 0),
+                "missing_usage_count": int(row["missing_usage_count"] or 0),
+                "estimated_usage_count": int(row["estimated_usage_count"] or 0),
+                "usage_may_be_incomplete": bool(row["usage_may_be_incomplete"]),
+                "incomplete_reason": row["incomplete_reason"],
+            }
+        except Exception as e:
+            logger.warning("observability[read_store]: get_token_usage_totals failed: %s", e)
+            return None
+
+    def get_token_usage_breakdown(self, run_id: str, request_id: str) -> list[dict[str, Any]]:
+        path = get_db_path()
+        if not path:
+            return []
+        try:
+            conn = _get_connection(path)
+            rows = conn.execute(
+                """
+                SELECT module, phase, action, model,
+                       SUM(input_tokens) AS input_tokens,
+                       SUM(output_tokens) AS output_tokens,
+                       SUM(total_tokens) AS total_tokens,
+                       COUNT(*) AS calls,
+                       SUM(token_usage_missing) AS missing_usage
+                FROM llm_calls
+                WHERE run_id = ? AND request_id = ?
+                  AND COALESCE(billable_provider_call, 1) = 1
+                GROUP BY module, phase, action, model
+                ORDER BY module, phase, action, model
+                """,
+                (run_id, request_id),
+            ).fetchall()
+            conn.close()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning("observability[read_store]: get_token_usage_breakdown failed: %s", e)
             return []
 
     def get_decision_traces_for_request(self, run_id: str, request_id: str) -> list[dict[str, Any]]:

@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from moralstack.observability.token_usage import TokenUsage
 from moralstack.orchestration.refusal_context import RefusalContext
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ class RefusalGenerationResult:
     attempts: int = 1
     leak_retried: bool = False
     leaked_terms: tuple[str, ...] = field(default_factory=tuple)
+    token_usage: TokenUsage = field(default_factory=lambda: TokenUsage(0, 0, 0, "missing"))
 
 
 # Language-agnostic: structural marker when LLM fails or unavailable.
@@ -542,18 +544,18 @@ def _llm_refusal_call(
     llm_client: _LLMGenerateProtocol,
     system: str,
     user_msg: str,
-) -> str:
-    """Single LLM round-trip for refusal generation. Returns stripped text or ''."""
+) -> tuple[str, TokenUsage]:
+    """Single LLM round-trip for refusal generation. Returns stripped text and token usage."""
     try:
         result = llm_client.generate(prompt=user_msg, system=system)
         text = getattr(result, "text", None) or (str(result) if result else "")
-        return (text or "").strip()
+        return (text or "").strip(), TokenUsage.from_generation_result(result)
     except Exception as e:
         logger.warning(
             "generate_llm_safe_refusal: LLM fallito, uso fallback: %s",
             str(e)[:100],
         )
-        return ""
+        return "", TokenUsage(0, 0, 0, "missing")
 
 
 def generate_llm_safe_refusal_detailed(
@@ -602,9 +604,11 @@ def generate_llm_safe_refusal_detailed(
             system_prompt=system,
             user_prompt=user_msg,
             attempts=0,
+            token_usage=TokenUsage(0, 0, 0, "missing"),
         )
 
-    text = _llm_refusal_call(llm_client=llm_client, system=system, user_msg=user_msg)
+    text, first_usage = _llm_refusal_call(llm_client=llm_client, system=system, user_msg=user_msg)
+    token_usages: list[TokenUsage] = [first_usage]
     attempts = 1
 
     leaked_terms = _detect_refusal_leaks(text, refusal_context, rational)
@@ -631,7 +635,8 @@ def generate_llm_safe_refusal_detailed(
             refusal_context=refusal_context,
             leak_avoidance_terms=leaked_terms,
         )
-        retry_text = _llm_refusal_call(llm_client=llm_client, system=system, user_msg=retry_user_msg)
+        retry_text, retry_usage = _llm_refusal_call(llm_client=llm_client, system=system, user_msg=retry_user_msg)
+        token_usages.append(retry_usage)
         attempts += 1
         leak_retried = True
         if len(retry_text) > 80:
@@ -650,6 +655,7 @@ def generate_llm_safe_refusal_detailed(
             attempts=attempts,
             leak_retried=leak_retried,
             leaked_terms=leaked_terms,
+            token_usage=TokenUsage.combine(token_usages),
         )
 
     return RefusalGenerationResult(
@@ -659,6 +665,7 @@ def generate_llm_safe_refusal_detailed(
         attempts=attempts,
         leak_retried=leak_retried,
         leaked_terms=leaked_terms,
+        token_usage=TokenUsage.combine(token_usages),
     )
 
 

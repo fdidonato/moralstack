@@ -155,6 +155,8 @@ class RefusalHandler:
             raw_response=refusal_content,
             attempts=refusal_result.attempts,
             sequence_in_cycle=6,
+            token_usage_json=refusal_result.token_usage.to_json(),
+            billable_provider_call=refusal_result.attempts > 0,
         )
         try:
             self._events.emit_decision_trace(

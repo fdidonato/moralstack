@@ -1,7 +1,6 @@
 """
-Persistence sink — thin wrappers over moralstack.observability.
+Observability emit helpers — thin wrappers over moralstack.observability.
 
-Deprecated: use moralstack.observability directly.
 All persist_* functions enqueue high-frequency telemetry asynchronously:
 they construct an EventEnvelope and call get_obs().emit*().
 The uow= parameter is accepted but ignored (atomicity is handled by SqliteEventSink).
@@ -27,6 +26,7 @@ from moralstack.observability.events import (
     EVENT_ORCHESTRATION_EVENT,
     make_envelope,
 )
+from moralstack.observability.service import get_obs
 
 logger = logging.getLogger(__name__)
 
@@ -460,3 +460,83 @@ def persist_orchestration_events_batch(
     except Exception as e:
         logger.warning("persistence: persist_orchestration_events_batch failed: %s", e)
         return False
+
+
+def async_persist_llm_call(**kwargs: Any) -> None:
+    """Fire-and-forget LLM call persist via observability write queue."""
+    run_id = kwargs.get("run_id") or get_current_run_id()
+    request_id = kwargs.get("request_id") or get_current_request_id()
+    if not run_id or not request_id:
+        return
+    cycle_val = kwargs.get("cycle") if "cycle" in kwargs else get_current_cycle()
+    now = int(time.time() * 1000)
+    envelope = make_envelope(
+        EVENT_LLM_CALL,
+        run_id=run_id,
+        request_id=request_id,
+        cycle=cycle_val,
+        session_id=kwargs.get("session_id") or get_current_session_id(),
+        turn_number=kwargs.get("turn_number") or get_current_turn_number(),
+        payload={
+            "phase": kwargs.get("phase", ""),
+            "module": kwargs.get("module", ""),
+            "action": kwargs.get("action", ""),
+            "model": kwargs.get("model", ""),
+            "started_at": kwargs.get("started_at", now),
+            "duration_ms": kwargs.get("duration_ms"),
+            "prompt": kwargs.get("prompt", ""),
+            "system_prompt": kwargs.get("system_prompt", ""),
+            "raw_response": kwargs.get("raw_response", ""),
+            "parsed_json": kwargs.get("parsed_json"),
+            "parsed_summary_json": kwargs.get("parsed_summary_json"),
+            "token_usage_json": kwargs.get("token_usage_json"),
+            "attempts": kwargs.get("attempts"),
+            "error": kwargs.get("error"),
+            "sequence_in_cycle": kwargs.get("sequence_in_cycle"),
+            "call_kind": kwargs.get("call_kind"),
+            "call_outcome": kwargs.get("call_outcome"),
+            "cache_status": kwargs.get("cache_status"),
+            "related_event_id": kwargs.get("related_event_id"),
+            "billable_provider_call": kwargs.get("billable_provider_call", True),
+        },
+    )
+    get_obs().emit(envelope)
+
+
+def async_persist_decision_trace(**kwargs: Any) -> None:
+    """Fire-and-forget decision trace persist via observability write queue."""
+    run_id = kwargs.get("run_id") or get_current_run_id()
+    request_id = kwargs.get("request_id") or get_current_request_id()
+    if not run_id or not request_id:
+        return
+    envelope = make_envelope(
+        EVENT_DECISION_TRACE,
+        run_id=run_id,
+        request_id=request_id,
+        session_id=kwargs.get("session_id") or get_current_session_id(),
+        turn_number=kwargs.get("turn_number") or get_current_turn_number(),
+        payload={
+            "stage": kwargs.get("stage", ""),
+            "sequence": kwargs.get("sequence", 0),
+            "trace_json": kwargs.get("trace_json", ""),
+            "created_at": kwargs.get("created_at", int(time.time() * 1000)),
+        },
+    )
+    get_obs().emit(envelope)
+
+
+def async_persist_debug_event(**kwargs: Any) -> None:
+    """Fire-and-forget debug event persist via observability write queue."""
+    run_id = kwargs.get("run_id") or get_current_run_id()
+    if not run_id:
+        return
+    payload = kwargs.get("payload") or {}
+    envelope = make_envelope(
+        EVENT_DEBUG_EVENT,
+        run_id=run_id,
+        request_id=kwargs.get("request_id") or get_current_request_id(),
+        session_id=kwargs.get("session_id") or get_current_session_id(),
+        turn_number=kwargs.get("turn_number") or get_current_turn_number(),
+        payload=payload if isinstance(payload, dict) else {"payload": payload},
+    )
+    get_obs().emit(envelope)

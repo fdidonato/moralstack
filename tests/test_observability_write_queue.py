@@ -11,11 +11,11 @@ from moralstack.models.risk.estimator import LLMBasedRiskEstimator
 from moralstack.models.risk.schema import RiskEstimatorConfig
 from moralstack.observability import router
 from moralstack.observability import service as service_module
+from moralstack.observability.emit_helpers import persist_llm_call
 from moralstack.observability.events import EVENT_DEBUG_EVENT, EVENT_LLM_CALL, make_envelope
 from moralstack.observability.service import get_obs
 from moralstack.observability.sinks.sqlite_sink import _get_connection, create_run, init_db, upsert_request
 from moralstack.observability.write_queue import ObservabilityWriteQueue
-from moralstack.persistence.sink import persist_llm_call
 
 
 @pytest.fixture(autouse=True)
@@ -476,7 +476,7 @@ def test_no_telemetry_route_on_request_thread(tmp_path, monkeypatch):
         system_prompt="s",
         raw_response="r",
     )
-    from moralstack.persistence.sink import persist_llm_calls_batch
+    from moralstack.observability.emit_helpers import persist_llm_calls_batch
 
     assert persist_llm_calls_batch(
         [

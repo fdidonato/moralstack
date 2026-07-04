@@ -12,11 +12,11 @@ import pytest
 from moralstack.models.delib_context import DelibContext
 from moralstack.observability import obs, router
 from moralstack.observability import service as service_module
+from moralstack.observability.emit_helpers import persist_decision_trace
 from moralstack.observability.service import get_obs
 
 # Persistence imports for report test
-from moralstack.persistence.db import create_run, init_db, upsert_request
-from moralstack.persistence.sink import persist_decision_trace
+from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
 from moralstack.prompts.perspectives_prompt import build_perspectives_system_prompt
 from moralstack.prompts.simulator_prompt import (
     DEFAULT_DOMAIN_GUIDANCE,

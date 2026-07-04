@@ -153,6 +153,32 @@ class SpeculativeOverlapHandle:
             },
         )
 
+        from moralstack.observability.context import (
+            get_current_cycle,
+            get_current_request_id,
+            get_current_run_id,
+            get_current_session_id,
+            get_current_turn_number,
+        )
+
+        captured_run_id = get_current_run_id()
+        captured_request_id = get_current_request_id()
+        captured_session_id = get_current_session_id()
+        captured_turn_number = get_current_turn_number()
+        captured_cycle = get_current_cycle()
+
+        if captured_run_id and captured_request_id:
+            try:
+                from moralstack.observability.request_token_accumulator import mark_request_usage_partial
+
+                mark_request_usage_partial(
+                    captured_run_id,
+                    captured_request_id,
+                    reason="speculative_discard_pending",
+                )
+            except Exception:
+                _LOG.debug("mark_request_usage_partial failed", exc_info=True)
+
         def _bg() -> None:
             try:
                 draft, meta = self._spec_future.result()
@@ -160,6 +186,11 @@ class SpeculativeOverlapHandle:
                     try:
                         merged = dict(meta)
                         merged["call_outcome"] = "discarded"
+                        merged.setdefault("run_id", captured_run_id)
+                        merged.setdefault("request_id", captured_request_id)
+                        merged.setdefault("session_id", captured_session_id)
+                        merged.setdefault("turn_number", captured_turn_number)
+                        merged.setdefault("cycle", captured_cycle)
                         self._events.emit_llm_call(**merged)
                     except Exception:
                         _LOG.debug("persist speculative discarded failed", exc_info=True)

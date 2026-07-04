@@ -24,6 +24,7 @@ from moralstack.orchestration._policy_helpers import POLICY_SYSTEM_PROMPT
 from moralstack.orchestration.controller import OrchestrationController
 from moralstack.orchestration.conversation_state import ConversationGovernanceState
 from moralstack.orchestration.default_event_emitter import DefaultEventEmitter
+from moralstack.orchestration.default_persistence import DefaultPersistence
 from moralstack.orchestration.response_assembler import ResponseAssembler
 
 # Re-export tipi ed eccezioni per compatibilità (API pubblica)
@@ -45,7 +46,6 @@ from moralstack.orchestration.types import (
     RiskEstimationError,
     RiskThresholds,
 )
-from moralstack.persistence.default import DefaultPersistence
 from moralstack.utils.output_protection import create_protector
 
 __all__ = [

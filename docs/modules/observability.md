@@ -2,8 +2,6 @@
 
 Unified observability module — single entry point for all telemetry (write + read).
 
-> **Migration note**: `moralstack.persistence` is now a deprecated alias. See [Migration from persistence](#migration-from-persistence) below.
-
 ---
 
 ## Architecture
@@ -17,6 +15,7 @@ moralstack/observability/
 ├── service.py           # ObservabilityService: emit(), emit_batch(), flush(), shutdown()
 ├── router.py            # EventRouter: envelope → active sinks (db_only/dual/file_only)
 ├── read_store.py        # ReadStore Protocol + SqliteReadStore
+├── emit_helpers.py      # persist_* / async_persist_* convenience wrappers
 ├── write_queue.py       # ObservabilityWriteQueue (daemon thread, FIFO)
 └── sinks/
     ├── base.py          # EventSink Protocol
@@ -36,6 +35,7 @@ The `obs` export resolves each attribute access on the current `get_obs()` insta
 | `sqlite_sink.py` | SQLite schema, `SqliteUnitOfWork`, synchronous lifecycle writes, FK-ordered `write_window()` with per-envelope isolation, unique `proxy_request_events(run_id, request_id)` |
 | `jsonl_sink.py` | Per-event-type JSONL under `logs/observability/`; thread-safe per-file locks; counted `write_window()` |
 | `read_store.py` | `ReadStore` Protocol + `SqliteReadStore`; unique read contract for UI and reports |
+| `emit_helpers.py` | `persist_*` / `async_persist_*` helpers: build `EventEnvelope` and call `get_obs().emit*()`; import via `moralstack.observability.emit_helpers` (not re-exported from package `__init__`). `get_obs` binding is deliberately split: `async_persist_*` use the module-level import; the sync `persist_*` re-import `get_obs` **lazily inside their `try` block** so a test can patch `moralstack.observability.service.get_obs` and have it take effect (do not collapse the two — the async contract test patches `moralstack.observability.emit_helpers.get_obs`) |
 | `config.py` | Env var loader with backwards-compat fallback to legacy vars |
 | `context.py` | ContextVars for `run_id`, `request_id`, `cycle` |
 
@@ -184,6 +184,8 @@ all_runs   = rs.get_all_runs()
 requests   = rs.get_requests_for_run(run_id)
 request    = rs.get_request(run_id, request_id)
 llm_calls  = rs.get_llm_calls_for_request(run_id, request_id)
+token_totals = rs.get_token_usage_totals(run_id, request_id)
+token_breakdown = rs.get_token_usage_breakdown(run_id, request_id)
 traces     = rs.get_decision_traces_for_request(run_id, request_id)
 orch       = rs.get_orchestration_events_for_request(run_id, request_id)
 debug      = rs.get_debug_events_for_request(run_id, request_id)
@@ -194,6 +196,37 @@ models     = rs.get_models_used_for_run(run_id)
 
 - The rollup includes only **effective** `llm_calls` rows (`call_outcome` not in `skipped`, `cancelled`, `discarded`).
 - This prevents report headers (for example, "Models used") from showing models that were configured but never actually consumed in the selected run path.
+
+### Token usage accounting
+
+Per-request token totals are tracked through two complementary mechanisms:
+
+1. **`request_token_usage` table** — a synchronous, best-effort, potentially partial
+   summary written at request finalization (`EVENT_REQUEST_TOKEN_USAGE_FINALIZED`).
+   It reflects what the in-process accumulator captured before the HTTP/SDK response
+   was returned. It is **not** an authoritative or complete guarantee: late async
+   writes, queue drops, or non-billable diagnostic rows can make it diverge from
+   durable `llm_calls` rows.
+
+2. **Offline reconstruction from `llm_calls`** — `get_token_usage_breakdown()` and
+   ad-hoc `SUM(...)` queries over billable rows
+   (`COALESCE(billable_provider_call, 1) = 1`) are the **most complete source
+   available among rows actually persisted**, but still subject to the same
+   best-effort observability queue (rows may be missing if the queue dropped them).
+
+The OpenAI-compatible proxy `usage` field mirrors the synchronous accumulator totals
+on the success path (zeros on fail-closed paths with no generation).
+
+`billable_provider_call` on `llm_calls` excludes diagnostic rows (speculative reuse,
+cache hits, skipped modules, leakage-only rows) from totals and breakdown queries.
+
+`TokenUsage.from_openai_usage` (`observability/token_usage.py:32-59`) marks a call
+`source="exact"` only when the provider returns separate `prompt_tokens` and
+`completion_tokens`. When only `total_tokens` is available, it estimates the
+input/output split as **70%/30%** of the total and marks `source="estimated"` —
+an arbitrary heuristic, not derived from the actual prompt/completion shape.
+Consumers that need a precise split (not just the total) should check `source`
+before trusting `input_tokens`/`output_tokens` on estimated rows.
 
 ---
 
@@ -408,29 +441,6 @@ Requires `MORALSTACK_OBSERVABILITY_DB_PATH` (or the legacy
 `MORALSTACK_DB_PATH`) to point at a populated SQLite database.
 
 ---
-
-## Migration from persistence
-
-`moralstack.persistence` is kept as a backwards-compatible alias. All symbols re-export from `moralstack.observability`. It will emit a `DeprecationWarning` on first import.
-
-### Symbol mapping
-
-| Old (persistence) | New (observability) |
-|---|---|
-| `from moralstack.persistence.config import get_db_path` | `from moralstack.observability.config import get_db_path` |
-| `from moralstack.persistence.config import get_persist_mode` | `from moralstack.observability.config import get_observability_mode` |
-| `from moralstack.persistence.context import set_current_run_id` | `from moralstack.observability.context import set_current_run_id` |
-| `from moralstack.persistence.db import init_db, create_run, …` | `from moralstack.observability.sinks.sqlite_sink import init_db, create_run, …` |
-| `from moralstack.persistence.db import get_run, get_llm_calls_for_request, …` | `obs.read_store.get_run(…)` |
-| `from moralstack.persistence.sink import persist_llm_call` | `from moralstack.persistence.sink import persist_llm_call` *(wrapper still works)* |
-| `from moralstack.persistence.write_queue import async_persist_llm_call` | `obs.emit(make_envelope(EVENT_LLM_CALL, …))` |
-
-### JSONL path change
-
-| Old path | New path |
-|---|---|
-| `logs/decision_trace.jsonl` | `logs/observability/decision.trace.jsonl` |
-| `.debug/debug.log` | `logs/observability/debug.event.jsonl` |
 
 ## JSONL semantics: atomic vs merge vs upsert
 

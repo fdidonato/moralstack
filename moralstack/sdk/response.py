@@ -102,6 +102,15 @@ class GovernanceMetadata:
     safety_override_reason: str | None = None
     """Safety override category when DCCL decision is SAFETY_OVERRIDE."""
 
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    llm_call_count: int = 0
+    token_usage_missing_count: int = 0
+    token_usage_estimated_count: int = 0
+    usage_may_be_incomplete: bool = False
+    incomplete_reason: str | None = None
+
     @classmethod
     def from_result(cls, result: OrchestratorResult) -> GovernanceMetadata:
         """
@@ -138,6 +147,14 @@ class GovernanceMetadata:
             compliance_evaluation_path=compliance_evaluation_path,
             compliance_confidence=compliance_confidence,
             safety_override_reason=safety_override_reason,
+            input_tokens=int(getattr(meta, "input_tokens", 0) or 0),
+            output_tokens=int(getattr(meta, "output_tokens", 0) or 0),
+            total_tokens=int(getattr(meta, "total_tokens", 0) or 0),
+            llm_call_count=int(getattr(meta, "llm_call_count", 0) or 0),
+            token_usage_missing_count=int(getattr(meta, "token_usage_missing_count", 0) or 0),
+            token_usage_estimated_count=int(getattr(meta, "token_usage_estimated_count", 0) or 0),
+            usage_may_be_incomplete=bool(getattr(meta, "usage_may_be_incomplete", False)),
+            incomplete_reason=getattr(meta, "incomplete_reason", None),
         )
 
 

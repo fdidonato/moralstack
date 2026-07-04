@@ -19,6 +19,7 @@ from moralstack.constitution.store import ConstitutionStore
 from moralstack.core.types import PolicyLLMProtocol, Turn, Violation
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
+from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.retry import RETRY_CRITIC
 from moralstack.runtime.modules.message_context import build_module_messages
@@ -80,6 +81,7 @@ class CriticReport:
     tokens_used: int = 0
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    token_usage_source: TokenUsageSource = "unknown"
     skipped: bool = False
     """True when critique returned without invoking the LLM (e.g. no relevant principles)."""
     skip_reason: str = ""
@@ -434,6 +436,7 @@ class LLMConstitutionalCritic:
 
         for attempt in range(self.config.max_retries):
             parse_attempts = attempt + 1
+            attempt_token_usage: TokenUsage | None = None
 
             try:
                 effective_prompt = prompt if attempt == 0 else f"{prompt}\n\n{RETRY_PROMPT}"
@@ -462,6 +465,7 @@ class LLMConstitutionalCritic:
                     )
 
                 raw_response = result.text
+                attempt_token_usage = TokenUsage.from_generation_result(result)
 
                 # Parse JSON (output strutturato: decision + violated_hard)
                 violations, guidance, decision, violated_hard = parse_critic_response(
@@ -511,12 +515,31 @@ class LLMConstitutionalCritic:
                     tokens_used=int(getattr(result, "tokens_used", 0) or 0),
                     prompt_tokens=getattr(result, "prompt_tokens", None),
                     completion_tokens=getattr(result, "completion_tokens", None),
+                    token_usage_source=attempt_token_usage.source,
                     enumerated_output_gate_applied=enumerated_gate_applied,
                 )
 
             except (JSONParseError, StructuredValidationError, PydanticValidationError) as e:
                 last_error = e
                 last_error_str = str(e) if e else ""
+                if attempt_token_usage is not None:
+                    try:
+                        from moralstack.observability.emit_helpers import async_persist_llm_call
+
+                        async_persist_llm_call(
+                            phase="critic_retry",
+                            module="critic",
+                            action=f"retry_failed_attempt_{parse_attempts}",
+                            prompt=f"Retry reason: {str(e)[:200]}",
+                            raw_response=raw_response or "",
+                            duration_ms=0.0,
+                            attempts=parse_attempts,
+                            call_outcome="retry_failed",
+                            billable_provider_call=True,
+                            token_usage_json=attempt_token_usage.to_json(),
+                        )
+                    except Exception:
+                        logger.debug("persist critic retry-failed llm call failed", exc_info=True)
                 if attempt == self.config.max_retries - 1:
                     logger.error(
                         "Critic parse failed after all retries request_id=%s attempts=%s",

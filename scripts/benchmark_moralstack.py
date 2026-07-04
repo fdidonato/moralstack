@@ -2453,9 +2453,9 @@ class BenchmarkRunner:
 
         run_id = str(uuid.uuid4())
         try:
-            from moralstack.persistence import create_run, end_run, init_db
-            from moralstack.persistence.config import get_db_path
-            from moralstack.persistence.context import set_current_run_id
+            from moralstack.observability.config import get_db_path
+            from moralstack.observability.context import set_current_run_id
+            from moralstack.observability.sinks.sqlite_sink import create_run, end_run, init_db
 
             db_path = get_db_path()
             if db_path:
@@ -2612,7 +2612,7 @@ class BenchmarkRunner:
 
         try:
             if getattr(self, "_persistence_run_id", None):
-                from moralstack.persistence import end_run
+                from moralstack.observability.sinks.sqlite_sink import end_run
 
                 end_run(
                     self._persistence_run_id,
@@ -2631,7 +2631,7 @@ class BenchmarkRunner:
         try:
             run_id = getattr(self, "_persistence_run_id", None)
             if run_id:
-                from moralstack.persistence.context import set_current_run_id
+                from moralstack.observability.context import set_current_run_id
 
                 set_current_run_id(run_id)
         except ImportError:
@@ -2748,7 +2748,7 @@ class BenchmarkRunner:
 
                 if run_id and result.moralstack_request_id:
                     try:
-                        from moralstack.persistence.db import update_request_response
+                        from moralstack.observability.sinks.sqlite_sink import update_request_response
 
                         update_request_response(
                             run_id=run_id,

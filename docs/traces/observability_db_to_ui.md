@@ -4,7 +4,7 @@ What gets logged, where it lands, how it is read back, and what the dashboard
 can reconstruct. Claims are grounded in the cited source. Gaps and conditional
 behaviors are collected in §8.
 
-Primary code: `moralstack/observability/*`, `moralstack/persistence/*`,
+Primary code: `moralstack/observability/*`, `moralstack/orchestration/default_persistence.py`,
 `moralstack/ui/app.py`, `moralstack/reports/*`.
 
 ---
@@ -64,7 +64,8 @@ Schema in `observability/sinks/sqlite_sink.py:48-489`; connection uses WAL +
 |---|---|
 | `runs` | one row per run (`run_type`: sdk_session / proxy / single / benchmark…) |
 | `requests` | per request: prompt, domain, `final_response`, merged `meta_json`; PK `(run_id, request_id)` |
-| `llm_calls` | every LLM call: module, action, model, prompt, system_prompt, raw_response, parsed/summary JSON, token usage, cycle, sequence, call_kind/outcome, cache_status |
+| `llm_calls` | every LLM call: module, action, model, prompt, system_prompt, raw_response, parsed/summary JSON, token usage, cycle, sequence, call_kind/outcome, cache_status, `billable_provider_call` |
+| `request_token_usage` | synchronous best-effort per-request token summary (one row per `run_id`/`request_id`); not authoritative — see token accounting notes below |
 | `orchestration_events` | pipeline events (speculative, compliance, ledger fast-path, conversation, proxy output finalized) |
 | `decision_traces` | stage snapshots (`RISK_ASSESSMENT`, `COMPLIANCE_LAYER`, `DELIBERATION_AGGREGATE`, `RELEVANT_PRINCIPLES`, `FINAL`, …) as `trace_json` |
 | `debug_events` | low-level diagnostic payloads |
@@ -83,6 +84,26 @@ Writers: `init_db`, `create_run`, `upsert_request`, `update_request_response`,
 (`sqlite_sink.py:611+`). Shared finalization: `finalize_governance_audit`
 (`observability/governance_audit.py`) writes `final_response`/domain, while
 `finalize_audit_sync` emits the synchronous meta/proxy audit envelopes.
+
+### Token usage (proxy `usage` field and DB)
+
+- **Synchronous path**: `ObservabilityService.emit()` accumulates billable
+  `llm.call` envelopes in-process (keyed by `(run_id, request_id)`). At request
+  end, `controller._finalize_token_accounting` pops the accumulator and emits
+  `request.token_usage_finalized`, populating `ResponseMetadata` token fields and
+  the proxy/SDK `usage` payload.
+- **`request_token_usage` row**: best-effort summary at finalization time. It may
+  be partial (late speculative discards, queue drops) and must not be treated as
+  a canonical total.
+- **Offline reconstruction**: `SUM(input_tokens/output_tokens/total_tokens) FROM
+  llm_calls WHERE … AND COALESCE(billable_provider_call,1)=1` is the most complete
+  view among rows actually written to SQLite — still not a completeness guarantee
+  because the async queue may drop envelopes before they reach the DB.
+- **UI**: `ReadStore.get_token_usage_totals`/`get_token_usage_breakdown` are
+  implemented and filter non-billable diagnostic rows the same way as SQL sums,
+  but as of this change `moralstack/ui/app.py` does not call them yet — the
+  dashboard has no token-usage panel wired up. Only tests exercise these
+  read-store methods today.
 
 ### Context-shape fields
 
@@ -122,7 +143,7 @@ post-processes JSONL meta.
 **JSONL vs. SQLite shape**: both sinks consume the *same* `EventEnvelope` via
 `router.route`, so they carry the same information, but the shape differs — JSONL
 stores the raw envelope dict grouped into per-event-type files, while SQLite
-decomposes the envelope into typed columns across the 11 tables. They are not a
+decomposes the envelope into typed columns across the 12 tables. They are not a
 column-for-column mirror.
 
 ## 5. How logs are retrieved

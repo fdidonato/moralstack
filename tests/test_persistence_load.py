@@ -14,6 +14,12 @@ import pytest
 from moralstack.observability import obs, router
 from moralstack.observability import service as service_module
 from moralstack.observability.conversation_events import finalize_audit_sync
+from moralstack.observability.emit_helpers import (
+    persist_decision_trace,
+    persist_llm_call,
+    persist_llm_calls_batch,
+    persist_orchestration_event,
+)
 from moralstack.observability.events import (
     EVENT_CONVERSATION_STATE_UPDATED,
     EVENT_LEDGER_LOOKUP,
@@ -35,12 +41,6 @@ from moralstack.observability.sinks.sqlite_sink import (
     upsert_request,
 )
 from moralstack.observability.write_queue import ObservabilityWriteQueue
-from moralstack.persistence.sink import (
-    persist_decision_trace,
-    persist_llm_call,
-    persist_llm_calls_batch,
-    persist_orchestration_event,
-)
 
 
 @pytest.fixture(autouse=True)

@@ -10,26 +10,29 @@ import pytest
 
 from moralstack.observability import obs, router
 from moralstack.observability import service as service_module
-from moralstack.observability.service import get_obs
-from moralstack.persistence.context import (
+from moralstack.observability.context import (
     set_current_cycle,
     set_current_request_id,
     set_current_run_id,
 )
-from moralstack.persistence.db import (
-    SqliteUnitOfWork,
-    create_run,
-    get_decision_traces_for_request,
-    get_llm_calls_for_request,
-    init_db,
-    upsert_request,
-)
-from moralstack.persistence.sink import (
+from moralstack.observability.emit_helpers import (
     persist_decision_trace,
     persist_decision_traces_batch,
     persist_llm_call,
     persist_llm_calls_batch,
 )
+from moralstack.observability.read_store import SqliteReadStore
+from moralstack.observability.service import get_obs
+from moralstack.observability.sinks.sqlite_sink import (
+    SqliteUnitOfWork,
+    create_run,
+    init_db,
+    upsert_request,
+)
+
+_rs = SqliteReadStore()
+get_decision_traces_for_request = _rs.get_decision_traces_for_request
+get_llm_calls_for_request = _rs.get_llm_calls_for_request
 
 
 @pytest.fixture(autouse=True)

@@ -11,7 +11,7 @@ FIX PERFORMANCE: Aggiunto caching per evitare ricalcolo su input identici.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
 
@@ -21,6 +21,7 @@ from typing import Any
 from moralstack.core.types import PolicyLLMProtocol, Turn
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
+from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.retry import RETRY_HINDSIGHT_BATCH, RETRY_HINDSIGHT_SINGLE
 from moralstack.runtime.modules.message_context import build_module_messages
@@ -282,6 +283,8 @@ class HindsightResult:
     tokens_used: int = 0
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    token_usage_source: TokenUsageSource = "unknown"
+    from_cache: bool = False
 
     @classmethod
     def empty(cls) -> "HindsightResult":
@@ -664,7 +667,7 @@ class LLMHindsightEvaluator:
                 context_fingerprint=context_fingerprint,
             )
             if isinstance(cached_result, HindsightResult):
-                return cached_result
+                return replace(cached_result, from_cache=True)
 
         if self.config.use_batch_evaluation and len(consequences) > 1:
             result = self._evaluate_batch(
@@ -719,9 +722,11 @@ class LLMHindsightEvaluator:
 
         parse_attempts = 0
         last_error: Exception | None = None
+        raw_response = ""
 
         for attempt in range(self.config.max_retries):
             parse_attempts = attempt + 1
+            attempt_token_usage: TokenUsage | None = None
 
             try:
                 if hasattr(self.policy, "generate_messages"):
@@ -750,6 +755,7 @@ class LLMHindsightEvaluator:
                     )
 
                 raw_response = result.text
+                attempt_token_usage = TokenUsage.from_generation_result(result)
 
                 # Parse batch response
                 evaluations = parse_batch_hindsight_response(
@@ -786,10 +792,29 @@ class LLMHindsightEvaluator:
                     tokens_used=int(getattr(result, "tokens_used", 0) or 0),
                     prompt_tokens=getattr(result, "prompt_tokens", None),
                     completion_tokens=getattr(result, "completion_tokens", None),
+                    token_usage_source=attempt_token_usage.source,
                 )
 
             except (JSONParseError, Exception) as e:
                 last_error = e
+                if attempt_token_usage is not None:
+                    try:
+                        from moralstack.observability.emit_helpers import async_persist_llm_call
+
+                        async_persist_llm_call(
+                            phase="hindsight_retry",
+                            module="hindsight",
+                            action=f"retry_failed_attempt_{parse_attempts}",
+                            prompt=f"Retry reason: {str(e)[:200]}",
+                            raw_response=raw_response or "",
+                            duration_ms=0.0,
+                            attempts=parse_attempts,
+                            call_outcome="retry_failed",
+                            billable_provider_call=True,
+                            token_usage_json=attempt_token_usage.to_json(),
+                        )
+                    except Exception:
+                        pass
                 continue
         # Tutti i retry falliti: errore esplicito, nessun fallback decisionale
         from moralstack.utils.structured_output import ValidationError as StructuredValidationError

@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import time
 from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
@@ -251,6 +252,8 @@ class OpenAIEmbedder:
             RuntimeError: when the OpenAI call succeeds but returns an unexpected
                 response shape. Network/API errors propagate from the openai client.
         """
+        started_at = int(time.time() * 1000)
+        t0 = time.time()
         response = self._client.embeddings.create(model=self.model, input=text)
         # OpenAI v2 returns CreateEmbeddingResponse with .data: list[Embedding].
         # Each Embedding has .embedding: list[float].
@@ -263,4 +266,27 @@ class OpenAIEmbedder:
             raise RuntimeError(
                 f"OpenAI embeddings.create returned an entry without 'embedding' attribute for model={self.model!r}"
             )
-        return list(embedding)
+        result = list(embedding)
+        try:
+            from moralstack.observability.token_usage import TokenUsage
+            from moralstack.orchestration.persistence_helpers import record_llm_call
+
+            usage = TokenUsage.from_openai_usage(getattr(response, "usage", None), is_embedding=True)
+            elapsed_ms = (time.time() - t0) * 1000
+            record_llm_call(
+                None,
+                None,
+                {
+                    "phase": "ledger",
+                    "module": "embedder",
+                    "action": "embed",
+                    "model": self.model,
+                    "started_at": started_at,
+                    "duration_ms": elapsed_ms,
+                    "token_usage_json": usage.to_json(),
+                    "call_kind": "embedding",
+                },
+            )
+        except Exception:
+            logger.debug("embedder token accounting failed", exc_info=True)
+        return result

@@ -118,7 +118,7 @@ def orch_debug_log(
       file_only -> logs/observability/debug.event.jsonl only
     """
     try:
-        from moralstack.persistence.write_queue import async_persist_debug_event
+        from moralstack.observability.emit_helpers import async_persist_debug_event
 
         inferred_component = component or _infer_component(location)
         inferred_event_type = event_type or _infer_event_type(location, message)

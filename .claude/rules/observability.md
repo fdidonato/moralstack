@@ -1,7 +1,10 @@
 ---
 paths:
   - "moralstack/observability/**"
-  - "moralstack/persistence/**"
+  - "moralstack/orchestration/default_persistence.py"
+  - "moralstack/orchestration/persistence_port.py"
+  - "moralstack/orchestration/null_persistence.py"
+  - "moralstack/orchestration/persistence_helpers.py"
 ---
 # Invariant — Observability never breaks the request (P0)
 

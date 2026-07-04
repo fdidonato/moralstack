@@ -28,6 +28,7 @@ from starlette.concurrency import run_in_threadpool
 
 from moralstack.models.base import GenerationOverrides
 from moralstack.observability.conversation_events import finalize_audit_sync
+from moralstack.observability.emit_helpers import persist_orchestration_event
 from moralstack.observability.governance_audit import (
     finalize_governance_audit,
 )
@@ -45,7 +46,6 @@ from moralstack.orchestration.final_revalidation import (
 )
 from moralstack.orchestration.orchestration_event_taxonomy import PROXY_OUTPUT_FINALIZED
 from moralstack.orchestration.types import ProcessedRequest
-from moralstack.persistence.sink import persist_orchestration_event
 from moralstack.sdk.bootstrap import _resolve_model
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.session_store import InMemorySessionStore, SessionStoreProtocol
@@ -163,6 +163,7 @@ def _build_synthetic_chat_completion(
     *,
     model: str,
     finish_reason: str = "stop",
+    usage: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """
     Build a synthetic ChatCompletion JSON for REFUSE responses.
@@ -170,6 +171,15 @@ def _build_synthetic_chat_completion(
     The shape matches openai.types.ChatCompletion so OpenAI-SDK clients can
     parse it without changes.
     """
+    usage_out = (
+        usage
+        if usage is not None
+        else {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+    )
     return {
         "id": f"chatcmpl-msrefuse-{uuid.uuid4().hex[:16]}",
         "object": "chat.completion",
@@ -185,11 +195,7 @@ def _build_synthetic_chat_completion(
                 "finish_reason": finish_reason,
             }
         ],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-        },
+        "usage": usage_out,
     }
 
 
@@ -393,10 +399,17 @@ def _handle_chat_completion_sync(
                     headers=governance_headers,
                 )
             else:
+                meta = result.response.metadata
+                usage = {
+                    "prompt_tokens": int(getattr(meta, "input_tokens", 0) or 0),
+                    "completion_tokens": int(getattr(meta, "output_tokens", 0) or 0),
+                    "total_tokens": int(getattr(meta, "total_tokens", 0) or 0),
+                }
                 payload = _build_synthetic_chat_completion(
                     content=delivery.text,
                     model=upstream_model,
                     finish_reason=delivery.finish_reason,
+                    usage=usage,
                 )
                 out_response = JSONResponse(content=payload, headers=governance_headers)
 

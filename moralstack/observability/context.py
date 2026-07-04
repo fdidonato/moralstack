@@ -2,7 +2,7 @@
 Observability context variables: run_id, request_id, cycle,
 session_id (multi-turn conversation_id), turn_number.
 
-Thread-safe via contextvars. Migrated from moralstack.persistence.context.
+Thread-safe via contextvars.
 """
 
 from __future__ import annotations

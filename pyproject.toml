@@ -123,8 +123,21 @@ warn_return_any = false
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = ["ruamel.yaml.*", "langdetect.*", "fastembed.*"]
+module = ["ruamel.yaml.*", "langdetect.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# fastembed and openai._extras.numpy_proxy pull in numpy, whose .pyi stubs
+# use PEP 695 syntax (Python 3.12+), which mypy rejects under this project's
+# python_version = "3.11" target. Skip type-checking those third-party
+# dependencies we do not control.
+module = ["fastembed", "fastembed.*", "numpy", "numpy.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "openai._extras.numpy_proxy"
+follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = "moralstack.ui.app"

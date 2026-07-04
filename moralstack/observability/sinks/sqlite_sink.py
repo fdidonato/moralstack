@@ -16,7 +16,7 @@ import logging
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from moralstack.observability.config import get_db_path, get_observability_mode
 from moralstack.observability.events import (
@@ -31,6 +31,7 @@ from moralstack.observability.events import (
     EVENT_REQUEST_DOMAIN_UPDATED,
     EVENT_REQUEST_META_UPDATED,
     EVENT_REQUEST_RESPONSE_UPDATED,
+    EVENT_REQUEST_TOKEN_USAGE_FINALIZED,
     EVENT_REQUEST_UPSERTED,
     EVENT_RUN_ENDED,
     EVENT_RUN_STARTED,
@@ -38,6 +39,7 @@ from moralstack.observability.events import (
     EVENT_SESSION_STORE_PUT,
     EventEnvelope,
 )
+from moralstack.observability.token_usage import TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +58,8 @@ _FK_ORDER: dict[str, int] = {
     EVENT_SESSION_STORE_GET: 36,
     EVENT_SESSION_STORE_PUT: 37,
     EVENT_PROXY_REQUEST_FINALIZED: 38,
-    EVENT_DEBUG_EVENT: 39,
+    EVENT_REQUEST_TOKEN_USAGE_FINALIZED: 39,
+    EVENT_DEBUG_EVENT: 40,
     EVENT_RUN_ENDED: 100,
 }
 _LOCK_RETRY_DELAYS_S = (0.01, 0.025, 0.05, 0.1)
@@ -511,7 +514,25 @@ _SCHEMA = """
               ON proxy_request_events(conversation_id, turn_index);
 
           CREATE INDEX IF NOT EXISTS idx_proxy_request_events_request
-              ON proxy_request_events(run_id, request_id); \
+              ON proxy_request_events(run_id, request_id);
+
+          CREATE TABLE IF NOT EXISTS request_token_usage
+          (
+              run_id                  TEXT    NOT NULL,
+              request_id              TEXT    NOT NULL,
+              input_tokens            INTEGER NOT NULL DEFAULT 0,
+              output_tokens           INTEGER NOT NULL DEFAULT 0,
+              total_tokens            INTEGER NOT NULL DEFAULT 0,
+              llm_call_count          INTEGER NOT NULL DEFAULT 0,
+              missing_usage_count     INTEGER NOT NULL DEFAULT 0,
+              estimated_usage_count   INTEGER NOT NULL DEFAULT 0,
+              usage_may_be_incomplete INTEGER NOT NULL DEFAULT 0,
+              incomplete_reason       TEXT,
+              finalized_at            INTEGER NOT NULL,
+              PRIMARY KEY (run_id, request_id),
+              FOREIGN KEY (run_id, request_id)
+                  REFERENCES requests(run_id, request_id) ON DELETE CASCADE
+          ); \
           """
 
 
@@ -581,8 +602,10 @@ _LLM_CALLS_INSERT = """
                            started_at, duration_ms, prompt, system_prompt, raw_response,
                            parsed_json, parsed_summary_json, token_usage_json,
                            attempts, error, sequence_in_cycle,
-                           call_kind, call_outcome, cache_status, related_event_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           call_kind, call_outcome, cache_status, related_event_id,
+                           input_tokens, output_tokens, total_tokens,
+                           token_usage_missing, token_usage_estimated, billable_provider_call)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _DECISION_TRACES_INSERT = """
@@ -615,6 +638,69 @@ def _text_or_json(value: Any) -> str | None:
     if value is None or isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False)
+
+
+def _token_usage_json_str(value: Any) -> str | None:
+    return _text_or_json(value)
+
+
+def _derive_llm_call_token_columns(payload: Mapping[str, Any]) -> tuple[Any, ...]:
+    usage = TokenUsage.from_json(_token_usage_json_str(payload.get("token_usage_json")))
+    if usage.total_tokens == 0 and usage.source == "missing":
+        input_tokens = output_tokens = total_tokens = None
+    else:
+        input_tokens = usage.input_tokens
+        output_tokens = usage.output_tokens
+        total_tokens = usage.total_tokens
+    token_usage_missing = 1 if usage.source == "missing" else 0
+    token_usage_estimated = 1 if usage.source == "estimated" else 0
+    billable_raw = payload.get("billable_provider_call")
+    if billable_raw is None:
+        billable_provider_call = None
+    else:
+        billable_provider_call = 1 if billable_raw else 0
+    return (
+        input_tokens,
+        output_tokens,
+        total_tokens,
+        token_usage_missing,
+        token_usage_estimated,
+        billable_provider_call,
+    )
+
+
+def _llm_call_row_from_envelope(ev: EventEnvelope, now: int) -> tuple[Any, ...] | None:
+    run_id = ev.run_id
+    request_id = ev.request_id
+    if not run_id or not request_id:
+        return None
+    p = ev.payload
+    token_cols = _derive_llm_call_token_columns(p)
+    return (
+        run_id,
+        request_id,
+        ev.cycle,
+        p.get("phase", ""),
+        p.get("module", ""),
+        p.get("action", ""),
+        p.get("model", ""),
+        p.get("started_at", now),
+        p.get("duration_ms"),
+        p.get("prompt", ""),
+        p.get("system_prompt", ""),
+        p.get("raw_response", ""),
+        _text_or_json(p.get("parsed_json")),
+        _text_or_json(p.get("parsed_summary_json")),
+        _text_or_json(p.get("token_usage_json")),
+        p.get("attempts"),
+        p.get("error"),
+        p.get("sequence_in_cycle"),
+        p.get("call_kind"),
+        p.get("call_outcome"),
+        p.get("cache_status"),
+        p.get("related_event_id"),
+        *token_cols,
+    )
 
 
 def insert_decision_traces_batch(conn: sqlite3.Connection, rows: list[tuple[Any, ...]]) -> None:
@@ -700,9 +786,24 @@ def init_db(db_path: str | None = None) -> bool:
             ("call_outcome", "ALTER TABLE llm_calls ADD COLUMN call_outcome TEXT"),
             ("cache_status", "ALTER TABLE llm_calls ADD COLUMN cache_status TEXT"),
             ("related_event_id", "ALTER TABLE llm_calls ADD COLUMN related_event_id INTEGER"),
+            ("input_tokens", "ALTER TABLE llm_calls ADD COLUMN input_tokens INTEGER"),
+            ("output_tokens", "ALTER TABLE llm_calls ADD COLUMN output_tokens INTEGER"),
+            ("total_tokens", "ALTER TABLE llm_calls ADD COLUMN total_tokens INTEGER"),
+            ("token_usage_missing", "ALTER TABLE llm_calls ADD COLUMN token_usage_missing INTEGER"),
+            ("token_usage_estimated", "ALTER TABLE llm_calls ADD COLUMN token_usage_estimated INTEGER"),
+            ("billable_provider_call", "ALTER TABLE llm_calls ADD COLUMN billable_provider_call INTEGER"),
         ):
             try:
                 conn.execute(_sql)
+                conn.commit()
+            except Exception:
+                pass
+        for _idx_sql in (
+            "CREATE INDEX IF NOT EXISTS idx_llm_calls_module_model "
+            "ON llm_calls(run_id, request_id, module, phase, action, model)",
+        ):
+            try:
+                conn.execute(_idx_sql)
                 conn.commit()
             except Exception:
                 pass
@@ -1093,6 +1194,26 @@ _PROXY_REQUEST_EVENTS_INSERT = """
         payload_json = excluded.payload_json
 """
 
+_REQUEST_TOKEN_USAGE_INSERT = """
+    INSERT INTO request_token_usage (
+        run_id, request_id,
+        input_tokens, output_tokens, total_tokens,
+        llm_call_count, missing_usage_count, estimated_usage_count,
+        usage_may_be_incomplete, incomplete_reason, finalized_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(run_id, request_id) DO UPDATE SET
+        input_tokens = excluded.input_tokens,
+        output_tokens = excluded.output_tokens,
+        total_tokens = excluded.total_tokens,
+        llm_call_count = excluded.llm_call_count,
+        missing_usage_count = excluded.missing_usage_count,
+        estimated_usage_count = excluded.estimated_usage_count,
+        usage_may_be_incomplete = excluded.usage_may_be_incomplete,
+        incomplete_reason = excluded.incomplete_reason,
+        finalized_at = excluded.finalized_at
+"""
+
 
 def insert_conversation_state_event(payload: dict[str, Any], *, conn: sqlite3.Connection | None = None) -> bool:
     """Insert one row into `conversation_states`. Best-effort, never raises."""
@@ -1309,6 +1430,57 @@ def insert_proxy_request_event(payload: dict[str, Any], *, conn: sqlite3.Connect
         if not owns_conn:
             raise
         logger.warning("observability: insert_proxy_request_event failed: %s", e)
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False
+    finally:
+        if owns_conn and conn is not None:
+            conn.close()
+
+
+def insert_request_token_usage(payload: dict[str, Any], *, conn: sqlite3.Connection | None = None) -> bool:
+    """Insert or replace one row in `request_token_usage`. Best-effort, never raises."""
+    if conn is None and get_observability_mode() == "file_only":
+        return False
+    path = get_db_path()
+    if conn is None and not path:
+        return False
+    run_id = (payload.get("run_id") or "").strip()
+    request_id = (payload.get("request_id") or "").strip()
+    if not run_id or not request_id:
+        if conn is not None:
+            raise ValueError("request token usage requires run_id and request_id")
+        return False
+    owns_conn = conn is None
+    try:
+        if conn is None:
+            conn = _get_connection(path or "")
+        conn.execute(
+            _REQUEST_TOKEN_USAGE_INSERT,
+            (
+                run_id,
+                request_id,
+                int(payload.get("input_tokens") or 0),
+                int(payload.get("output_tokens") or 0),
+                int(payload.get("total_tokens") or 0),
+                int(payload.get("llm_call_count") or 0),
+                int(payload.get("missing_usage_count") or 0),
+                int(payload.get("estimated_usage_count") or 0),
+                _coerce_bool_to_int(payload.get("usage_may_be_incomplete")) or 0,
+                payload.get("incomplete_reason"),
+                int(payload.get("finalized_at") or time.time() * 1000),
+            ),
+        )
+        if owns_conn:
+            conn.commit()
+        return True
+    except Exception as e:
+        if not owns_conn:
+            raise
+        logger.warning("observability: insert_request_token_usage failed: %s", e)
         if conn is not None:
             try:
                 conn.rollback()
@@ -1606,6 +1778,8 @@ class SqliteEventSink:
             insert_session_store_event(self._build_session_store_event_payload(envelope), conn=conn)
         elif et == EVENT_PROXY_REQUEST_FINALIZED:
             insert_proxy_request_event(self._build_proxy_request_event_payload(envelope), conn=conn)
+        elif et == EVENT_REQUEST_TOKEN_USAGE_FINALIZED:
+            insert_request_token_usage(self._build_request_token_usage_payload(envelope), conn=conn)
         else:
             raise ValueError(f"unsupported event_type for sqlite window: {et}")
 
@@ -1689,6 +1863,9 @@ class SqliteEventSink:
         elif et == EVENT_PROXY_REQUEST_FINALIZED:
             insert_proxy_request_event(self._build_proxy_request_event_payload(envelope))
 
+        elif et == EVENT_REQUEST_TOKEN_USAGE_FINALIZED:
+            insert_request_token_usage(self._build_request_token_usage_payload(envelope))
+
         # Lifecycle events that don't map to a table are silently ignored.
 
     def _dispatch_batch(self, event_type: str, batch: list[EventEnvelope]) -> None:
@@ -1762,6 +1939,14 @@ class SqliteEventSink:
             p["created_at"] = ev.timestamp_ms
         return p
 
+    def _build_request_token_usage_payload(self, ev: EventEnvelope) -> dict[str, Any]:
+        p = dict(ev.payload or {})
+        p.setdefault("run_id", ev.run_id or "")
+        p.setdefault("request_id", ev.request_id or "")
+        if "finalized_at" not in p:
+            p["finalized_at"] = ev.timestamp_ms
+        return p
+
     # ------------------------------------------------------------------
     # Single-row writers
     # ------------------------------------------------------------------
@@ -1772,36 +1957,10 @@ class SqliteEventSink:
         path = get_db_path()
         if not path:
             return
-        run_id = ev.run_id
-        request_id = ev.request_id
-        if not run_id or not request_id:
-            return
-        p = ev.payload
         now = int(time.time() * 1000)
-        row = (
-            run_id,
-            request_id,
-            ev.cycle,
-            p.get("phase", ""),
-            p.get("module", ""),
-            p.get("action", ""),
-            p.get("model", ""),
-            p.get("started_at", now),
-            p.get("duration_ms"),
-            p.get("prompt", ""),
-            p.get("system_prompt", ""),
-            p.get("raw_response", ""),
-            _text_or_json(p.get("parsed_json")),
-            _text_or_json(p.get("parsed_summary_json")),
-            _text_or_json(p.get("token_usage_json")),
-            p.get("attempts"),
-            p.get("error"),
-            p.get("sequence_in_cycle"),
-            p.get("call_kind"),
-            p.get("call_outcome"),
-            p.get("cache_status"),
-            p.get("related_event_id"),
-        )
+        row = _llm_call_row_from_envelope(ev, now)
+        if row is None:
+            return
         conn = None
         try:
             conn = _get_connection(path)
@@ -1944,39 +2103,12 @@ class SqliteEventSink:
         now = int(time.time() * 1000)
         rows = []
         for ev in batch:
-            run_id = ev.run_id
-            request_id = ev.request_id
-            if not run_id or not request_id:
+            row = _llm_call_row_from_envelope(ev, now)
+            if row is None:
                 if conn is not None:
                     raise ValueError("llm.call requires run_id and request_id")
                 continue
-            p = ev.payload
-            rows.append(
-                (
-                    run_id,
-                    request_id,
-                    ev.cycle,
-                    p.get("phase", ""),
-                    p.get("module", ""),
-                    p.get("action", ""),
-                    p.get("model", ""),
-                    p.get("started_at", now),
-                    p.get("duration_ms"),
-                    p.get("prompt", ""),
-                    p.get("system_prompt", ""),
-                    p.get("raw_response", ""),
-                    _text_or_json(p.get("parsed_json")),
-                    _text_or_json(p.get("parsed_summary_json")),
-                    _text_or_json(p.get("token_usage_json")),
-                    p.get("attempts"),
-                    p.get("error"),
-                    p.get("sequence_in_cycle"),
-                    p.get("call_kind"),
-                    p.get("call_outcome"),
-                    p.get("cache_status"),
-                    p.get("related_event_id"),
-                )
-            )
+            rows.append(row)
         if not rows:
             if conn is not None and batch:
                 raise ValueError("llm.call window produced no rows")

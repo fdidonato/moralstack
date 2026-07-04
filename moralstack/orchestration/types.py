@@ -282,6 +282,15 @@ class ResponseMetadata:
     # draft (no second policy `generate` for delivery). Surfaced as the
     # X-Moralstack-Internal-Draft-Reused proxy header (server/headers.py).
     internal_draft_reused: bool = False
+    # Token accounting (best-effort synchronous summary).
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    llm_call_count: int = 0
+    token_usage_missing_count: int = 0
+    token_usage_estimated_count: int = 0
+    usage_may_be_incomplete: bool = False
+    incomplete_reason: str | None = None
 
     @classmethod
     def from_decision(

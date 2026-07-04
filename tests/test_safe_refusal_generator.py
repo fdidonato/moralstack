@@ -70,6 +70,44 @@ def test_generate_llm_safe_refusal_no_client():
     assert result == REFUSAL_FALLBACK_MARKER
 
 
+def test_llm_refusal_call_returns_tuple_text_and_token_usage_on_success():
+    from moralstack.observability.token_usage import TokenUsage
+    from moralstack.orchestration.safe_refusal_generator import _llm_refusal_call
+
+    class _Client:
+        def generate(self, **kwargs):
+            from moralstack.models.base import GenerationResult
+
+            return GenerationResult(
+                text="Refusal text long enough to pass the guardrail threshold easily.",
+                tokens_used=12,
+                finish_reason="stop",
+                prompt_tokens=8,
+                completion_tokens=4,
+                token_usage_source="exact",
+            )
+
+    text, usage = _llm_refusal_call(llm_client=_Client(), system="sys", user_msg="user")
+    assert "Refusal" in text
+    assert isinstance(usage, TokenUsage)
+    assert usage.total_tokens == 12
+
+
+def test_generate_llm_safe_refusal_detailed_no_client_returns_missing_token_usage():
+    from moralstack.orchestration.safe_refusal_generator import generate_llm_safe_refusal_detailed
+
+    result = generate_llm_safe_refusal_detailed(
+        user_prompt="x",
+        risk_category="clearly_harmful",
+        policy_reason_codes=["risk_clearly_harmful"],
+        language="English",
+        domain="general",
+        llm_client=None,
+    )
+    assert result.token_usage.source == "missing"
+    assert result.attempts == 0
+
+
 # =============================================================================
 # Refusal domain normalization
 # =============================================================================

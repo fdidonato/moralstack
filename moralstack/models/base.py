@@ -4,9 +4,10 @@ Base types for MoralStack LLM models.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Any, List, Literal, Mapping, Optional
+
+from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
 
 
 @dataclass(frozen=True)
@@ -119,16 +120,10 @@ class GenerationResult:
     messages_used: Optional[List[dict[str, Any]]] = None
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
+    token_usage_source: TokenUsageSource = "unknown"
 
     def token_usage_json(self) -> str | None:
-        """Serialize token usage breakdown as JSON string for observability.
-        Returns None when no token data is available."""
+        """Serialize token usage breakdown as JSON string for observability."""
         if self.tokens_used == 0 and not self.prompt_tokens:
             return None
-        return json.dumps(
-            {
-                "prompt_tokens": self.prompt_tokens or 0,
-                "completion_tokens": self.completion_tokens or 0,
-                "total_tokens": self.tokens_used,
-            }
-        )
+        return TokenUsage.from_generation_result(self).to_json()

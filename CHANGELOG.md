@@ -4,6 +4,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- **Token accounting end-to-end**: every billable provider call now records token
+  usage, aggregated per request and persisted for audit. New modules
+  `moralstack/observability/token_usage.py` (`TokenUsage` value object) and
+  `moralstack/observability/request_token_accumulator.py` (per-request
+  accumulator). Token usage flows from the model layer (`models/base.py`,
+  `models/policy.py`) through the orchestration modules (critic, hindsight,
+  perspective, simulator), the deliberation runner, the local embedder, the SDK
+  response (`sdk/response.py`) and the OpenAI-compatible proxy (`server/proxy.py`),
+  and is stored via the SQLite sink / read store (`token_usage_json`,
+  `billable_provider_call`).
+
+### Changed
+
+- **AI review harness**: refactored the Codex/Cursor agentic-workflow commands and
+  helper scripts (`.claude/commands/ai-review-*`, `scripts/ai/*`, `docs/ai/*`) and
+  removed the obsolete `codex-review-coordinator` agent.
+
+### Removed
+
+- **Breaking:** the deprecated public package `moralstack.persistence` and all its
+  submodules have been removed. No per-symbol compatibility aliases remain.
+  - **Persistence DI:** import `PersistencePort`, `DefaultPersistence`, and
+    `NullPersistence` from `moralstack.orchestration.persistence_port`,
+    `moralstack.orchestration.default_persistence`, and
+    `moralstack.orchestration.null_persistence` respectively.
+  - **Emit helpers:** import `persist_*` and `async_persist_*` from
+    `moralstack.observability.emit_helpers` (submodule import only — not re-exported
+    from `moralstack.observability` top-level `__all__`).
+  - **Config/context:** use `moralstack.observability.config` and
+    `moralstack.observability.context` directly (`get_persist_mode` remains as an
+    alias of `get_observability_mode` on the config module).
+  - **SQLite writes:** use `moralstack.observability.sinks.sqlite_sink` for
+    `init_db`, `create_run`, `upsert_request`, etc.
+  - **SQLite reads:** instantiate `SqliteReadStore()` from
+    `moralstack.observability.read_store` (or use `obs.read_store`) instead of
+    the removed standalone functions from old `persistence.db`
+    (`get_token_usage_totals`, `get_token_usage_breakdown`, `get_runs_page`,
+    `get_request_domains`, `get_models_used_for_run`, `get_run`, etc.).
+  - **Removed with no replacement:** `PersistenceWriteQueue` and `get_write_queue`
+    (zero internal consumers; were public via the old package `__all__`).
+  - **Removed alias:** `PersistMode` (was an alias of `ObservabilityMode` on the
+    old config wrapper — use `ObservabilityMode` from
+    `moralstack.observability.config`).
+  - **Logger name change:** modules moved from `moralstack.persistence.default` /
+    `moralstack.persistence.sink` to `moralstack.orchestration.default_persistence` /
+    `moralstack.observability.emit_helpers`; update external log filters accordingly.
+
 ## 0.6.1 — 2026-06-25
 
 ### Changed

@@ -26,10 +26,13 @@ from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.reason_codes import policy_reason_codes_to_reason_codes
 from moralstack.models.risk import OperationalRisk, RiskCategory, RiskEstimation
 from moralstack.observability.context import (
+    get_current_run_id,
     set_current_session_id,
     set_current_turn_number,
 )
 from moralstack.observability.conversation_events import emit_conversation_state_updated
+from moralstack.observability.request_token_accumulator import finalize_and_persist
+from moralstack.observability.token_usage import TokenUsage
 from moralstack.orchestration.conversation_context import evaluate_delivery_context_guard
 from moralstack.orchestration.conversation_state import ConversationGovernanceState, TurnDecisionSummary
 from moralstack.orchestration.conversational_fast_path import ConversationalFastPathRunner
@@ -47,6 +50,7 @@ from moralstack.orchestration.domain_exclusion import generate_domain_exclusion_
 from moralstack.orchestration.event_emitter import EventEmitter
 from moralstack.orchestration.language_resolver import resolve_prompt_with_language
 from moralstack.orchestration.ledger import CachedDecision, LedgerResult, SemanticDecisionLedger
+from moralstack.orchestration.null_persistence import NullPersistence
 from moralstack.orchestration.orchestration_event_taxonomy import (
     COMPLIANCE_DRAFT_REGENERATED,
     COMPLIANCE_DRAFT_REUSED,
@@ -72,6 +76,7 @@ from moralstack.orchestration.overlay_policy import (
     is_overlay_sensitive,
 )
 from moralstack.orchestration.path_router import get_route, is_hard_signal_refuse
+from moralstack.orchestration.persistence_port import PersistencePort
 from moralstack.orchestration.process_context import ProcessCallContext
 from moralstack.orchestration.refusal_handler import RefusalHandler
 from moralstack.orchestration.response_assembler import ResponseAssembler
@@ -104,8 +109,6 @@ from moralstack.orchestration.types import (
     RiskEstimationProtocol,
     risk_category_str,
 )
-from moralstack.persistence.null import NullPersistence
-from moralstack.persistence.port import PersistencePort
 from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace, normalize_trace_fields
 from moralstack.sdk.session_store import SessionStoreProtocol
 
@@ -317,7 +320,29 @@ class OrchestrationController:
     ) -> OrchestratorResult:
         out = self._diagnostics.attach_trace_and_return(result, request, self.execution_trace)
         self._apply_conversation_metadata_to_result(out, request, call_ctx)
+        self._finalize_token_accounting(out, request)
         return out
+
+    def _finalize_token_accounting(self, result: OrchestratorResult, request: ProcessedRequest) -> None:
+        try:
+            run_id = get_current_run_id()
+            request_id = request.request_id
+            if not run_id or not request_id:
+                return
+            totals = finalize_and_persist(run_id, request_id)
+            if totals is None:
+                return
+            m = result.response.metadata
+            m.input_tokens = totals.input_tokens
+            m.output_tokens = totals.output_tokens
+            m.total_tokens = totals.total_tokens
+            m.llm_call_count = totals.llm_call_count
+            m.token_usage_missing_count = totals.missing_usage_count
+            m.token_usage_estimated_count = totals.estimated_usage_count
+            m.usage_may_be_incomplete = totals.usage_may_be_incomplete
+            m.incomplete_reason = totals.incomplete_reason
+        except Exception:
+            _LOG.debug("token accounting finalize failed", exc_info=True)
 
     def _emit_context_shape(
         self,
@@ -956,6 +981,7 @@ class OrchestrationController:
             except TypeError:
                 result = self.policy.generate(prompt_text)
             elapsed = (time.time() - start) * 1000
+            speculative_token_usage = TokenUsage.from_generation_result(result)
             response_text = getattr(result, "text", None) or str(result)
             protection = self._output_protector.validate(response_text)
             prompt_used = getattr(result, "prompt_used", None) or prompt_text
@@ -997,6 +1023,7 @@ class OrchestrationController:
                 ),
                 "sequence_in_cycle": 0,
                 "call_kind": "speculative",
+                "token_usage_json": speculative_token_usage.to_json(),
             }
             if conversation_context is not None:
                 try:
@@ -1106,7 +1133,7 @@ class OrchestrationController:
         try:
             from moralstack.compliance.dccl import DeveloperContractComplianceLayer
             from moralstack.compliance.types import ComplianceDecision
-            from moralstack.persistence.sink import persist_orchestration_event
+            from moralstack.observability.emit_helpers import persist_orchestration_event
 
             compliance_layer = DeveloperContractComplianceLayer(policy=self.policy)
             conv_ctx = getattr(request, "conversation_context", None)

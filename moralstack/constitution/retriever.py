@@ -20,7 +20,8 @@ from moralstack.constitution.helpers import resolve_conflict, tokenize
 from moralstack.constitution.openai_config import OpenAIClientConfig
 from moralstack.constitution.prompt_formatter import format_principles_for_prompt
 from moralstack.constitution.schema import Overlay, Principle
-from moralstack.persistence.sink import persist_llm_call, persist_orchestration_event
+from moralstack.observability.emit_helpers import persist_llm_call, persist_orchestration_event
+from moralstack.observability.token_usage import TokenUsage
 from moralstack.utils.llm_parse_contract import (
     merge_parse_contract_into_summary,
     parse_dict_with_contract,
@@ -63,6 +64,7 @@ def _persist_constitution_llm_call(
     started_at: int | None,
     parse_contract: dict[str, Any],
     model: str | None,
+    token_usage_json: str | None = None,
     retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING,
     cycle: int | None = 0,
     sequence_in_cycle: int | None = None,
@@ -93,6 +95,7 @@ def _persist_constitution_llm_call(
             system_prompt=system_prompt,
             raw_response=raw_response,
             parsed_summary_json=summary,
+            token_usage_json=token_usage_json,
             attempts=1,
             cycle=cycle,
             sequence_in_cycle=sequence_in_cycle,
@@ -596,16 +599,11 @@ class DomainPrefilter:
                 **completion_tokens_param(self.openai_config.model, 200),
             )
 
-            usage = response.usage
+            raw_usage = response.usage
+            token_usage = TokenUsage.from_openai_usage(raw_usage)
             tracker = self._cost_tracker
-            if tracker is not None and usage and hasattr(tracker, "add_call"):
-                pt = getattr(usage, "prompt_tokens", None)
-                ct = getattr(usage, "completion_tokens", None)
-                total = getattr(usage, "total_tokens", 0) or 0
-                if pt is None or ct is None:
-                    pt = int(total * 0.7) if total else 0
-                    ct = total - pt if total else 0
-                tracker.add_call(self.openai_config.model, pt, ct)
+            if tracker is not None and raw_usage is not None and hasattr(tracker, "add_call"):
+                tracker.add_call(self.openai_config.model, token_usage.input_tokens, token_usage.output_tokens)
 
             text = (response.choices[0].message.content or "").strip()
             elapsed_ms = (time.time() - t0) * 1000
@@ -660,6 +658,7 @@ class DomainPrefilter:
                 started_at=started_ms,
                 parse_contract=p_contract,
                 model=self.openai_config.model,
+                token_usage_json=token_usage.to_json(),
                 retrieval_phase=retrieval_phase,
                 cycle=cycle_val,
                 sequence_in_cycle=seq_val,
@@ -855,16 +854,11 @@ Output valid JSON only:"""
                 **completion_tokens_param(self.openai_config.model, _ENHANCED_DOMAIN_AGENT_MAX_OUTPUT_TOKENS),
             )
 
-            usage = response.usage
+            raw_usage = response.usage
+            token_usage = TokenUsage.from_openai_usage(raw_usage)
             tracker = self._cost_tracker
-            if tracker is not None and usage and hasattr(tracker, "add_call"):
-                pt = getattr(usage, "prompt_tokens", None)
-                ct = getattr(usage, "completion_tokens", None)
-                total = getattr(usage, "total_tokens", 0) or 0
-                if pt is None or ct is None:
-                    pt = int(total * 0.7) if total else 0
-                    ct = total - pt if total else 0
-                tracker.add_call(self.openai_config.model, pt, ct)
+            if tracker is not None and raw_usage is not None and hasattr(tracker, "add_call"):
+                tracker.add_call(self.openai_config.model, token_usage.input_tokens, token_usage.output_tokens)
 
             text = (response.choices[0].message.content or "").strip()
             elapsed_ms = (time.time() - t0) * 1000
@@ -915,6 +909,7 @@ Output valid JSON only:"""
                 started_at=started_ms,
                 parse_contract=p_contract,
                 model=self.openai_config.model,
+                token_usage_json=token_usage.to_json(),
             )
             return data
 
@@ -1034,16 +1029,11 @@ Output ONLY one JSON object (not a bare array), nothing else:"""
                 **completion_tokens_param(self.openai_config.model, _LEGACY_DOMAIN_AGENT_MAX_OUTPUT_TOKENS),
             )
 
-            usage = response.usage
+            raw_usage = response.usage
+            token_usage = TokenUsage.from_openai_usage(raw_usage)
             tracker = self._cost_tracker
-            if tracker is not None and usage and hasattr(tracker, "add_call"):
-                pt = getattr(usage, "prompt_tokens", None)
-                ct = getattr(usage, "completion_tokens", None)
-                total = getattr(usage, "total_tokens", 0) or 0
-                if pt is None or ct is None:
-                    pt = int(total * 0.7) if total else 0
-                    ct = total - pt if total else 0
-                tracker.add_call(self.openai_config.model, pt, ct)
+            if tracker is not None and raw_usage is not None and hasattr(tracker, "add_call"):
+                tracker.add_call(self.openai_config.model, token_usage.input_tokens, token_usage.output_tokens)
 
             text = (response.choices[0].message.content or "").strip()
             elapsed_ms = (time.time() - t0) * 1000
@@ -1068,6 +1058,7 @@ Output ONLY one JSON object (not a bare array), nothing else:"""
                 started_at=started_ms,
                 parse_contract=p_contract,
                 model=self.openai_config.model,
+                token_usage_json=token_usage.to_json(),
             )
             return ids
 

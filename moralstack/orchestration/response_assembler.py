@@ -318,6 +318,7 @@ class ResponseAssembler:
                             "raw_response": content,
                             "attempts": refusal_result.attempts,
                             "sequence_in_cycle": _SEQ_REFUSAL_OR_FINALIZE,
+                            "token_usage_json": refusal_result.token_usage.to_json(),
                         },
                     )
                 except Exception as _persist_e:

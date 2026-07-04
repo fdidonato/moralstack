@@ -17,8 +17,8 @@ from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.risk import OperationalRisk, RiskCategory
 from moralstack.models.risk.schema import RiskEstimation
 from moralstack.orchestration.controller import OrchestrationController
+from moralstack.orchestration.null_persistence import NullPersistence
 from moralstack.orchestration.types import Decision, OrchestratorConfig, ProcessedRequest
-from moralstack.persistence.null import NullPersistence
 from moralstack.utils.output_protection import OutputProtector
 
 

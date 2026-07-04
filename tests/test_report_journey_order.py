@@ -28,9 +28,9 @@ import pytest
 
 from moralstack.observability import obs, router
 from moralstack.observability import service as service_module
+from moralstack.observability.emit_helpers import persist_decision_trace, persist_llm_call
 from moralstack.observability.service import get_obs
-from moralstack.persistence.db import create_run, init_db, upsert_request
-from moralstack.persistence.sink import persist_decision_trace, persist_llm_call
+from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
 from moralstack.reports.model import request_report_from_db
 
 

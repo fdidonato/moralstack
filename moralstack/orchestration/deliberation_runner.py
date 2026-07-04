@@ -18,6 +18,7 @@ from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.delib_context import DelibContext
 from moralstack.models.risk.categories import OperationalRisk, RiskCategory, RiskPolicyAction
 from moralstack.observability.context import set_current_cycle
+from moralstack.observability.emit_helpers import persist_orchestration_event
 from moralstack.orchestration._policy_helpers import (
     CONSTRAINED_GENERATION_INSTRUCTION,
     SAFE_COMPLETE_GENERATION_INSTRUCTION,
@@ -71,7 +72,6 @@ from moralstack.orchestration.types import (
     RiskEstimationProtocol,
     risk_category_str,
 )
-from moralstack.persistence.sink import persist_orchestration_event
 from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace, normalize_trace_fields
 from moralstack.runtime.trace.trace_stages import CYCLE_SUMMARY, REQUEST_ANALYSIS_CONTEXT
 
@@ -197,33 +197,33 @@ def _emit_context_shape(request: ProcessedRequest, module: str, cycle: int) -> N
         _LOG.debug("emit CONTEXT_SHAPE_RECORDED failed for %s", module, exc_info=True)
 
 
-def _policy_llm_model_for_action(policy: Any, action: str) -> str | None:
+def _policy_llm_model_for_action(policy: Any, action: str) -> str:
     """Effective OpenAI model name for policy generate vs rewrite (rewrite may use MORALSTACK_POLICY_REWRITE_MODEL)."""
     if policy is None:
-        return None
+        return ""
     if action == "rewrite":
         rw = getattr(policy, "rewrite_model", None)
         if rw is not None:
             return str(rw)
     m = getattr(policy, "model", None)
-    return str(m) if m is not None else None
+    return str(m) if m is not None else ""
 
 
-def _module_model(module: Any) -> str | None:
+def _module_model(module: Any) -> str:
     """Return the OpenAI model name used by a cognitive module (critic, simulator, …).
 
     Each module stores its inner ``OpenAIPolicy`` as ``self.policy``; fall back
     to ``module.model`` if present.
     """
     if module is None:
-        return None
+        return ""
     inner = getattr(module, "policy", None)
     if inner is not None:
         m = getattr(inner, "model", None)
         if m is not None:
             return str(m)
     m = getattr(module, "model", None)
-    return str(m) if m is not None else None
+    return str(m) if m is not None else ""
 
 
 # Logical order within a deliberation cycle for journey/report display (sequence_in_cycle).
@@ -378,18 +378,10 @@ def _policy_system_used(result: PolicyGenerationResultProtocol, fallback: str) -
 
 def _token_usage_json_from_result(result: Any) -> str | None:
     """Build token usage json from result-like objects used by deliberative modules."""
-    tokens_used = int(getattr(result, "tokens_used", 0) or 0)
-    prompt_tokens = getattr(result, "prompt_tokens", None)
-    completion_tokens = getattr(result, "completion_tokens", None)
-    if tokens_used == 0 and prompt_tokens is None and completion_tokens is None:
-        return None
-    return json.dumps(
-        {
-            "prompt_tokens": int(prompt_tokens or 0),
-            "completion_tokens": int(completion_tokens or 0),
-            "total_tokens": tokens_used,
-        }
-    )
+    from moralstack.observability.token_usage import TokenUsage
+
+    usage = TokenUsage.from_generation_result(result)
+    return usage.to_json()
 
 
 def _constitution_corrupted(constitution: object) -> bool:
@@ -883,6 +875,7 @@ class DeliberationRunner:
                             "prompt": request.prompt[:200],
                             "raw_response": speculative_draft[:200],
                             "sequence_in_cycle": SEQ_POLICY,
+                            "billable_provider_call": False,
                         },
                     )
                 else:
@@ -933,6 +926,7 @@ class DeliberationRunner:
                                     "had_leakage": True,
                                 },
                                 "sequence_in_cycle": SEQ_POLICY,
+                                "billable_provider_call": False,
                             },
                         )
                     state.draft_response = protection_result.cleaned
@@ -2635,6 +2629,7 @@ class DeliberationRunner:
                     "raw_response": state.draft_response,
                     "sequence_in_cycle": SEQ_POLICY,
                     "call_kind": "speculative_reuse",
+                    "billable_provider_call": False,
                 },
             )
             return state
@@ -2670,6 +2665,7 @@ class DeliberationRunner:
                         "raw_response": "",
                         "sequence_in_cycle": SEQ_POLICY,
                         "cycle": state.cycle,
+                        "billable_provider_call": False,
                     },
                 )
                 return state
@@ -2738,6 +2734,7 @@ class DeliberationRunner:
                             }
                         ),
                         "sequence_in_cycle": SEQ_POLICY,
+                        "billable_provider_call": False,
                     },
                 )
             state.draft_response = sanitize_policy_output(protection_result.cleaned)
@@ -2935,6 +2932,7 @@ class DeliberationRunner:
                     "call_outcome": "skipped" if is_skipped else None,
                     "cache_status": "not_invoked" if is_skipped else None,
                     "related_event_id": None,
+                    "billable_provider_call": not is_skipped,
                 },
             )
             _emit_context_shape(request, "critic", state.cycle)
@@ -3015,6 +3013,7 @@ class DeliberationRunner:
                 f"Dominant harms: {dom_harms}, Worst harm: {worst}"
             )
             sim_model = _module_model(self.simulator)
+            from_cache = bool(getattr(simulation, "from_cache", False))
             record_llm_call(
                 self.logger,
                 {
@@ -3048,6 +3047,8 @@ class DeliberationRunner:
                     "attempts": getattr(simulation, "parse_attempts", 1),
                     "sequence_in_cycle": SEQ_SIMULATOR,
                     "token_usage_json": _token_usage_json_from_result(simulation),
+                    "billable_provider_call": not from_cache,
+                    "cache_status": "hit" if from_cache else None,
                 },
             )
             _emit_context_shape(request, "simulator", state.cycle)
@@ -3126,6 +3127,7 @@ class DeliberationRunner:
             )
             elapsed = (time.time() - start) * 1000
             hindsight_model = _module_model(self.hindsight)
+            from_cache = bool(getattr(hindsight_result, "from_cache", False))
             record_llm_call(
                 self.logger,
                 {
@@ -3150,6 +3152,8 @@ class DeliberationRunner:
                     "attempts": getattr(hindsight_result, "parse_attempts", 1),
                     "sequence_in_cycle": SEQ_HINDSIGHT,
                     "token_usage_json": _token_usage_json_from_result(hindsight_result),
+                    "billable_provider_call": not from_cache,
+                    "cache_status": "hit" if from_cache else None,
                 },
             )
             _emit_context_shape(request, "hindsight", state.cycle)
@@ -3239,6 +3243,7 @@ class DeliberationRunner:
             prompts_list = getattr(result, "prompts", []) or []
             system_list = getattr(result, "system_prompts", []) or []
             persp_model = _module_model(self.perspectives)
+            from_cache = bool(getattr(result, "from_cache", False))
             record_llm_call(
                 self.logger,
                 {
@@ -3262,6 +3267,8 @@ class DeliberationRunner:
                     "parsed_summary_json": json.dumps({"context_shape": _context_shape_payload(request, "perspectives")}),
                     "sequence_in_cycle": SEQ_PERSPECTIVES,
                     "token_usage_json": _token_usage_json_from_result(result),
+                    "billable_provider_call": not from_cache,
+                    "cache_status": "hit" if from_cache else None,
                 },
             )
             _emit_context_shape(request, "perspectives", state.cycle)

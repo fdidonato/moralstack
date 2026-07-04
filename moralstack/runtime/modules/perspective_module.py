@@ -22,6 +22,7 @@ from typing import Any, Literal, Union
 from moralstack.core.types import PolicyLLMProtocol, Turn
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
+from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.perspectives_prompt import (
     build_perspectives_system_prompt,
@@ -86,6 +87,7 @@ class PerspectiveResult:
     tokens_used: int = 0
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    token_usage_source: TokenUsageSource = "unknown"
 
     def __post_init__(self) -> None:
         """Normalizza l'approval score in range valido."""
@@ -173,6 +175,8 @@ class EnsembleResult:
     tokens_used: int = 0
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    token_usage_source: TokenUsageSource = "unknown"
+    from_cache: bool = False
 
     @classmethod
     def empty(cls) -> EnsembleResult:
@@ -492,7 +496,7 @@ class LLMPerspectiveEnsemble:
                 context_fingerprint=context_fingerprint,
             )
             if isinstance(cached_result, EnsembleResult):
-                return cached_result
+                return dataclass_replace(cached_result, from_cache=True)
 
         active_perspectives = perspectives or self.perspectives
 
@@ -620,6 +624,17 @@ class LLMPerspectiveEnsemble:
         system_prompts_list = [getattr(r, "system_prompt", "") for r in results]
         prompt_tokens = _sum_optional_token_field(results, "prompt_tokens")
         completion_tokens = _sum_optional_token_field(results, "completion_tokens")
+        combined_source = TokenUsage.combine(
+            [
+                TokenUsage(
+                    r.prompt_tokens or 0,
+                    r.completion_tokens or 0,
+                    r.tokens_used,
+                    r.token_usage_source,
+                )
+                for r in results
+            ]
+        ).source
 
         return EnsembleResult(
             results=results,
@@ -632,6 +647,7 @@ class LLMPerspectiveEnsemble:
             tokens_used=sum(int(getattr(r, "tokens_used", 0) or 0) for r in results),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            token_usage_source=combined_source,
         )
 
     def _evaluate_sequential(
@@ -670,6 +686,17 @@ class LLMPerspectiveEnsemble:
         system_prompts_list = [getattr(r, "system_prompt", "") for r in results]
         prompt_tokens = _sum_optional_token_field(results, "prompt_tokens")
         completion_tokens = _sum_optional_token_field(results, "completion_tokens")
+        combined_source = TokenUsage.combine(
+            [
+                TokenUsage(
+                    r.prompt_tokens or 0,
+                    r.completion_tokens or 0,
+                    r.tokens_used,
+                    r.token_usage_source,
+                )
+                for r in results
+            ]
+        ).source
 
         return EnsembleResult(
             results=results,
@@ -682,6 +709,7 @@ class LLMPerspectiveEnsemble:
             tokens_used=sum(int(getattr(r, "tokens_used", 0) or 0) for r in results),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            token_usage_source=combined_source,
         )
 
     def _evaluate_single_perspective(
@@ -705,6 +733,8 @@ class LLMPerspectiveEnsemble:
         user_prompt = build_perspectives_user_prompt(perspective.name, perspective.prompt_template)
 
         for attempt in range(self.config.max_retries):
+            attempt_token_usage: TokenUsage | None = None
+            raw_response = ""
             try:
                 effective_prompt = user_prompt if attempt == 0 else f"{user_prompt}\n\n{RETRY_PROMPT}"
                 if (
@@ -728,14 +758,35 @@ class LLMPerspectiveEnsemble:
                         system=shared_system_prompt,
                         config=self._generation_config,
                     )
-                pr = parse_perspective_response(result.text, perspective)
+                raw_response = result.text
+                attempt_token_usage = TokenUsage.from_generation_result(result)
+                pr = parse_perspective_response(raw_response, perspective)
                 pr.prompt = effective_prompt
                 pr.system_prompt = shared_system_prompt
-                pr.tokens_used = int(getattr(result, "tokens_used", 0) or 0)
+                pr.tokens_used = attempt_token_usage.total_tokens
                 pr.prompt_tokens = getattr(result, "prompt_tokens", None)
                 pr.completion_tokens = getattr(result, "completion_tokens", None)
+                pr.token_usage_source = attempt_token_usage.source
                 return pr
-            except (JSONParseError, Exception):
+            except (JSONParseError, Exception) as e:
+                if attempt_token_usage is not None:
+                    try:
+                        from moralstack.observability.emit_helpers import async_persist_llm_call
+
+                        async_persist_llm_call(
+                            phase="perspectives_retry",
+                            module="perspectives",
+                            action=f"retry_failed_attempt_{attempt + 1}",
+                            prompt=(f"Perspective {perspective.id}/{perspective.name} retry reason: {str(e)[:200]}"),
+                            raw_response=raw_response or "",
+                            duration_ms=0.0,
+                            attempts=attempt + 1,
+                            call_outcome="retry_failed",
+                            billable_provider_call=True,
+                            token_usage_json=attempt_token_usage.to_json(),
+                        )
+                    except Exception:
+                        pass
                 continue
         return None
 

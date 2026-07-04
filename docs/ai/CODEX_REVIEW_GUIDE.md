@@ -1,61 +1,55 @@
 # Codex review guide
 
-Codex CLI is the **independent reviewer** of plans (before implementation) and
+Codex is the **independent reviewer** of plans (before implementation) and
 diffs (after). It runs in a **read-only sandbox** — it inspects the repo but
 cannot modify, commit, or push.
 
-## Local CLI (verified)
+## Invocation mechanism (verified)
 
-- Binary: `codex` (v0.142.x), logged in via ChatGPT.
-- Non-interactive review entry point used here:
-  `codex exec -s read-only [-m <model>] -o <out.md> -` (prompt on stdin).
-  `-s read-only` = read-only sandbox; `-o` writes the final review to a file.
-- `codex` also has a purpose-built `codex review --uncommitted | --base <ref>`
-  subcommand. We use `codex exec` instead so the **output follows our markdown
-  templates** (`ai/prompts/codex-*-review-template.md`) verbatim.
+- We call Codex through the official **OpenAI Codex Claude Code plugin**
+  (`github.com/openai/codex-plugin-cc`), using its `codex:rescue` entry point
+  — there is no repo script that shells out to `codex` anymore.
+- Install/verify: `/plugin marketplace add openai/codex-plugin-cc`, then
+  `/plugin install codex@openai-codex`. Check readiness with `/codex:setup`
+  (or `Skill(codex:setup)`).
+- `/ai-review-plan-with-codex` and `/ai-review-diff-with-codex`
+  (`.claude/commands/`) run **inline** in the main conversation (not via a
+  coordinator subagent — the plugin's own `codex:rescue` docs warn that a
+  forked/general-purpose subagent doesn't reliably keep Agent-tool access,
+  which `codex:rescue` needs internally) and call:
+
+      Skill(skill: "codex:rescue", args: "--wait --fresh <review request>")
+
+  `--wait` runs it synchronously; `--fresh` skips the "continue previous
+  thread?" prompt since each review is a one-shot request.
+- The plugin's native `/codex:review` / `/codex:adversarial-review` commands
+  are diff/working-tree-only (fixed `approve`/`needs-attention` + severity
+  schema, no custom framing for `/codex:review`) and aren't exposed to
+  automated invocation in this session, so they aren't used here — `codex:rescue`
+  is the one entry point our commands can call themselves, for both plan and
+  diff review.
+- No `--write` is ever passed to `codex:rescue`, so its default write-capable
+  behavior doesn't kick in — the review request explicitly says "read-only,
+  do not modify anything," which is what the plugin's own `codex-cli-runtime`
+  skill treats as the carve-out for a read-only run.
+- We still hand Codex the same rubric we always did
+  (`ai/prompts/codex-plan-review-template.md` /
+  `codex-diff-review-template.md`, MoralStack invariant framing, and the
+  `docs/ai/REVIEW_POLICY.md` taxonomy) — as the natural-language request text,
+  not a file a script concatenates. Codex reads the plan/diff/handoff files
+  itself (it has repo read access), so we no longer paste their full content
+  into the prompt.
+- The command saves Codex's verbatim response to
+  `ai/reviews/codex-{plan,diff}-review-<slug>-<timestamp>.md` and the exact
+  composed request to `ai/prompts/generated-codex-*-<slug>-<timestamp>.md`,
+  same audit convention as before.
 
 ## Models / effort
 
-- Default: Codex uses its own configured model. On this machine that is
-  `gpt-5.5` at `xhigh` reasoning effort — i.e. the high-effort review setting.
-- Override per run:
-  - `$env:CODEX_MODEL = "<model>"` → passed as `-m <model>`.
-  - `$env:CODEX_REASONING_EFFORT = "high"` → passed as
-    `-c model_reasoning_effort="high"`.
-- We do **not** hardcode model names beyond these env hooks (PROJECT_SPEC:
-  don't invent flags/models). List/inspect models with `codex --help` and your
-  Codex account.
-
-## Automatic run (preferred)
-
-```powershell
-# Plan review
-pwsh scripts/ai/run_codex_plan_review.ps1 -PlanPath ai/plans/<task>.md
-# Diff review (collects the diff if -DiffPath is omitted)
-pwsh scripts/ai/run_codex_diff_review.ps1 -PlanPath ai/plans/<task>.md `
-    -HandoffPath ai/handoffs/<task>-cursor-cli-handoff.md
-```
-
-Reports are written to `ai/reviews/codex-*-review-<task>-<timestamp>.md`. The
-exact prompt sent is saved to `ai/prompts/generated-codex-*-<task>-<timestamp>.md`
-for reproducibility.
-
-Bash equivalents (WSL/Linux): `scripts/ai/run_codex_*_review.sh` with
-`--plan`, `--diff`, `--handoff`, `--model`, `--dry-run`.
-
-## Manual run (fallback)
-
-If Codex CLI is missing or you set `-DryRun`, the script saves the generated
-prompt and prints the command. Run it yourself:
-
-```powershell
-Get-Content -Raw ai/prompts/generated-codex-plan-review-<task>-<ts>.md |
-    codex exec -s read-only -o ai/reviews/codex-plan-review-<task>-<ts>.md -
-```
-
-Or paste the generated prompt into an interactive Codex session. Either way the
-review must follow the template structure and end with a verdict
-(`APPROVE` / `APPROVE_WITH_CHANGES` / `BLOCK`).
+- `codex:rescue` accepts `--model <model|spark>` and `--effort
+  <none|minimal|low|medium|high|xhigh>`. Our commands leave both unset by
+  default (Codex plugin default); pass them through only if the user
+  explicitly asks for a specific model/effort for a given review.
 
 ## What Codex must check
 
@@ -63,3 +57,9 @@ See the templates and `docs/ai/REVIEW_POLICY.md`. In short: wrong assumptions,
 blast radius, missing files/tests, regressions, architecture/coupling, security,
 performance — and, for this repo specifically, the MoralStack invariants
 (`docs/ai/INVARIANTS.md`). A governance change that fails **open** is BLOCKING.
+
+## If the plugin is unavailable
+
+`/ai-review-plan-with-codex` / `/ai-review-diff-with-codex` must tell the user
+to run `/plugin install codex@openai-codex` and stop — never fabricate a
+review or fall back to Claude's own judgment presented as Codex's.

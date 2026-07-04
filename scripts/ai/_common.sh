@@ -12,13 +12,6 @@ timestamp() { date +"%Y%m%d-%H%M%S"; }
 
 ensure_dir() { mkdir -p "$1"; printf '%s\n' "$1"; }
 
-# Resolve Codex CLI; override with $CODEX_CMD (default: codex). Echoes cmd or empty.
-resolve_codex() {
-  local cmd="${CODEX_CMD:-codex}"
-  command -v "$cmd" >/dev/null 2>&1 && { printf '%s\n' "$cmd"; return 0; }
-  return 1
-}
-
 # Resolve the cursor *agent* CLI (headless implementer), not the GUI launcher.
 # Order: $CURSOR_CMD, cursor-agent on PATH, Windows LOCALAPPDATA install.
 resolve_cursor_agent() {

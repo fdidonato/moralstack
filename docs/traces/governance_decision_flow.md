@@ -43,7 +43,7 @@ Proxy equivalent: `conversation_id` resolution + stateless `turn_index`
 
 - Coerce `str` → `ProcessedRequest`; build `ProcessCallContext`.
 - Set context vars: `set_current_session_id`, `set_current_turn_number`.
-- `persistence.set_request_context(request_id)` and
+- `DefaultPersistence.set_request_context(request_id)` and
   `ensure_run_and_upsert_request(...)` — **side effect**: pre-inserts the
   `requests` row so later FK-bound events succeed.
 - `trace = self._trace_lifecycle.start_trace(request_id)`.

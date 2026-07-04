@@ -19,18 +19,22 @@ from moralstack.constitution.retriever import (
 from moralstack.constitution.schema import Principle
 from moralstack.observability import router
 from moralstack.observability import service as service_module
+from moralstack.observability.context import set_current_request_id, set_current_run_id
+from moralstack.observability.read_store import SqliteReadStore
 from moralstack.observability.service import get_obs
+from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
 from moralstack.orchestration.orchestration_event_taxonomy import (
     DOMAIN_PREFILTER_CACHE_HIT,
     DOMAIN_PREFILTER_CACHE_INVALIDATED,
     DOMAIN_PREFILTER_CACHE_MISS,
 )
-from moralstack.persistence.context import set_current_request_id, set_current_run_id
-from moralstack.persistence.db import create_run, get_orchestration_events_for_request, init_db, upsert_request
 from moralstack.reports.runtime_decisions import (
     build_retrieval_reuse_summary,
     build_runtime_decision_observability,
 )
+
+_rs = SqliteReadStore()
+get_orchestration_events_for_request = _rs.get_orchestration_events_for_request
 
 _CONFIG_CORE = Path(__file__).resolve().parent.parent / "moralstack" / "constitution" / "data" / "core.yaml"
 

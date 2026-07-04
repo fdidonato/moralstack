@@ -164,7 +164,7 @@ def _capture(ctrl: OrchestrationController) -> Iterator[_Captured]:
     with (
         patch.object(ctrl._events, "emit_orchestration_event", side_effect=_track_orch),
         patch.object(ctrl._events, "emit_llm_call", side_effect=_track_llm_emit),
-        patch("moralstack.persistence.sink.persist_orchestration_event", side_effect=_track_orch),
+        patch("moralstack.observability.emit_helpers.persist_orchestration_event", side_effect=_track_orch),
         patch("moralstack.orchestration.persistence_helpers.record_llm_call", side_effect=_track_record),
         patch("moralstack.runtime.trace.decision_trace.append_decision_trace", side_effect=_track_trace),
         patch("moralstack.orchestration.controller.append_decision_trace", side_effect=_track_trace),

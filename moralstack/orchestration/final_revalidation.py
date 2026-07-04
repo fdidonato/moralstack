@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any, Literal
 
+from moralstack.observability.emit_helpers import persist_orchestration_event
 from moralstack.orchestration.orchestration_event_taxonomy import (
     PROXY_FINAL_REVALIDATION_BLOCKED,
     PROXY_FINAL_REVALIDATION_ERROR,
@@ -24,7 +25,6 @@ from moralstack.orchestration.safe_refusal_generator import (
     resolve_refusal_domain_and_redirection,
 )
 from moralstack.orchestration.types import ResponseType
-from moralstack.persistence.sink import persist_orchestration_event
 
 logger = logging.getLogger(__name__)
 
@@ -593,6 +593,8 @@ def _generate_post_revalidation_refusal(
                 "attempts": refusal_result.attempts,
                 "sequence_in_cycle": 6,
                 "call_kind": "final_revalidation_refusal",
+                "token_usage_json": refusal_result.token_usage.to_json(),
+                "billable_provider_call": refusal_result.attempts > 0,
             },
         )
     except Exception:

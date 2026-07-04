@@ -16,6 +16,7 @@ from moralstack.models.risk import OperationalRisk, RiskCategory
 from moralstack.models.risk.schema import RiskEstimation
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.controller import OrchestrationController
+from moralstack.orchestration.null_persistence import NullPersistence
 from moralstack.orchestration.orchestration_event_taxonomy import (
     COMPLIANCE_DRAFT_REGENERATED,
     COMPLIANCE_DRAFT_REUSED,
@@ -30,7 +31,6 @@ from moralstack.orchestration.types import (
     ResponseMetadata,
     ResponseType,
 )
-from moralstack.persistence.null import NullPersistence
 from moralstack.utils.output_protection import OutputProtector
 
 
@@ -126,13 +126,16 @@ class TestComplianceFastPath:
                 return_value="PONG",
             ),
             patch.object(ctrl._events, "emit_orchestration_event", side_effect=_tracking_emit),
-            patch("moralstack.persistence.sink.persist_orchestration_event"),
+            patch("moralstack.observability.emit_helpers.persist_orchestration_event") as mock_dccl_persist,
         ):
             result = ctrl.process(req)
 
         assert result.compliance_verdict is not None
         assert result.compliance_verdict.decision == ComplianceDecision.MATCH
         assert result.response.metadata.final_action == "NORMAL_COMPLETE"
+        # Lazy-import guard (plan §7.1/§10): the DCCL persist import in
+        # controller.py:1136 must resolve to the patched emit_helpers target.
+        assert mock_dccl_persist.call_count >= 1
         assert "PONG" in result.response.content
         assert result.path == "COMPLIANCE_FAST_PATH"
         assert COMPLIANCE_DRAFT_REUSED in emitted
@@ -178,7 +181,7 @@ class TestComplianceFastPath:
             ),
             patch.object(ctrl, "_regenerate_for_contract", regen_mock),
             patch.object(ctrl._events, "emit_orchestration_event", side_effect=_tracking_emit),
-            patch("moralstack.persistence.sink.persist_orchestration_event"),
+            patch("moralstack.observability.emit_helpers.persist_orchestration_event"),
         ):
             result = ctrl.process(req)
 
@@ -227,7 +230,7 @@ class TestComplianceFastPath:
             ),
             patch.object(ctrl, "_regenerate_for_contract", return_value="PONG"),
             patch.object(ctrl._events, "emit_orchestration_event", side_effect=_tracking_emit),
-            patch("moralstack.persistence.sink.persist_orchestration_event"),
+            patch("moralstack.observability.emit_helpers.persist_orchestration_event"),
         ):
             result = ctrl.process(req)
 
@@ -272,7 +275,7 @@ class TestComplianceFastPath:
             ),
             patch.object(ctrl, "_regenerate_for_contract", return_value="PONG"),
             patch.object(ctrl._events, "emit_orchestration_event", side_effect=_tracking_emit),
-            patch("moralstack.persistence.sink.persist_orchestration_event"),
+            patch("moralstack.observability.emit_helpers.persist_orchestration_event"),
         ):
             result = ctrl.process(req)
 
@@ -316,7 +319,7 @@ class TestComplianceFastPath:
             patch.object(ctrl, "_nonblocking_speculative_draft", return_value=""),
             patch("moralstack.orchestration.controller.decide_action", decide_mock),
             patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
-            patch("moralstack.persistence.sink.persist_orchestration_event"),
+            patch("moralstack.observability.emit_helpers.persist_orchestration_event"),
             patch.object(
                 ctrl._runner,
                 "run_benign_fast_path",
@@ -366,7 +369,7 @@ class TestComplianceFastPath:
             patch("moralstack.orchestration.controller.decide_action", return_value=(_refuse_decision(), None)),
             patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
             patch("moralstack.orchestration.controller.get_route", return_value=("refuse", False, "REFUSE")),
-            patch("moralstack.persistence.sink.persist_orchestration_event"),
+            patch("moralstack.observability.emit_helpers.persist_orchestration_event"),
             patch.object(
                 ctrl,
                 "_route_refuse",
@@ -409,7 +412,7 @@ class TestComplianceFastPath:
                 ),
             ),
             patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
-            patch("moralstack.persistence.sink.persist_orchestration_event"),
+            patch("moralstack.observability.emit_helpers.persist_orchestration_event"),
             patch.object(
                 ctrl._runner,
                 "run_benign_fast_path",
@@ -476,7 +479,7 @@ class TestComplianceFastPath:
                 ),
             ),
             patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
-            patch("moralstack.persistence.sink.persist_orchestration_event"),
+            patch("moralstack.observability.emit_helpers.persist_orchestration_event"),
             patch.object(
                 ctrl._runner,
                 "run_benign_fast_path",
@@ -567,7 +570,7 @@ class TestComplianceFastPath:
                 ),
             ),
             patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
-            patch("moralstack.persistence.sink.persist_orchestration_event"),
+            patch("moralstack.observability.emit_helpers.persist_orchestration_event"),
             patch.object(
                 ctrl._runner,
                 "run_benign_fast_path",

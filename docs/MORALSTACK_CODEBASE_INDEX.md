@@ -25,8 +25,7 @@ moralstack/
     data/core.yaml       # baseline constitution
     data/overlays/*.yaml # 21 domain overlays
   compliance/            # DCCL (Developer Contract Compliance Layer)
-  observability/         # telemetry service, sinks (SQLite/JSONL), read store
-  persistence/           # DB/file persistence ports used by the controller
+  observability/         # telemetry service, sinks (SQLite/JSONL), read store, emit helpers
   pipeline/              # context builder + deliberation stack assembly
                          #   output_contract.py: Tier-1 enumerated-output
                          #   detection (TRUE/FALSE etc.) used by the critic gate
@@ -144,6 +143,12 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `FinalResponse`, `ResponseMetadata`, `OrchestratorConfig`, errors.
 - `contract.py` — `DeveloperContract` (`from_text`, `contract_hash`, `structured_rules`).
 - `orchestration_event_taxonomy.py` — canonical event-type constants.
+- `persistence_port.py` — `PersistencePort` protocol (request-scoped upsert abstraction).
+- `default_persistence.py` — `DefaultPersistence` (`ensure_run_and_upsert_request`,
+  `set_request_context`, `update_request_domain`); used by the controller via DI.
+- `null_persistence.py` — `NullPersistence` (no-op default).
+- `persistence_helpers.py` — `record_llm_call`, `record_decision_trace` (async emit + swallow).
+- `default_event_emitter.py` — `DefaultEventEmitter` (orchestration event persistence).
 
 ### Risk — `moralstack/models/risk/`
 - `estimator.py` — `LLMBasedRiskEstimator`. `estimate(prompt, developer_contract_text=…,
@@ -200,13 +205,7 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 - `context.py` — contextvars (`set_current_run_id`, `set_current_request_id`,
   `set_current_session_id`, `set_current_turn_number`).
 - `config.py` — `get_observability_mode`, `get_db_path`.
-
-### Persistence — `moralstack/persistence/`
-- `default.py` — `DefaultPersistence` (`ensure_run_and_upsert_request`,
-  `set_request_context`, `update_request_domain`). Used by the controller.
-- `null.py` — `NullPersistence` (no-op default).
-- `port.py` — `PersistencePort` protocol; `sink.py` — `persist_orchestration_event`.
-- `db.py`, `write_queue.py`, `config.py`, `context.py`.
+- `emit_helpers.py` — `persist_*` / `async_persist_*` telemetry wrappers.
 
 ### Server proxy — `moralstack/server/`
 - `proxy.py` — `create_app(openai_client, orchestrator, config, session_store)`
@@ -487,7 +486,7 @@ See `docs/traces/openai_compatible_multiturn.md`.
   separately; in `file_only`, JSONL drives the result and is synchronously
   attempted, not crash-durable.
 - **SQLite tables** (`sinks/sqlite_sink.py:48-489`): `runs`, `requests`,
-  `llm_calls`, `orchestration_events`, `decision_traces`, `debug_events`,
+  `llm_calls`, `request_token_usage`, `orchestration_events`, `decision_traces`, `debug_events`,
   `exports_cache`, `conversation_states`, `ledger_events`,
   `session_store_events`, `proxy_request_events`. WAL + foreign keys enabled
   (`_get_connection`, `sinks/sqlite_sink.py:497-504`).
@@ -560,7 +559,7 @@ See `docs/traces/complai_llm_rules_flow.md`.
 - SDK: `test_sdk_*.py` (wrapper, session, stream, dccl, integration, …).
 - Server/proxy: `test_server_proxy.py`, `test_conversation_correlation.py`,
   `test_server_fingerprint.py`.
-- Observability: `test_observability_*.py`, `test_persistence_*.py`.
+- Observability: `test_observability_*.py`, `test_persistence_*.py`, `test_observability_config.py`.
 - UI/reports: `test_ui_*.py`, `test_reports.py`, `test_conversation_export.py`.
 - Byte-equality: `test_system_prompt_byte_equality.py`,
   `test_system_prompt_resolver.py`.

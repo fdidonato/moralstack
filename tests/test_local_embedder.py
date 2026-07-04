@@ -139,18 +139,14 @@ class TestLocalEmbedderWithFastembedMocked:
 
 
 class TestLocalEmbedderFallback:
-    def test_local_embedder_falls_back_to_hashing_when_fastembed_missing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_local_embedder_falls_back_to_hashing_when_fastembed_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setitem(sys.modules, "fastembed", None)
         emb = LocalEmbedder()
         result = emb.embed("test")
         assert isinstance(result, list)
         assert len(result) == DEFAULT_HASHING_DIM
 
-    def test_local_embedder_fallback_dim_matches_hashing_embedder_constant(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_local_embedder_fallback_dim_matches_hashing_embedder_constant(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setitem(sys.modules, "fastembed", None)
         result = LocalEmbedder().embed("hello")
         assert len(result) == DEFAULT_HASHING_DIM

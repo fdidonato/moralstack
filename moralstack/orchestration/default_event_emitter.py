@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from moralstack.observability.emit_helpers import persist_orchestration_event
 from moralstack.orchestration.persistence_helpers import record_decision_trace, record_llm_call
-from moralstack.persistence.sink import persist_orchestration_event
 
 
 class DefaultEventEmitter:

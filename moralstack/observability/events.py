@@ -41,6 +41,7 @@ EVENT_LEDGER_STORE = "ledger.store"
 EVENT_SESSION_STORE_GET = "session_store.get"
 EVENT_SESSION_STORE_PUT = "session_store.put"
 EVENT_PROXY_REQUEST_FINALIZED = "proxy.request_finalized"
+EVENT_REQUEST_TOKEN_USAGE_FINALIZED = "request.token_usage_finalized"
 
 ALL_EVENT_TYPES: frozenset[str] = frozenset(
     {
@@ -61,6 +62,7 @@ ALL_EVENT_TYPES: frozenset[str] = frozenset(
         EVENT_SESSION_STORE_GET,
         EVENT_SESSION_STORE_PUT,
         EVENT_PROXY_REQUEST_FINALIZED,
+        EVENT_REQUEST_TOKEN_USAGE_FINALIZED,
     }
 )
 

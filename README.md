@@ -116,7 +116,6 @@ Main packages:
 - `moralstack/orchestration/` — controller, routing, deliberation services
 - `moralstack/models/risk/` — risk estimation and calibration
 - `moralstack/constitution/` — constitution schema, loader, store (YAML-driven)
-- `moralstack/persistence/` — DB and file persistence modes
 - `moralstack/ui/` — FastAPI dashboard (`moralstack-ui`)
 - `moralstack/server/` — OpenAI-compatible governance HTTP proxy (`create_app`; install with `.[server]` or `.[ui]`)
 

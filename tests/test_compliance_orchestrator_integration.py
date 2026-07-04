@@ -19,6 +19,7 @@ from moralstack.models.risk import OperationalRisk, RiskCategory
 from moralstack.models.risk.schema import RiskEstimation
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.controller import OrchestrationController
+from moralstack.orchestration.null_persistence import NullPersistence
 from moralstack.orchestration.orchestration_event_taxonomy import (
     COMPLIANCE_LAYER_STARTED,
     COMPLIANCE_LAYER_VERDICT_MATCH,
@@ -33,7 +34,6 @@ from moralstack.orchestration.types import (
     ResponseMetadata,
     ResponseType,
 )
-from moralstack.persistence.null import NullPersistence
 from moralstack.utils.output_protection import OutputProtector
 
 
@@ -122,7 +122,7 @@ def test_orchestrator_emits_dccl_events_for_request_with_contract(
     with (
         patch("moralstack.orchestration.controller.decide_action", return_value=(benign_decision, explanation)),
         patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
-        patch("moralstack.persistence.sink.persist_orchestration_event", side_effect=_capture),
+        patch("moralstack.observability.emit_helpers.persist_orchestration_event", side_effect=_capture),
         patch.object(
             ctrl._runner,
             "run_benign_fast_path",
@@ -158,7 +158,7 @@ def test_orchestrator_no_dccl_events_without_contract(
     with (
         patch("moralstack.orchestration.controller.decide_action", return_value=(benign_decision, explanation)),
         patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
-        patch("moralstack.persistence.sink.persist_orchestration_event", side_effect=_capture),
+        patch("moralstack.observability.emit_helpers.persist_orchestration_event", side_effect=_capture),
         patch.object(
             ctrl._runner,
             "run_benign_fast_path",
@@ -207,7 +207,7 @@ def test_pipeline_decision_unchanged_without_validated_draft(
         patch.object(ctrl, "_regenerate_for_contract", return_value=""),
         patch("moralstack.orchestration.controller.decide_action", return_value=(benign_decision, explanation)),
         patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
-        patch("moralstack.persistence.sink.persist_orchestration_event"),
+        patch("moralstack.observability.emit_helpers.persist_orchestration_event") as mock_dccl_persist,
         patch.object(ctrl._runner, "run_benign_fast_path", run_benign_mock),
     ):
         result = ctrl.process(req)
@@ -216,4 +216,7 @@ def test_pipeline_decision_unchanged_without_validated_draft(
     assert result.compliance_verdict.decision == ComplianceDecision.MATCH
     assert result.compliance_verdict.speculative_draft_validated is False
     assert run_benign_mock.call_count == 1
+    # Lazy-import guard (plan §7.1/§10): the DCCL persist import in
+    # controller.py:1136 must resolve to the patched emit_helpers target.
+    assert mock_dccl_persist.call_count >= 1
     assert result.path == "FAST_PATH"

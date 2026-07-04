@@ -157,7 +157,7 @@ deviations from the plan, and residual problems.
     Write-Host "Diff saved: $diffFile" -ForegroundColor Green
     Write-Host ""
     Write-Host "NEXT: review the diff against the plan:" -ForegroundColor Cyan
-    Write-Host "  pwsh scripts/ai/run_codex_diff_review.ps1 -PlanPath <plan> -DiffPath '$diffFile' -HandoffPath '$resolvedHandoff'"
+    Write-Host "  /ai-review-diff-with-codex <plan> (diff: '$diffFile', handoff: '$resolvedHandoff')"
     Write-Output $diffFile
 }
 finally {

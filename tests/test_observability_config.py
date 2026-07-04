@@ -1,10 +1,10 @@
 """
-Characterization tests for persistence config.
+Characterization tests for observability config (formerly persistence config).
 
 Documents current behavior of get_db_path, get_persist_mode, get_ui_credentials.
 """
 
-from moralstack.persistence.config import (
+from moralstack.observability.config import (
     get_db_path,
     get_persist_mode,
     get_ui_credentials,

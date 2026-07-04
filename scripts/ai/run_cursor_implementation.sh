@@ -92,5 +92,5 @@ bash "$HERE/collect_git_diff.sh" --out "$DIFF" >/dev/null
 
 echo "Log saved : $LOG"
 echo "Diff saved: $DIFF"
-echo "NEXT: pwsh/bash run_codex_diff_review with --plan <plan> --diff '$DIFF' --handoff '$ABS_HANDOFF'"
+echo "NEXT: /ai-review-diff-with-codex <plan> (diff: '$DIFF', handoff: '$ABS_HANDOFF')"
 printf '%s\n' "$DIFF"

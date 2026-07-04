@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import logging
 
-from moralstack.persistence.config import get_db_path
-from moralstack.persistence.context import get_current_run_id, set_current_request_id
-from moralstack.persistence.db import create_run, init_db, update_request_domain, upsert_request
+from moralstack.observability.config import get_db_path
+from moralstack.observability.context import get_current_run_id, set_current_request_id
+from moralstack.observability.sinks.sqlite_sink import create_run, init_db, update_request_domain, upsert_request
 
 logger = logging.getLogger(__name__)
 

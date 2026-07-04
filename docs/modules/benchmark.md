@@ -107,5 +107,5 @@ working directory.
 
 ## See Also
 
-- [Persistence](./persistence.md) — Run/request storage; benchmark reports loaded from `MORALSTACK_BENCHMARK_OUTPUTS`
+- [Observability](./observability.md) — Run/request storage and telemetry; benchmark reports loaded from `MORALSTACK_BENCHMARK_OUTPUTS`
 - [INSTALL.md](../../INSTALL.md) — Benchmark env vars summary

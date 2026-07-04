@@ -187,8 +187,8 @@ class TestRequestReportFromDbFastPathConverged:
         import json
 
         from moralstack.observability import obs
-        from moralstack.persistence.db import create_run, init_db, upsert_request
-        from moralstack.persistence.sink import persist_decision_trace
+        from moralstack.observability.emit_helpers import persist_decision_trace
+        from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
         from moralstack.reports.model import request_report_from_db
 
         db_path = str(tmp_path / "report_fast.db")

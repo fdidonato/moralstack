@@ -16,6 +16,7 @@ from moralstack.models.risk import OperationalRisk, RiskCategory
 from moralstack.models.risk.schema import RiskEstimation
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.controller import OrchestrationController
+from moralstack.orchestration.null_persistence import NullPersistence
 from moralstack.orchestration.process_context import ProcessCallContext
 from moralstack.orchestration.types import (
     Decision,
@@ -26,7 +27,6 @@ from moralstack.orchestration.types import (
     ResponseMetadata,
     ResponseType,
 )
-from moralstack.persistence.null import NullPersistence
 from moralstack.sdk.response import GovernanceMetadata
 from moralstack.utils.output_protection import OutputProtector
 
@@ -161,7 +161,7 @@ class TestSDKComplianceMatch:
             ),
             patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
             patch("moralstack.orchestration.controller.get_route", return_value=("refuse", False, "REFUSE")),
-            patch("moralstack.persistence.sink.persist_orchestration_event"),
+            patch("moralstack.observability.emit_helpers.persist_orchestration_event") as mock_dccl_persist,
             patch.object(
                 ctrl,
                 "_route_refuse",
@@ -174,6 +174,9 @@ class TestSDKComplianceMatch:
         assert meta.compliance_decision == "SAFETY_OVERRIDE"
         assert meta.final_action == "REFUSE"
         assert meta.safety_override_reason is not None
+        # Lazy-import guard (plan §7.1/§10): the DCCL persist import in
+        # controller.py:1136 must resolve to the patched emit_helpers target.
+        assert mock_dccl_persist.call_count >= 1
 
     def test_sdk_no_contract_no_compliance(self) -> None:
         meta = GovernanceMetadata.from_result(_orchestrator_result(compliance_verdict=None))
@@ -233,7 +236,7 @@ class TestSDKComplianceMatch:
             ),
             patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
             patch("moralstack.orchestration.controller.get_route", return_value=("refuse", False, "REFUSE")),
-            patch("moralstack.persistence.sink.persist_orchestration_event"),
+            patch("moralstack.observability.emit_helpers.persist_orchestration_event") as mock_dccl_persist,
             patch.object(
                 ctrl,
                 "_route_refuse",
@@ -245,3 +248,6 @@ class TestSDKComplianceMatch:
         meta = GovernanceMetadata.from_result(result)
         assert meta.compliance_decision == "NO_CONTRACT"
         assert meta.final_action == "REFUSE"
+        # Lazy-import guard (plan §7.1/§10): the DCCL persist import in
+        # controller.py:1136 must resolve to the patched emit_helpers target.
+        assert mock_dccl_persist.call_count >= 1

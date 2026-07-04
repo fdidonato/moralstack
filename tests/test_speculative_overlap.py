@@ -122,6 +122,59 @@ def test_abandon_skips_join_and_emits_events(executor: ThreadPoolExecutor) -> No
     h.shutdown_executor()
 
 
+def test_abandon_persists_run_id_request_id_from_captured_context(executor: ThreadPoolExecutor) -> None:
+    """abandon() must inject run/request context captured in the calling thread."""
+    from moralstack.observability.context import (
+        set_current_cycle,
+        set_current_request_id,
+        set_current_run_id,
+        set_current_session_id,
+        set_current_turn_number,
+    )
+
+    emitter = _RecordingEmitter()
+    fut: Future[tuple[str | None, dict | None]] = Future()
+    fut.set_result(
+        (
+            "waste",
+            {
+                "phase": "speculative_generate",
+                "call_kind": "speculative",
+                "token_usage_json": '{"total_tokens": 5, "source": "exact"}',
+            },
+        )
+    )
+
+    set_current_run_id("run-abandon")
+    set_current_request_id("req-abandon")
+    set_current_session_id("sess-1")
+    set_current_turn_number(2)
+    set_current_cycle(0)
+    try:
+        h = SpeculativeOverlapHandle(
+            risk_estimation=object(),
+            spec_future=fut,
+            executor=executor,
+            spec_started_at_ms=0,
+            event_emitter=emitter,
+        )
+        h.abandon("refuse_path", "refuse")
+        import time
+
+        deadline = time.time() + 2.0
+        while not emitter.llm_calls and time.time() < deadline:
+            time.sleep(0.01)
+    finally:
+        pass
+
+    assert emitter.llm_calls, "discarded speculative llm_call should be persisted"
+    row = emitter.llm_calls[0]
+    assert row.get("run_id") == "run-abandon"
+    assert row.get("request_id") == "req-abandon"
+    assert row.get("call_outcome") == "discarded"
+    h.shutdown_executor()
+
+
 def test_join_for_consumer_idempotent_second_call_returns_none(
     executor: ThreadPoolExecutor,
 ) -> None:
