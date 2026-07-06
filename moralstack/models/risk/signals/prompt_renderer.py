@@ -111,12 +111,21 @@ def get_harm_signal_prompts(registry: SignalRegistry) -> tuple[str, str]:
     """
     Return (system_prompt, user_template) for the Harm Signal Scanner mini-estimator.
 
-    The system_prompt is the static HARM_SIGNAL_SYSTEM_PROMPT from prompts.py.
-    The user_template has all five dynamic sections filled from the registry.
+    All five registry-derived sections (evaluation order, signal definitions,
+    domain sensitivity, coherence rules, output schema) are static — they
+    depend only on the fixed SignalRegistry, never on per-request data — so
+    they are rendered once here and appended to the static
+    HARM_SIGNAL_SYSTEM_PROMPT to form the cacheable system prefix. The
+    user_template carries ONLY the per-request `{request}` field.
 
-    Callers should use user_template.format(request=...) to produce the final prompt.
+    Callers should use user_template.format(request=...) to produce the
+    final per-request user message.
     """
-    from moralstack.models.risk.prompts import HARM_SIGNAL_PROMPT_TEMPLATE, HARM_SIGNAL_SYSTEM_PROMPT  # noqa: PLC0415
+    from moralstack.models.risk.prompts import (  # noqa: PLC0415
+        HARM_SIGNAL_STATIC_TEMPLATE,
+        HARM_SIGNAL_SYSTEM_PROMPT,
+        HARM_SIGNAL_USER_TEMPLATE,
+    )
 
     evaluation_order = render_evaluation_order(registry)
     signal_definitions = render_signal_definitions(registry)
@@ -124,19 +133,25 @@ def get_harm_signal_prompts(registry: SignalRegistry) -> tuple[str, str]:
     coherence_rules = render_coherence_rules(registry)
     output_schema = render_output_schema(registry)
 
-    # Fill the 5 dynamic placeholder sections; leave {request} intact for
-    # the caller to fill per-request via .format(request=...).
-    # We use a partial format with only the section keys, not {request}.
-    user_template = HARM_SIGNAL_PROMPT_TEMPLATE.format(
-        request="{request}",  # preserve the per-request placeholder
-        evaluation_order_section=evaluation_order,
-        signal_definitions_section=signal_definitions,
-        domain_sensitivity_section=domain_sensitivity,
-        coherence_rules_section=coherence_rules,
-        output_schema_section=output_schema,
+    # Fill the 5 static placeholder sections, then collapse any
+    # format()-escaped literal braces (e.g. the JSON schema skeleton
+    # produced by render_output_schema uses "{{"/"}}") since this text is
+    # no longer passed through a second .format() call once it is static.
+    static_suffix = (
+        HARM_SIGNAL_STATIC_TEMPLATE.format(
+            evaluation_order_section=evaluation_order,
+            signal_definitions_section=signal_definitions,
+            domain_sensitivity_section=domain_sensitivity,
+            coherence_rules_section=coherence_rules,
+            output_schema_section=output_schema,
+        )
+        .replace("{{", "{")
+        .replace("}}", "}")
     )
 
-    return HARM_SIGNAL_SYSTEM_PROMPT, user_template
+    system_prompt = HARM_SIGNAL_SYSTEM_PROMPT + "\n\n" + static_suffix
+
+    return system_prompt, HARM_SIGNAL_USER_TEMPLATE
 
 
 # ── Internal helpers ────────────────────────────────────────────────────────

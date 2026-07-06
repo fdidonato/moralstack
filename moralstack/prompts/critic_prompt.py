@@ -86,14 +86,38 @@ If no violations:
 {"decision":"PROCEED","violated_hard":false,"violations":[],"revision_guidance":""}
 """
 
-# Static rules + JSON closure first (prompt-cache friendly); per-request fields last.
-CRITIC_FULL_TEMPLATE = (
-    """{rules}
+# Verbatim copy of critic_module.CRITIC_SYSTEM_PROMPT's base framing text.
+# critic_module.CRITIC_SYSTEM_PROMPT remains the short, UNCHANGED system
+# prompt used by the quick-check fast path (its own `{"violated"}` contract).
+# This copy is the base of CRITIC_FULL_SYSTEM_PROMPT below, used ONLY at the
+# two FULL-critique call sites (see critic_module.py generate_messages /
+# legacy generate branches) — never at the quick-check call site. A
+# content-preservation test pins byte-equality between the two so they never
+# silently diverge.
+_CRITIC_FULL_BASE_PROMPT = """You are a constitutional critic for an AI safety system.
+Your task is to evaluate AI responses against ethical principles and identify violations.
+Be thorough but fair. Only flag genuine violations with clear evidence.
+CRITICAL DISTINCTION: You evaluate the RESPONSE content, not the REQUEST topic.
+If the response contains no operational content and already declines or redirects
+the request (a refusal or safe-redirect draft), it has zero violations regardless
+of how sensitive the request topic is. Decision MUST be PROCEED for clean refusal drafts.
+When the request warrants refusal (e.g. terrorism, weapons, critical infrastructure
+targeting), also flag information leakage: responses that provide operationally useful
+information—such as listing components, targets, materials, or structural elements that
+could be exploited—even if framed as "general principles" or "educational content."
+When you output REVISE or REFUSE, always include concrete safe alternatives in
+revision_guidance using the format "suggest: [specific topics, resources, or reframing]"
+so the response can be improved or redirected constructively.
+Always respond with valid JSON only. No additional text or explanation outside the JSON."""
 
-"""
-    + OUTPUT_JSON_ONLY
-    + """
+# Prompt-caching reorder (Part A): the static rules + JSON closure now live
+# entirely in the system prefix, so the whole thing is byte-identical across
+# requests for the FULL critique path. Used ONLY at the two FULL-critique
+# call sites in critic_module.py.
+CRITIC_FULL_SYSTEM_PROMPT = _CRITIC_FULL_BASE_PROMPT + "\n\n" + CRITIC_SHARED_RULES + "\n\n" + OUTPUT_JSON_ONLY
 
+# Dynamic-only: per-request fields last (nothing static remains here).
+CRITIC_FULL_TEMPLATE = """\
 TASK: Evaluate the response in TURN CONTEXT against the listed principles. Judge the RESPONSE content, not the REQUEST topic.
 
 PRINCIPLES:
@@ -110,7 +134,6 @@ RESPONSE:
 {response}
 {previous_guidance_section}
 """
-)
 
 
 def build_critic_prompt(
@@ -129,7 +152,8 @@ def build_critic_prompt(
         previous_guidance: Revision guidance del ciclo precedente
 
     Returns:
-        Prompt string pronto per l'LLM
+        Prompt string pronto per l'LLM (dynamic content only; the static
+        rules/schema live in CRITIC_FULL_SYSTEM_PROMPT).
     """
     request = context.user_prompt or ""
 
@@ -151,5 +175,4 @@ def build_critic_prompt(
         request=request,
         response=context.draft_text_full or "",
         previous_guidance_section=previous_guidance_section,
-        rules=CRITIC_SHARED_RULES,
     )

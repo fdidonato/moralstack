@@ -64,6 +64,26 @@ leakage is mapped to `CORE.DUALUSE.1` (or `CORE.NM.1` when applicable).
 
 ---
 
+## Prompt-Caching Static/Dynamic Split (Part A)
+
+To engage OpenAI automatic prompt caching, the FULL-critique path uses a
+byte-stable system prefix: `CRITIC_FULL_SYSTEM_PROMPT`
+(`moralstack/prompts/critic_prompt.py`) = the critic framing + `CRITIC_SHARED_RULES`
+(rules/schema) + `OUTPUT_JSON_ONLY`. `build_critic_prompt()` returns ONLY dynamic
+content (TASK/PRINCIPLES/TURN CONTEXT/REQUEST/RESPONSE/previous-guidance). This
+constant is used at both FULL-critique call sites in `critic_module.py`
+(`generate_messages` and legacy `generate` branches).
+
+The **quick-check fast path** (`quick_check()`, HARD-constraint short-circuit) is
+intentionally **unchanged**: it keeps its own short `CRITIC_SYSTEM_PROMPT` and the
+`{"violated": ...}` contract, sent via `generate()`. Its prompt is small (max_tokens=256,
+below the ~1024-token cache threshold) so reordering it has no caching payoff and
+risks the safety-critical fast-path contract — it is a separate constant from
+`CRITIC_FULL_SYSTEM_PROMPT` on purpose (mixing them would make quick-check emit
+the full `decision`/`violations` schema and silently drop the `violated` field).
+
+---
+
 ## Output Structure
 
 ### CriticReport

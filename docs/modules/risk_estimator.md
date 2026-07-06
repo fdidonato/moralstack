@@ -151,6 +151,28 @@ declared in-prompt as `context_mode=role_serialized_truncated`; the controller
 emits `CONTEXT_SHAPE_RECORDED` so audit can distinguish available prior turns
 from the subset used by risk estimation.
 
+### Prompt-Caching Static/Dynamic Split (Part A / A1)
+
+The static procedure/examples/output-schema content of each mini-estimator now lives
+in the corresponding `*_SYSTEM_PROMPT` (`models/risk/prompts.py`), byte-identical
+across requests for that mini:
+
+- **Intent** (`INTENT_CONTEXT_SYSTEM_PROMPT`): STEP 0-3 + field reminders + output
+  schema. The user template (`INTENT_CONTEXT_PROMPT_TEMPLATE`) is dynamic-only:
+  `REQUEST` + the per-request `{constitution_context}` (retrieved principles).
+- **Operational** (`OPERATIONAL_RISK_SYSTEM_PROMPT`): STEP 1-4 + output schema.
+  User template is `REQUEST` only.
+- **Signals** (`HARM_SIGNAL_SYSTEM_PROMPT`, composed by
+  `models/risk/signals/prompt_renderer.get_harm_signal_prompts()`): all five
+  registry-derived sections (evaluation order, signal definitions, domain
+  sensitivity, coherence rules, output schema) are static — they depend only on
+  the fixed `SignalRegistry`, never on per-request data — so they are rendered
+  once and appended to the system prefix. The user template is `REQUEST` only.
+
+Verified by `tests/test_static_prefix_stability.py` (byte-identical system across
+two distinct requests, equal to the module constant); `response_format` stays
+`json_object` and retries/parsers are unchanged.
+
 Shared steps:
 
 1. **Prompt building** — dedicated templates in `prompts.py` (`INTENT_CONTEXT_*`, `HARM_SIGNAL_*`, `OPERATIONAL_RISK_*`). `GenerationConfig`

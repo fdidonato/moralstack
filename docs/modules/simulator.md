@@ -37,6 +37,27 @@ To reduce token usage:
 
 ---
 
+## Prompt-Caching Static/Dynamic Split (Part A)
+
+The simulator has **two independent LLM paths with path-specific system prompts**
+(`moralstack/prompts/simulator_prompt.py`), so a seeded call can never receive the
+batch-only contract and vice versa:
+
+- **Batch** (`_simulate_batch`): `SIMULATOR_BATCH_SYSTEM_PROMPT` = base framing +
+  `SIMULATOR_FULL_STATIC_PREFIX` (the "exactly N consequences" contract, enums, JSON
+  schema skeleton). `build_simulator_prompt()` returns dynamic-only content (TURN
+  PARAMETERS/REQUEST/RESPONSE/RISK CONTEXT/DOMAIN/`num_scenarios`).
+- **Seeded** (`_simulate_with_seeds`, `SimulatorConfig.use_seeded_generation=True`):
+  `SIMULATOR_SEEDED_SYSTEM_PROMPT` = base framing + the seeded rubric (one
+  consequence per seed) + enums + schema skeleton. `SEEDED_PROMPT_TEMPLATE`
+  (`simulator_module.py`) is dynamic-only: `PERSPECTIVE:{seed}` + REQUEST + RESPONSE.
+
+Both system prompts are byte-stable across requests for their own path (verified by
+`tests/test_static_prefix_stability.py`); `response_format` stays `json_object` and
+retries are unchanged.
+
+---
+
 ## Scenario Types
 
 ### ScenarioType

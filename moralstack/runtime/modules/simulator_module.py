@@ -21,9 +21,8 @@ from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.retry import RETRY_SIMULATOR
 from moralstack.prompts.simulator_prompt import (
-    HARM_TYPE_MAPPING_RULE,
-    SIMULATOR_ENUMS,
-    SIMULATOR_SCHEMA_SKELETON,
+    SIMULATOR_BATCH_SYSTEM_PROMPT,
+    SIMULATOR_SEEDED_SYSTEM_PROMPT,
 )
 from moralstack.runtime.modules.message_context import build_module_messages
 from moralstack.utils.cache import build_context_fingerprint, get_global_cache
@@ -152,10 +151,6 @@ class SimulationResult:
 # Protocols
 # =============================================================================
 
-SIMULATOR_SYSTEM_PROMPT = """You are a consequence simulator.
-Return ONLY valid JSON matching the required schema.
-No explanations. No extra text."""
-
 SCENARIO_SEEDS = [
     "Consider what happens if this advice is followed literally by someone inexperienced",
     "Consider how this information could be misused by a malicious actor",
@@ -164,28 +159,16 @@ SCENARIO_SEEDS = [
     "Consider unintended consequences for vulnerable populations",
 ]
 
-SEEDED_PROMPT_TEMPLATE = (
-    """Generate a consequence based on this perspective:
+# Prompt-caching reorder (A3): dynamic-only. The static rubric (incl. the
+# "Generate a consequence based on this perspective:" framing, Requirements,
+# enums, and schema skeleton) now lives in SIMULATOR_SEEDED_SYSTEM_PROMPT
+# (moralstack/prompts/simulator_prompt.py) and is sent once per call as the
+# system prefix; only the per-request seed/request/response remain here.
+SEEDED_PROMPT_TEMPLATE = """PERSPECTIVE: {seed}
 
-        PERSPECTIVE: {seed}
-
-        REQUEST: {request}
-        RESPONSE: {response}
-
-        Requirements: text <= 15 words. Use only allowed values. harm_type: match REQUEST topic ("""
-    + HARM_TYPE_MAPPING_RULE
-    + """). JSON only.
-
+REQUEST: {request}
+RESPONSE: {response}
 """
-    + SIMULATOR_ENUMS
-    + """
-
-"""
-    + SIMULATOR_SCHEMA_SKELETON
-    + """
-
-Output ONLY valid JSON:"""
-)
 
 RETRY_PROMPT = RETRY_SIMULATOR
 
@@ -428,7 +411,7 @@ class LLMConsequenceSimulator:
                 if hasattr(self.policy, "generate_messages"):
                     result = self.policy.generate_messages(
                         messages=build_module_messages(
-                            system_prompt=SIMULATOR_SYSTEM_PROMPT,
+                            system_prompt=SIMULATOR_BATCH_SYSTEM_PROMPT,
                             user_prompt=prompt,
                             developer_contract=developer_contract,
                             conversation_history=conversation_history,
@@ -439,14 +422,14 @@ class LLMConsequenceSimulator:
                 elif attempt == 0:
                     result = self.policy.generate(
                         prompt=legacy_prompt,
-                        system=SIMULATOR_SYSTEM_PROMPT,
+                        system=SIMULATOR_BATCH_SYSTEM_PROMPT,
                         config=self._generation_config,
                     )
                 else:
                     retry_prompt = f"{legacy_prompt}\n\n{RETRY_PROMPT}"
                     result = self.policy.generate(
                         prompt=retry_prompt,
-                        system=SIMULATOR_SYSTEM_PROMPT,
+                        system=SIMULATOR_BATCH_SYSTEM_PROMPT,
                         config=self._generation_config,
                     )
 
@@ -464,7 +447,7 @@ class LLMConsequenceSimulator:
                     raw_response=raw_response,
                     parse_attempts=parse_attempts,
                     prompt=effective_prompt,
-                    system_prompt=SIMULATOR_SYSTEM_PROMPT,
+                    system_prompt=SIMULATOR_BATCH_SYSTEM_PROMPT,
                     tokens_used=tokens_used,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
@@ -547,7 +530,7 @@ class LLMConsequenceSimulator:
                     if hasattr(self.policy, "generate_messages"):
                         result = self.policy.generate_messages(
                             messages=build_module_messages(
-                                system_prompt=SIMULATOR_SYSTEM_PROMPT,
+                                system_prompt=SIMULATOR_SEEDED_SYSTEM_PROMPT,
                                 user_prompt=prompt,
                                 developer_contract=developer_contract,
                                 conversation_history=conversation_history,
@@ -558,14 +541,14 @@ class LLMConsequenceSimulator:
                     elif attempt == 0:
                         result = self.policy.generate(
                             prompt=legacy_prompt,
-                            system=SIMULATOR_SYSTEM_PROMPT,
+                            system=SIMULATOR_SEEDED_SYSTEM_PROMPT,
                             config=self._generation_config,
                         )
                     else:
                         retry_prompt = f"{legacy_prompt}\n\n{RETRY_PROMPT}"
                         result = self.policy.generate(
                             prompt=retry_prompt,
-                            system=SIMULATOR_SYSTEM_PROMPT,
+                            system=SIMULATOR_SEEDED_SYSTEM_PROMPT,
                             config=self._generation_config,
                         )
 
@@ -615,7 +598,7 @@ class LLMConsequenceSimulator:
             raw_response="\n---\n".join(raw_responses),
             parse_attempts=total_attempts,
             prompt="\n---\n".join(prompts_used) if prompts_used else "",
-            system_prompt=SIMULATOR_SYSTEM_PROMPT,
+            system_prompt=SIMULATOR_SEEDED_SYSTEM_PROMPT,
             tokens_used=total_tokens_used,
             prompt_tokens=(total_prompt_tokens if has_prompt_tokens else None),
             completion_tokens=(total_completion_tokens if has_completion_tokens else None),

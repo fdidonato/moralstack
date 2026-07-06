@@ -21,6 +21,7 @@ from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
 from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
 from moralstack.orchestration.contract import DeveloperContract
+from moralstack.prompts.critic_prompt import CRITIC_FULL_SYSTEM_PROMPT
 from moralstack.prompts.retry import RETRY_CRITIC
 from moralstack.runtime.modules.message_context import build_module_messages
 from moralstack.utils.json_utils import JSONParseError, extract_json
@@ -443,7 +444,7 @@ class LLMConstitutionalCritic:
                 if hasattr(self.policy, "generate_messages"):
                     result = self.policy.generate_messages(
                         messages=build_module_messages(
-                            system_prompt=CRITIC_SYSTEM_PROMPT,
+                            system_prompt=CRITIC_FULL_SYSTEM_PROMPT,
                             user_prompt=prompt,
                             developer_contract=developer_contract,
                             conversation_history=conversation_history,
@@ -454,13 +455,13 @@ class LLMConstitutionalCritic:
                 elif attempt == 0:
                     result = self.policy.generate(
                         prompt=legacy_prompt,
-                        system=CRITIC_SYSTEM_PROMPT,
+                        system=CRITIC_FULL_SYSTEM_PROMPT,
                         config=self._generation_config,
                     )
                 else:
                     result = self.policy.generate(
                         prompt=f"{legacy_prompt}\n\n{RETRY_PROMPT}",
-                        system=CRITIC_SYSTEM_PROMPT,
+                        system=CRITIC_FULL_SYSTEM_PROMPT,
                         config=self._generation_config,
                     )
 
@@ -511,7 +512,7 @@ class LLMConstitutionalCritic:
                     raw_response=raw_response,
                     parse_attempts=parse_attempts,
                     prompt=effective_prompt,
-                    system_prompt=CRITIC_SYSTEM_PROMPT,
+                    system_prompt=CRITIC_FULL_SYSTEM_PROMPT,
                     tokens_used=int(getattr(result, "tokens_used", 0) or 0),
                     prompt_tokens=getattr(result, "prompt_tokens", None),
                     completion_tokens=getattr(result, "completion_tokens", None),

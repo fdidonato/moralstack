@@ -1,38 +1,27 @@
 """Perspectives module must pass developer/history as native messages."""
 
-from moralstack.models.delib_context import DelibContext
 from moralstack.prompts.perspectives_prompt import build_perspectives_system_prompt
 
 
 def test_perspectives_system_prompt_does_not_inline_contract_when_present():
-    ctx = DelibContext(
-        user_prompt="some_token_123",
-        draft_text_full="response_text",
-        developer_contract_text=("You are an admin assistant. If the user sends 'PING', reply 'PONG'."),
-    )
-    prompt = build_perspectives_system_prompt(ctx)
+    # Prompt-caching reorder (A5a): build_perspectives_system_prompt is now
+    # ctx-independent (static only) — it structurally cannot inline a
+    # developer contract or REQUEST/RESPONSE regardless of what the caller's
+    # context carries. Developer contract/history stay in their own message
+    # slots (see test_perspectives_module_propagates_contract_to_context).
+    prompt = build_perspectives_system_prompt()
     assert "DEVELOPER CONTRACT:" not in prompt
     assert "If the user sends 'PING'" not in prompt
 
 
 def test_perspectives_system_prompt_omits_contract_when_absent():
-    """When developer_contract_text is empty, the DEVELOPER CONTRACT block must NOT appear."""
-    ctx = DelibContext(
-        user_prompt="generic request",
-        draft_text_full="generic response",
-    )
-    prompt = build_perspectives_system_prompt(ctx)
+    """The DEVELOPER CONTRACT block must NOT appear (system prompt is ctx-independent)."""
+    prompt = build_perspectives_system_prompt()
     assert "DEVELOPER CONTRACT:" not in prompt
 
 
 def test_perspectives_system_prompt_does_not_inline_contract_or_history():
-    ctx = DelibContext(
-        user_prompt="X",
-        draft_text_full="Y",
-        developer_contract_text="if user types X, reply Y",
-        conversation_history_snippet="[user]: previous turn\n[assistant]: previous reply",
-    )
-    prompt = build_perspectives_system_prompt(ctx)
+    prompt = build_perspectives_system_prompt()
     assert "DEVELOPER CONTRACT:" not in prompt
     assert "CONVERSATION HISTORY" not in prompt
     assert "previous turn" not in prompt

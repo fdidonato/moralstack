@@ -1,8 +1,12 @@
 """
 Perspectives prompt builder.
 
-OPT-2: Shared system prompt (REQUEST+RESPONSE+common instructions) and per-perspective
-user prompt (identity/instructions only) to avoid sending the draft N times in N perspectives.
+A5a: static, ctx-independent shared system prompt (RISK CONTEXT INTERPRETATION +
+DEVELOPER CONTRACT EVALUATION + common instructions/JSON contract only — no
+REQUEST/RESPONSE/risk signals) and per-perspective user prompt (identity/instructions
++ dynamic TURN CONTEXT: REQUEST/RESPONSE/RISK CONTEXT), so the system prefix stays
+byte-identical across every perspective and every request while still avoiding
+sending the draft N times in N perspectives.
 """
 
 from __future__ import annotations
@@ -74,9 +78,18 @@ RISK CONTEXT: {risk_signals}
 """
 )
 
-# Shared system prompt body: static block first, then REQUEST/RESPONSE.
-PERSPECTIVE_SYSTEM_FULL_BODY = (
-    RISK_CONTEXT_INTERPRETATION + DEVELOPER_CONTRACT_EVALUATION + PERSPECTIVE_COMMON_INSTRUCTIONS + """
+# Prompt-caching reorder (A5a): the shared system body is now STATIC ONLY
+# (RISK CONTEXT INTERPRETATION + DEVELOPER CONTRACT EVALUATION + common
+# instructions/JSON contract) — ctx-independent, so it is byte-identical
+# across every request AND every perspective in a round. REQUEST/RESPONSE/
+# RISK CONTEXT (formerly interpolated here, defeating caching — see OPT-2
+# docstring above) now live in the per-perspective USER message built by
+# build_perspectives_user_prompt below.
+PERSPECTIVE_SYSTEM_FULL_BODY = RISK_CONTEXT_INTERPRETATION + DEVELOPER_CONTRACT_EVALUATION + PERSPECTIVE_COMMON_INSTRUCTIONS
+
+# Dynamic TURN CONTEXT block, appended per-perspective to the user message
+# (moved out of PERSPECTIVE_SYSTEM_FULL_BODY by the A5a reorder).
+_PERSPECTIVE_TURN_CONTEXT_TEMPLATE = """
 
 TURN CONTEXT:
 REQUEST: {request}
@@ -85,55 +98,64 @@ RESPONSE: {response}
 
 RISK CONTEXT: {risk_signals}
 """
-)
 
 
-def build_perspectives_system_prompt(
-    context: DelibContext,
-) -> str:
+def build_perspectives_system_prompt() -> str:
     """
-    Build the shared system prompt body (REQUEST + RESPONSE + common instructions).
+    Build the shared, ctx-INDEPENDENT system prompt body (static only).
 
-    Used by OPT-2: one system prompt per evaluation round so REQUEST+RESPONSE are sent once
-    instead of once per perspective. Does not include perspective identity or instructions.
+    Prompt-caching reorder (A5a): this is now identical across every request
+    and every perspective — the cacheable prefix. REQUEST/RESPONSE/risk
+    signals are no longer interpolated here; they are sent in the
+    per-perspective user message via build_perspectives_user_prompt.
 
-    Args:
-        context: DelibContext with request, draft, and risk signals.
     Returns:
         String to be appended after PERSPECTIVE_SYSTEM_PROMPT (JSON-only) in the module.
     """
-    request = context.user_prompt or ""
-    response = context.draft_text_full or ""
-    risk_signals = context.get_risk_signals_str() or "none"
-    prompt = PERSPECTIVE_SYSTEM_FULL_BODY.format(
-        request=request,
-        response=response,
-        risk_signals=risk_signals,
-    )
-
-    return prompt
+    # format()-escaped literal braces ("{{"/"}}") in PERSPECTIVE_COMMON_INSTRUCTIONS'
+    # JSON schema are collapsed to single braces since this text is no longer
+    # passed through a further .format() call (it carries no placeholders anymore).
+    return PERSPECTIVE_SYSTEM_FULL_BODY.replace("{{", "{").replace("}}", "}")
 
 
 def build_perspectives_user_prompt(
     perspective_name: str,
     perspective_instructions: str,
+    context: DelibContext | None = None,
 ) -> str:
     """
-    Build the per-perspective user prompt (identity and instructions only).
+    Build the per-perspective user prompt: identity/instructions + dynamic TURN CONTEXT.
 
-    OPT-2: no REQUEST/RESPONSE here; they are in the shared system prompt to reduce tokens
-    when evaluating multiple perspectives.
+    Prompt-caching reorder (A5a): REQUEST/RESPONSE/RISK CONTEXT now live here
+    (moved out of the shared system body) so the system prefix stays static
+    across every perspective and every request.
 
     Args:
         perspective_name: Display name of the perspective (e.g. "Direct User").
         perspective_instructions: Perspective-specific evaluation instructions.
+        context: DelibContext with request, draft, and risk signals. Optional
+            for backward compatibility with direct/low-level callers that have
+            no turn context; when omitted, no TURN CONTEXT block is appended
+            (identity + instructions only, matching the pre-A5a shape).
 
     Returns:
-        Short user prompt to send per perspective.
+        User prompt to send per perspective (identity + instructions [+ turn context]).
     """
-    return f"""Evaluate this AI response from the perspective of: {perspective_name}
+    identity_block = f"""Evaluate this AI response from the perspective of: {perspective_name}
 
 {perspective_instructions}"""
+    if context is None:
+        return identity_block
+
+    request = context.user_prompt or ""
+    response = context.draft_text_full or ""
+    risk_signals = context.get_risk_signals_str() or "none"
+    turn_context = _PERSPECTIVE_TURN_CONTEXT_TEMPLATE.format(
+        request=request,
+        response=response,
+        risk_signals=risk_signals,
+    )
+    return identity_block + turn_context
 
 
 def build_perspectives_prompt(

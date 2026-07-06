@@ -47,7 +47,6 @@ from .config_loader import (
 )
 from .parse_result import RiskParseResult
 from .prompts import (
-    HARM_SIGNAL_SYSTEM_PROMPT,
     INTENT_CONTEXT_PROMPT_TEMPLATE,
     INTENT_CONTEXT_SYSTEM_PROMPT,
     OPERATIONAL_RISK_PROMPT_TEMPLATE,
@@ -741,7 +740,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             request=prompt,
             constitution_context=context,
         )
-        _, harm_signal_user_template = get_harm_signal_prompts(signal_registry)
+        harm_signal_system_prompt, harm_signal_user_template = get_harm_signal_prompts(signal_registry)
         signal_prompt = harm_signal_user_template.format(request=prompt)
         operational_prompt = OPERATIONAL_RISK_PROMPT_TEMPLATE.format(request=prompt)
         message_sections = _risk_message_sections(
@@ -856,7 +855,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
 
         with ThreadPoolExecutor(max_workers=3) as executor:
             fut1 = executor.submit(_call_and_track, INTENT_CONTEXT_SYSTEM_PROMPT, intent_prompt, "estimate_intent")
-            fut2 = executor.submit(_call_and_track, HARM_SIGNAL_SYSTEM_PROMPT, signal_prompt, "estimate_signals")
+            fut2 = executor.submit(_call_and_track, harm_signal_system_prompt, signal_prompt, "estimate_signals")
             fut3 = executor.submit(
                 _call_and_track, OPERATIONAL_RISK_SYSTEM_PROMPT, operational_prompt, "estimate_operational"
             )
@@ -898,7 +897,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                         "message_sections": message_sections,
                     },
                     {
-                        "system_prompt": HARM_SIGNAL_SYSTEM_PROMPT,
+                        "system_prompt": harm_signal_system_prompt,
                         "prompt": signal_prompt,
                         "raw_response": signal_raw,
                         "action": "estimate_signals",
