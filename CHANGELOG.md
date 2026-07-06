@@ -21,6 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Prompt caching (deliberative LLM modules)**: reordered the prompts of every
+  deliberative module (risk mini-estimators, critic, simulator, hindsight,
+  perspective) so the static content (instructions, enums, JSON schema/skeleton,
+  examples) lives in the system prompt as a byte-identical prefix, while only the
+  per-request dynamic data stays in the user message. This enables OpenAI automatic
+  prompt caching (stable prefix ≥1024 tokens), cutting input-token cost and latency.
+  No behavior change: `response_format` stays `{"type":"json_object"}` everywhere and
+  parsers, retries and JSON contracts are unchanged. Path-specific system prompts keep
+  differing JSON contracts from colliding (critic full vs quick-check; simulator batch
+  vs seeded; hindsight single/individual vs batch); perspective moves request/response/
+  risk context into the per-perspective user message; the shared hindsight base framing
+  is unified in `moralstack/prompts/_common.py` (`HINDSIGHT_BASE_FRAMING`). Observability
+  persistence reflects the new system/user split.
 - **AI review harness**: refactored the Codex/Cursor agentic-workflow commands and
   helper scripts (`.claude/commands/ai-review-*`, `scripts/ai/*`, `docs/ai/*`) and
   removed the obsolete `codex-review-coordinator` agent.

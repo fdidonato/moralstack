@@ -394,10 +394,14 @@ class TestNoContractUserPromptByteEquivalence:
         ]
         assert len(intent_calls) == 1
         user_prompt = str(intent_calls[0].kwargs.get("prompt", ""))
+        system_prompt = str(intent_calls[0].kwargs.get("system", ""))
         # Injected deployer block prefix must be absent; STEP 0 instructions may mention DEVELOPER CONTRACT.
         assert "DEVELOPER CONTRACT (system prompt declared" not in user_prompt
-        assert "STEP 0 — DEVELOPER CONTRACT CHECK" in user_prompt
-        assert "If no DEVELOPER CONTRACT block is present" in str(intent_calls[0].kwargs.get("system", ""))
+        assert "DEVELOPER CONTRACT (system prompt declared" not in system_prompt
+        # Prompt-caching reorder (A1): STEP 0 is static content and now lives in
+        # the system prefix, not the per-request user prompt.
+        assert "STEP 0 — DEVELOPER CONTRACT CHECK" in system_prompt
+        assert "If no DEVELOPER CONTRACT block is present" in system_prompt
 
 
 class TestSystemPromptStructureSmoke:

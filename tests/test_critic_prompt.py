@@ -5,7 +5,7 @@ Tests for critic_prompt: ensure risk context is injected correctly.
 from __future__ import annotations
 
 from moralstack.models.delib_context import DelibContext
-from moralstack.prompts.critic_prompt import build_critic_prompt
+from moralstack.prompts.critic_prompt import CRITIC_FULL_SYSTEM_PROMPT, build_critic_prompt
 
 
 def test_build_critic_prompt_full_includes_risk_assessment():
@@ -43,11 +43,19 @@ def test_build_critic_prompt_includes_enumerated_option_only_guard():
     answer flipped the factual token via the rewrite loop. SOFT-only feedback on
     an enumerated single-token output must resolve to PROCEED; only HARD
     violations may justify REVISE/REFUSE there.
+
+    Prompt-caching reorder (A2): the shared rules (incl. this guard) moved
+    from the per-request user prompt into the static `CRITIC_FULL_SYSTEM_PROMPT`
+    prefix. This test now asserts the guard lives verbatim in the system
+    prompt AND is absent from the dynamic user prompt (proves the move and
+    guards against duplication re-bloating per-request tokens).
     """
     ctx = DelibContext(user_prompt="Question: ...?", draft_text_full="TRUE")
 
     prompt = build_critic_prompt(ctx, principles="P1: Test principle")
 
-    assert "Enumerated/option-only answers" in prompt
-    assert 'decision="PROCEED"' in prompt
-    assert "violated_hard=false" in prompt
+    assert "Enumerated/option-only answers" in CRITIC_FULL_SYSTEM_PROMPT
+    assert 'decision="PROCEED"' in CRITIC_FULL_SYSTEM_PROMPT
+    assert "violated_hard=false" in CRITIC_FULL_SYSTEM_PROMPT
+
+    assert "Enumerated/option-only answers" not in prompt

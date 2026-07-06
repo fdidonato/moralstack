@@ -17,7 +17,10 @@ from moralstack.observability.service import get_obs
 
 # Persistence imports for report test
 from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
-from moralstack.prompts.perspectives_prompt import build_perspectives_system_prompt
+from moralstack.prompts.perspectives_prompt import (
+    build_perspectives_system_prompt,
+    build_perspectives_user_prompt,
+)
 from moralstack.prompts.simulator_prompt import (
     DEFAULT_DOMAIN_GUIDANCE,
     DOMAIN_GUIDANCE,
@@ -51,7 +54,13 @@ def _fresh_obs_singleton():
 
 
 class TestPerspectivesFullModeRiskContext:
-    """RISK CONTEXT must appear in shared system prompt in full mode (Finding 3)."""
+    """RISK CONTEXT must appear in the per-perspective user message (Finding 3).
+
+    Prompt-caching reorder (A5a): REQUEST/RESPONSE/RISK CONTEXT moved out of
+    the shared system prompt (which is now ctx-independent, static-only, and
+    must NOT vary with ctx.risk_score/risk_category/intent_to_harm) into the
+    per-perspective user message built by build_perspectives_user_prompt.
+    """
 
     def test_full_mode_includes_risk_context_section(self):
         ctx = DelibContext(
@@ -61,11 +70,19 @@ class TestPerspectivesFullModeRiskContext:
             risk_category="clearly_harmful",
             intent_to_harm=True,
         )
-        out = build_perspectives_system_prompt(ctx)
-        assert "RISK CONTEXT:" in out
-        assert "risk_score=0.60" in out
-        assert "risk_category=clearly_harmful" in out
-        assert "intent_to_harm=true" in out
+        user_prompt = build_perspectives_user_prompt("Direct User", "instructions", ctx)
+        assert "RISK CONTEXT:" in user_prompt
+        assert "risk_score=0.60" in user_prompt
+        assert "risk_category=clearly_harmful" in user_prompt
+        assert "intent_to_harm=true" in user_prompt
+
+    def test_shared_system_prompt_is_ctx_independent(self):
+        """The shared system prompt takes no context and never varies (A5a)."""
+        out_a = build_perspectives_system_prompt()
+        out_b = build_perspectives_system_prompt()
+        assert out_a == out_b
+        assert "risk_score=" not in out_a
+        assert "RISK CONTEXT:" not in out_a
 
 
 # -----------------------------------------------------------------------------

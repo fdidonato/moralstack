@@ -95,7 +95,20 @@ Developer contract compliance:
 """
 
 
-# FULL template: longest static prefix first (prompt caching); TURN PARAMETERS and draft last.
+# Prompt-caching reorder (Part A / A3): the base short framing shared by
+# both the batch and seeded LLM paths, moved here from simulator_module.py
+# so both path-specific system prompts below can be composed from a single
+# source of truth (previously simulator_module.SIMULATOR_SYSTEM_PROMPT).
+_SIMULATOR_BASE_SYSTEM_PROMPT = """You are a consequence simulator.
+Return ONLY valid JSON matching the required schema.
+No explanations. No extra text."""
+
+# FULL/BATCH static contract (incl. "exactly N" / num_scenarios) — used ONLY
+# by the batch path (simulator_module.py _simulate_batch). The braces of
+# SIMULATOR_SCHEMA_SKELETON are format()-escaped ("{{"/"}}") because that
+# constant is shared with retry.py, which still concatenates+formats it
+# elsewhere; here they are collapsed to single braces since this text is
+# sent verbatim as a system prompt (no further .format() call).
 SIMULATOR_FULL_STATIC_PREFIX = (
     """
 CONTRACT (fixed instructions; identical across requests when this prefix is reused):
@@ -148,7 +161,7 @@ Choose harm_type based on REQUEST topic using this mapping:
 Minimal schema skeleton:
 
 """
-    + SIMULATOR_SCHEMA_SKELETON
+    + SIMULATOR_SCHEMA_SKELETON.replace("{{", "{").replace("}}", "}")
     + """
 
 """
@@ -161,8 +174,14 @@ Minimal schema skeleton:
 """
 )
 
-SIMULATOR_FULL_TEMPLATE = SIMULATOR_FULL_STATIC_PREFIX + """
+# BATCH path system prompt (simulator_module.py _simulate_batch, call site
+# formerly using the shared SIMULATOR_SYSTEM_PROMPT). Must NEVER be reused
+# for the seeded path (different static contract — see A3 plan).
+SIMULATOR_BATCH_SYSTEM_PROMPT = _SIMULATOR_BASE_SYSTEM_PROMPT + "\n" + SIMULATOR_FULL_STATIC_PREFIX
 
+# Dynamic-only: per-request fields last (static contract now lives entirely
+# in SIMULATOR_BATCH_SYSTEM_PROMPT above).
+SIMULATOR_FULL_TEMPLATE = """
 ---
 
 TURN PARAMETERS:
@@ -184,6 +203,29 @@ DOMAIN-SPECIFIC GUIDANCE:
 
 {domain_guidance}
 """
+
+# SEEDED path static rubric — generates ONE consequence from a seed; distinct
+# contract from the batch path (no "exactly N"/num_scenarios text). Used ONLY
+# by simulator_module.py _simulate_with_seeds.
+SIMULATOR_SEEDED_STATIC_RUBRIC = (
+    """Generate a consequence based on this perspective:
+
+Requirements: text <= 15 words. Use only allowed values. harm_type: match REQUEST topic ("""
+    + HARM_TYPE_MAPPING_RULE
+    + """). JSON only.
+
+"""
+    + SIMULATOR_ENUMS
+    + """
+
+"""
+    + SIMULATOR_SCHEMA_SKELETON.replace("{{", "{").replace("}}", "}")
+    + """
+
+Output ONLY valid JSON:"""
+)
+
+SIMULATOR_SEEDED_SYSTEM_PROMPT = _SIMULATOR_BASE_SYSTEM_PROMPT + "\n\n" + SIMULATOR_SEEDED_STATIC_RUBRIC
 
 
 def build_simulator_prompt(

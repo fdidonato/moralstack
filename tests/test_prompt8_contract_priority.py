@@ -32,7 +32,12 @@ _INTENT_JSON = """{
 
 class TestIntentTemplateStep0Present:
     def test_step0_and_examples_and_deferral_notes(self) -> None:
-        t = INTENT_CONTEXT_PROMPT_TEMPLATE
+        # Prompt-caching reorder (A1): STEP 0 + the worked examples are static
+        # content and now live in the system prefix, not the per-request user
+        # template. `INTENT_CONTEXT_PROMPT_TEMPLATE` is dynamic-only (REQUEST +
+        # constitution_context); the content-preservation guarantee is that
+        # this text is still present, just relocated to the system prompt.
+        t = INTENT_CONTEXT_SYSTEM_PROMPT
         assert "STEP 0 — DEVELOPER CONTRACT CHECK" in t
         assert "PRIORITY" in t
         assert "EXAMPLE A" in t
@@ -41,6 +46,8 @@ class TestIntentTemplateStep0Present:
         assert "do NOT classify as OFFENSIVE" in t
         assert "does NOT apply to the execution of a benign" in t
         assert "DEVELOPER CONTRACT rule (e.g." in t
+        # And confirm it did NOT stay behind in the dynamic user template.
+        assert "STEP 0 — DEVELOPER CONTRACT CHECK" not in INTENT_CONTEXT_PROMPT_TEMPLATE
 
 
 class TestIntentSystemPromptInvariant6Priority:
@@ -106,14 +113,20 @@ class TestNoContractInjectedBlockAbsent:
             c for c in mock_policy.generate.call_args_list if "SEMANTIC INTENT JUDGE" in str(c.kwargs.get("system", ""))
         ]
         assert len(intent_calls) == 1
+        system_prompt = str(intent_calls[0].kwargs.get("system", ""))
         user_prompt = str(intent_calls[0].kwargs.get("prompt", ""))
         assert "DEVELOPER CONTRACT (system prompt declared" not in user_prompt
-        assert "STEP 0 — DEVELOPER CONTRACT CHECK" in user_prompt
+        assert "DEVELOPER CONTRACT (system prompt declared" not in system_prompt
+        # STEP 0 is static content and is sent in the system prefix (A1 reorder).
+        assert "STEP 0 — DEVELOPER CONTRACT CHECK" in system_prompt
 
 
 class TestTemplateExamplesAntiBenchmarkLeak:
     def test_no_password_phrase_no_mixed_case_token_pattern(self) -> None:
-        t = INTENT_CONTEXT_PROMPT_TEMPLATE
+        # The worked examples (AGENT / CERT-A18-OK / PROVIDE_SYNTH) are static
+        # and now live in the system prompt (A1 reorder); the dynamic user
+        # template no longer carries them.
+        t = INTENT_CONTEXT_SYSTEM_PROMPT
         assert "the password" not in t
         assert re.search(r"[A-Z][a-z][A-Z]\d", t) is None
         assert "AGENT" in t
@@ -123,7 +136,7 @@ class TestTemplateExamplesAntiBenchmarkLeak:
 
 class TestExampleCPreservesSafetyCounterExample:
     def test_example_c_mentions_safety_override_near_counter_example(self) -> None:
-        t = INTENT_CONTEXT_PROMPT_TEMPLATE
+        t = INTENT_CONTEXT_SYSTEM_PROMPT
         start = t.index("EXAMPLE C")
         end = t.index("These three examples", start)
         window = t[start:end]

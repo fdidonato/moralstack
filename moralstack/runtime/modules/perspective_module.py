@@ -533,12 +533,13 @@ class LLMPerspectiveEnsemble:
                 ctx = dataclass_replace(delib_context, **updates)
             else:
                 ctx = delib_context
-        shared_system = PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + build_perspectives_system_prompt(ctx)
+        shared_system = PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + build_perspectives_system_prompt()
 
         if self.config.parallel_evaluation:
             result = self._evaluate_parallel(
                 active_perspectives,
                 shared_system,
+                ctx,
                 developer_contract=developer_contract,
                 conversation_history=conversation_history,
             )
@@ -546,6 +547,7 @@ class LLMPerspectiveEnsemble:
             result = self._evaluate_sequential(
                 active_perspectives,
                 shared_system,
+                ctx,
                 developer_contract=developer_contract,
                 conversation_history=conversation_history,
             )
@@ -566,12 +568,17 @@ class LLMPerspectiveEnsemble:
         self,
         perspectives: list[Perspective],
         shared_system: str,
+        context: DelibContext | None = None,
         *,
         developer_contract: DeveloperContract | None = None,
         conversation_history: list[Turn] | None = None,
     ) -> EnsembleResult:
         """
-        Evaluate perspectives in parallel. OPT-2: shared_system contains REQUEST+RESPONSE once.
+        Evaluate perspectives in parallel.
+
+        Prompt-caching reorder (A5a): shared_system is now ctx-independent
+        (static prefix only); REQUEST/RESPONSE/risk signals are threaded via
+        `context` into each per-perspective user message.
         """
         results: list[PerspectiveResult] = []
         raw_responses: list[str] = []
@@ -583,6 +590,7 @@ class LLMPerspectiveEnsemble:
                     self._evaluate_single_perspective,
                     shared_system,
                     perspective,
+                    context=context,
                     developer_contract=developer_contract,
                     conversation_history=conversation_history,
                 ): perspective
@@ -654,12 +662,17 @@ class LLMPerspectiveEnsemble:
         self,
         perspectives: list[Perspective],
         shared_system: str,
+        context: DelibContext | None = None,
         *,
         developer_contract: DeveloperContract | None = None,
         conversation_history: list[Turn] | None = None,
     ) -> EnsembleResult:
         """
-        Evaluate perspectives sequentially. OPT-2: shared_system contains REQUEST+RESPONSE once.
+        Evaluate perspectives sequentially.
+
+        Prompt-caching reorder (A5a): shared_system is now ctx-independent
+        (static prefix only); REQUEST/RESPONSE/risk signals are threaded via
+        `context` into each per-perspective user message.
         """
         results: list[PerspectiveResult] = []
         raw_responses: list[str] = []
@@ -669,6 +682,7 @@ class LLMPerspectiveEnsemble:
             result = self._evaluate_single_perspective(
                 shared_system,
                 perspective,
+                context=context,
                 developer_contract=developer_contract,
                 conversation_history=conversation_history,
             )
@@ -716,21 +730,31 @@ class LLMPerspectiveEnsemble:
         self,
         shared_system_prompt: str,
         perspective: Perspective,
+        context: DelibContext | None = None,
         *,
         developer_contract: DeveloperContract | None = None,
         conversation_history: list[Turn] | None = None,
     ) -> PerspectiveResult | None:
         """
-        Evaluate the response from a single perspective. OPT-2: only user prompt (identity/instructions).
+        Evaluate the response from a single perspective.
+
+        Prompt-caching reorder (A5a): shared_system_prompt is the static,
+        ctx-independent prefix (JSON contract + common instructions); the
+        per-request REQUEST/RESPONSE/risk signals are carried in the
+        per-perspective user message built from `context` (optional, for
+        backward compatibility with direct/low-level callers with no turn
+        context — see build_perspectives_user_prompt).
 
         Args:
-            shared_system_prompt: Full system prompt (JSON + REQUEST+RESPONSE + common instructions).
+            shared_system_prompt: Static system prompt (JSON + common instructions).
             perspective: Perspective to use.
+            context: DelibContext with request, draft, and risk signals for the
+                dynamic TURN CONTEXT block of the user message.
 
         Returns:
             PerspectiveResult or None on failure after retries.
         """
-        user_prompt = build_perspectives_user_prompt(perspective.name, perspective.prompt_template)
+        user_prompt = build_perspectives_user_prompt(perspective.name, perspective.prompt_template, context)
 
         for attempt in range(self.config.max_retries):
             attempt_token_usage: TokenUsage | None = None
@@ -814,8 +838,8 @@ class LLMPerspectiveEnsemble:
             return None
 
         ctx = DelibContext(user_prompt=request, draft_text_full=response)
-        shared_system = PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + build_perspectives_system_prompt(ctx)
-        return self._evaluate_single_perspective(shared_system, perspective)
+        shared_system = PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + build_perspectives_system_prompt()
+        return self._evaluate_single_perspective(shared_system, perspective, context=ctx)
 
     def aggregate(
         self,

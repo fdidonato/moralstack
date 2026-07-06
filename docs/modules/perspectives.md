@@ -25,12 +25,26 @@ the deployer explicitly authorized the response via the developer contract.
 
 ---
 
-## Prompt structure (token reduction)
+## Prompt structure (prompt-caching reorder, Part A / A5a)
 
-The perspective evaluation prompt is split to reduce tokens when multiple perspectives are used (OPT-2):
+`build_perspectives_system_prompt()` (`moralstack/prompts/perspectives_prompt.py`) is
+now **ctx-INDEPENDENT (static only)**: RISK CONTEXT INTERPRETATION + DEVELOPER
+CONTRACT EVALUATION + common instructions/JSON schema, byte-identical across every
+request AND every perspective in a round — the cacheable system prefix.
 
-- **Shared system prompt** (built once per evaluation round): REQUEST, RESPONSE (or thin summary/key points), and common instructions (suggestions preference, JSON schema). Sent once to the LLM context.
-- **Per-perspective user prompt**: Only the perspective identity and its specific instructions (e.g. "Evaluate from the perspective of: Direct User …"). This avoids sending the full draft N times for N perspectives.
+REQUEST/RESPONSE/RISK CONTEXT (formerly interpolated into the shared system under
+OPT-2, which made it vary per request and defeated caching) now live in the
+**per-perspective user message**, built by `build_perspectives_user_prompt(name,
+instructions, context)`. This is a deliberate cost/latency trade-off: the draft and
+risk context are re-sent once per perspective (undoing OPT-2's single-send saving),
+but cached input tokens are ~90% cheaper, so the reorder is still a net win.
+
+All three call paths (`evaluate`, `_evaluate_single_perspective`,
+`evaluate_single`) thread the dynamic context explicitly into the per-perspective
+user message; `evaluate_single` has no risk parameter, so its `DelibContext.risk_score`
+defaults to `0.5` and its user message renders `risk_score=0.50` (unchanged
+behavior — only the message it lives in moved). Verified by
+`tests/test_static_prefix_stability.py`.
 
 ---
 

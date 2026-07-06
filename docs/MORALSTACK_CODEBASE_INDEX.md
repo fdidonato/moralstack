@@ -357,6 +357,35 @@ q14–q16 are topic-only and excluded from the count (`:118-193`). The controlle
 can additionally raise the score with a sensitive-overlay floor
 (`apply_risk_floor_if_sensitive`).
 
+### 5.1 Prompt-caching system/user split (Part A)
+
+To engage OpenAI automatic prompt caching, every deliberative LLM module and
+call path was reordered so the system message is a byte-stable, path-specific
+static prefix and the user message carries only per-request dynamic data
+(`response_format` stays `json_object` everywhere; retries/parsers unchanged):
+- **Risk minis** (`models/risk/prompts.py`): `INTENT_CONTEXT_SYSTEM_PROMPT` /
+  `HARM_SIGNAL_SYSTEM_PROMPT` (composed by
+  `models/risk/signals/prompt_renderer.get_harm_signal_prompts()`) /
+  `OPERATIONAL_RISK_SYSTEM_PROMPT` carry all static procedure/schema text; user
+  templates carry `REQUEST` (+ `constitution_context` for intent).
+- **Critic** (`prompts/critic_prompt.py`): `CRITIC_FULL_SYSTEM_PROMPT` for the two
+  FULL-critique call sites only. The quick-check fast path keeps its own
+  short, UNCHANGED `CRITIC_SYSTEM_PROMPT` + `{"violated"}` contract
+  (`runtime/modules/critic_module.py`) — never merged with the full-critique prompt.
+- **Simulator** (`prompts/simulator_prompt.py`): path-specific
+  `SIMULATOR_BATCH_SYSTEM_PROMPT` / `SIMULATOR_SEEDED_SYSTEM_PROMPT` (batch vs
+  seeded contracts never collide).
+- **Hindsight** (`runtime/modules/hindsight_module.py` /
+  `prompts/hindsight_prompt.py`): `HINDSIGHT_SINGLE_SYSTEM_PROMPT` (single-scenario
+  + non-batch aggregate) vs `HINDSIGHT_BATCH_SYSTEM_PROMPT` (`"evaluations"`-rooted).
+- **Perspectives** (`prompts/perspectives_prompt.py`): `build_perspectives_system_prompt()`
+  is now ctx-independent (static only); REQUEST/RESPONSE/risk signals moved into
+  the per-perspective user message via `build_perspectives_user_prompt(...)`.
+- **DCCL / constitution retriever**: verified already static system + dynamic
+  later messages — no code change (A6, verify-only).
+
+Verified by `tests/test_static_prefix_stability.py`.
+
 ---
 
 ## 6. Constitution and overlays

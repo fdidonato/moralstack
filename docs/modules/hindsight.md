@@ -39,6 +39,30 @@ total = (safety × 0.5) + (helpfulness × 0.3) + (honesty × 0.2)
 
 ---
 
+## Prompt-Caching Static/Dynamic Split (Part A)
+
+Hindsight has **three LLM entry points** across two JSON contracts (root-object vs
+`"evaluations"`-rooted), so path-specific system prompts prevent schema collisions:
+
+- **Single-scenario** (`evaluate_scenario`) and the **non-batch aggregate**
+  (`_evaluate_individual`, used when batch is disabled or there is a single
+  consequence — it calls `evaluate_scenario` per consequence) both use
+  `HINDSIGHT_SINGLE_SYSTEM_PROMPT` (`hindsight_module.py`): base framing + the
+  3-dimension rubric + the ROOT-OBJECT JSON skeleton. `HINDSIGHT_PROMPT_TEMPLATE`
+  is dynamic-only (REQUEST/RESPONSE/CONSEQUENCE). The aggregate `HindsightResult`
+  returned by `_evaluate_individual` sets `system_prompt` to this same constant
+  (reflecting what was actually sent, per the observability invariant).
+- **Batch** (`_evaluate_batch`, `generate_messages`/legacy branches) uses
+  `HINDSIGHT_BATCH_SYSTEM_PROMPT` (`moralstack/prompts/hindsight_prompt.py`): the
+  batch evaluation instructions + the `"evaluations"`-rooted schema + the
+  developer-contract-compliance block. `build_hindsight_prompt()` is dynamic-only
+  (POTENTIAL CONSEQUENCES/TURN CONTEXT/RISK CONTEXT).
+
+The two constants are never interchangeable (verified by
+`tests/test_static_prefix_stability.py`); `response_format` stays `json_object`.
+
+---
+
 ## Output Structure
 
 ### HindsightScores
