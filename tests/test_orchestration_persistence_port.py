@@ -80,9 +80,19 @@ def test_persistence_port_protocol_shape():
         assert callable(getattr(impl, "set_request_context", None))
         assert callable(getattr(impl, "ensure_run_and_upsert_request", None))
         assert callable(getattr(impl, "update_request_domain", None))
-    assert PersistencePort.__protocol_attrs__ == frozenset(
-        {"set_request_context", "ensure_run_and_upsert_request", "update_request_domain"}
-    )
+    # ``__protocol_attrs__`` is a class attribute only on Python >= 3.12; on 3.11
+    # the equivalent lives behind ``typing._get_protocol_attrs``. Resolve both so the
+    # assertion is stable across the supported interpreter range.
+    protocol_attrs = getattr(PersistencePort, "__protocol_attrs__", None)
+    if protocol_attrs is None:
+        from typing import _get_protocol_attrs
+
+        protocol_attrs = _get_protocol_attrs(PersistencePort)
+    assert set(protocol_attrs) == {
+        "set_request_context",
+        "ensure_run_and_upsert_request",
+        "update_request_domain",
+    }
 
 
 def test_concurrent_ensure_run_and_upsert_request(tmp_path, monkeypatch):

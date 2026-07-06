@@ -1255,6 +1255,13 @@ class TestObservabilityPersistence:
         )
         assert response.status_code == 200
 
+        # PROXY_OUTPUT_FINALIZED is enqueued on the async write queue (the per-request
+        # flush was removed from the proxy); drain it before reading, otherwise the DB
+        # read races the background writer on slower CI runners.
+        from moralstack.observability import obs
+
+        obs.flush(timeout=10.0)
+
         import sqlite3
 
         conn = sqlite3.connect(db_path)
