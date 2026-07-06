@@ -43,6 +43,6 @@ Steps:
 7. If **APPROVE** / **APPROVE_WITH_CHANGES** with only non-blocking items: fold
    the agreed non-blocking fixes into the plan, mark it approved, and tell the
    user the next step:
-   `/ai-implement-with-cursor ai/plans/<slug>.md`.
+   `/ai-implement ai/plans/<slug>.md`.
 
 Do not implement the change. Do not commit.

@@ -4,7 +4,7 @@ description: >-
   Designs the test strategy for a planned change — existing coverage, gaps, the
   unit/integration/regression tests to add, fixtures/mocks needed, edge cases,
   and the exact commands to run. Complements architect-planner. Does NOT
-  implement code; it specifies what Cursor CLI must test.
+  implement code; it specifies what the implementer must test.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---

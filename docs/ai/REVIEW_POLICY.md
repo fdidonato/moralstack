@@ -27,8 +27,8 @@ classify every finding into one of four buckets and **never hide a blocker**.
 | Verdict | Plan stage | Diff stage |
 | --- | --- | --- |
 | `APPROVE` | Proceed to implementation | Proceed to finalize |
-| `APPROVE_WITH_CHANGES` | Fold non-blocking changes into the plan, then proceed | Apply non-blocking fixes (new Cursor handoff) or accept with noted follow-ups, then finalize |
-| `BLOCK` | **Stop.** Revise the plan, re-run plan review | **Stop.** Fix via a new Cursor handoff, re-run diff review |
+| `APPROVE_WITH_CHANGES` | Fold non-blocking changes into the plan, then proceed | Apply non-blocking fixes (new handoff) or accept with noted follow-ups, then finalize |
+| `BLOCK` | **Stop.** Revise the plan, re-run plan review | **Stop.** Fix via a new handoff, re-run diff review |
 
 ## Gates
 
