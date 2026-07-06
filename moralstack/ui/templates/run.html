@@ -123,6 +123,9 @@
     <button class="btn btn-danger btn-delete" data-run-id="{{ run.run_id }}">Delete Run</button>
 </div>
 
+{% set token_usage_title = 'Token usage by model (run)' %}
+{% include "_token_usage.html" %}
+
 {% if run.run_type == 'benchmark' and benchmark_report and benchmark_summary_md %}
 <h2>Benchmark Summary</h2>
 

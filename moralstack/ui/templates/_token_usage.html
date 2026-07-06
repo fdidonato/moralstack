@@ -1,0 +1,62 @@
+{# Reusable token-usage-by-model card. Expects a ``token_usage`` dict built by
+   app._token_usage_view(); optional ``token_usage_title`` overrides the heading. #}
+{% if token_usage and token_usage.has_data %}
+<div class="card token-usage-card">
+    <div class="token-usage-header">
+        <h2>{{ token_usage_title or 'Token usage by model' }}</h2>
+        <div class="token-usage-totals">
+            <span class="badge badge-type" title="Total tokens across all models">{{ '{:,}'.format(token_usage.total_tokens) }} tokens</span>
+            <span class="muted small">in {{ '{:,}'.format(token_usage.total_input) }} · out {{ '{:,}'.format(token_usage.total_output) }} · {{ token_usage.total_calls }} calls</span>
+            {% if token_usage.estimated_calls %}
+            <span class="badge badge-running" title="Provider returned no token split; counts use a 70/30 estimate">{{ token_usage.estimated_calls }} estimated</span>
+            {% endif %}
+            {% if token_usage.missing_calls %}
+            <span class="badge badge-fail" title="No usage object was returned by the provider; totals are a lower bound">{{ token_usage.missing_calls }} missing</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="token-usage-scroll">
+        <table class="table">
+            <thead>
+            <tr>
+                <th>Model</th>
+                <th class="num">Input</th>
+                <th class="num">Output</th>
+                <th class="num">Total</th>
+                <th class="num">Calls</th>
+                <th>Quality</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for m in token_usage.by_model %}
+            <tr>
+                <td class="mono">{{ m.model or '—' }}</td>
+                <td class="num">{{ '{:,}'.format(m.input_tokens or 0) }}</td>
+                <td class="num">{{ '{:,}'.format(m.output_tokens or 0) }}</td>
+                <td class="num"><strong>{{ '{:,}'.format(m.total_tokens or 0) }}</strong></td>
+                <td class="num">{{ m.calls or 0 }}</td>
+                <td>
+                    {% if not m.estimated_usage and not m.missing_usage %}
+                    <span class="badge badge-ok">exact</span>
+                    {% else %}
+                    {% if m.estimated_usage %}<span class="badge badge-running">{{ m.estimated_usage }} est</span>{% endif %}
+                    {% if m.missing_usage %}<span class="badge badge-fail">{{ m.missing_usage }} missing</span>{% endif %}
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if token_usage.incomplete_reason %}
+    <p class="muted small">⚠ This per-request summary may be incomplete: {{ token_usage.incomplete_reason }}</p>
+    {% endif %}
+</div>
+<style>
+.token-usage-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
+.token-usage-header h2 { margin: 0; }
+.token-usage-totals { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.token-usage-scroll { overflow-x: auto; }
+.token-usage-card td.num, .token-usage-card th.num { text-align: right; font-variant-numeric: tabular-nums; }
+</style>
+{% endif %}

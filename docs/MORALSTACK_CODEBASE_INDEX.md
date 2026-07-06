@@ -523,6 +523,21 @@ Routes (`ui/app.py:1738-2185`): `/`, `/login`, `/logout`, `/auth-status`,
 `/conversations/{conversation_id}` (multi-turn timeline),
 `/conversations/{conversation_id}/export.md` (AI Act art. 12 audit export).
 
+Token usage per model is rendered on `/runs` (all runs), `/runs/{run_id}`,
+`/conversations/{conversation_id}`, and `/runs/{run_id}/requests/{request_id}`
+via `_token_usage_view()` + the shared `templates/_token_usage.html` partial,
+backed by `SqliteReadStore.get_token_usage_by_model_{global,for_run,for_request,
+for_conversation}` (billable-only; conversation variant joins `requests`).
+
+The request-detail page also surfaces per-call token cost inline: a `token_badge`
+Jinja macro (`templates/request.html`) reads the numeric `llm_calls` columns on
+each flow-graph node and journey step; `_module_summaries()` adds a per-module
+token rollup; and a dedicated **Domain retrieval** section (`_domain_retrieval_view()`)
+lists every `constitution_retriever` call (prefilter + per-domain agents) with its
+domain, phase, model and tokens. Per-domain attribution relies on the `domain`
+field that `constitution/retriever.py::_persist_constitution_llm_call` now writes
+into `parsed_summary_json` for the enhanced/legacy domain agents.
+
 ---
 
 ## 15. COMPL-AI integration points

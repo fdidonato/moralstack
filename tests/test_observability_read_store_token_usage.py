@@ -118,6 +118,119 @@ def test_get_token_usage_breakdown_groups_by_module_phase_action_model(tmp_path,
     assert policy_row["total_tokens"] == 30
 
 
+def _emit_llm_call(
+    run_id: str,
+    request_id: str,
+    *,
+    model: str,
+    total: int,
+    source: str = "exact",
+    billable: bool = True,
+) -> None:
+    route(
+        make_envelope(
+            EVENT_LLM_CALL,
+            run_id=run_id,
+            request_id=request_id,
+            payload={
+                "phase": "deliberation",
+                "module": "policy",
+                "action": "generate",
+                "model": model,
+                "prompt": "p",
+                "raw_response": "{}",
+                "token_usage_json": json.dumps(
+                    {
+                        "prompt_tokens": total,
+                        "completion_tokens": 0,
+                        "total_tokens": total,
+                        "source": source,
+                    }
+                ),
+                "billable_provider_call": billable,
+            },
+        )
+    )
+
+
+def test_get_token_usage_by_model_for_request_groups_and_excludes_non_billable(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    create_run("run-1", run_type="test", meta={})
+    upsert_request("run-1", "req-1", prompt="hi", domain="")
+    _emit_llm_call("run-1", "req-1", model="gpt-4", total=30)
+    _emit_llm_call("run-1", "req-1", model="gpt-4", total=20)
+    _emit_llm_call("run-1", "req-1", model="gpt-4o-mini", total=10)
+    _emit_llm_call("run-1", "req-1", model="gpt-4", total=999, billable=False)
+    rs = SqliteReadStore()
+    by_model = rs.get_token_usage_by_model_for_request("run-1", "req-1")
+    totals = {row["model"]: row for row in by_model}
+    assert totals["gpt-4"]["total_tokens"] == 50
+    assert totals["gpt-4"]["calls"] == 2
+    assert totals["gpt-4o-mini"]["total_tokens"] == 10
+    # Non-billable call is never summed.
+    assert all(row["total_tokens"] != 999 for row in by_model)
+
+
+def test_get_token_usage_by_model_for_run_sums_across_requests(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    create_run("run-1", run_type="test", meta={})
+    upsert_request("run-1", "req-1", prompt="a", domain="")
+    upsert_request("run-1", "req-2", prompt="b", domain="")
+    _emit_llm_call("run-1", "req-1", model="gpt-4", total=30)
+    _emit_llm_call("run-1", "req-2", model="gpt-4", total=70)
+    rs = SqliteReadStore()
+    by_model = rs.get_token_usage_by_model_for_run("run-1")
+    assert len(by_model) == 1
+    assert by_model[0]["model"] == "gpt-4"
+    assert by_model[0]["total_tokens"] == 100
+
+
+def test_get_token_usage_by_model_global_sums_across_runs(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    for run_id in ("run-1", "run-2"):
+        create_run(run_id, run_type="test", meta={})
+        upsert_request(run_id, "req-1", prompt="hi", domain="")
+        _emit_llm_call(run_id, "req-1", model="gpt-4", total=25)
+    rs = SqliteReadStore()
+    by_model = rs.get_token_usage_by_model_global()
+    assert len(by_model) == 1
+    assert by_model[0]["total_tokens"] == 50
+
+
+def test_get_token_usage_by_model_for_conversation_joins_requests(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    create_run("run-1", run_type="test", meta={})
+    upsert_request("run-1", "req-1", prompt="a", domain="", conversation_id="conv-1", turn_index=0)
+    upsert_request("run-1", "req-2", prompt="b", domain="", conversation_id="conv-1", turn_index=1)
+    upsert_request("run-1", "req-3", prompt="c", domain="", conversation_id="conv-2", turn_index=0)
+    _emit_llm_call("run-1", "req-1", model="gpt-4", total=30)
+    _emit_llm_call("run-1", "req-2", model="gpt-4", total=40)
+    _emit_llm_call("run-1", "req-3", model="gpt-4", total=999)
+    rs = SqliteReadStore()
+    by_model = rs.get_token_usage_by_model_for_conversation("conv-1")
+    assert len(by_model) == 1
+    assert by_model[0]["total_tokens"] == 70
+
+
+def test_get_token_usage_by_model_counts_estimated_and_missing(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    create_run("run-1", run_type="test", meta={})
+    upsert_request("run-1", "req-1", prompt="hi", domain="")
+    _emit_llm_call("run-1", "req-1", model="gpt-4", total=100, source="exact")
+    _emit_llm_call("run-1", "req-1", model="gpt-4", total=70, source="estimated")
+    _emit_llm_call("run-1", "req-1", model="gpt-4", total=0, source="missing")
+    rs = SqliteReadStore()
+    by_model = rs.get_token_usage_by_model_for_request("run-1", "req-1")
+    row = by_model[0]
+    assert row["estimated_usage"] == 1
+    assert row["missing_usage"] == 1
+    assert row["calls"] == 3
+
+
 def test_read_store_protocol_declares_new_methods():
     assert hasattr(ReadStore, "get_token_usage_totals")
     assert hasattr(ReadStore, "get_token_usage_breakdown")
+    assert hasattr(ReadStore, "get_token_usage_by_model_global")
+    assert hasattr(ReadStore, "get_token_usage_by_model_for_run")
+    assert hasattr(ReadStore, "get_token_usage_by_model_for_request")
+    assert hasattr(ReadStore, "get_token_usage_by_model_for_conversation")

@@ -99,11 +99,16 @@ Writers: `init_db`, `create_run`, `upsert_request`, `update_request_response`,
   llm_calls WHERE … AND COALESCE(billable_provider_call,1)=1` is the most complete
   view among rows actually written to SQLite — still not a completeness guarantee
   because the async queue may drop envelopes before they reach the DB.
-- **UI**: `ReadStore.get_token_usage_totals`/`get_token_usage_breakdown` are
-  implemented and filter non-billable diagnostic rows the same way as SQL sums,
-  but as of this change `moralstack/ui/app.py` does not call them yet — the
-  dashboard has no token-usage panel wired up. Only tests exercise these
-  read-store methods today.
+- **UI**: `ReadStore.get_token_usage_totals`/`get_token_usage_breakdown` and the
+  per-model aggregations `get_token_usage_by_model_{global,for_run,for_request,
+  for_conversation}` all filter non-billable diagnostic rows the same way as the
+  SQL sums. `moralstack/ui/app.py` wires the per-model views into four scopes via
+  the shared `_token_usage_view()` helper and the `templates/_token_usage.html`
+  partial: the dashboard (`/runs`, all runs), the run detail (`/runs/{id}`), the
+  conversation detail (`/conversations/{id}`, joined through `requests.conversation_id`),
+  and the single-question detail (`/runs/{id}/requests/{id}`). Each panel shows
+  tokens per model plus `estimated`/`missing` quality badges; the request panel
+  also surfaces `usage_may_be_incomplete` from `request_token_usage`.
 
 ### Context-shape fields
 

@@ -41,6 +41,9 @@
     </form>
 </div>
 
+{% set token_usage_title = 'Token usage by model (all runs)' %}
+{% include "_token_usage.html" %}
+
 <div class="runs-summary">
     Showing {{ runs|length }} of {{ total_runs }} runs · page {{ page }} / {{ total_pages }}
 </div>

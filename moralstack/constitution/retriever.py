@@ -8,6 +8,7 @@ parallel execution, and get_relevant_principles internals.
 from __future__ import annotations
 
 import concurrent.futures
+import contextvars
 import copy
 import hashlib
 import json
@@ -68,11 +69,13 @@ def _persist_constitution_llm_call(
     retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING,
     cycle: int | None = 0,
     sequence_in_cycle: int | None = None,
+    domain: str | None = None,
 ) -> None:
     """
     Best-effort persistence for constitution retrieval LLM calls (parse metadata in parsed_summary_json).
 
-    Skips silently when no DB context or persistence is disabled.
+    ``domain`` names the domain agent that made the call (per-domain agents); it is
+    omitted for the shared prefilter call. Skips silently when no DB context.
     """
     try:
         if sequence_in_cycle is None:
@@ -80,10 +83,10 @@ def _persist_constitution_llm_call(
                 retrieval_phase,
                 _RETRIEVAL_PHASE_PERSISTENCE[RETRIEVAL_PHASE_RISK_ROUTING],
             )
-        summary = merge_parse_contract_into_summary(
-            {"module": "constitution_retriever", "retrieval_phase": retrieval_phase},
-            parse_contract,
-        )
+        summary_base: dict[str, Any] = {"module": "constitution_retriever", "retrieval_phase": retrieval_phase}
+        if domain:
+            summary_base["domain"] = domain
+        summary = merge_parse_contract_into_summary(summary_base, parse_contract)
         persist_llm_call(
             phase="constitution_retrieval",
             module="constitution_retriever",
@@ -910,6 +913,7 @@ Output valid JSON only:"""
                 parse_contract=p_contract,
                 model=self.openai_config.model,
                 token_usage_json=token_usage.to_json(),
+                domain=self.domain_name,
             )
             return data
 
@@ -1059,6 +1063,7 @@ Output ONLY one JSON object (not a bare array), nothing else:"""
                 parse_contract=p_contract,
                 model=self.openai_config.model,
                 token_usage_json=token_usage.to_json(),
+                domain=self.domain_name,
             )
             return ids
 
@@ -1445,7 +1450,14 @@ class ConstitutionRetriever:
         for i in range(0, len(agents), batch_size):
             batch = agents[i : i + batch_size]
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(batch)) as executor:
-                future_to_agent = {executor.submit(agent.evaluate, query): agent for agent in batch}
+                # copy_context() runs in this (main) thread, so each worker inherits the
+                # observability context (run_id/request_id/cycle/session/turn). Without it
+                # the per-domain llm_calls persist orphaned (no run/request id) and their
+                # tokens are never attributed to the request. One snapshot per submit — a
+                # Context object cannot be entered concurrently by multiple threads.
+                future_to_agent = {
+                    executor.submit(contextvars.copy_context().run, agent.evaluate, query): agent for agent in batch
+                }
                 for future in concurrent.futures.as_completed(future_to_agent):
                     agent = future_to_agent[future]
                     try:
@@ -1466,7 +1478,11 @@ class ConstitutionRetriever:
         for i in range(0, len(agents), batch_size):
             batch = agents[i : i + batch_size]
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(batch)) as executor:
-                future_to_agent = {executor.submit(agent.evaluate, query): agent for agent in batch}
+                # See _run_enhanced_agents_parallel: propagate observability context into
+                # worker threads so legacy per-domain llm_calls carry run/request ids.
+                future_to_agent = {
+                    executor.submit(contextvars.copy_context().run, agent.evaluate, query): agent for agent in batch
+                }
                 for future in concurrent.futures.as_completed(future_to_agent):
                     agent = future_to_agent[future]
                     try:

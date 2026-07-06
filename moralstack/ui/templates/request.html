@@ -1,6 +1,28 @@
 {% extends "base.html" %}
 {% block title %}Request {{ req.request_id[:12] }} - MoralStack{% endblock %}
 {% block content %}
+{# Per-call token badge. Reads the numeric llm_calls columns present on every real
+   call row (total_tokens/input_tokens/output_tokens/token_usage_estimated/
+   token_usage_missing). Renders nothing for synthetic nodes (no total_tokens). #}
+{% macro token_badge(call) %}
+{% set tt = call.get('total_tokens') %}
+{% if tt is not none %}
+{% set est = call.get('token_usage_estimated') %}
+{% set miss = call.get('token_usage_missing') %}
+<span class="badge badge-tokens"
+      title="input {{ call.get('input_tokens') or 0 }} · output {{ call.get('output_tokens') or 0 }} · total {{ tt }} tokens{% if est %} — estimated 70/30 split{% elif miss %} — provider returned no usage{% endif %}">
+    &#9930; {{ '{:,}'.format(tt) }} tok{% if est %} <span class="tok-flag tok-flag-est">est</span>{% elif miss %} <span class="tok-flag tok-flag-miss">?</span>{% endif %}
+</span>
+{% endif %}
+{% endmacro %}
+<style>
+.badge-tokens { background: rgba(45, 212, 191, 0.15); color: #2dd4bf; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tok-flag { font-size: 0.62rem; padding: 0 0.25rem; border-radius: 4px; margin-left: 0.1rem; }
+.tok-flag-est { background: var(--yellow-bg); color: var(--yellow); }
+.tok-flag-miss { background: var(--red-bg); color: var(--red); }
+.module-token-line { display: block; margin-top: 0.25rem; }
+.domain-retrieval-num { text-align: right; font-variant-numeric: tabular-nums; }
+</style>
 <div class="page-header">
     <nav class="breadcrumb">
         <a href="/runs">Dashboard</a> &rsaquo;
@@ -265,6 +287,60 @@
     <div class="actions-bar" style="margin-top:1rem;">
         <a href="/conversations/{{ conversation_context.conversation_id }}" class="btn btn-sm">View full conversation</a>
         <a href="/conversations/{{ conversation_context.conversation_id }}/export.md" download class="btn btn-sm btn-outline">Export conversation</a>
+    </div>
+</div>
+{% endif %}
+
+{% set token_usage_title = 'Token usage by model (this question)' %}
+{% include "_token_usage.html" %}
+
+{% if domain_retrieval and domain_retrieval.has_data %}
+<h2>Domain retrieval <span class="muted">({{ domain_retrieval.call_count }} LLM call{{ 's' if domain_retrieval.call_count != 1 else '' }})</span></h2>
+<p class="muted" style="margin-bottom:0.5rem;">Constitution retrieval fans out to one LLM call per candidate domain (plus the shared prefilter). Each row is a real persisted <code>constitution_retriever</code> call with its token cost.</p>
+<div class="card">
+    <div class="token-usage-header">
+        <div></div>
+        <div class="token-usage-totals">
+            <span class="badge badge-tokens">&#9930; {{ '{:,}'.format(domain_retrieval.total_tokens) }} tokens</span>
+            {% if domain_retrieval.estimated_calls %}<span class="tok-flag tok-flag-est">{{ domain_retrieval.estimated_calls }} est</span>{% endif %}
+            {% if domain_retrieval.missing_calls %}<span class="tok-flag tok-flag-miss">{{ domain_retrieval.missing_calls }} no-usage</span>{% endif %}
+        </div>
+    </div>
+    <div style="overflow-x:auto;">
+        <table class="table">
+            <thead>
+            <tr>
+                <th>Phase</th>
+                <th>Call</th>
+                <th>Domain</th>
+                <th>Model</th>
+                <th class="domain-retrieval-num">Input</th>
+                <th class="domain-retrieval-num">Output</th>
+                <th class="domain-retrieval-num">Total</th>
+                <th class="domain-retrieval-num">ms</th>
+                <th>Quality</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for r in domain_retrieval.rows %}
+            <tr>
+                <td>{{ r.phase or '—' }}</td>
+                <td class="mono">{{ r.action or '—' }}</td>
+                <td>{{ r.domain or '—' }}</td>
+                <td class="mono">{{ r.model or '—' }}</td>
+                <td class="domain-retrieval-num">{{ '{:,}'.format(r.input_tokens) }}</td>
+                <td class="domain-retrieval-num">{{ '{:,}'.format(r.output_tokens) }}</td>
+                <td class="domain-retrieval-num"><strong>{{ '{:,}'.format(r.total_tokens) }}</strong></td>
+                <td class="domain-retrieval-num">{% if r.duration_ms %}{{ r.duration_ms | round(0) | int }}{% else %}—{% endif %}</td>
+                <td>
+                    {% if r.estimated %}<span class="tok-flag tok-flag-est">est</span>
+                    {% elif r.missing %}<span class="tok-flag tok-flag-miss">no-usage</span>
+                    {% else %}<span class="badge badge-ok">exact</span>{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endif %}
@@ -972,6 +1048,7 @@
             {% if call.get('is_draft_reuse') %}
             <span class="muted">0ms (reuse)</span>
             {% elif call.duration_ms %}<span class="muted">{{ call.duration_ms | round(0) | int }}ms</span>{% endif %}
+            {{ token_badge(call) }}
             <span class="muted ts">{{ call.started_at | fmtdate }}</span>
             {% if call.ended_at_ms %}<span class="muted ts">→ {{ call.ended_at_ms | fmtdate }}</span>{% endif %}
         </li>
@@ -1019,6 +1096,13 @@
     <div class="meta-item">
         <span class="meta-label">{{ mod }}</span>
         <span class="meta-value">{{ info.count }} call{{ 's' if info.count != 1 else '' }}{% if info.total_ms %}, {{ info.total_ms | int }}ms{% endif %}{% if info.last_summary %}: {{ (info.last_summary[:80] +'…') if (info.last_summary | length) > 80 else info.last_summary }}{% endif %}</span>
+        {% if info.total_tokens %}
+        <span class="meta-value module-token-line">
+            <span class="badge badge-tokens">&#9930; {{ '{:,}'.format(info.total_tokens) }} tok</span>
+            {% if info.estimated_calls %}<span class="tok-flag tok-flag-est">{{ info.estimated_calls }} est</span>{% endif %}
+            {% if info.missing_calls %}<span class="tok-flag tok-flag-miss">{{ info.missing_calls }} no-usage</span>{% endif %}
+        </span>
+        {% endif %}
     </div>
     {% endfor %}
 </div>
@@ -1123,6 +1207,7 @@
                                     {% if call.duration_ms %}
                                     <span class="flow-node-dur">{{ call.duration_ms | round(0) | int }}ms</span>
                                     {% endif %}
+                                    {{ token_badge(call) }}
                                 </div>
                                 {% set preview = call.parsed_summary_json | module_result(call.module) %}
                                 {% if preview %}

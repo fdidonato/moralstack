@@ -186,6 +186,11 @@ request    = rs.get_request(run_id, request_id)
 llm_calls  = rs.get_llm_calls_for_request(run_id, request_id)
 token_totals = rs.get_token_usage_totals(run_id, request_id)
 token_breakdown = rs.get_token_usage_breakdown(run_id, request_id)
+# Per-model rollups (used by the UI token-usage panels at four scopes):
+tu_global  = rs.get_token_usage_by_model_global()
+tu_run     = rs.get_token_usage_by_model_for_run(run_id)
+tu_request = rs.get_token_usage_by_model_for_request(run_id, request_id)
+tu_conv    = rs.get_token_usage_by_model_for_conversation(conversation_id)
 traces     = rs.get_decision_traces_for_request(run_id, request_id)
 orch       = rs.get_orchestration_events_for_request(run_id, request_id)
 debug      = rs.get_debug_events_for_request(run_id, request_id)
@@ -214,11 +219,26 @@ Per-request token totals are tracked through two complementary mechanisms:
    available among rows actually persisted**, but still subject to the same
    best-effort observability queue (rows may be missing if the queue dropped them).
 
+3. **Per-model rollups** — `get_token_usage_by_model_{global,for_run,for_request,
+   for_conversation}()` group the same billable `llm_calls` rows by model (the
+   conversation variant joins `requests.conversation_id`). The UI renders these at
+   four scopes (dashboard, run, conversation, single question) through the shared
+   `templates/_token_usage.html` partial, with `estimated`/`missing` badges derived
+   from `token_usage_estimated`/`token_usage_missing`.
+
 The OpenAI-compatible proxy `usage` field mirrors the synchronous accumulator totals
 on the success path (zeros on fail-closed paths with no generation).
 
 `billable_provider_call` on `llm_calls` excludes diagnostic rows (speculative reuse,
 cache hits, skipped modules, leakage-only rows) from totals and breakdown queries.
+
+Constitution domain-agent calls (`module="constitution_retriever"`,
+`action` ∈ `domain_prefilter`/`enhanced_domain_agent`/`legacy_domain_agent`) are
+billable and counted like any other provider call. The per-domain agents run in a
+`ThreadPoolExecutor`; `constitution/retriever.py` propagates the observability
+context into each worker via `contextvars.copy_context().run`, otherwise
+`persist_llm_call` would short-circuit on the empty run/request id and drop the
+row entirely (so their tokens would be missing from every scope).
 
 `TokenUsage.from_openai_usage` (`observability/token_usage.py:32-59`) marks a call
 `source="exact"` only when the provider returns separate `prompt_tokens` and

@@ -66,6 +66,22 @@ class ReadStore(Protocol):
 
     def get_token_usage_breakdown(self, run_id: str, request_id: str) -> list[dict[str, Any]]: ...
 
+    def get_token_usage_by_model_global(self) -> list[dict[str, Any]]:
+        """Return token totals grouped by model across every billable llm_call."""
+        ...
+
+    def get_token_usage_by_model_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        """Return token totals grouped by model for a single run."""
+        ...
+
+    def get_token_usage_by_model_for_request(self, run_id: str, request_id: str) -> list[dict[str, Any]]:
+        """Return token totals grouped by model for a single request."""
+        ...
+
+    def get_token_usage_by_model_for_conversation(self, conversation_id: str) -> list[dict[str, Any]]:
+        """Return token totals grouped by model for every request of a conversation."""
+        ...
+
     def get_decision_traces_for_request(self, run_id: str, request_id: str) -> list[dict[str, Any]]: ...
 
     def get_orchestration_events_for_request(self, run_id: str, request_id: str) -> list[dict[str, Any]]: ...
@@ -354,6 +370,71 @@ class SqliteReadStore:
         except Exception as e:
             logger.warning("observability[read_store]: get_token_usage_breakdown failed: %s", e)
             return []
+
+    # SELECT fragment reused by every per-model token aggregation. ``lc`` is the
+    # ``llm_calls`` alias so the conversation variant can JOIN ``requests``. Only
+    # billable provider calls are summed (diagnostic rows carry no real cost).
+    _TOKEN_BY_MODEL_SELECT = """
+        SELECT COALESCE(NULLIF(TRIM(lc.model), ''), '') AS model,
+               SUM(COALESCE(lc.input_tokens, 0)) AS input_tokens,
+               SUM(COALESCE(lc.output_tokens, 0)) AS output_tokens,
+               SUM(COALESCE(lc.total_tokens, 0)) AS total_tokens,
+               COUNT(*) AS calls,
+               SUM(COALESCE(lc.token_usage_missing, 0)) AS missing_usage,
+               SUM(COALESCE(lc.token_usage_estimated, 0)) AS estimated_usage
+        FROM llm_calls lc
+    """
+    _TOKEN_BY_MODEL_TAIL = """
+        GROUP BY COALESCE(NULLIF(TRIM(lc.model), ''), '')
+        ORDER BY total_tokens DESC, model ASC
+    """
+
+    def _token_usage_by_model(
+        self,
+        *,
+        where: str,
+        params: tuple[Any, ...],
+        join_requests: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Run the per-model token aggregation with a caller-supplied WHERE."""
+        path = get_db_path()
+        if not path:
+            return []
+        try:
+            conn = _get_connection(path)
+            join = "JOIN requests req ON req.run_id = lc.run_id AND req.request_id = lc.request_id" if join_requests else ""
+            sql = (
+                f"{self._TOKEN_BY_MODEL_SELECT} {join} "
+                f"WHERE COALESCE(lc.billable_provider_call, 1) = 1 AND {where} "
+                f"{self._TOKEN_BY_MODEL_TAIL}"
+            )
+            rows = conn.execute(sql, params).fetchall()
+            conn.close()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning("observability[read_store]: _token_usage_by_model failed: %s", e)
+            return []
+
+    def get_token_usage_by_model_global(self) -> list[dict[str, Any]]:
+        return self._token_usage_by_model(where="1 = 1", params=())
+
+    def get_token_usage_by_model_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        return self._token_usage_by_model(where="lc.run_id = ?", params=(run_id,))
+
+    def get_token_usage_by_model_for_request(self, run_id: str, request_id: str) -> list[dict[str, Any]]:
+        return self._token_usage_by_model(
+            where="lc.run_id = ? AND lc.request_id = ?",
+            params=(run_id, request_id),
+        )
+
+    def get_token_usage_by_model_for_conversation(self, conversation_id: str) -> list[dict[str, Any]]:
+        if not conversation_id:
+            return []
+        return self._token_usage_by_model(
+            where="req.conversation_id = ?",
+            params=(conversation_id,),
+            join_requests=True,
+        )
 
     def get_decision_traces_for_request(self, run_id: str, request_id: str) -> list[dict[str, Any]]:
         path = get_db_path()

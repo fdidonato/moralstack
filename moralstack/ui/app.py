@@ -89,6 +89,13 @@ get_request = _rs.get_request
 get_requests_for_run = _rs.get_requests_for_run
 get_run = _rs.get_run
 
+# Token accounting (per-model breakdown) accessors.
+get_token_usage_totals = _rs.get_token_usage_totals
+get_token_usage_by_model_global = _rs.get_token_usage_by_model_global
+get_token_usage_by_model_for_run = _rs.get_token_usage_by_model_for_run
+get_token_usage_by_model_for_request = _rs.get_token_usage_by_model_for_request
+get_token_usage_by_model_for_conversation = _rs.get_token_usage_by_model_for_conversation
+
 # Step 13: multi-turn conversation observability accessors.
 get_requests_for_conversation = _rs.get_requests_for_conversation
 get_conversation_states = _rs.get_conversation_states
@@ -2163,12 +2170,93 @@ def _module_summaries(llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
             if ps:
                 last_parsed = ps
                 break
+        # Token rollup from the numeric llm_calls columns (present on real calls).
+        total_tokens = sum(int(x.get("total_tokens") or 0) for x in calls)
+        estimated_calls = sum(1 for x in calls if x.get("token_usage_estimated"))
+        missing_calls = sum(1 for x in calls if x.get("token_usage_missing"))
         summaries[mod] = {
             "count": len(calls),
             "total_ms": round(total_ms, 0),
             "last_summary": last_parsed,
+            "total_tokens": total_tokens,
+            "estimated_calls": estimated_calls,
+            "missing_calls": missing_calls,
         }
     return summaries
+
+
+def _token_usage_view(
+    by_model: list[dict[str, Any]],
+    totals: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Shape per-model token rows for the shared ``_token_usage.html`` partial.
+
+    Aggregates grand totals and the exact/estimated/missing quality counters so
+    the template stays presentation-only. ``totals`` is the optional
+    ``request_token_usage`` summary row (request scope only): when it flags the
+    request as incomplete, the reason is surfaced as a note.
+    """
+    rows = [r for r in (by_model or []) if int(r.get("total_tokens") or 0) > 0 or int(r.get("calls") or 0) > 0]
+    view: dict[str, Any] = {
+        "by_model": rows,
+        "total_input": sum(int(r.get("input_tokens") or 0) for r in rows),
+        "total_output": sum(int(r.get("output_tokens") or 0) for r in rows),
+        "total_tokens": sum(int(r.get("total_tokens") or 0) for r in rows),
+        "total_calls": sum(int(r.get("calls") or 0) for r in rows),
+        "estimated_calls": sum(int(r.get("estimated_usage") or 0) for r in rows),
+        "missing_calls": sum(int(r.get("missing_usage") or 0) for r in rows),
+        "has_data": bool(rows),
+        "incomplete_reason": None,
+    }
+    if totals and totals.get("usage_may_be_incomplete"):
+        view["incomplete_reason"] = totals.get("incomplete_reason") or "a billable call resolved asynchronously"
+    return view
+
+
+def _domain_retrieval_view(llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
+    """Per-call breakdown of the constitution domain-retrieval LLM calls.
+
+    Surfaces every ``constitution_retriever`` row (shared ``domain_prefilter`` plus
+    the per-domain ``enhanced_domain_agent``/``legacy_domain_agent`` calls) with its
+    domain, phase, model and token cost, so the domain retrieval — which fans out to
+    one LLM call per candidate domain — is explicit rather than hidden behind a
+    single aggregate node.
+    """
+    rows: list[dict[str, Any]] = []
+    for c in llm_calls:
+        if (c.get("module") or "").strip() != "constitution_retriever":
+            continue
+        summary = c.get("parsed_summary_json")
+        if isinstance(summary, str):
+            try:
+                summary = json.loads(summary)
+            except (ValueError, TypeError):
+                summary = {}
+        if not isinstance(summary, dict):
+            summary = {}
+        rows.append(
+            {
+                "action": c.get("action") or "",
+                "domain": summary.get("domain") or "",
+                "phase": summary.get("retrieval_phase") or "",
+                "model": c.get("model") or "",
+                "total_tokens": int(c.get("total_tokens") or 0),
+                "input_tokens": int(c.get("input_tokens") or 0),
+                "output_tokens": int(c.get("output_tokens") or 0),
+                "estimated": bool(c.get("token_usage_estimated")),
+                "missing": bool(c.get("token_usage_missing")),
+                "duration_ms": c.get("duration_ms"),
+            }
+        )
+    rows.sort(key=lambda r: (r["phase"], r["action"], r["domain"]))
+    return {
+        "rows": rows,
+        "call_count": len(rows),
+        "total_tokens": sum(r["total_tokens"] for r in rows),
+        "estimated_calls": sum(1 for r in rows if r["estimated"]),
+        "missing_calls": sum(1 for r in rows if r["missing"]),
+        "has_data": bool(rows),
+    }
 
 
 def _call_result_preview(parsed_summary_json: str | None, module: str) -> str:
@@ -2551,6 +2639,7 @@ button:hover{opacity:0.9}
                 search_text=search_text,
             )
         available_domains = get_request_domains()
+        token_usage = _token_usage_view(get_token_usage_by_model_global())
         if templates:
             return templates.TemplateResponse(
                 request,
@@ -2564,6 +2653,7 @@ button:hover{opacity:0.9}
                     "domain": domain.strip(),
                     "search_text": search_text.strip(),
                     "available_domains": available_domains,
+                    "token_usage": token_usage,
                 },
             )
         return HTMLResponse(f"<html><body><h1>Runs</h1><pre>{runs}</pre></body></html>")
@@ -2586,6 +2676,7 @@ button:hover{opacity:0.9}
                 questions_by_category = get_questions_by_category(benchmark_report)
                 benchmark_summary_md = build_benchmark_report_markdown(benchmark_report)
         conversations = get_conversation_ids_for_run(run_id) or []
+        token_usage = _token_usage_view(get_token_usage_by_model_for_run(run_id))
         if templates:
             return templates.TemplateResponse(
                 request,
@@ -2597,6 +2688,7 @@ button:hover{opacity:0.9}
                     "questions_by_category": questions_by_category,
                     "benchmark_summary_md": benchmark_summary_md,
                     "conversations": conversations,
+                    "token_usage": token_usage,
                 },
             )
         return HTMLResponse(f"<html><body><h1>Run {run_id}</h1></body></html>")
@@ -2771,6 +2863,12 @@ button:hover{opacity:0.9}
         if (execution_summary.get("path") or "").strip().upper() == "COMPLIANCE_FAST_PATH":
             compliance_fast_path_panel = _build_compliance_fast_path_panel(traces, orchestration_events)
 
+        token_usage = _token_usage_view(
+            get_token_usage_by_model_for_request(run_id, request_id),
+            totals=get_token_usage_totals(run_id, request_id),
+        )
+        domain_retrieval = _domain_retrieval_view(llm_calls)
+
         if templates:
             return templates.TemplateResponse(
                 request,
@@ -2801,6 +2899,8 @@ button:hover{opacity:0.9}
                     "delivery_path_summary": delivery_path_summary,
                     "final_revalidation_info": final_revalidation_info,
                     "conversation_context": conversation_context,
+                    "token_usage": token_usage,
+                    "domain_retrieval": domain_retrieval,
                 },
             )
         return HTMLResponse(f"<html><body><h1>Request {request_id}</h1></body></html>")
@@ -2852,6 +2952,7 @@ button:hover{opacity:0.9}
         timeline = _build_conversation_timeline(conversation_id)
         if not timeline.get("requests"):
             raise HTTPException(404, f"Conversation {conversation_id} not found")
+        token_usage = _token_usage_view(get_token_usage_by_model_for_conversation(conversation_id))
         if templates:
             return templates.TemplateResponse(
                 request,
@@ -2859,6 +2960,7 @@ button:hover{opacity:0.9}
                 {
                     "conversation_id": conversation_id,
                     "timeline": timeline,
+                    "token_usage": token_usage,
                 },
             )
         return HTMLResponse(

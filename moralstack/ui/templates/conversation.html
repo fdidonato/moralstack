@@ -76,6 +76,9 @@
     </div>
 </div>
 
+{% set token_usage_title = 'Token usage by model (conversation)' %}
+{% include "_token_usage.html" %}
+
 {# Step 14.6 — Conversation strip: horizontal visual summary of turns #}
 {% if timeline.requests %}
 <h2>Conversation strip</h2>
