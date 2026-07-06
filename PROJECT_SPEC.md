@@ -88,8 +88,8 @@ when you open the relevant files — the headline below is only the reminder.
   "tidy" adjacent code.
 - Do not introduce abstractions for hypothetical future needs.
 - The codebase uses mixed Italian/English in older comments and docstrings.
-  Do **not** mass-translate or reformat. New comments/docs must be English
-  (per `.cursor/rules/`), but leave existing text alone unless it is in scope.
+  Do **not** mass-translate or reformat. New comments/docs must be English, but
+  leave existing text alone unless it is in scope.
 
 ## 7. Testing expectations
 

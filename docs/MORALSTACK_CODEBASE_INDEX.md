@@ -5,9 +5,9 @@
 > The code is authoritative — verify a symbol still exists before relying on it.
 > Confidence and evidence for individual claims live in `docs/CODEBASE_FACTS.md`.
 >
-> For the AI agentic workflow (Claude orchestrates · Codex reviews · Cursor
-> implements) that consumes this index at planning time, see `docs/ai/` —
-> start from `docs/ai/AGENTIC_WORKFLOW.md`.
+> For the AI agentic workflow (Claude orchestrates · Codex reviews · a Claude
+> Sonnet sub-agent implements) that consumes this index at planning time, see
+> `docs/ai/` — start from `docs/ai/AGENTIC_WORKFLOW.md`.
 
 ---
 

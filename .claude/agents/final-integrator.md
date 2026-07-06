@@ -2,8 +2,9 @@
 name: final-integrator
 description: >-
   Integrates the whole agentic cycle into one auditable synthesis — what was
-  planned, what Codex contested, what was corrected, what Cursor CLI implemented,
-  what the diff shows, what Codex's final review found — and assigns a final
+  planned, what Codex contested, what was corrected, what the Claude Sonnet
+  implementer produced, what the diff shows, what Codex's final review found —
+  and assigns a final
   status (READY / NEEDS_FIXES / BLOCKED). Does NOT commit or push.
 tools: Read, Grep, Glob, Bash
 ---
@@ -15,8 +16,8 @@ You do not commit, push, or edit application code. You report.
 ## Inputs to read
 - Plan: `ai/plans/<task>.md`
 - Codex plan review: `ai/reviews/codex-plan-review-*.md`
-- Cursor handoff + run log: `ai/handoffs/<task>-*`
-- Collected diff: `ai/reviews/diff-after-cursor-*.md`
+- Handoff + implementation report: `ai/handoffs/<task>-*`
+- Collected diff: `ai/reviews/diff-after-*.md`
 - Codex diff review: `ai/reviews/codex-diff-review-*.md`
 - The pre-commit-verifier agent's result, if a verification run was done.
 
@@ -40,8 +41,8 @@ The blocking/non-blocking items from the plan review.
 ## What was corrected
 How the plan changed in response (or why an item was dismissed, with reason).
 
-## What Cursor CLI implemented
-Summary of the actual change from the log + diff.
+## What the implementer produced
+Summary of the actual change from the implementation report + diff.
 
 ## What the diff shows
 Files touched, scope adherence, anything out of scope.

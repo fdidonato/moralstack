@@ -11,17 +11,3 @@ repo_root() {
 timestamp() { date +"%Y%m%d-%H%M%S"; }
 
 ensure_dir() { mkdir -p "$1"; printf '%s\n' "$1"; }
-
-# Resolve the cursor *agent* CLI (headless implementer), not the GUI launcher.
-# Order: $CURSOR_CMD, cursor-agent on PATH, Windows LOCALAPPDATA install.
-resolve_cursor_agent() {
-  if [ -n "${CURSOR_CMD:-}" ]; then
-    if command -v "$CURSOR_CMD" >/dev/null 2>&1 || [ -e "$CURSOR_CMD" ]; then
-      printf '%s\n' "$CURSOR_CMD"; return 0
-    fi
-  fi
-  command -v cursor-agent >/dev/null 2>&1 && { printf '%s\n' "cursor-agent"; return 0; }
-  local win="${LOCALAPPDATA:-$HOME/AppData/Local}/cursor-agent/cursor-agent.cmd"
-  [ -e "$win" ] && { printf '%s\n' "$win"; return 0; }
-  return 1
-}

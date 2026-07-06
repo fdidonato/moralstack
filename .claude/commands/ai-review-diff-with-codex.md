@@ -13,13 +13,12 @@ and stop; do not fabricate a review.
 
 Steps:
 1. Collect the current diff via `scripts/ai/collect_git_diff.ps1` (bash:
-   `collect_git_diff.sh`) unless one was already collected by the Cursor
-   implementation step — reuse that file instead of collecting again. This is
-   a plain git-diff snapshot helper, not a Codex call.
+   `collect_git_diff.sh`) unless one was already collected by the implementation
+   step — reuse that file instead of collecting again. This is a plain git-diff
+   snapshot helper, not a Codex call.
 2. Read `ai/prompts/codex-diff-review-template.md` (the review rubric and
    required output structure), `$ARGUMENTS` (the approved plan), and the
-   matching Cursor handoff at `ai/handoffs/<slug>-cursor-cli-handoff.md` if it
-   exists.
+   matching handoff at `ai/handoffs/<slug>-handoff.md` if it exists.
 3. Compose the review request: the template's content verbatim, followed by:
    - "This is a READ-ONLY review. Do not modify, create, or delete any file."
    - The diff file path, the plan path, and the handoff path, with instructions
@@ -44,7 +43,7 @@ Steps:
    classify findings **BLOCKING / NON_BLOCKING / SUGGESTION** per
    `docs/ai/REVIEW_POLICY.md`. Surface deviations from the plan explicitly.
 7. If there are BLOCKING items: state that implementation must be fixed (back
-   to `/ai-implement-with-cursor` with an updated handoff) before finalize.
+   to `/ai-implement` with an updated handoff) before finalize.
 
 Next step to tell the user: `/ai-finalize $ARGUMENTS`.
 
