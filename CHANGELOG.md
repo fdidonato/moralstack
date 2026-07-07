@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Constitution retrieval unified to a single pass**: `get_relevant_principles`
+  now runs exactly once per request, owned inside the risk thread
+  (`models/risk/estimator.py:_get_principles_context`) at the unified
+  `top_k = max(risk_top_k, critic_top_k)`. The controller lifts the result into a
+  `RequestAnalysisContext` reused by the deliberation critic, the FAST_PATH
+  `quick_check` (filtered to HARD) and the quick-check-failed deliberative
+  fallback, so the constitution store is queried a single time across all routes.
+  Reuse-vs-fallback is gated on the explicit `RiskEstimation.retrieval_succeeded`
+  flag, never on the emptiness of the principle list (an empty-but-successful
+  retrieval is authoritative, not degraded). `COMPLIANCE_FAST_PATH` consumes no
+  principles and adds no retrieval. Decision/routing behavior is unchanged: this
+  is a retrieval-consolidation and observability change, verified by the
+  release-time noise-floor gate (route flips 0%, REFUSE-set identical, hard-signal
+  codes byte-identical branch-vs-HEAD).
+- **Single `RELEVANT_PRINCIPLES_RETRIEVED` emission**: the event is now emitted
+  once, before routing, so every route that returns after a successful risk
+  retrieval (deliberative, FAST_PATH, COMPLIANCE_FAST_PATH, REFUSE, benign,
+  SAFE_COMPLETE) is covered; the deliberation runner only emits on its own
+  fallback retrieval. Constitution `llm_calls` rows now carry a `retrieval_phase`
+  qualifier (`risk_routing` / `deliberation_retrieval`) on the domain prefilter
+  and per-domain agents.
+- **Cacheable intent prompt**: the 5 fixed SEMANTIC ANALYSIS GUIDELINES moved from
+  the intent mini-estimator's per-request user message into the static
+  `INTENT_CONTEXT_SYSTEM_PROMPT` prefix; the signals/operational minis remain
+  principle-free.
+
 ## 0.7.0 — 2026-07-06
 
 ### Added
