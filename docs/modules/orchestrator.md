@@ -131,6 +131,27 @@ Protocols include: `PolicyGenerationResultProtocol`, `CriticReportProtocol`, `Qu
 
 `DeliberationRunner.run_fast_path` and `DeliberationRunner.run_deliberative_path` accept an optional keyword argument `constitution`. When the controller passes a pre-loaded constitution (one load per request via `get_constitution_safe`), the runner reuses it for quick_check, assemble, and critique, avoiding multiple store lookups. If `constitution` is omitted, the runner loads from the store when needed (backward compatible).
 
+Both entry points also accept an optional `request_analysis:
+RequestAnalysisContext | None` (unify-constitution-retrieval-single-pass): the
+controller's risk-owned single constitution-retrieval wave, lifted from
+`RiskEstimation` and passed down so the runner never retrieves a second time.
+It is **authoritative even when `relevant_principles` is empty** — a
+successful zero-principle retrieval is a valid result, not a degraded one; only
+when `request_analysis is None` (the risk-owned retrieval was unavailable —
+no risk estimator / no store / retrieval raised) does the runner fall back to
+its own retrieval (`_try_build_request_analysis_context`) and emit
+`RELEVANT_PRINCIPLES_RETRIEVED` itself (the controller already emitted it on
+the success path, so the two emit sites are mutually exclusive). The critic
+reuse gate (`_critique`) checks `request_analysis is not None`, never
+`len(relevant_principles) > 0`, and slices the reused list to
+`retrieval_top_k_for_request()` (the critic's own configured top_k) so it is
+never widened beyond its bound even when the unified retrieval top_k
+(`max(risk_top_k, critic_top_k)`) was larger. `run_fast_path` forwards the same
+context to `critic.quick_check(..., pre_retrieved_principles=...)` and to the
+quick-check-failed `run_deliberative_path` escalation, so FAST_PATH and its
+deliberative fallback also reuse the single wave (see
+`docs/modules/critic.md` and `docs/TRACES/governance_decision_flow.md` §3).
+
 ### Supporting modules (orchestration)
 
 `DeliberationRunner` delegates to dedicated modules to keep responsibilities separated:

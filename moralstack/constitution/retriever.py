@@ -10,6 +10,7 @@ from __future__ import annotations
 import concurrent.futures
 import contextvars
 import copy
+import functools
 import hashlib
 import json
 import logging
@@ -733,7 +734,7 @@ class EnhancedDomainAgent:
         self._openai_client_creates: int = 0
         self._openai_client_reuses_after_cache: int = 0
 
-    def evaluate(self, query: str) -> AgentResult:
+    def evaluate(self, query: str, *, retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING) -> AgentResult:
         """Evaluate query and return AgentResult with principles and confidence."""
         if not self.principles:
             return AgentResult(principle_ids=[], confidence=0.0, domain_match=False)
@@ -804,7 +805,7 @@ Output valid JSON only:"""
             return self._cache[cache_key]
 
         try:
-            result_data = self._call_openai(prompt)
+            result_data = self._call_openai(prompt, retrieval_phase=retrieval_phase)
 
             domain_match = result_data.get("domain_match", False)
             confidence = float(result_data.get("confidence", 0.0))
@@ -827,7 +828,7 @@ Output valid JSON only:"""
             logger.warning(f"EnhancedDomainAgent {self.domain_name} evaluation failed: {e}")
             return AgentResult(principle_ids=[], confidence=0.0, domain_match=False, reasoning=str(e))
 
-    def _call_openai(self, prompt: str) -> dict[str, Any]:
+    def _call_openai(self, prompt: str, *, retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING) -> dict[str, Any]:
         import time
 
         from moralstack.utils.json_utils import JSONParseError
@@ -913,6 +914,7 @@ Output valid JSON only:"""
                 parse_contract=p_contract,
                 model=self.openai_config.model,
                 token_usage_json=token_usage.to_json(),
+                retrieval_phase=retrieval_phase,
                 domain=self.domain_name,
             )
             return data
@@ -949,7 +951,7 @@ class DomainAgent:
         self._openai_client_creates: int = 0
         self._openai_client_reuses_after_cache: int = 0
 
-    def evaluate(self, query: str) -> list[str]:
+    def evaluate(self, query: str, *, retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING) -> list[str]:
         """Evaluate query and return relevant principle IDs."""
         if not self.principles:
             return []
@@ -993,7 +995,7 @@ Output ONLY one JSON object (not a bare array), nothing else:"""
             return self._cache[cache_key]
 
         try:
-            result_ids = self._call_openai(prompt)
+            result_ids = self._call_openai(prompt, retrieval_phase=retrieval_phase)
 
             valid_ids = [pid for pid in result_ids if any(p.id == pid for p in self.principles)]
             self._cache[cache_key] = valid_ids
@@ -1003,7 +1005,7 @@ Output ONLY one JSON object (not a bare array), nothing else:"""
             logger.warning(f"DomainAgent {self.domain_name} evaluation failed: {e}")
             return []
 
-    def _call_openai(self, prompt: str) -> list[str]:
+    def _call_openai(self, prompt: str, *, retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING) -> list[str]:
         import time
 
         from moralstack.utils.json_utils import JSONParseError
@@ -1063,6 +1065,7 @@ Output ONLY one JSON object (not a bare array), nothing else:"""
                 parse_contract=p_contract,
                 model=self.openai_config.model,
                 token_usage_json=token_usage.to_json(),
+                retrieval_phase=retrieval_phase,
                 domain=self.domain_name,
             )
             return ids
@@ -1230,7 +1233,7 @@ class ConstitutionRetriever:
                 self._last_debug_info["fallback"] = True
                 return sorted(core, key=lambda p: -p.priority)[:top_k]
 
-            agent_results = self._run_enhanced_agents_parallel(agents, query)
+            agent_results = self._run_enhanced_agents_parallel(agents, query, retrieval_phase=retrieval_phase)
 
             filtered_results: dict[str, AgentResult] = {}
             rejected_results: dict[str, dict[str, Any]] = {}
@@ -1279,7 +1282,7 @@ class ConstitutionRetriever:
                 self._last_debug_info["fallback"] = True
                 return sorted(core, key=lambda p: -p.priority)[:top_k]
 
-            legacy_results = self._run_agents_parallel(legacy_agents, query)
+            legacy_results = self._run_agents_parallel(legacy_agents, query, retrieval_phase=retrieval_phase)
 
             for domain_name, principle_ids in legacy_results.items():
                 all_principle_ids.update(principle_ids)
@@ -1443,7 +1446,13 @@ class ConstitutionRetriever:
 
         return agents
 
-    def _run_enhanced_agents_parallel(self, agents: list[EnhancedDomainAgent], query: str) -> dict[str, AgentResult]:
+    def _run_enhanced_agents_parallel(
+        self,
+        agents: list[EnhancedDomainAgent],
+        query: str,
+        *,
+        retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING,
+    ) -> dict[str, AgentResult]:
         results: dict[str, AgentResult] = {}
         batch_size = self._config.max_parallel_agents
 
@@ -1456,7 +1465,11 @@ class ConstitutionRetriever:
                 # tokens are never attributed to the request. One snapshot per submit — a
                 # Context object cannot be entered concurrently by multiple threads.
                 future_to_agent = {
-                    executor.submit(contextvars.copy_context().run, agent.evaluate, query): agent for agent in batch
+                    executor.submit(
+                        contextvars.copy_context().run,
+                        functools.partial(agent.evaluate, query, retrieval_phase=retrieval_phase),
+                    ): agent
+                    for agent in batch
                 }
                 for future in concurrent.futures.as_completed(future_to_agent):
                     agent = future_to_agent[future]
@@ -1471,7 +1484,13 @@ class ConstitutionRetriever:
 
         return results
 
-    def _run_agents_parallel(self, agents: list[DomainAgent], query: str) -> dict[str, list[str]]:
+    def _run_agents_parallel(
+        self,
+        agents: list[DomainAgent],
+        query: str,
+        *,
+        retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING,
+    ) -> dict[str, list[str]]:
         results: dict[str, list[str]] = {}
         batch_size = self._config.max_parallel_agents
 
@@ -1481,7 +1500,11 @@ class ConstitutionRetriever:
                 # See _run_enhanced_agents_parallel: propagate observability context into
                 # worker threads so legacy per-domain llm_calls carry run/request ids.
                 future_to_agent = {
-                    executor.submit(contextvars.copy_context().run, agent.evaluate, query): agent for agent in batch
+                    executor.submit(
+                        contextvars.copy_context().run,
+                        functools.partial(agent.evaluate, query, retrieval_phase=retrieval_phase),
+                    ): agent
+                    for agent in batch
                 }
                 for future in concurrent.futures.as_completed(future_to_agent):
                     agent = future_to_agent[future]

@@ -26,7 +26,7 @@ class _FakeEnhancedAgent:
         self.domain_name = name
         self._sink = sink
 
-    def evaluate(self, query: str) -> AgentResult:
+    def evaluate(self, query: str, *, retrieval_phase: str = "risk_routing") -> AgentResult:
         # Captured from inside the worker thread.
         self._sink[self.domain_name] = (get_current_run_id(), get_current_request_id())
         return AgentResult(principle_ids=[], confidence=1.0, domain_match=True)
@@ -37,7 +37,7 @@ class _FakeLegacyAgent:
         self.domain_name = name
         self._sink = sink
 
-    def evaluate(self, query: str) -> list[str]:
+    def evaluate(self, query: str, *, retrieval_phase: str = "risk_routing") -> list[str]:
         self._sink[self.domain_name] = (get_current_run_id(), get_current_request_id())
         return []
 

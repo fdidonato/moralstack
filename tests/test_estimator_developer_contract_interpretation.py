@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from moralstack.models.risk.categories import RiskCategory
-from moralstack.models.risk.estimator import LLMBasedRiskEstimator
+from moralstack.models.risk.estimator import LLMBasedRiskEstimator, _PrinciplesContextResult
 from moralstack.models.risk.prompts import (
     HARM_SIGNAL_SYSTEM_PROMPT,
     INTENT_CONTEXT_SYSTEM_PROMPT,
@@ -275,7 +275,11 @@ class TestQ74SimulatedClassification:
         mock_policy.generate.side_effect = _gen_side_effect
 
         with (
-            patch.object(llm_risk_estimator, "_get_principles_context", return_value=("", None)),
+            patch.object(
+                llm_risk_estimator,
+                "_get_principles_context",
+                return_value=_PrinciplesContextResult(formatted_context="", runtime_domain=None),
+            ),
             patch.object(llm_risk_estimator, "_policy_for_mini_estimator_model", return_value=mock_policy),
             patch("moralstack.models.risk.estimator.persist_llm_call", return_value=False),
         ):
@@ -307,7 +311,11 @@ class TestQ74SimulatedClassification:
         estimator = LLMBasedRiskEstimator(policy=policy, config=risk_config, constitution_store=None)
 
         with (
-            patch.object(estimator, "_get_principles_context", return_value=("", None)),
+            patch.object(
+                estimator,
+                "_get_principles_context",
+                return_value=_PrinciplesContextResult(formatted_context="", runtime_domain=None),
+            ),
             patch.object(estimator, "_policy_for_mini_estimator_model", return_value=policy),
             patch("moralstack.models.risk.estimator.persist_llm_call", return_value=False),
         ):
@@ -349,7 +357,11 @@ class TestSafetyOverrideInIntentSystemPrompt:
         mock_policy.generate.side_effect = _gen_side_effect
 
         with (
-            patch.object(llm_risk_estimator, "_get_principles_context", return_value=("", None)),
+            patch.object(
+                llm_risk_estimator,
+                "_get_principles_context",
+                return_value=_PrinciplesContextResult(formatted_context="", runtime_domain=None),
+            ),
             patch.object(llm_risk_estimator, "_policy_for_mini_estimator_model", return_value=mock_policy),
             patch("moralstack.models.risk.estimator.persist_llm_call", return_value=False),
         ):
@@ -383,7 +395,11 @@ class TestNoContractUserPromptByteEquivalence:
         mock_policy.generate.side_effect = _gen_side_effect
 
         with (
-            patch.object(llm_risk_estimator, "_get_principles_context", return_value=("", None)),
+            patch.object(
+                llm_risk_estimator,
+                "_get_principles_context",
+                return_value=_PrinciplesContextResult(formatted_context="", runtime_domain=None),
+            ),
             patch.object(llm_risk_estimator, "_policy_for_mini_estimator_model", return_value=mock_policy),
             patch("moralstack.models.risk.estimator.persist_llm_call", return_value=False),
         ):
