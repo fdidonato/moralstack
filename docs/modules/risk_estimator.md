@@ -158,8 +158,12 @@ in the corresponding `*_SYSTEM_PROMPT` (`models/risk/prompts.py`), byte-identica
 across requests for that mini:
 
 - **Intent** (`INTENT_CONTEXT_SYSTEM_PROMPT`): STEP 0-3 + field reminders + output
-  schema. The user template (`INTENT_CONTEXT_PROMPT_TEMPLATE`) is dynamic-only:
-  `REQUEST` + the per-request `{constitution_context}` (retrieved principles).
+  schema, **plus** (unify-constitution-retrieval-single-pass) the 5 fixed
+  SEMANTIC ANALYSIS GUIDELINES, moved here from the per-request user message so
+  they join the cacheable static prefix. The user template
+  (`INTENT_CONTEXT_PROMPT_TEMPLATE`) stays dynamic-only: `REQUEST` + the
+  per-request `{constitution_context}` (retrieved principles list ONLY — no
+  guidelines, no duplication; see `tests/test_intent_guidelines_placement.py`).
 - **Operational** (`OPERATIONAL_RISK_SYSTEM_PROMPT`): STEP 1-4 + output schema.
   User template is `REQUEST` only.
 - **Signals** (`HARM_SIGNAL_SYSTEM_PROMPT`, composed by
@@ -190,6 +194,33 @@ Shared steps:
    `seeks_norm_circumvention`, `q13_protected_class_targeting`, and `estimation_mode`.
 
 Persistence of LLM calls is best-effort and must not affect risk decisions. The three real mini-estimator rows are written as one synchronous batch; SQLite write failures roll back the whole mini-estimator group. The optional synthetic `calibration_guard` row remains a single synchronous write with `sequence_in_cycle=-8`.
+
+### Constitution retrieval (single upstream wave)
+
+`_get_principles_context(prompt, *, retrieval_query=None, retrieval_top_k=None)`
+is the **one** `constitution_store.get_relevant_principles(query, top_k,
+domain=None)` call for the whole request (unify-constitution-retrieval-single-
+pass): the controller supplies `retrieval_query` (raw prompt vs its enriched
+contract+history query) and `retrieval_top_k` (`max(risk_top_k, critic_top_k)`);
+both default to standalone behavior (raw prompt, `self._top_k`) when absent, so
+direct callers/tests are unaffected. It returns a `_PrinciplesContextResult`:
+the formatted intent-mini string (sliced to `self._top_k`, guidelines removed —
+they now live in `INTENT_CONTEXT_SYSTEM_PROMPT`, see above), the FULL retrieved
+principle tuple, the domain-prefilter debug snapshot (`runtime_domain`
+derivation unchanged — `core`-excluded, single source of truth), and
+retrieval-status flags (`retrieval_attempted`/`retrieval_succeeded`/
+`retrieval_error`). `_to_risk_estimation` carries all of this onto
+`RiskEstimation` (`relevant_principles`, `retrieval_metadata`,
+`retrieval_count`, `retrieval_duration_ms`, `retrieval_started_at_ms`,
+`retrieval_top_k`, plus the three status flags) — in-memory `Principle` objects
+that must **never** be serialized into the persisted `llm_calls` payload
+(`_LOCAL_LLM_CALL_PAYLOAD_KEYS` is unchanged). `retrieval_succeeded` (never the
+emptiness of `relevant_principles`) is what the controller/deliberation layer
+use to decide reuse-vs-fallback: an empty-but-successful retrieval is
+authoritative and must not trigger a second `get_relevant_principles` call. See
+`docs/TRACES/governance_decision_flow.md` §3 for the full request-level flow
+(controller query policy → risk retrieval → `RequestAnalysisContext` → reuse by
+deliberation/critic/fast-path).
 
 ### Prompt templates (`prompts.py`)
 

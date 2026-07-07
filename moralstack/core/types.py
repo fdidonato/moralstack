@@ -118,7 +118,13 @@ class CriticProtocol(Protocol):
         developer_contract: Any = None,
         conversation_history: Optional[List[Turn]] = None,
     ) -> Any: ...
-    def quick_check(self, request: str, response: str, constitution: Any) -> Any: ...
+    def quick_check(
+        self,
+        request: str,
+        response: str,
+        constitution: Any,
+        pre_retrieved_principles: Optional[List[Any]] = None,
+    ) -> Any: ...
     def critique_with_relevant_principles(
         self,
         request: str,

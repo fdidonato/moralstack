@@ -8,6 +8,7 @@ import logging
 import threading
 import time
 from contextlib import nullcontext
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from moralstack.core.types import PolicyLLMProtocol
@@ -91,6 +92,31 @@ _LOCAL_LLM_CALL_PAYLOAD_KEYS = (
     "error",
     "sequence_in_cycle",
 )
+
+
+@dataclass(frozen=True)
+class _PrinciplesContextResult:
+    """
+    Result of a single constitution-retrieval attempt inside the risk thread.
+
+    ``formatted_context``/``runtime_domain`` are the fields historically returned by
+    ``_get_principles_context``; the rest carry the full retrieval so it can be exposed
+    on ``RiskEstimation`` and reused downstream (deliberation/critic/fast-path) without a
+    second ``get_relevant_principles`` call. ``retrieval_succeeded`` (not the emptiness of
+    ``principles``) is the authoritative signal consumers use to decide reuse-vs-fallback.
+    """
+
+    formatted_context: str
+    runtime_domain: str | None
+    principles: tuple[Any, ...] = ()
+    debug_snapshot: dict[str, Any] = field(default_factory=dict)
+    retrieval_attempted: bool = False
+    retrieval_succeeded: bool = False
+    retrieval_error: str | None = None
+    retrieval_count: int = 0
+    retrieval_duration_ms: float = 0.0
+    retrieval_started_at_ms: int = 0
+    retrieval_top_k: int = 0
 
 
 class _Phase0Timer:
@@ -377,6 +403,8 @@ class LLMBasedRiskEstimator:
         *,
         developer_contract_text: str | None = None,
         conversation_history: list[dict[str, str]] | None = None,
+        retrieval_query: str | None = None,
+        retrieval_top_k: int | None = None,
     ) -> RiskEstimation:
         """
         Stima il rischio etico di un prompt usando analisi semantica pura.
@@ -399,6 +427,13 @@ class LLMBasedRiskEstimator:
             prompt: Richiesta utente da valutare
             developer_contract_text: Deployer system prompt / developer contract text
             conversation_history: Prior turns as ``{"role", "content"}`` dicts
+            retrieval_query: Optional override for the constitution-retrieval query
+                (controller query policy: raw prompt vs enriched contract/history
+                query). Defaults to ``prompt`` when absent, preserving standalone
+                behavior.
+            retrieval_top_k: Optional override for the constitution-retrieval
+                ``top_k`` (unified ``max(risk_top_k, critic_top_k)`` from the
+                controller). Defaults to ``self._top_k`` when absent.
 
         Returns:
             RiskEstimation con score, categoria e ragionamento semantico
@@ -415,6 +450,8 @@ class LLMBasedRiskEstimator:
             prompt,
             developer_contract_text=developer_contract_text,
             conversation_history=conversation_history,
+            retrieval_query=retrieval_query,
+            retrieval_top_k=retrieval_top_k,
         )
 
     def _fallback_estimate(self, prompt: str) -> RiskEstimation:
@@ -449,36 +486,69 @@ class LLMBasedRiskEstimator:
             _RISK_LOG.debug("GenerationConfig unavailable: %s", e)
             return None
 
-    def _get_principles_context(self, prompt: str) -> tuple[str, str | None]:
+    def _get_principles_context(
+        self,
+        prompt: str,
+        *,
+        retrieval_query: str | None = None,
+        retrieval_top_k: int | None = None,
+    ) -> _PrinciplesContextResult:
         """
         Retrieve and format relevant constitution principles for the prompt.
 
-        Returns (context, runtime_domain). `runtime_domain` is derived from the
-        DomainPrefilter's prefiltered_domains (single source of truth) — never
-        from a separate LLM call. `core` is treated as a retrieval-only pseudo-
-        domain and is never returned as runtime_domain.
+        This is the single, risk-owned constitution retrieval for the request: the
+        caller (controller) may supply ``retrieval_query`` (raw vs enriched, per query
+        policy) and ``retrieval_top_k`` (unified `max(risk_top_k, critic_top_k)`); both
+        default to today's standalone behavior (raw prompt, `self._top_k`) when absent.
+
+        `runtime_domain` is derived from the DomainPrefilter's prefiltered_domains
+        (single source of truth) — never from a separate LLM call. `core` is treated
+        as a retrieval-only pseudo-domain and is never returned as runtime_domain.
+
+        `retrieval_succeeded` (not the emptiness of the returned principles) is the
+        authoritative status flag downstream consumers use to decide reuse-vs-fallback;
+        an empty-but-successful retrieval is a valid result and must not be treated as
+        a failure.
         """
         if self.constitution_store is None:
-            return "", None
+            return _PrinciplesContextResult(formatted_context="", runtime_domain=None)
+
+        query = retrieval_query if retrieval_query else prompt
+        top_k = retrieval_top_k if retrieval_top_k else self._top_k
+        started_at_ms = int(time.time() * 1000)
+        t0 = time.time()
         try:
-            relevant_principles = self.constitution_store.get_relevant_principles(
-                query=prompt, top_k=self._top_k, domain=None
-            )
+            relevant_principles = self.constitution_store.get_relevant_principles(query=query, top_k=top_k, domain=None)
+            duration_ms = (time.time() - t0) * 1000
 
             runtime_domain: str | None = None
+            debug_snapshot: dict[str, Any] = {}
             try:
                 get_debug_info = getattr(self.constitution_store, "get_debug_info", None)
-                debug_info = get_debug_info() if callable(get_debug_info) else {}
-                prefiltered_domains = list(debug_info.get("prefiltered_domains") or [])
+                debug_snapshot = get_debug_info() if callable(get_debug_info) else {}
+                prefiltered_domains = list(debug_snapshot.get("prefiltered_domains") or [])
                 specific_domains = [
                     d.strip() for d in prefiltered_domains if isinstance(d, str) and d.strip() and d.strip() != "core"
                 ]
                 runtime_domain = specific_domains[0] if specific_domains else None
             except Exception:
                 runtime_domain = None
+                debug_snapshot = {}
 
+            principles_tuple = tuple(relevant_principles)
             if not relevant_principles:
-                return "", runtime_domain
+                return _PrinciplesContextResult(
+                    formatted_context="",
+                    runtime_domain=runtime_domain,
+                    principles=principles_tuple,
+                    debug_snapshot=debug_snapshot,
+                    retrieval_attempted=True,
+                    retrieval_succeeded=True,
+                    retrieval_count=0,
+                    retrieval_duration_ms=round(duration_ms, 1),
+                    retrieval_started_at_ms=started_at_ms,
+                    retrieval_top_k=top_k,
+                )
             n_principles = self._top_k
             hard_principles = [p for p in relevant_principles[:n_principles] if p.level == "hard"]
             soft_principles = [p for p in relevant_principles[:n_principles] if p.level == "soft"]
@@ -499,20 +569,29 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
 {chr(10).join(hard_list) if hard_list else "  (None found)"}
 
 ℹ️ SOFT NORMS:
-{chr(10).join(soft_list) if soft_list else "  (None found)"}
-
-IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
-1. These principles are RELEVANT to the topic, but the request may NOT violate them.
-2. Analyze the INTENT and MEANING, not the presence of specific words.
-3. A question ABOUT a sensitive topic is NOT the same as REQUESTING harmful content.
-4. Academic/educational discussions RESPECT principles by promoting understanding.
-5. Only classify as harmful if the request ACTIVELY SEEKS TO CAUSE HARM:
-   - Asking HOW TO harm, deceive, or manipulate someone → potentially harmful
-   - Asking ABOUT ethics, psychology, or controversial topics → educational/sensitive"""
-            return formatted_context, runtime_domain
+{chr(10).join(soft_list) if soft_list else "  (None found)"}"""
+            return _PrinciplesContextResult(
+                formatted_context=formatted_context,
+                runtime_domain=runtime_domain,
+                principles=principles_tuple,
+                debug_snapshot=debug_snapshot,
+                retrieval_attempted=True,
+                retrieval_succeeded=True,
+                retrieval_count=len(principles_tuple),
+                retrieval_duration_ms=round(duration_ms, 1),
+                retrieval_started_at_ms=started_at_ms,
+                retrieval_top_k=top_k,
+            )
         except Exception as e:
             _RISK_LOG.warning("principles retrieval failed, continuing without: %s", e)
-            return "", None
+            return _PrinciplesContextResult(
+                formatted_context="",
+                runtime_domain=None,
+                retrieval_attempted=True,
+                retrieval_succeeded=False,
+                retrieval_error=str(e),
+                retrieval_top_k=top_k,
+            )
 
     def _post_process_crisis(self, parsed: RiskParseResult) -> tuple[
         float,
@@ -577,12 +656,18 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         request_type_final: str,
         detected_domain: str | None = None,
         estimation_mode: str = "",
+        principles_ctx: _PrinciplesContextResult | None = None,
     ) -> RiskEstimation:
         """Build RiskEstimation from parsed result and post-processed values."""
         intent_type = _intent_type_from_request_type(
             request_type_final,
             intent_operational=parsed.intent_operational,
             risk_score=score,
+        )
+        pctx = (
+            principles_ctx
+            if principles_ctx is not None
+            else _PrinciplesContextResult(formatted_context="", runtime_domain=detected_domain)
         )
         return RiskEstimation(
             score=score,
@@ -613,6 +698,15 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             q15_deceptive_online_campaign=parsed.q15_deceptive_online_campaign,
             q16_harassment_smear_campaign=parsed.q16_harassment_smear_campaign,
             q17_minor_exploitation=parsed.q17_minor_exploitation,
+            relevant_principles=pctx.principles,
+            retrieval_metadata=dict(pctx.debug_snapshot),
+            retrieval_count=pctx.retrieval_count,
+            retrieval_duration_ms=pctx.retrieval_duration_ms,
+            retrieval_started_at_ms=pctx.retrieval_started_at_ms,
+            retrieval_top_k=pctx.retrieval_top_k,
+            retrieval_attempted=pctx.retrieval_attempted,
+            retrieval_succeeded=pctx.retrieval_succeeded,
+            retrieval_error=pctx.retrieval_error,
         )
 
     def _persist_mini_llm_call(
@@ -714,6 +808,8 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         *,
         developer_contract_text: str | None = None,
         conversation_history: list[dict[str, str]] | None = None,
+        retrieval_query: str | None = None,
+        retrieval_top_k: int | None = None,
     ) -> RiskEstimation:
         """
         Esegue 3 mini-chiamate LLM in parallelo via ThreadPoolExecutor.
@@ -734,7 +830,11 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         _policy = self.policy  # narrowed non-optional for closure capture
 
         gen_config = self._build_generation_config()
-        context, detected_domain = self._get_principles_context(prompt)
+        principles_ctx = self._get_principles_context(
+            prompt, retrieval_query=retrieval_query, retrieval_top_k=retrieval_top_k
+        )
+        context = principles_ctx.formatted_context
+        detected_domain = principles_ctx.runtime_domain
 
         intent_prompt = INTENT_CONTEXT_PROMPT_TEMPLATE.format(
             request=prompt,
@@ -1015,6 +1115,7 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
             request_type_final,
             detected_domain=detected_domain,
             estimation_mode="parallel",
+            principles_ctx=principles_ctx,
         )
 
     def _semantic_analysis(
@@ -1023,6 +1124,8 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
         *,
         developer_contract_text: str | None = None,
         conversation_history: list[dict[str, str]] | None = None,
+        retrieval_query: str | None = None,
+        retrieval_top_k: int | None = None,
     ) -> RiskEstimation:
         """
         Execute focused parallel mini-analysis.
@@ -1032,6 +1135,8 @@ IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
                 prompt,
                 developer_contract_text=developer_contract_text,
                 conversation_history=conversation_history,
+                retrieval_query=retrieval_query,
+                retrieval_top_k=retrieval_top_k,
             )
         except Exception as e:
             _RISK_LOG.warning("parallel mini-analysis failed, using safe fallback estimate: %s", e)

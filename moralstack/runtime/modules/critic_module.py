@@ -615,6 +615,7 @@ class LLMConstitutionalCritic:
         request: str,
         response: str,
         constitution: Constitution,
+        pre_retrieved_principles: list[Principle] | None = None,
     ) -> QuickCheckResult:
         """
         Check veloce per fast path.
@@ -625,6 +626,12 @@ class LLMConstitutionalCritic:
             request: Richiesta originale
             response: Risposta da verificare
             constitution: Costituzione
+            pre_retrieved_principles: Optional shared retrieval result from the
+                risk-owned single upstream wave (unified single-retrieval-per-request).
+                When supplied, filtered to HARD instead of self-retrieving (single
+                retrieval per request across all routes). When not supplied
+                (degraded / no risk-owned context), self-retrieves as before
+                (fail-safe fallback).
 
         Returns:
             QuickCheckResult con pass/fail
@@ -635,16 +642,22 @@ class LLMConstitutionalCritic:
 
         # Usa principi rilevanti se disponibili, altrimenti top hard constraints
         hard_constraints = []
-        if self.store is not None:
+        if pre_retrieved_principles is not None:
+            # Reuse the risk-owned retrieval (already executed once upstream);
+            # filter to HARD only — no store call here.
+            hard_constraints = [p for p in pre_retrieved_principles if p.level == "hard"][:10]
+        elif self.store is not None:
             try:
-                # Ottieni principi rilevanti (solo HARD) per questa query
+                # Fail-safe fallback: no shared context supplied — self-retrieve
+                # (solo HARD) per questa query.
                 relevant = self.store.get_relevant_principles(query=request, top_k=10, domain=None)
                 # Filtra solo hard constraints rilevanti
                 hard_constraints = [p for p in relevant if p.level == "hard"][:10]
             except Exception:
                 pass
 
-        # Fallback: usa top hard constraints per priorità
+        # Fallback: usa top hard constraints per priorità (never skip the check,
+        # even when the shared/self-retrieved list has zero HARD principles).
         if not hard_constraints:
             hard_constraints = [p for p in constitution.principles if p.level == "hard"][
                 :10

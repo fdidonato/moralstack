@@ -214,6 +214,18 @@ when the API key is unchanged; chat completion parameters (`model`, `messages`, 
 
 Public API (`get_relevant_principles`, `detect_relevant_domains`, `get_debug_info`) remains unchanged.
 
+**`retrieval_phase` observability qualifier** (unify-constitution-retrieval-
+single-pass). `get_relevant_principles(query, top_k=10, domain=None, *,
+retrieval_phase="risk_routing")` threads `retrieval_phase` through the
+`DomainPrefilter` call, both agent kinds' `evaluate(query, *,
+retrieval_phase=...)` → `_call_openai(..., retrieval_phase=...)`, and
+`_persist_constitution_llm_call` — so every `llm_calls` row for a given
+retrieval wave (prefilter AND per-domain agents, enhanced or legacy) is labeled
+consistently: `"risk_routing"` (default) for the single risk-owned wave (see
+`docs/modules/risk_estimator.md`), `"deliberation_retrieval"` for the
+deliberation runner's fallback wave when the risk-owned retrieval was
+unavailable.
+
 ## Domain Selection (DomainPrefilter)
 
 Domains are narrowed using **compact keyword maps** backed by YAML overlay metadata to keep token budgets small. When

@@ -103,7 +103,22 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 - `controller.py` — `OrchestrationController.process(...)` is the governance
   runner core (file is ~2498 lines). Owns risk estimation, speculative overlap,
   DCCL invocation, routing, ledger lookup/store, conversation-state extension,
-  and event emission.
+  and event emission. `_estimate_risk` computes the single-wave retrieval query
+  policy (RAW prompt iff no developer-contract text AND no conversation history,
+  else `_build_enriched_retrieval_query`, imported from `deliberation_runner`)
+  and the unified `retrieval_top_k = max(risk_top_k, critic_top_k)` (guarded
+  `getattr(risk_estimator, "_top_k", DEFAULT_RISK_TOP_K)` since
+  `RiskEstimatorProtocol` exposes only `estimate(prompt)`), passing both into
+  `risk_estimator.estimate(...)`. `_build_request_analysis_from_risk` lifts the
+  risk-owned retrieval into a `RequestAnalysisContext` (authoritative even when
+  `relevant_principles == ()`, gated on `RiskEstimation.retrieval_succeeded` —
+  never on emptiness) and emits the single `RELEVANT_PRINCIPLES_RETRIEVED` event;
+  `_route_fast_path`/`_route_deliberative` build it once and pass it into
+  `run_fast_path`/`run_deliberative_path` so deliberation, the fast-path
+  `quick_check`, and the quick-check-failed deliberative fallback all reuse the
+  same retrieval (exactly one `get_relevant_principles` call per request across
+  routes). `COMPLIANCE_FAST_PATH` (`run_benign_fast_path`) consumes no
+  principles, so it adds no retrieval regardless.
 - `conversation_context.py` — shared OpenAI-message parser for SDK/proxy. Builds
   `ConversationContext` with final user message, prior user/assistant turns,
   developer contract, `history_source`, role-serialized transcript helpers,
@@ -120,7 +135,23 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `is_hard_signal_refuse(...)`.
 - `safe_complete_gating.py` — `apply_safe_complete_gating(...)`.
 - `deliberation_runner.py` — `DeliberationRunner` (cycles, convergence,
-  `run_fast_path`, `run_benign_fast_path`).
+  `run_fast_path`, `run_benign_fast_path`). `run_deliberative_path`/
+  `run_fast_path` accept an optional `request_analysis: RequestAnalysisContext |
+  None` (the controller's risk-owned retrieval); when supplied it is
+  authoritative (used as-is, even empty) and the runner does NOT re-retrieve or
+  emit `RELEVANT_PRINCIPLES_RETRIEVED` itself. Only when `None` does the runner
+  fall back to its own retrieval via `_try_build_request_analysis_context`
+  (`retrieval_phase="deliberation_retrieval"`) and emit the event
+  (`_record_retrieval_start_and_event`) — controller-emit and runner-emit are
+  mutually exclusive per request. `retrieval_top_k_for_request()` (public;
+  aligns with `critic.config.top_k_principles`) is also used by the controller to
+  compute the unified top_k. The critic-reuse gate in `_critique` no longer
+  requires `len(relevant_principles) > 0` (an empty supplied context is used
+  as-is); critic reuse slices to `retrieval_top_k_for_request()` so the critic is
+  never widened beyond its own configured top_k. `run_fast_path` forwards the
+  shared principles to `critic.quick_check(..., pre_retrieved_principles)`
+  (filtered to HARD there) and to the quick-check-failed `run_deliberative_path`
+  fallback call, so FAST_PATH never re-retrieves either.
 - `convergence.py`, `convergence_evaluator.py` — convergence engine.
 - `conversation_state.py` — `ConversationGovernanceState`, `TurnDecisionSummary`.
 - `conversational_fast_path.py` — `ConversationalFastPathRunner` (cache-driven skip).
@@ -152,12 +183,32 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 
 ### Risk — `moralstack/models/risk/`
 - `estimator.py` — `LLMBasedRiskEstimator`. `estimate(prompt, developer_contract_text=…,
-  conversation_history=…)` runs **three parallel mini-estimators** via a
-  `ThreadPoolExecutor`: `estimate_intent`, `estimate_signals` (q1–q17),
-  `estimate_operational`; merged by `calibration.merge_mini_estimator_results`.
-  The three real mini-estimator `llm_call` envelopes are built with the local
-  15-key risk payload and enqueued as one observability batch; a synthetic
-  `calibration_guard` row remains a separate single enqueue.
+  conversation_history=…, retrieval_query=…, retrieval_top_k=…)` runs **three
+  parallel mini-estimators** via a `ThreadPoolExecutor`: `estimate_intent`,
+  `estimate_signals` (q1–q17), `estimate_operational`; merged by
+  `calibration.merge_mini_estimator_results`. The three real mini-estimator
+  `llm_call` envelopes are built with the local 15-key risk payload and enqueued
+  as one observability batch; a synthetic `calibration_guard` row remains a
+  separate single enqueue.
+- **Unified single-wave constitution retrieval** (unify-constitution-retrieval-
+  single-pass): `_get_principles_context` is the ONE `get_relevant_principles`
+  call per request, owned here (risk thread), reused by deliberation/critic/
+  fast-path. It accepts optional `retrieval_query` (raw prompt vs the
+  controller's enriched query) and `retrieval_top_k` (`max(risk_top_k,
+  critic_top_k)`, computed by the controller) and returns a
+  `_PrinciplesContextResult` carrying the formatted intent-mini string (sliced to
+  `self._top_k`), the FULL retrieved principle tuple, the domain-prefilter debug
+  snapshot, and retrieval-status flags (`retrieval_attempted`/`_succeeded`/
+  `_error`) — the status flags, not emptiness, decide reuse-vs-fallback
+  downstream. These are carried on `RiskEstimation` (`relevant_principles`,
+  `retrieval_metadata`, `retrieval_count`, `retrieval_duration_ms`,
+  `retrieval_started_at_ms`, `retrieval_top_k`, `retrieval_attempted`,
+  `retrieval_succeeded`, `retrieval_error`) — in-memory `Principle` objects that
+  must NEVER be serialized into the persisted `llm_calls` payload
+  (`_LOCAL_LLM_CALL_PAYLOAD_KEYS`). The signals/operational minis still receive
+  no principles (§5.3 unaffected); only the intent mini does, and the 5 fixed
+  SEMANTIC ANALYSIS GUIDELINES now live in `INTENT_CONTEXT_SYSTEM_PROMPT` (static,
+  cacheable) rather than the per-request user message.
 - `calibration.py` — `merge_mini_estimator_results`, `parse_risk_dict`, score
   calibration rules (defensive override, harm escalation, non-operational clamp,
   calibration guard).
@@ -168,9 +219,17 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 
 ### Constitution — `moralstack/constitution/`
 - `store.py` — `ConstitutionStore` (optional LLM-based principle matching).
+  `get_relevant_principles(query, top_k=10, domain=None, *,
+  retrieval_phase="risk_routing")` delegates to `ConstitutionRetriever`.
 - `loader.py`, `schema.py`, `retriever.py`, `prompt_formatter.py`, `helpers.py`.
   `retriever.py` domain-agent caches hash rendered OpenAI messages plus
-  generation params, not only principle ids/counts.
+  generation params, not only principle ids/counts. `retrieval_phase`
+  (`RETRIEVAL_PHASE_RISK_ROUTING` / `RETRIEVAL_PHASE_DELIBERATION`) is threaded
+  through the domain prefilter AND both agent kinds — `EnhancedDomainAgent`/
+  `DomainAgent.evaluate(query, *, retrieval_phase=...)` → their `_call_openai` →
+  `_persist_constitution_llm_call` — so the risk-owned single wave persists
+  `llm_calls.retrieval_phase="risk_routing"` and any fallback wave (no
+  controller-supplied context) persists `"deliberation_retrieval"`.
 - `data/core.yaml` — baseline constitution.
 - `data/overlays/*.yaml` — 21 domain overlays: children, coding, creative,
   customer_service, cybersecurity, education, emergency, enterprise, environment,
@@ -409,6 +468,13 @@ on the eligible deliberative route** — benign, safe_complete, ledger
 fast-path, and compliance fast-path routes bypass them entirely. Individual
 modules can also be absent, disabled, or skipped by timeout or gating:
 - **Constitutional Critic** (`LLMConstitutionalCritic`) — principle violations.
+  `quick_check(request, response, constitution, pre_retrieved_principles=None)`
+  (FAST_PATH): when the runner supplies the risk-owned shared principles list,
+  filters it to `level == "hard"` instead of self-retrieving (single retrieval
+  per request, global scope); still falls back to the constitution's own top HARD
+  constraints if the filtered shared list has zero HARD principles (never skips
+  the check); self-retrieves as before when no shared list is supplied
+  (fail-safe).
 - **Consequence Simulator** (`LLMConsequenceSimulator`) — projected harm /
   expected valence. Runs in parallel with perspectives.
 - **Perspectives Ensemble** — multi-stakeholder approval scores.

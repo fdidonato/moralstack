@@ -75,12 +75,25 @@ constant is used at both FULL-critique call sites in `critic_module.py`
 (`generate_messages` and legacy `generate` branches).
 
 The **quick-check fast path** (`quick_check()`, HARD-constraint short-circuit) is
-intentionally **unchanged**: it keeps its own short `CRITIC_SYSTEM_PROMPT` and the
-`{"violated": ...}` contract, sent via `generate()`. Its prompt is small (max_tokens=256,
-below the ~1024-token cache threshold) so reordering it has no caching payoff and
-risks the safety-critical fast-path contract — it is a separate constant from
-`CRITIC_FULL_SYSTEM_PROMPT` on purpose (mixing them would make quick-check emit
-the full `decision`/`violations` schema and silently drop the `violated` field).
+intentionally **unchanged in its prompt**: it keeps its own short
+`CRITIC_SYSTEM_PROMPT` and the `{"violated": ...}` contract, sent via
+`generate()`. Its prompt is small (max_tokens=256, below the ~1024-token cache
+threshold) so reordering it has no caching payoff and risks the safety-critical
+fast-path contract — it is a separate constant from `CRITIC_FULL_SYSTEM_PROMPT`
+on purpose (mixing them would make quick-check emit the full
+`decision`/`violations` schema and silently drop the `violated` field).
+
+**Single upstream retrieval reuse (unify-constitution-retrieval-single-pass).**
+`quick_check(request, response, constitution, pre_retrieved_principles=None)`
+gained an optional 4th argument: the risk-owned shared principles list
+(`DeliberationRunner.run_fast_path` forwards it). When supplied, `quick_check`
+filters it to `level == "hard"` **instead of** calling
+`store.get_relevant_principles` itself — the single retrieval-per-request
+invariant now holds for FAST_PATH too, not only the deliberative path. If the
+filtered shared list has zero HARD principles, it still falls back to the
+constitution's own top HARD constraints (never silently skips the check). When
+`pre_retrieved_principles` is `None` (no risk-owned context available —
+fail-safe), `quick_check` self-retrieves exactly as before.
 
 ---
 

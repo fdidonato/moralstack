@@ -342,6 +342,19 @@ seeks_norm_circumvention: "yes" only when the requester THEMSELVES
 }
 
 Return ONLY valid JSON. No preamble, no markdown fences, no commentary.
+
+══════════════════════════════════════════════════════════════════
+ SEMANTIC ANALYSIS GUIDELINES
+══════════════════════════════════════════════════════════════════
+
+IMPORTANT - SEMANTIC ANALYSIS GUIDELINES:
+1. These principles are RELEVANT to the topic, but the request may NOT violate them.
+2. Analyze the INTENT and MEANING, not the presence of specific words.
+3. A question ABOUT a sensitive topic is NOT the same as REQUESTING harmful content.
+4. Academic/educational discussions RESPECT principles by promoting understanding.
+5. Only classify as harmful if the request ACTIVELY SEEKS TO CAUSE HARM:
+   - Asking HOW TO harm, deceive, or manipulate someone → potentially harmful
+   - Asking ABOUT ethics, psychology, or controversial topics → educational/sensitive
 """
 
 INTENT_CONTEXT_PROMPT_TEMPLATE = """\

@@ -85,6 +85,20 @@ Writers: `init_db`, `create_run`, `upsert_request`, `update_request_response`,
 (`observability/governance_audit.py`) writes `final_response`/domain, while
 `finalize_audit_sync` emits the synchronous meta/proxy audit envelopes.
 
+**Constitution retrieval events (unify-constitution-retrieval-single-pass).**
+`RELEVANT_PRINCIPLES_RETRIEVED` is emitted exactly once per request: by the
+controller (`orchestration/controller.py:_emit_relevant_principles_retrieved`,
+`payload.source="controller"`) when the single risk-owned wave succeeds, or by
+`DeliberationRunner._record_retrieval_start_and_event`
+(`payload.source="deliberation_runner"`) only on its own fallback retrieval
+(risk-owned retrieval unavailable) — never both. `RELEVANT_PRINCIPLES_REUSED` is
+still emitted per consumer reuse (e.g. the critic). The `llm_calls` rows for the
+constitution domain-prefilter and per-domain agents carry
+`parsed_summary_json.retrieval_phase`: `"risk_routing"` for the single risk-owned
+wave (default), `"deliberation_retrieval"` for any fallback wave
+(`constitution/retriever.py:_persist_constitution_llm_call`, threaded through
+both `EnhancedDomainAgent` and legacy `DomainAgent`).
+
 ### Token usage (proxy `usage` field and DB)
 
 - **Synchronous path**: `ObservabilityService.emit()` accumulates billable

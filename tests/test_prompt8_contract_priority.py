@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from moralstack.models.risk.estimator import LLMBasedRiskEstimator
+from moralstack.models.risk.estimator import LLMBasedRiskEstimator, _PrinciplesContextResult
 from moralstack.models.risk.prompts import INTENT_CONTEXT_PROMPT_TEMPLATE, INTENT_CONTEXT_SYSTEM_PROMPT
 from moralstack.models.risk.schema import RiskEstimatorConfig
 
@@ -103,7 +103,11 @@ class TestNoContractInjectedBlockAbsent:
         mock_policy.generate.side_effect = _gen
 
         with (
-            patch.object(llm_risk_estimator, "_get_principles_context", return_value=("", None)),
+            patch.object(
+                llm_risk_estimator,
+                "_get_principles_context",
+                return_value=_PrinciplesContextResult(formatted_context="", runtime_domain=None),
+            ),
             patch.object(llm_risk_estimator, "_policy_for_mini_estimator_model", return_value=mock_policy),
             patch("moralstack.models.risk.estimator.persist_llm_call", return_value=False),
         ):

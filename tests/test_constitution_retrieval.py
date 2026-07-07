@@ -143,7 +143,7 @@ def test_retrieval_returns_non_empty_when_config_exists():
         pytest.skip("moralstack/constitution/data/core.yaml not present")
 
     # Mock DomainAgent._call_openai to avoid real OpenAI calls; return core principle IDs
-    def _mock_call_openai(prompt: str) -> list[str]:
+    def _mock_call_openai(prompt: str, *, retrieval_phase: str = "risk_routing") -> list[str]:
         return ["CORE.MANIPULATION.1", "CORE.AUTONOMY.1"]
 
     store = ConstitutionStore(

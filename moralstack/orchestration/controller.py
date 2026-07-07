@@ -40,7 +40,7 @@ from moralstack.orchestration.decision_logger import log_decision_explanation
 from moralstack.orchestration.decision_service import decide_action
 from moralstack.orchestration.default_event_emitter import DefaultEventEmitter
 from moralstack.orchestration.deliberation_override import evaluate_deliberation_override
-from moralstack.orchestration.deliberation_runner import DeliberationRunner
+from moralstack.orchestration.deliberation_runner import DeliberationRunner, _build_enriched_retrieval_query
 from moralstack.orchestration.diagnostics import (
     DiagnosticsLayer,
     log_deliberation_inconsistency,
@@ -66,6 +66,7 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     LEDGER_FAST_PATH_APPLIED,
     LEDGER_FAST_PATH_NOT_APPLIED,
     MODULE_DEFERRED_TO_COMPLIANCE,
+    RELEVANT_PRINCIPLES_RETRIEVED,
     SPECULATIVE_STARTED,
 )
 from moralstack.orchestration.overlay_policy import (
@@ -103,6 +104,7 @@ from moralstack.orchestration.types import (
     OrchestratorTimeoutError,
     OutputProtectorProtocol,
     ProcessedRequest,
+    RequestAnalysisContext,
     ResponseMetadata,
     ResponseType,
     RiskEstimationError,
@@ -113,6 +115,11 @@ from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decisi
 from moralstack.sdk.session_store import SessionStoreProtocol
 
 _LOG = logging.getLogger(__name__)
+
+# Fallback retrieval top_k when the configured risk_estimator does not expose its
+# own top_k (protocol-only estimator implementing only `estimate(prompt)`, e.g.
+# `RiskEstimatorProtocol` in core/types.py or a test double).
+DEFAULT_RISK_TOP_K = 10
 
 
 def _as_risk_protocol(r: RiskEstimation) -> RiskEstimationProtocol:
@@ -881,6 +888,27 @@ class OrchestrationController:
                     for t in history_turns
                 ]
 
+            # Unified single-wave retrieval query policy: RAW prompt when there is no
+            # meaningful developer contract text AND no conversation history (keeps the
+            # no-contract/no-history path byte-identical to today's standalone retrieval,
+            # §5.4); ENRICHED (contract + recent history + prompt) otherwise, matching the
+            # single query the deliberation runner used to build separately.
+            has_contract_text = bool(contract_text and contract_text.strip())
+            if not has_contract_text and not history_dicts:
+                retrieval_query = request.prompt
+            else:
+                retrieval_query = _build_enriched_retrieval_query(request)
+
+            # Unified retrieval top_k = max(risk_top_k, critic_top_k): retrieve once at the
+            # larger bound; each consumer slices down to its own top_k (never widened).
+            # `_top_k` is a private estimator attribute — the public RiskEstimatorProtocol
+            # exposes only estimate(prompt), so protocol-only estimators/mocks fall back to
+            # DEFAULT_RISK_TOP_K rather than raising.
+            _risk_top_k_raw = getattr(self.risk_estimator, "_top_k", DEFAULT_RISK_TOP_K)
+            risk_top_k = _risk_top_k_raw if isinstance(_risk_top_k_raw, int) and _risk_top_k_raw > 0 else DEFAULT_RISK_TOP_K
+            critic_top_k = self._runner.retrieval_top_k_for_request()
+            retrieval_top_k = max(risk_top_k, critic_top_k)
+
             # The protocol exposes only `estimate(prompt)`. Concrete implementations
             # accept optional kwargs; pass them only when meaningful so the byte-equivalent
             # single-turn fast path is preserved.
@@ -889,6 +917,8 @@ class OrchestrationController:
                     request.prompt,
                     developer_contract_text=contract_text,
                     conversation_history=history_dicts,
+                    retrieval_query=retrieval_query,
+                    retrieval_top_k=retrieval_top_k,
                 )
             except TypeError:
                 # Defensive fallback: an estimator implementation that does not yet
@@ -1729,6 +1759,92 @@ class OrchestrationController:
             partial(self._attach_trace_and_return, call_ctx=call_ctx),
         )
 
+    def _build_request_analysis_from_risk(
+        self,
+        request: ProcessedRequest,
+        risk_estimation: RiskEstimationProtocol,
+    ) -> RequestAnalysisContext | None:
+        """
+        Lift the risk-owned retrieval (already executed once, in the risk thread —
+        `_estimate_risk`) into a `RequestAnalysisContext` for reuse by deliberation,
+        the fast-path `quick_check`, and the quick-check-failed deliberative fallback.
+
+        Called exactly once per request, immediately after risk estimation succeeds
+        in `process()` — i.e. BEFORE any route dispatch (compliance fast-path, hard-
+        signal REFUSE, benign, SAFE_COMPLETE, FAST_PATH, deliberative all run after
+        this point), so every route that can return after a successful risk
+        retrieval is covered by the single emission below.
+
+        Authoritative even when `relevant_principles` is empty — a successful
+        zero-principle retrieval is a valid result, not a degraded one; reuse-vs-
+        fallback is decided by `retrieval_succeeded` alone. Returns `None` only when
+        the risk-owned retrieval did not succeed (no risk estimator / no store /
+        retrieval raised), so callers fall back to their own retrieval (fail-safe,
+        never fail-open — PROJECT_SPEC §7).
+
+        Domain resolution mirrors (read-only, without mutating `request`) the
+        domain-persist block that runs later in `process()`
+        (`request.get_domain() or risk_estimation.detected_domain`, normalized via
+        `_normalize_runtime_domain`) so the `constitution`/`detected_domain` carried
+        here are identical to what a post-domain-assignment build would have
+        produced — this call moved earlier in the request lifecycle, but the
+        resolved domain must not silently drift for the routes (deliberative) that
+        consume `request_analysis.constitution` for prompt-adjacent guidance.
+
+        Emits the single `RELEVANT_PRINCIPLES_RETRIEVED` event on success. Callers
+        (routing dispatchers) must consume this pre-built context rather than
+        rebuilding it, so there is exactly one emission per request.
+        """
+        if not getattr(risk_estimation, "retrieval_succeeded", False):
+            return None
+        _declared_domain = request.get_domain() if hasattr(request, "get_domain") else None
+        effective_domain = _normalize_runtime_domain(_declared_domain or getattr(risk_estimation, "detected_domain", None))
+        constitution = get_constitution_safe(self.constitution_store, effective_domain)
+        request_analysis = RequestAnalysisContext(
+            relevant_principles=tuple(getattr(risk_estimation, "relevant_principles", ()) or ()),
+            constitution=constitution,
+            detected_domain=effective_domain,
+            retrieval_metadata=dict(getattr(risk_estimation, "retrieval_metadata", {}) or {}),
+            retrieval_count=getattr(risk_estimation, "retrieval_count", 0),
+            retrieval_duration_ms=getattr(risk_estimation, "retrieval_duration_ms", 0.0),
+            retrieval_started_at_ms=getattr(risk_estimation, "retrieval_started_at_ms", 0),
+            retrieval_top_k=getattr(risk_estimation, "retrieval_top_k", 0) or DEFAULT_RISK_TOP_K,
+        )
+        self._emit_relevant_principles_retrieved(request, request_analysis)
+        return request_analysis
+
+    def _emit_relevant_principles_retrieved(
+        self,
+        request: ProcessedRequest,
+        request_analysis: RequestAnalysisContext,
+    ) -> None:
+        """Best-effort single emission of RELEVANT_PRINCIPLES_RETRIEVED at the retrieval-owner (controller) level."""
+        try:
+            from moralstack.observability.emit_helpers import persist_orchestration_event
+
+            relevant = list(request_analysis.relevant_principles)
+            principle_ids = [getattr(p, "id", "") for p in relevant]
+            persist_orchestration_event(
+                cycle=None,
+                stage="retrieval",
+                component="constitution",
+                event_type=RELEVANT_PRINCIPLES_RETRIEVED,
+                decision=str(len(relevant)),
+                status="ok",
+                duration_ms=request_analysis.retrieval_duration_ms,
+                payload={
+                    "principles_count": len(relevant),
+                    "principle_ids": principle_ids,
+                    "constitution_domain": (request_analysis.detected_domain or "") or "",
+                    "prefilter_cache_status": request_analysis.retrieval_metadata.get("prefilter_cache_status"),
+                    "retrieval_count": request_analysis.retrieval_count,
+                    "retrieval_top_k": request_analysis.retrieval_top_k,
+                    "source": "controller",
+                },
+            )
+        except Exception:
+            _LOG.debug("emit RELEVANT_PRINCIPLES_RETRIEVED (controller) failed", exc_info=True)
+
     def _route_fast_path(
         self,
         request: ProcessedRequest,
@@ -1740,7 +1856,13 @@ class OrchestrationController:
         speculative_draft: str | None = None,
         *,
         call_ctx: ProcessCallContext,
+        request_analysis: RequestAnalysisContext | None = None,
     ) -> OrchestratorResult:
+        """
+        `request_analysis` is the context already built (and, on success, emitted)
+        once by `process()` immediately after risk estimation — consumed here as-is,
+        never rebuilt, so this route never re-emits RELEVANT_PRINCIPLES_RETRIEVED.
+        """
         request_id = request.request_id
         orch_debug_log(
             "orchestrator.py:process",
@@ -1758,6 +1880,7 @@ class OrchestrationController:
             constitution=constitution,
             decision_explanation=explanation,
             speculative_draft=speculative_draft,
+            request_analysis=request_analysis,
         )
         _fsnap = getattr(result, "convergence_snapshot", None)
         if isinstance(_fsnap, dict) and request_id:
@@ -1788,7 +1911,13 @@ class OrchestrationController:
         speculative_draft: str | None = None,
         *,
         call_ctx: ProcessCallContext,
+        request_analysis: RequestAnalysisContext | None = None,
     ) -> OrchestratorResult:
+        """
+        `request_analysis` is the context already built (and, on success, emitted)
+        once by `process()` immediately after risk estimation — consumed here as-is,
+        never rebuilt, so this route never re-emits RELEVANT_PRINCIPLES_RETRIEVED.
+        """
         request_id = request.request_id
         orch_debug_log(
             "orchestrator.py:process",
@@ -1805,6 +1934,7 @@ class OrchestrationController:
             constrained_generation=constrained_generation,
             constitution=constitution,
             speculative_draft=speculative_draft,
+            request_analysis=request_analysis,
         )
         _snap_raw = getattr(state, "_convergence_evaluation_snapshot", None)
         _convergence_snapshot = dict(_snap_raw) if isinstance(_snap_raw, dict) else None
@@ -2094,6 +2224,15 @@ class OrchestrationController:
                 risk_estimation = spec_handle.risk_estimation
             else:
                 risk_estimation = self._estimate_risk(request)
+
+            # Build (and, on success, emit RELEVANT_PRINCIPLES_RETRIEVED) the risk-owned
+            # request analysis exactly once here, before ANY route dispatch — compliance
+            # fast-path, hard-signal REFUSE, benign, SAFE_COMPLETE, FAST_PATH, and
+            # deliberative can all return after this point, so building it here (rather
+            # than inside individual route dispatchers) is the only way to cover every
+            # route with a single emission. Route dispatchers consume this pre-built
+            # context instead of rebuilding it (no double-emit on reuse).
+            request_analysis = self._build_request_analysis_from_risk(request, risk_estimation)
 
             speculative_draft_for_dccl = self._nonblocking_speculative_draft(spec_handle)
             self._run_dccl_evaluation(request, speculative_draft_for_dccl, call_ctx)
@@ -2613,6 +2752,7 @@ class OrchestrationController:
                     trace,
                     speculative_draft=speculative_draft_fp,
                     call_ctx=call_ctx,
+                    request_analysis=request_analysis,
                 )
 
             speculative_draft_delib: str | None = None
@@ -2635,6 +2775,7 @@ class OrchestrationController:
                 pre_decision=decision,
                 speculative_draft=speculative_draft_delib,
                 call_ctx=call_ctx,
+                request_analysis=request_analysis,
             )
 
         except OrchestratorTimeoutError as e:

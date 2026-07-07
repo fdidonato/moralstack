@@ -29,12 +29,16 @@ class _RecordingRiskEstimator:
         *,
         developer_contract_text: str | None = None,
         conversation_history: list[dict[str, str]] | None = None,
+        retrieval_query: str | None = None,
+        retrieval_top_k: int | None = None,
     ) -> RiskEstimation:
         self.calls.append(
             {
                 "prompt": prompt,
                 "developer_contract_text": developer_contract_text,
                 "conversation_history": conversation_history,
+                "retrieval_query": retrieval_query,
+                "retrieval_top_k": retrieval_top_k,
             }
         )
         return RiskEstimation(

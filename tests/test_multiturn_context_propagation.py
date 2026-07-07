@@ -15,7 +15,7 @@ import pytest
 
 from moralstack.core.types import Turn
 from moralstack.models.risk import RiskCategory, RiskEstimation
-from moralstack.models.risk.estimator import LLMBasedRiskEstimator
+from moralstack.models.risk.estimator import LLMBasedRiskEstimator, _PrinciplesContextResult
 from moralstack.models.risk.schema import RiskEstimatorConfig
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.controller import OrchestrationController
@@ -134,7 +134,11 @@ class TestQ74EstimateContextPropagation:
         mock_policy: MagicMock,
     ) -> None:
         with (
-            patch.object(llm_risk_estimator, "_get_principles_context", return_value=("", None)),
+            patch.object(
+                llm_risk_estimator,
+                "_get_principles_context",
+                return_value=_PrinciplesContextResult(formatted_context="", runtime_domain=None),
+            ),
             patch.object(llm_risk_estimator, "_policy_for_mini_estimator_model", return_value=mock_policy),
             patch("moralstack.models.risk.estimator.persist_llm_call", return_value=False),
         ):
@@ -222,7 +226,11 @@ class TestSingleTurnByteEquivalence:
         mock_policy.generate.side_effect = _capture_generate
 
         with (
-            patch.object(llm_risk_estimator, "_get_principles_context", return_value=("", None)),
+            patch.object(
+                llm_risk_estimator,
+                "_get_principles_context",
+                return_value=_PrinciplesContextResult(formatted_context="", runtime_domain=None),
+            ),
             patch.object(llm_risk_estimator, "_policy_for_mini_estimator_model", return_value=mock_policy),
             patch("moralstack.models.risk.estimator.persist_llm_call", return_value=False),
         ):

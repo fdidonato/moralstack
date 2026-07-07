@@ -5,6 +5,7 @@ Data models per il sistema di classificazione del rischio.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from .action import coerce_risk_policy_action
 from .categories import (
@@ -81,6 +82,25 @@ class RiskEstimation:
     q15_deceptive_online_campaign: bool = False
     q16_harassment_smear_campaign: bool = False
     q17_minor_exploitation: bool = False
+
+    # ── Constitution retrieval carrier (unified single-wave retrieval) ─────
+    # In-memory Principle objects from constitution_store.get_relevant_principles,
+    # retrieved once at risk-estimation time and reused by deliberation/critic/
+    # fast-path consumers (see RequestAnalysisContext in orchestration/types.py).
+    # MUST NEVER be serialized into persisted llm_calls payloads (see
+    # _LOCAL_LLM_CALL_PAYLOAD_KEYS in models/risk/estimator.py).
+    relevant_principles: tuple[Any, ...] = ()
+    retrieval_metadata: dict[str, Any] = field(default_factory=dict)
+    retrieval_count: int = 0
+    retrieval_duration_ms: float = 0.0
+    retrieval_started_at_ms: int = 0
+    retrieval_top_k: int = 0
+    # Status flags — the authoritative signal for reuse-vs-fallback decisions
+    # downstream (never the emptiness of relevant_principles: an empty
+    # successful retrieval is a valid result, not a degraded one).
+    retrieval_attempted: bool = False
+    retrieval_succeeded: bool = False
+    retrieval_error: str | None = None
 
     # Alias per backward compatibility
     @property

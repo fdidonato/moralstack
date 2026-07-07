@@ -16,6 +16,13 @@ After the fix:
   - it derives `runtime_domain` from `constitution_store.get_debug_info()["prefiltered_domains"]`
   - `core` is excluded from the candidate set (retrieval-only pseudo-domain)
   - it never imports or calls `detect_domain`
+
+Unify-constitution-retrieval-single-pass (this change): `_get_principles_context` now
+returns a `_PrinciplesContextResult` (attribute access: `.formatted_context`,
+`.runtime_domain`, plus the full retrieved `.principles` and retrieval-status flags)
+instead of a plain 2-tuple, so it can carry the single upstream retrieval for reuse
+by deliberation/critic/fast-path. Tests below were re-anchored to attribute access;
+assertions are unchanged.
 """
 
 from __future__ import annotations
@@ -52,29 +59,29 @@ def _make_estimator(prefiltered_domains: list[str]) -> tuple[LLMBasedRiskEstimat
 def test_get_principles_context_returns_none_when_only_core_in_prefiltered():
     """`core` alone is the always-on baseline: runtime_domain must be None."""
     est, _ = _make_estimator(["core"])
-    _, runtime_domain = est._get_principles_context("any prompt")
-    assert runtime_domain is None
+    result = est._get_principles_context("any prompt")
+    assert result.runtime_domain is None
 
 
 def test_get_principles_context_returns_none_when_prefiltered_is_empty():
     """No prefiltered domains at all: runtime_domain must be None."""
     est, _ = _make_estimator([])
-    _, runtime_domain = est._get_principles_context("any prompt")
-    assert runtime_domain is None
+    result = est._get_principles_context("any prompt")
+    assert result.runtime_domain is None
 
 
 def test_get_principles_context_returns_first_specific_domain():
     """First non-core domain in prefiltered_domains wins."""
     est, _ = _make_estimator(["core", "legal", "medical"])
-    _, runtime_domain = est._get_principles_context("a real legal question")
-    assert runtime_domain == "legal"
+    result = est._get_principles_context("a real legal question")
+    assert result.runtime_domain == "legal"
 
 
 def test_get_principles_context_handles_specific_only_no_core():
     """Defensive: if core is missing for any reason, still pick the first specific domain."""
     est, _ = _make_estimator(["medical"])
-    _, runtime_domain = est._get_principles_context("a medical question")
-    assert runtime_domain == "medical"
+    result = est._get_principles_context("a medical question")
+    assert result.runtime_domain == "medical"
 
 
 def test_get_principles_context_calls_get_relevant_principles_with_domain_none():
@@ -114,21 +121,38 @@ def test_get_principles_context_skips_runtime_domain_when_store_has_no_debug_inf
         # intentionally no get_debug_info attribute
 
     est = LLMBasedRiskEstimator(policy=None, constitution_store=_NoDebugStore())
-    _, runtime_domain = est._get_principles_context("any prompt")
-    assert runtime_domain is None
+    result = est._get_principles_context("any prompt")
+    assert result.runtime_domain is None
 
 
 def test_get_principles_context_returns_empty_string_context_when_no_principles():
     """No principles + only-core prefiltered → ('', None) shape preserved."""
     est, _ = _make_estimator(["core"])
-    context, runtime_domain = est._get_principles_context("any prompt")
-    assert context == ""
-    assert runtime_domain is None
+    result = est._get_principles_context("any prompt")
+    assert result.formatted_context == ""
+    assert result.runtime_domain is None
 
 
 @pytest.mark.parametrize("prefiltered", [["core"], [], ["core", "legal"]])
 def test_get_principles_context_never_returns_core_as_runtime_domain(prefiltered):
     """Invariant: runtime_domain is never the literal string 'core'."""
     est, _ = _make_estimator(prefiltered)
-    _, runtime_domain = est._get_principles_context("any prompt")
-    assert runtime_domain != "core"
+    result = est._get_principles_context("any prompt")
+    assert result.runtime_domain != "core"
+
+
+def test_get_principles_context_tolerates_new_keyword_only_store_params():
+    """
+    [Gap 1] The estimator must not force-pass a new keyword-only param the
+    ConstitutionStoreProtocol declares optional (e.g. ``retrieval_phase``), so
+    existing store doubles without it (like ``_FakeConstitutionStore`` above,
+    which has no ``retrieval_phase``/``**kwargs``) keep working unchanged.
+    """
+    est, store = _make_estimator(["core"])
+    result = est._get_principles_context("any prompt", retrieval_query="enriched query", retrieval_top_k=20)
+    assert result.retrieval_succeeded is True
+    assert len(store.get_relevant_principles_calls) == 1
+    call = store.get_relevant_principles_calls[0]
+    assert call["query"] == "enriched query"
+    assert call["top_k"] == 20
+    assert call["domain"] is None

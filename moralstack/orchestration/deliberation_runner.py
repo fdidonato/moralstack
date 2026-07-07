@@ -443,8 +443,13 @@ class DeliberationRunner:
             self._executor.shutdown(wait=True)
             self._executor = None
 
-    def _retrieval_top_k_for_request(self) -> int:
-        """Align single-shot retrieval with critic.critique_with_relevant_principles (top_k_principles)."""
+    def retrieval_top_k_for_request(self) -> int:
+        """
+        Align single-shot retrieval with critic.critique_with_relevant_principles (top_k_principles).
+
+        Public accessor: also used by the controller to compute the unified
+        ``max(risk_top_k, critic_top_k)`` retrieval top_k for the single upstream wave.
+        """
         if self.critic is not None:
             cfg = getattr(self.critic, "config", None)
             if cfg is not None:
@@ -461,7 +466,7 @@ class DeliberationRunner:
         if self.constitution_store is None:
             return None
         request_id = request.request_id or ""
-        top_k = self._retrieval_top_k_for_request()
+        top_k = self.retrieval_top_k_for_request()
         try:
             t0 = time.time()
             started_ms = int(t0 * 1000)
@@ -832,9 +837,18 @@ class DeliberationRunner:
         constitution: Any | None = None,
         decision_explanation: DecisionExplanation | None = None,
         speculative_draft: str | None = None,
+        request_analysis: RequestAnalysisContext | None = None,
     ) -> OrchestratorResult:
         """Path veloce: genera draft + quick check costituzionale;
-        se fallisce passa a deliberative."""
+        se fallisce passa a deliberative.
+
+        ``request_analysis``: risk-owned retrieval context (single upstream wave).
+        When supplied, ``quick_check`` filters the shared principles to HARD
+        instead of self-retrieving (still falls back to the constitution's own
+        HARD constraints if the filtered shared list has zero HARD principles);
+        forwarded unchanged to the quick-check-failed ``run_deliberative_path``
+        escalation so the fallback path does not retrieve a second time either.
+        """
         from moralstack.orchestration.diagnostics import orch_debug_log
 
         orch_debug_log(
@@ -967,7 +981,15 @@ class DeliberationRunner:
             state.draft_response = f"[Mock response to: {request.prompt[:50]}...]"
         if self.critic is not None and constitution is not None:
             try:
-                quick_result = self.critic.quick_check(request.prompt, state.draft_response, constitution)
+                pre_retrieved_principles = (
+                    list(request_analysis.relevant_principles) if request_analysis is not None else None
+                )
+                quick_result = self.critic.quick_check(
+                    request.prompt,
+                    state.draft_response,
+                    constitution,
+                    pre_retrieved_principles,
+                )
                 if not quick_result.passed:
                     state_delib, risk_score, outcome = self.run_deliberative_path(
                         request,
@@ -975,6 +997,7 @@ class DeliberationRunner:
                         start_time,
                         constitution=constitution,
                         speculative_draft=state.draft_response,
+                        request_analysis=request_analysis,
                     )
                     return self._build_deliberative_result(
                         request,
@@ -1331,6 +1354,7 @@ class DeliberationRunner:
         constrained_generation: bool = False,
         constitution: Any | None = None,
         speculative_draft: str | None = None,
+        request_analysis: RequestAnalysisContext | None = None,
     ) -> tuple[DeliberationState, float, ConvergenceOutcome]:
         """
         Esegue cicli deliberativi. Restituisce (state, risk_score, outcome) per assemblaggio.
@@ -1342,6 +1366,15 @@ class DeliberationRunner:
                 risk estimation.  When provided *and* constrained_generation is
                 False, the draft is used as the cycle-1 starting point,
                 skipping the initial generation call.
+            request_analysis: Risk-owned retrieval context supplied by the controller
+                (single upstream wave). Authoritative even when
+                ``relevant_principles`` is empty — an empty successful retrieval is
+                not degraded and must not trigger a second retrieval. Only when this
+                is ``None`` does the runner fall back to its own retrieval
+                (``_try_build_request_analysis_context``), which also emits
+                ``RELEVANT_PRINCIPLES_RETRIEVED`` (the controller already emitted it
+                when it supplied a successful context, so the two emit sites are
+                mutually exclusive per request).
         """
         from moralstack.orchestration.diagnostics import orch_debug_log
 
@@ -1377,8 +1410,11 @@ class DeliberationRunner:
             max_cycles = 1
         # Request-scoped retrieval: single get_relevant_principles + constitution for downstream reuse.
         self._request_analysis_reuse_targets = []
-        request_analysis: RequestAnalysisContext | None = None
-        if self.constitution_store is not None:
+        # Controller-supplied context is authoritative even when empty (successful
+        # zero-principle retrieval is not degraded); fall back to this runner's own
+        # retrieval only when the controller did not supply one (no risk estimator /
+        # no store / retrieval raised — see run_deliberative_path docstring).
+        if request_analysis is None and self.constitution_store is not None:
             request_analysis = self._try_build_request_analysis_context(request)
             if request_analysis is not None:
                 self._record_retrieval_start_and_event(
@@ -2805,11 +2841,12 @@ class DeliberationRunner:
                     )
                 prev_guidance = (state.last_critique.revision_guidance or "") if state.last_critique else ""
             has_critique_with_principles = getattr(self.critic, "critique_with_relevant_principles", None) is not None
-            use_precomputed = (
-                request_analysis is not None
-                and len(request_analysis.relevant_principles) > 0
-                and getattr(self.critic, "critique", None) is not None
-            )
+            # A supplied request_analysis is authoritative even when empty (a
+            # successful zero-principle retrieval): gate on presence of the
+            # context, never on len(relevant_principles) > 0, so a legitimately
+            # empty result is used as-is and never triggers a second retrieval
+            # via critique_with_relevant_principles.
+            use_precomputed = request_analysis is not None and getattr(self.critic, "critique", None) is not None
             precomputed_analysis = request_analysis if request_analysis is not None else None
             const_for_precomputed: Any | None = None
             if use_precomputed and precomputed_analysis is not None:
@@ -2821,11 +2858,15 @@ class DeliberationRunner:
                 if const_for_precomputed is None:
                     use_precomputed = False
             if use_precomputed and const_for_precomputed is not None and precomputed_analysis is not None:
+                # Never widen the critic beyond its own configured top_k, even when
+                # the unified retrieval top_k (max(risk_top_k, critic_top_k)) was larger.
+                critic_top_k = self.retrieval_top_k_for_request()
+                sliced_principles = list(precomputed_analysis.relevant_principles)[:critic_top_k]
                 critique = self.critic.critique(
                     request.prompt,
                     state.draft_response,
                     const_for_precomputed,
-                    principles=list(precomputed_analysis.relevant_principles),
+                    principles=sliced_principles,
                     request_id=request.request_id or "",
                     delib_context=delib_context,
                     previous_violations=prev_violations,
@@ -2841,11 +2882,11 @@ class DeliberationRunner:
                         stage="deliberation",
                         component="critic",
                         event_type=RELEVANT_PRINCIPLES_REUSED,
-                        decision=str(len(precomputed_analysis.relevant_principles)),
+                        decision=str(len(sliced_principles)),
                         status="ok",
                         payload={
                             "reuse_target": "critic",
-                            "principles_count": len(precomputed_analysis.relevant_principles),
+                            "principles_count": len(sliced_principles),
                             "cycle": state.cycle,
                             "request_scoped": True,
                         },
