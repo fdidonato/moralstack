@@ -3,8 +3,12 @@
 
 Injects a short situational brief at session start so work can begin without
 the user re-explaining state: current branch, working-tree summary, and any
-uncommitted review/plan notes sitting in the repo root. Pure context — it never
-blocks and always exits 0; any error degrades to no brief.
+uncommitted review/plan notes sitting in the repo root. When the session resumes
+after a compaction (``source`` in {compact, resume}) and a pre-compaction
+snapshot exists (``.claude/.context-snapshot.md``, written by
+``precompact_snapshot.py``), it re-injects that snapshot so the in-flight plan
+survives auto-compaction. Pure context — it never blocks and always exits 0; any
+error degrades to no brief.
 """
 
 from __future__ import annotations
@@ -13,9 +17,13 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 _REVIEW_HINTS = ("review", "plan", "analisi", "upgrade")
+SNAPSHOT_NAME = ".context-snapshot.md"
+_SNAPSHOT_PREVIEW_CHARS = 6000
+_SNAPSHOT_FRESH_SECONDS = 3600
 
 
 def _project_dir() -> Path:
@@ -39,11 +47,37 @@ def _git(args: list[str], project: Path) -> str:
         return ""
 
 
+def _restored_snapshot(project: Path, source: str) -> str:
+    """Return the pre-compaction snapshot to re-inject, or "" if none applies.
+
+    Loaded when the session resumes after compaction (``source`` in
+    {compact, resume}); as a fallback, also loaded when ``source`` is unknown but
+    the snapshot is fresh (< 1h), so a manual resume still recovers context."""
+    snapshot = project / ".claude" / SNAPSHOT_NAME
+    if not snapshot.exists():
+        return ""
+    load = source in ("compact", "resume")
+    if not load:
+        try:
+            load = (time.time() - snapshot.stat().st_mtime) < _SNAPSHOT_FRESH_SECONDS
+        except OSError:
+            load = False
+    if not load:
+        return ""
+    try:
+        return snapshot.read_text(encoding="utf-8")[:_SNAPSHOT_PREVIEW_CHARS]
+    except OSError:
+        return ""
+
+
 def main() -> int:
     try:
-        sys.stdin.read()
-    except (ValueError, OSError):
-        pass
+        data = json.loads(sys.stdin.read() or "{}")
+    except (ValueError, TypeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    source = str(data.get("source") or "")
 
     project = _project_dir()
     branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], project) or "?"
@@ -68,10 +102,15 @@ def main() -> int:
         "before declaring done."
     )
 
+    context = " ".join(parts)
+    snapshot = _restored_snapshot(project, source)
+    if snapshot:
+        context += "\n\n[Restored context — pre-compaction snapshot, " ".claude/" + SNAPSHOT_NAME + "]\n" + snapshot
+
     payload = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
-            "additionalContext": " ".join(parts),
+            "additionalContext": context,
         }
     }
     sys.stdout.write(json.dumps(payload))

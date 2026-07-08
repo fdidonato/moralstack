@@ -54,6 +54,15 @@ htmlcov/
 .claude/settings.local.json
 .claude/.instructions-loaded.log
 .claude/.session-edits.json
+.claude/.last-verified.json
+.claude/.nudge-count.json
+.claude/.context-snapshot.md
+.claude/.docs-stub.md
+.claude/session-diary.md
+
+# AI harness — generated, reproducible artifacts (keep plans/handoffs/review summaries)
+ai/reviews/diff-*.md
+ai/prompts/generated-*.md
 
 # OS
 .DS_Store
