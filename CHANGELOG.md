@@ -33,6 +33,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the intent mini-estimator's per-request user message into the static
   `INTENT_CONTEXT_SYSTEM_PROMPT` prefix; the signals/operational minis remain
   principle-free.
+- **Cacheable domain-prefilter prompt**: the `DomainPrefilter` classifier prompt is
+  split into a byte-stable system prompt (classifier instructions, the
+  `AVAILABLE DOMAINS` list rendered from the current domain config, procedure,
+  falsification checks and JSON schema) and a query-only user message, so the large
+  static prefix is cache-eligible for OpenAI automatic prompt caching. `_call_openai`
+  threads a single builder output (`_build_prefilter_system_prompt`) into both the
+  API call and the persisted `llm_calls` row (persisted `system_prompt` now holds the
+  static block, `prompt` only the query). The template is rendered flush-left to drop
+  leading-whitespace waste from the cached prefix. No decision/routing change: `core`
+  stays excluded from the domain list (P0), and the local retrieval cache key and the
+  parse/retry/fallback ladder are unchanged.
+- **Parallel domain retrieval default raised to 4**: the effective
+  `max_parallel_agents` default is now 4 (was 2) across every source
+  (`ConstitutionRetrieverConfig`, `ConstitutionStoreConfig`,
+  `ConstitutionStore.__init__`, `CLIConfig`, the `resolve_constitution_max_parallel_agents`
+  env fallback, and the CLI `--max-parallel-agents` help), so up to 4 prefilter agents
+  (core + up to 3 domains) run in a single `ThreadPoolExecutor` batch instead of two.
+  The `MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS` env override still wins when set.
+
+### Development
+
+- **AI harness**: added a self-maintaining memory contract and evolved the Claude Code
+  hook mechanics (Stop verify dedup, PreCompact snapshot, SessionEnd diary, docs-gate)
+  with offline harness tests under `tests/harness/`. Test-suite isolation hardened
+  (test DB/logs decoupled from the developer `.env`, slow benchmark excluded from the
+  default run, report version read from `pyproject.toml`).
+- **Changelog guard (pre-commit)**: a local pre-commit hook
+  (`scripts/check_changelog_updated.py`) blocks a commit when staged changes outside
+  the AI/test infra prefixes (`.claude/`, `ai/`, `tests/`) are not accompanied by a
+  `CHANGELOG.md` update. Bypass an intentional infra-only commit with
+  `CHANGELOG_GUARD_SKIP=1`.
 
 ## 0.7.0 — 2026-07-06
 

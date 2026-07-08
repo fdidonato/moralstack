@@ -24,3 +24,9 @@ repos:
         entry: mypy moralstack --ignore-missing-imports
         language: system
         pass_filenames: false
+      - id: changelog-guard
+        name: changelog guard
+        entry: python scripts/check_changelog_updated.py
+        language: system
+        pass_filenames: false
+        always_run: true
