@@ -80,7 +80,13 @@ include = ["moralstack*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# I test marcati `slow` (benchmark di performance) sono esclusi dal run di default
+# perché dominano il tempo totale della suite. Eseguibili on demand con `-m slow`
+# (o `-m ""` per non filtrare); la CI li lancia in uno step dedicato.
+addopts = "-ra -m 'not slow'"
+markers = [
+    "slow: benchmark/performance test escluso dal run di default (opt-in con `-m slow`)",
+]
 
 # MoralStack runtime configuration example
 # See docs/modules/orchestrator.md for details.
