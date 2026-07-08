@@ -16,7 +16,7 @@ only when the `[ui]`/`[server]` extras are absent.
 
 | Fact | Evidence file/function | Confidence | Notes |
 |---|---|---|---|
-| Package version is `0.5.0`; requires Python >=3.11 | `pyproject.toml:7,11` | High | |
+| Package version is `0.7.0`; requires Python >=3.11 | `pyproject.toml:7,11` | High | Corrected 2026-07-08 (was `0.5.0`, stale): release commit `cc62c6b` bumped to v0.7.0 (code wins, §9) |
 | Public SDK surface is `govern`, `GovernedClient`, `GovernanceConfig`, `GovernedResponse`, `GovernanceMetadata`, error types; lazily imported from `moralstack.sdk` | `moralstack/__init__.py:38-64`, `moralstack/sdk/__init__.py:7-22` | High | |
 | `govern(client, config=None)` wraps any client exposing `.chat.completions.create()`; returns `GovernedClient` | `sdk/wrapper.py:616-661` | High | duck-typed check at `:652` |
 | Only `chat.completions.create()` is intercepted; all other attributes pass through | `sdk/wrapper.py:606-608` (`GovernedClient.__getattr__`) | High | |

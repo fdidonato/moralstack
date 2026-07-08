@@ -1,7 +1,7 @@
 # MoralStack Codebase Index
 
 > A file/function map of the MoralStack codebase, grounded in inspected source.
-> Snapshot of `main` at package version `0.5.0` (`pyproject.toml:7`).
+> Snapshot of `main` at package version `0.7.0` (`pyproject.toml:7`).
 > The code is authoritative — verify a symbol still exists before relying on it.
 > Confidence and evidence for individual claims live in `docs/CODEBASE_FACTS.md`.
 >
