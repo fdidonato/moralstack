@@ -1102,7 +1102,7 @@ class ConstitutionRetrieverConfig:
     """Configuration for ConstitutionRetriever."""
 
     openai_config: OpenAIClientConfig | None = None
-    max_parallel_agents: int = 2
+    max_parallel_agents: int = 4
     use_enhanced_retrieval: bool = True
     confidence_threshold: float = 0.6
     use_domain_prefilter: bool = True

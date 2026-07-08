@@ -133,7 +133,7 @@ cfg = ConstitutionStoreConfig(
         api_key=api_key,
         model="gpt-4o-mini",
     ),
-    max_parallel_agents=2,
+    max_parallel_agents=4,
 )
 store = ConstitutionStore(config=cfg)
 ```
@@ -143,7 +143,8 @@ All fields have defaults; only override what you need. See `ConstitutionStoreCon
 `use_enhanced_retrieval`, `confidence_threshold`, `use_domain_prefilter`, `max_prefilter_domains`).
 
 When `max_parallel_agents` is not set explicitly, SDK/CLI runtime wiring resolves it from
-`MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS` (fallback default: `2`).
+`MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS` (fallback default: `4` — bumped from `2`;
+the env var still wins when set).
 
 ### Initialization (keyword args, backward compatible)
 
@@ -156,7 +157,7 @@ from moralstack.constitution import ConstitutionStore, OpenAIClientConfig
 constitution_store = ConstitutionStore(
     policy_llm=policy,
     use_llm_matching=True,
-    max_parallel_agents=2,
+    max_parallel_agents=4,
 )
 
 # With OpenAI for constitution evaluation
@@ -168,7 +169,7 @@ constitution_store = ConstitutionStore(
         api_key=api_key,
         model="gpt-4o-mini",
     ),
-    max_parallel_agents=2,
+    max_parallel_agents=4,
 )
 ```
 

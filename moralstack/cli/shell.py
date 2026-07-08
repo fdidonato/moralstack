@@ -1120,7 +1120,7 @@ Examples:
         "--max-parallel-agents",
         type=int,
         default=None,
-        help="Maximum number of parallel agents (default: MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS or 2)",
+        help="Maximum number of parallel agents (default: MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS or 4)",
     )
 
     parser.add_argument(

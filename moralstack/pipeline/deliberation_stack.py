@@ -61,7 +61,7 @@ def resolve_constitution_max_parallel_agents(explicit: int | None = None) -> int
     """Resolve constitution agent parallelism from explicit value or environment."""
     if explicit is not None:
         return max(1, explicit)
-    return get_env_int(ENV_CONSTITUTION_MAX_PARALLEL_AGENTS, 2, 1)
+    return get_env_int(ENV_CONSTITUTION_MAX_PARALLEL_AGENTS, 4, 1)
 
 
 def _resolve_optional_model(

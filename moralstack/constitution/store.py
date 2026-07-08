@@ -459,7 +459,7 @@ class ConstitutionStoreConfig:
     policy_llm: Any | None = None
     use_llm_matching: bool = True
     openai_config: OpenAIClientConfig | None = None
-    max_parallel_agents: int = 2
+    max_parallel_agents: int = 4
     use_enhanced_retrieval: bool = True
     confidence_threshold: float = 0.6
     use_domain_prefilter: bool = True
@@ -495,7 +495,7 @@ class ConstitutionStore:
         policy_llm: Any | None = None,
         use_llm_matching: bool = True,
         openai_config: OpenAIClientConfig | None = None,
-        max_parallel_agents: int = 2,
+        max_parallel_agents: int = 4,
         use_enhanced_retrieval: bool = True,
         confidence_threshold: float = 0.6,
         use_domain_prefilter: bool = True,
