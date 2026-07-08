@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -120,6 +120,128 @@ def test_repeated_filter_domains_single_openai_call():
         p.set_domain_keywords(kw)
         p.filter_domains("money advice question", ["core", "dom"])
     assert m.call_count == 1
+
+
+def _fake_completion_json_obj(content: str) -> MagicMock:
+    """Mirrors tests/test_runtime_pooling.py::_fake_completion_json_obj (kept local, minimal)."""
+    msg = MagicMock()
+    msg.content = content
+    ch = MagicMock()
+    ch.message = msg
+    resp = MagicMock()
+    resp.choices = [ch]
+    resp.usage = None
+    return resp
+
+
+def test_call_openai_persists_system_prompt_as_built_block_and_prompt_as_query_only():
+    """Single source (task decision 4): the builder output feeds BOTH the API system
+    message and the persisted system_prompt; the persisted prompt is query-only."""
+    kw = {"core": ["c"], "dom": ["x"]}
+    p = DomainPrefilter(
+        openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-4o-mini"),
+        domain_keywords=kw,
+        max_domains=3,
+    )
+    payload = json.dumps({"domains": ["dom"], "confidence": 0.9})
+    query = "question about banking regulations"
+    captured: dict = {}
+
+    def _capture_persist(**kwargs):
+        captured.update(kwargs)
+
+    with (
+        patch("openai.OpenAI") as ctor,
+        patch("moralstack.constitution.retriever.persist_llm_call", side_effect=_capture_persist),
+    ):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = MagicMock(return_value=_fake_completion_json_obj(payload))
+        ctor.return_value = mock_client
+
+        result = p.filter_domains(query, ["core", "dom"])
+
+    assert result == ["core", "dom"]
+    domain_list = "\n".join(["- dom: x"])
+    expected_system_prompt = p._build_prefilter_system_prompt(domain_list)
+    assert captured["system_prompt"] == expected_system_prompt
+    assert captured["prompt"] == f"USER QUERY:\n{query}"
+    # Also lock the outbound OpenAI system message to the same single source.
+    sent_messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+    assert sent_messages[0] == {"role": "system", "content": expected_system_prompt}
+    assert sent_messages[1] == {"role": "user", "content": f"USER QUERY:\n{query}"}
+
+
+def test_call_openai_strict_json_parse_path():
+    """Valid JSON content -> data parsed directly, no fallback."""
+    p = DomainPrefilter(openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-4o-mini"))
+    payload = json.dumps({"domains": ["core"], "confidence": 0.9})
+    captured: dict = {}
+
+    def _capture_persist(**kwargs):
+        captured.update(kwargs)
+
+    with (
+        patch("openai.OpenAI") as ctor,
+        patch("moralstack.constitution.retriever.persist_llm_call", side_effect=_capture_persist),
+    ):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = MagicMock(return_value=_fake_completion_json_obj(payload))
+        ctor.return_value = mock_client
+        data = p._call_openai("USER QUERY:\nquery", system_prompt="sys")
+
+    assert data == {"domains": ["core"], "confidence": 0.9}
+    summary = json.loads(captured["parsed_summary_json"])
+    assert summary["parse_contract"]["parse_status"] == "ok"
+    assert summary["parse_contract"]["fallback_used"] is False
+
+
+def test_call_openai_regex_fallback_on_malformed_json():
+    """JSON wrapped in surrounding prose -> tolerant recovery, fallback_used True."""
+    p = DomainPrefilter(openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-4o-mini"))
+    recovered = {"domains": ["core"], "confidence": 0.7}
+    text = f"Here is the classification:\n{json.dumps(recovered)}\nThanks."
+    captured: dict = {}
+
+    def _capture_persist(**kwargs):
+        captured.update(kwargs)
+
+    with (
+        patch("openai.OpenAI") as ctor,
+        patch("moralstack.constitution.retriever.persist_llm_call", side_effect=_capture_persist),
+    ):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = MagicMock(return_value=_fake_completion_json_obj(text))
+        ctor.return_value = mock_client
+        data = p._call_openai("USER QUERY:\nquery", system_prompt="sys")
+
+    assert data == recovered
+    summary = json.loads(captured["parsed_summary_json"])
+    assert summary["parse_contract"]["parse_status"] == "fallback_ok"
+    assert summary["parse_contract"]["fallback_used"] is True
+
+
+def test_call_openai_fully_unparseable_returns_empty_and_failed_status():
+    """No recoverable JSON object at all -> empty dict, failed status."""
+    p = DomainPrefilter(openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-4o-mini"))
+    text = "I cannot help with that request."
+    captured: dict = {}
+
+    def _capture_persist(**kwargs):
+        captured.update(kwargs)
+
+    with (
+        patch("openai.OpenAI") as ctor,
+        patch("moralstack.constitution.retriever.persist_llm_call", side_effect=_capture_persist),
+    ):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = MagicMock(return_value=_fake_completion_json_obj(text))
+        ctor.return_value = mock_client
+        data = p._call_openai("USER QUERY:\nquery", system_prompt="sys")
+
+    assert data == {}
+    summary = json.loads(captured["parsed_summary_json"])
+    assert summary["parse_contract"]["parse_status"] == "failed"
+    assert summary["parse_contract"]["fallback_used"] is False
 
 
 def test_miss_then_hit_emits_events(tmp_path, monkeypatch):

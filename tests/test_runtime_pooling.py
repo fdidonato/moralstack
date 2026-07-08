@@ -35,8 +35,8 @@ def test_domain_prefilter_reuses_openai_client_across_calls():
         mock_client.chat.completions.create = MagicMock(return_value=fake)
         ctor.return_value = mock_client
 
-        r1 = pre._call_openai("q1")
-        r2 = pre._call_openai("q2")
+        r1 = pre._call_openai("q1", system_prompt="s")
+        r2 = pre._call_openai("q2", system_prompt="s")
 
         assert ctor.call_count == 1
         assert mock_client.chat.completions.create.call_count == 2
@@ -44,6 +44,10 @@ def test_domain_prefilter_reuses_openai_client_across_calls():
         assert r2.get("domains") == ["core"]
         assert pre._openai_client_creates == 1
         assert pre._openai_client_reuses_after_cache == 1
+        assert mock_client.chat.completions.create.call_args_list[0].kwargs["messages"][0] == {
+            "role": "system",
+            "content": "s",
+        }
 
 
 def test_domain_prefilter_new_client_when_api_key_changes():
@@ -55,9 +59,9 @@ def test_domain_prefilter_new_client_when_api_key_changes():
         mock_client.chat.completions.create = MagicMock(return_value=fake)
         ctor.return_value = mock_client
 
-        pre._call_openai("x")
+        pre._call_openai("x", system_prompt="s")
         pre.openai_config = OpenAIClientConfig(api_key="sk-b", model="gpt-4o-mini")
-        pre._call_openai("y")
+        pre._call_openai("y", system_prompt="s")
 
         assert ctor.call_count == 2
 

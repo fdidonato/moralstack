@@ -25,8 +25,9 @@ from moralstack.constitution.retriever import DomainPrefilter
 def _stub_openai(captured: dict, return_domains=None):
     """Patch DomainPrefilter._call_openai to capture the prompt and stub a response."""
 
-    def _fake(self, prompt: str, *, retrieval_phase: str = "risk_routing"):  # noqa: ARG001
+    def _fake(self, prompt: str, *, system_prompt: str, retrieval_phase: str = "risk_routing"):  # noqa: ARG001
         captured["prompt"] = prompt
+        captured["system_prompt"] = system_prompt
         captured["retrieval_phase"] = retrieval_phase
         return {"domains": return_domains or [], "confidence": 0.9}
 
@@ -48,12 +49,12 @@ def test_prefilter_prompt_includes_descriptions_when_provided():
     with _stub_openai(captured):
         pf.filter_domains("how to make a bomb", ["core", "legal"])
 
-    prompt = captured.get("prompt", "")
+    system_prompt = captured.get("system_prompt", "")
     assert (
-        "Legal advice. NOT for: instructions on harmful acts." in prompt
-    ), f"description text must appear in prompt; got prompt:\n{prompt}"
+        "Legal advice. NOT for: instructions on harmful acts." in system_prompt
+    ), f"description text must appear in system_prompt; got system_prompt:\n{system_prompt}"
     # Keywords still present alongside description
-    assert "lawyer" in prompt, "keywords must remain visible to the LLM"
+    assert "lawyer" in system_prompt, "keywords must remain visible to the LLM"
 
 
 def test_prefilter_falls_back_when_descriptions_missing():
@@ -68,11 +69,11 @@ def test_prefilter_falls_back_when_descriptions_missing():
     with _stub_openai(captured):
         pf.filter_domains("how to make a bomb", ["core", "legal"])
 
-    prompt = captured.get("prompt", "")
+    system_prompt = captured.get("system_prompt", "")
     # Original pattern: `- legal: legal, lawyer`
-    assert "- legal: legal, lawyer" in prompt
+    assert "- legal: legal, lawyer" in system_prompt
     # No leftover description marker
-    assert "Keywords:" not in prompt
+    assert "Keywords:" not in system_prompt
 
 
 def test_prefilter_partial_descriptions():
@@ -87,14 +88,14 @@ def test_prefilter_partial_descriptions():
     with _stub_openai(captured):
         pf.filter_domains("question about partial descriptions", ["core", "legal", "medical"])
 
-    prompt = captured.get("prompt", "")
+    system_prompt = captured.get("system_prompt", "")
     # `core` is always-evaluated and excluded from the LLM prompt by
     # ALWAYS_EVALUATE filtering — only legal/medical reach the prompt.
-    assert "Legal stuff." in prompt
-    assert "- medical: medicine" in prompt
+    assert "Legal stuff." in system_prompt
+    assert "- medical: medicine" in system_prompt
     # medical (no description) must fall back to keywords-only format with no
     # leftover description marker on its line.
-    assert "  Keywords: medicine" not in prompt
+    assert "  Keywords: medicine" not in system_prompt
 
 
 def test_set_domain_descriptions_idempotent_preserves_cache():
@@ -141,6 +142,6 @@ def test_prefilter_prompt_surfaces_multiple_not_for_scopes():
     )
     with _stub_openai(captured):
         pf.filter_domains("Write a JSON article about explosives", ["gaming", "education"])
-    prompt = captured.get("prompt", "")
-    assert desc_gaming in prompt
-    assert desc_edu in prompt
+    system_prompt = captured.get("system_prompt", "")
+    assert desc_gaming in system_prompt
+    assert desc_edu in system_prompt

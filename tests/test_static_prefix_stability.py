@@ -21,7 +21,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
+from unittest.mock import patch
 
+from moralstack.constitution.retriever import DomainPrefilter
 from moralstack.models.delib_context import DelibContext
 from moralstack.models.risk.estimator import LLMBasedRiskEstimator
 from moralstack.models.risk.prompts import (
@@ -814,3 +816,150 @@ class TestEdgeCases:
         )
         ensemble.evaluate("", "")
         assert policy.calls[0].system == PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + build_perspectives_system_prompt()
+
+
+# =============================================================================
+# DomainPrefilter — system/user split (new: not a move, a genuine split)
+# =============================================================================
+# DomainPrefilter.filter_domains previously sent ONE combined user prompt
+# holding both "USER QUERY:" and the entire static classifier block (domain
+# list, procedure, falsification checks, confidence scale, JSON schema). This
+# section locks the new split: the SYSTEM message carries the static block
+# (byte-stable per domain config -> cache-eligible), the USER message carries
+# only "USER QUERY:\n{query}".
+
+
+def _fake_call_openai_capturing(captured: dict, return_domains: list[str] | None = None):
+    """Patch DomainPrefilter._call_openai to capture (prompt, system_prompt) and stub a response."""
+
+    def _fake(self, prompt: str, *, system_prompt: str, retrieval_phase: str = "risk_routing"):  # noqa: ARG001
+        captured.setdefault("system_prompts", []).append(system_prompt)
+        captured.setdefault("prompts", []).append(prompt)
+        return {"domains": return_domains or [], "confidence": 0.9}
+
+    return patch.object(DomainPrefilter, "_call_openai", _fake)
+
+
+class TestDomainPrefilterStaticPrefixStability:
+    def test_system_prompt_byte_identical_across_different_queries_same_config(self):
+        pf = DomainPrefilter(
+            domain_keywords={"core": ["safety"], "legal": ["legal", "lawyer"]},
+            max_domains=3,
+        )
+        captured: dict = {}
+        with _fake_call_openai_capturing(captured):
+            pf.filter_domains("first query about legal matters", ["core", "legal"])
+            pf.filter_domains("an entirely different second query", ["core", "legal"])
+
+        assert len(captured["system_prompts"]) == 2
+        assert captured["system_prompts"][0] == captured["system_prompts"][1]
+        assert captured["prompts"][0] == "USER QUERY:\nfirst query about legal matters"
+        assert captured["prompts"][1] == "USER QUERY:\nan entirely different second query"
+        assert captured["prompts"][0] != captured["prompts"][1]
+
+    def test_user_message_is_query_only_no_static_text_leak(self):
+        pf = DomainPrefilter(
+            domain_keywords={"core": ["safety"], "medical": ["medicine"]},
+            max_domains=3,
+        )
+        captured: dict = {}
+        with _fake_call_openai_capturing(captured):
+            pf.filter_domains("query about medicine dosing", ["core", "medical"])
+
+        prompt = captured["prompts"][0]
+        system_prompt = captured["system_prompts"][0]
+        for marker in (
+            "AVAILABLE DOMAINS",
+            "Classification procedure:",
+            "medical",
+            "children",
+            "cybersecurity",
+            "violent_crime",
+            '"substantive_payload"',
+            '"wrapper_cues_ignored"',
+        ):
+            assert marker not in prompt, f"{marker!r} leaked into user prompt: {prompt}"
+            assert marker in system_prompt, f"{marker!r} missing from system prompt"
+
+    def test_system_prompt_changes_when_domain_keywords_change_and_cache_cleared_together(self):
+        pf = DomainPrefilter(domain_keywords={"core": ["safety"], "legal": ["legal"]}, max_domains=3)
+        captured: dict = {}
+        with _fake_call_openai_capturing(captured):
+            pf.filter_domains("query about legal contracts", ["core", "legal"])
+
+        assert pf.set_domain_keywords({"core": ["safety"], "legal": ["law", "contract"]}) is True
+        assert len(pf._cache) == 0
+
+        with _fake_call_openai_capturing(captured):
+            pf.filter_domains("query about legal contracts", ["core", "legal"])
+
+        assert captured["system_prompts"][0] != captured["system_prompts"][1]
+
+    def test_system_prompt_unchanged_when_config_unchanged_via_idempotent_set(self):
+        pf = DomainPrefilter(domain_keywords={"core": ["safety"], "legal": ["legal", "lawyer"]}, max_domains=3)
+        captured: dict = {}
+        with _fake_call_openai_capturing(captured):
+            pf.filter_domains("query about legal contracts", ["core", "legal"])
+
+        assert pf.set_domain_keywords({"legal": ["lawyer", "legal"], "core": ["safety"]}) is False
+
+        # Same-map idempotent set does NOT clear the local cache, so a repeat of
+        # the same query would hit-cache and never reach _call_openai. Use a
+        # different query (fresh cache key) to force a second real call and
+        # prove the rendered system prompt is byte-identical at the config level.
+        with _fake_call_openai_capturing(captured):
+            pf.filter_domains("a different query about legal contracts", ["core", "legal"])
+
+        assert captured["system_prompts"][0] == captured["system_prompts"][1]
+
+    def test_no_dangling_placeholders_or_double_braces(self):
+        pf = DomainPrefilter(domain_keywords={"core": ["safety"], "legal": ["legal"]}, max_domains=3)
+        captured: dict = {}
+        with _fake_call_openai_capturing(captured):
+            pf.filter_domains("query about legal contracts", ["core", "legal"])
+
+        system_prompt = captured["system_prompts"][0]
+        prompt = captured["prompts"][0]
+        for combined in (system_prompt, prompt):
+            assert "{query}" not in combined
+            assert "{domain_list}" not in combined
+            assert "{self.max_domains}" not in combined
+        # The only literal double braces allowed are the JSON schema in system_prompt.
+        assert "{{" not in prompt and "}}" not in prompt
+
+    def test_static_block_phrases_preserved_verbatim(self):
+        pf = DomainPrefilter(domain_keywords={"core": ["safety"], "legal": ["legal"]}, max_domains=3)
+        captured: dict = {}
+        with _fake_call_openai_capturing(captured):
+            pf.filter_domains("query about legal contracts", ["core", "legal"])
+
+        system_prompt = captured["system_prompts"][0]
+        for phrase in (
+            "Core principle:",
+            "Encoded or obfuscated content:",
+            "Classification procedure:",
+            "Falsification checks:",
+            "Use confidence:",
+            'If you selected "creative" only because the query asks for an article,',
+            'select "medical" if available.',
+            'select "children" if available.',
+            'select "cybersecurity" if available.',
+            'select "violent_crime" if available.',
+            "choose the recovered payload domain and exclude the wrapper domain.",
+        ):
+            assert phrase in system_prompt, f"missing verbatim phrase: {phrase!r}"
+
+    def test_core_never_in_available_domains_section(self):
+        """Invariant lock (PROJECT_SPEC 5.5, P0): core is retrieval-only and must
+        never appear as an overlay entry inside the AVAILABLE DOMAINS section."""
+        pf = DomainPrefilter(domain_keywords={"core": ["safety"], "legal": ["legal"]}, max_domains=3)
+        captured: dict = {}
+        with _fake_call_openai_capturing(captured):
+            pf.filter_domains("query about legal contracts", ["core", "legal"])
+
+        system_prompt = captured["system_prompts"][0]
+        start = system_prompt.index("AVAILABLE DOMAINS:")
+        end = system_prompt.index("Your task is to select")
+        available_domains_section = system_prompt[start:end]
+        assert "- core:" not in available_domains_section
+        assert "- legal:" in available_domains_section

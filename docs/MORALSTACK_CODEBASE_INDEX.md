@@ -443,8 +443,19 @@ static prefix and the user message carries only per-request dynamic data
 - **Perspectives** (`prompts/perspectives_prompt.py`): `build_perspectives_system_prompt()`
   is now ctx-independent (static only); REQUEST/RESPONSE/risk signals moved into
   the per-perspective user message via `build_perspectives_user_prompt(...)`.
-- **DCCL / constitution retriever**: verified already static system + dynamic
-  later messages — no code change (A6, verify-only).
+- **DomainPrefilter** (`constitution/retriever.py`): `DomainPrefilter._build_prefilter_system_prompt(domain_list)`
+  composes a per-config-instance (not module-level constant) SYSTEM prompt —
+  classifier role, `AVAILABLE DOMAINS` list rendered from the current
+  keywords/descriptions, classification procedure, falsification checks,
+  confidence scale, JSON schema. Byte-identical across requests while the
+  domain config is unchanged (`set_domain_keywords`/`set_domain_descriptions`
+  clear `self._cache` in lockstep with any prompt-byte change). The USER
+  message is query-only: `f"USER QUERY:\n{query}"`. `_call_openai(prompt, *,
+  system_prompt, retrieval_phase=...)` threads the same builder output into
+  both the OpenAI system message and the persisted `system_prompt` (single
+  source); the old hardcoded 11-word `sys_msg` is gone.
+- **DCCL**: verified already static system + dynamic later messages — no code
+  change (A6, verify-only).
 
 Verified by `tests/test_static_prefix_stability.py`.
 
@@ -459,7 +470,27 @@ Verified by `tests/test_static_prefix_stability.py`.
   risk floor) and `sensitive_risk_floor`. Excluded domains short-circuit to a
   domain-exclusion response (`_route_domain_excluded`).
 - `core` is retrieval-only and never becomes a runtime overlay
-  (`_normalize_runtime_domain`, `controller.py:117-130`).
+  (`_normalize_runtime_domain`, `controller.py:117-130`); `DomainPrefilter`
+  independently excludes `core` from `domains_to_check` (`retriever.py:447`),
+  so `core` never appears in the prefilter's `AVAILABLE DOMAINS` section either
+  (`ALWAYS_EVALUATE = {"core"}`, `retriever.py:279`).
+- `DomainPrefilter` sends a byte-stable SYSTEM prompt + query-only USER message
+  (see §5.1) — cache-eligible for OpenAI automatic prompt caching, but an
+  actual cache hit still depends on prompt length (>=1024 tokens) and provider
+  conditions.
+- The effective `max_parallel_agents` default is **4** (bumped from 2) across
+  all runtime sources: `ConstitutionRetrieverConfig.max_parallel_agents`
+  (`retriever.py:1099`), `ConstitutionStoreConfig.max_parallel_agents` /
+  `ConstitutionStore.__init__` kwarg default (`store.py:462`,`:498` — the store
+  overrides the retriever default on every store-mediated path), `CLIConfig.max_parallel_agents`
+  (`cli/models.py:492`), and `resolve_constitution_max_parallel_agents`'s env
+  fallback (`pipeline/deliberation_stack.py:64`, env var
+  `MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS` still wins when set). With
+  prefilter enabled (default), the wave is core + up to 3 domains, so 4 agents
+  now run in a single `ThreadPoolExecutor` batch; on non-default paths
+  (prefilter disabled, or legacy retrieval with core + every overlay) the same
+  batch size applies to a larger wave — operators hitting provider throttling
+  there can set the env override back to 2.
 
 ---
 
