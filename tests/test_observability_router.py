@@ -4,8 +4,40 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from moralstack.observability import router as router_module
+from moralstack.observability import service as service_module
 from moralstack.observability.events import EVENT_LLM_CALL, EVENT_ORCHESTRATION_EVENT, make_envelope
 from moralstack.observability.router import route, route_audit_sync, route_batch, route_window
+from moralstack.observability.service import get_obs
+
+
+@pytest.fixture(autouse=True)
+def _drain_obs_singleton():
+    """Join and reset the global observability singleton around each router test.
+
+    These tests monkeypatch the module-level sink getters and assert exact call
+    counts on the mocks. A background write-queue worker leaked from an earlier
+    test (one that ran the full async pipeline) can call the real ``route_window``
+    while the patch is active and hit the mocked sink, producing a spurious extra
+    call. Draining the singleton before the test joins any such worker so no async
+    writer is alive during the mock window; the teardown keeps the next test clean.
+    """
+
+    def _reset() -> None:
+        if service_module._obs_instance is not None:
+            try:
+                service_module._obs_instance.shutdown(timeout=2.0)
+            except Exception:
+                pass
+        service_module._obs_instance = None
+        router_module._sqlite_sink = None
+        router_module._jsonl_sink = None
+
+    _reset()
+    yield
+    _reset()
 
 
 def _env(event_type: str = EVENT_LLM_CALL, run_id: str = "r1", request_id: str = "q1"):
@@ -192,7 +224,6 @@ class TestRouterWindowAccounting:
         from moralstack.observability import router as router_module
         from moralstack.observability import service as service_module
         from moralstack.observability.router import WindowResult
-        from moralstack.observability.service import get_obs
         from moralstack.observability.sinks.jsonl_sink import JsonlWindowResult
         from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
 
