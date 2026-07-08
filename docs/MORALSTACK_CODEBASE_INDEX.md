@@ -39,7 +39,10 @@ moralstack/
 scripts/                 # benchmark, inspector, install
 examples/                # runnable usage examples
 tests/                   # ~120 test modules + e2e payloads
+  harness/               # offline unit tests for the .claude/hooks/* scripts
 docs/                    # architecture, modules, traces, this index
+.claude/                 # AI harness: hooks, path-scoped rules, agents, skills
+                         #   (fail-open; inventory in .claude/hooks/README.md)
 ```
 
 Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=2`,
@@ -675,6 +678,10 @@ See `docs/traces/complai_llm_rules_flow.md`.
   `test_system_prompt_resolver.py`.
 - Compliance: `test_compliance_evaluation.py`, `test_sdk_dccl.py`.
 - E2E payloads in `tests/e2e_payloads/`; regression in `tests/e2e_run_regression.py`.
+- AI harness: `tests/harness/` — offline unit tests for the `.claude/hooks/*`
+  scripts (stop-gate verify dedup + docs-gate/nudge cap, PreCompact snapshot,
+  SessionEnd diary, UserPromptSubmit, fail-open on malformed input). Not
+  governance code; do not confuse with the 84-question benchmark.
 
 ---
 

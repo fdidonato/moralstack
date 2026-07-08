@@ -90,6 +90,10 @@ when you open the relevant files — the headline below is only the reminder.
 - The codebase uses mixed Italian/English in older comments and docstrings.
   Do **not** mass-translate or reformat. New comments/docs must be English, but
   leave existing text alone unless it is in scope.
+- **This project is internationalized: all commit messages and PR descriptions
+  must be written in English** (Conventional Commits), regardless of any personal
+  or global default. This project-level rule overrides the global "Italian by
+  default" convention for commits.
 
 ## 7. Testing expectations
 
@@ -110,6 +114,16 @@ When you change behavior, update the docs in the **same** change:
 COMPL-AI), `docs/modules/*.md` (module contract). Full mapping →
 `.claude/rules/docs-maintenance.md` (loads when you open `docs/**`). A `Stop` hook
 gates this: editing behavior code without touching the matching docs blocks the turn.
+When it blocks it stages a docs-update **stub** at `.claude/.docs-stub.md` (touched
+symbols → likely doc targets) — review and promote it, then delete it. The gate nudges
+at most once per session (`.claude/.nudge-count.json`); see `.claude/hooks/README.md`
+for the full hook + marker inventory. A `SessionEnd` hook also appends an **UNVERIFIED**
+session digest to `.claude/session-diary.md` (staging only, never the verified facts
+table — §4); promote relevant items by hand. The full capture→promote→prune cycle is
+the **memory contract** in `.claude/rules/memory-maintenance.md` (loads when you open
+`docs/CODEBASE_FACTS.md`); promotion of a staged item into the Verified facts table is a
+verified act — run the `memory-curator` agent (`.claude/agents/memory-curator.md`) at the
+end of a cycle. See `docs/ai/MEMORY_LIFECYCLE.md` for the narrative.
 
 ## 9. Error-correction protocol
 

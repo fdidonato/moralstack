@@ -217,6 +217,29 @@ One row or block per refactoring step. Add rows as you go.
 - **Commit:** (hash or message)
 ```
 
+#### Entry: 2026-07-07 — AI harness hooks (context survival + verify dedup)
+
+- **What:** `.claude/hooks/` — `stop_gate.py` (verify skipped on `stop_hook_active`
+  or unchanged content-fingerprint via `.last-verified.json`; docs-gate nudge cap
+  via `.nudge-count.json`; docs-update stub `.docs-stub.md`; emits context only on a
+  fresh verify to avoid a re-wake loop); new `precompact_snapshot.py` (PreCompact,
+  `async`) → `.context-snapshot.md`, reloaded by `session_start.py` on
+  `source∈{compact,resume}`; new `session_end.py` → UNVERIFIED digest in
+  `.claude/session-diary.md` (staging only, §4); new `user_prompt_submit.py`
+  (keyword-gated context injection). Registered in `.claude/settings.json`. New
+  `.claude/hooks/README.md`; `.gitignore` for the new markers + generated `ai/`
+  artifacts. Tests in `tests/harness/`. Docs: `PROJECT_SPEC.md` §8,
+  `.claude/rules/docs-maintenance.md`, `docs/ai/HARNESS_SESSION_LEARNINGS.md`.
+- **Why:** Fase-1 reconstruction found redundant Stop-verify runs, docs-nudge repeated
+  across chains, and silent loss of the in-flight plan on auto-compaction. All fixes are
+  harness-only; no `moralstack/`/`tests/` product code touched.
+- **Risk:** low. Every hook is fail-open (malformed/empty stdin → exit 0); no governance
+  behavior changed → 84-question benchmark invariant by construction.
+- **Tests run:** `pytest tests/harness/` (63 passed); full suite `python -m pytest -q`
+  (2150 passed / 0 failed, 2026-07-07); `pre-commit run --files` on the changed set
+  (clean; black reformatted `session_start.py`).
+- **Commit:** (pending user commit)
+
 ---
 
 _See `.cursor/rules/refactoring.md` for the refactoring constraints and workflow._

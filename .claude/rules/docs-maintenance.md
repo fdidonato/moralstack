@@ -13,3 +13,8 @@ When you change behavior, update the docs in the **same** change:
   bridge path → update the matching file in `docs/TRACES/`.
 - Module-level behavior also has long-form docs in `docs/modules/*.md`; update the
   relevant one if you touch that module's contract.
+
+When the Stop docs-gate blocks, it stages `.claude/.docs-stub.md` with the symbols you
+touched (parsed from `git diff HEAD`) mapped to the docs above. Treat it as a starting
+point, not an authority: verify each symbol against the code, update the real docs, then
+delete the stub.
