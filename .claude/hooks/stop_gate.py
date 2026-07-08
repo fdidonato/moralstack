@@ -18,8 +18,12 @@ this session (per ``.claude/.session-edits.json`` written by
    fingerprint matches the last run that already passed
    (``.claude/.last-verified.json``).
 2. **Docs gate (blocking).** If governance *behavior* files were edited without
-   touching the matching docs (or the behavior-locking tests), emits
-   ``{"decision": "block"}`` so Claude updates docs before finishing
+   touching a verified-memory ledger (``docs/CODEBASE_FACTS.md``,
+   ``docs/MORALSTACK_CODEBASE_INDEX.md``, ``docs/TRACES/``, ``docs/modules/``),
+   emits ``{"decision": "block"}`` so Claude updates docs before finishing. A test
+   does NOT satisfy it, and an arbitrary ``docs/`` file does not either — the hard
+   guarantee lives in the commit-time memory-guard
+   (``scripts/check_memory_updated.py``); this is the softer early reminder
    (PROJECT_SPEC §8). Nudges at most ``MSTACK_DOCS_NUDGE_CAP`` (default 1) times
    per session — a persisted counter (``.claude/.nudge-count.json``) holds the
    cap across separate Stop chains, while ``stop_hook_active`` holds it within a
@@ -53,6 +57,17 @@ BEHAVIOR_PREFIXES = (
     "moralstack/observability/",
     "moralstack/server/",
     "moralstack/constitution/",
+)
+
+# Only a verified-memory ledger satisfies the docs nudge — NOT an arbitrary docs/
+# file and NOT a test. The commit-time memory-guard (scripts/check_memory_updated.py)
+# enforces the fine per-prefix mapping; this nudge is the softer early reminder, so it
+# stays coarse (any of these four categories counts).
+MEMORY_DOC_PREFIXES = (
+    "docs/CODEBASE_FACTS.md",
+    "docs/MORALSTACK_CODEBASE_INDEX.md",
+    "docs/TRACES/",
+    "docs/modules/",
 )
 
 # Map an edited behavior path to the docs most likely to need an update. Kept
@@ -338,8 +353,7 @@ def main() -> int:
         return 0
 
     behavior = [p for p in code if p.startswith(BEHAVIOR_PREFIXES)]
-    docs_touched = any(p.startswith("docs/") for p in edited)
-    tests_touched = any(p.startswith("tests/") for p in edited)
+    docs_touched = any(p.startswith(MEMORY_DOC_PREFIXES) for p in edited)
 
     # ---- Verify (skipped when redundant) ------------------------------------
     fingerprint = _fingerprint(project, code)
@@ -356,7 +370,9 @@ def main() -> int:
         verify_ran = True
 
     # ---- Docs gate (blocking, capped) ---------------------------------------
-    needs_docs = bool(behavior) and not (docs_touched or tests_touched)
+    # A test does NOT satisfy the docs requirement (that loophole silenced the gate
+    # in exactly the cases that matter, since the workflow almost always adds tests).
+    needs_docs = bool(behavior) and not docs_touched
     if needs_docs:
         try:
             cap = int(os.environ.get("MSTACK_DOCS_NUDGE_CAP", "1"))

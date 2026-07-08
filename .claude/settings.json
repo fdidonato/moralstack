@@ -52,7 +52,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write",
+        "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/format_on_edit.py\"", "timeout": 60 }
         ]

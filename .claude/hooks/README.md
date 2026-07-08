@@ -10,7 +10,7 @@ turn. They are plain Python (no third-party imports) and unit-tested in
 | --- | --- | --- | --- |
 | `guard_dangerous_git.py` | PreToolUse(Bash) | yes | Blocks destructive git (`--no-verify`, force-push, hard reset, …). |
 | `guard_secrets.py` | PreToolUse(Bash/Edit/Write) | yes | Blocks secret exposure in commands/edits. |
-| `format_on_edit.py` | PostToolUse(Edit/Write) | no | Records edited paths → `.session-edits.json`; ruff+black on the file. |
+| `format_on_edit.py` | PostToolUse(Edit/Write/MultiEdit) | no | Records edited paths → `.session-edits.json`; ruff+black on the file. |
 | `stop_gate.py` | Stop | docs-gate only | Non-blocking verify (deduped) + blocking docs-gate with nudge cap + docs stub. |
 | `precompact_snapshot.py` | PreCompact (`async`) | no | Snapshots in-flight context → `.context-snapshot.md` before compaction. |
 | `session_start.py` | SessionStart | no | Situational brief; re-injects `.context-snapshot.md` on resume/compact. |
@@ -34,9 +34,18 @@ turn. They are plain Python (no third-party imports) and unit-tested in
 - **Verify** runs `pre-commit --files <changed>` + scoped `pytest` only when the
   edit-set actually changed since the last passing run (content fingerprint) and
   `stop_hook_active` is False. `MSTACK_STOP_RUN_PYTEST=1` forces the full suite.
-- **Docs-gate** blocks when governance behavior files change without a matching
-  docs/tests edit, at most `MSTACK_DOCS_NUDGE_CAP` (default 1) times per session.
-  The full behavior→docs mapping lives in `.claude/rules/docs-maintenance.md`.
+- **Docs-gate** blocks when governance behavior files change without touching a
+  **verified-memory ledger** (`docs/CODEBASE_FACTS.md`,
+  `docs/MORALSTACK_CODEBASE_INDEX.md`, `docs/TRACES/`, `docs/modules/`), at most
+  `MSTACK_DOCS_NUDGE_CAP` (default 1) times per session. A **test does NOT** satisfy
+  it, and an arbitrary `docs/` file does not either. The full behavior→docs mapping
+  lives in `.claude/rules/docs-maintenance.md`.
+- This gate is a **best-effort session nudge** (keyed on `.session-edits.json`, which
+  misses Bash edits and never resets mid-session). The hard, non-bypassable guarantee
+  lives at **commit time** in `scripts/check_memory_updated.py` (a pre-commit hook,
+  fine per-prefix mapping, source of truth `git diff --cached`; bypass
+  `MEMORY_GUARD_SKIP=1`). `scripts/check_changelog_updated.py` is the sibling
+  changelog gate.
 
 ## Registration
 

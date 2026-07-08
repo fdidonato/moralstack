@@ -64,6 +64,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the AI/test infra prefixes (`.claude/`, `ai/`, `tests/`) are not accompanied by a
   `CHANGELOG.md` update. Bypass an intentional infra-only commit with
   `CHANGELOG_GUARD_SKIP=1`.
+- **Memory guard (pre-commit)**: a local pre-commit hook
+  (`scripts/check_memory_updated.py`) enforces the verified-memory contract at commit
+  time — the guarantee the session-scoped Stop nudge could not give. Source of truth is
+  `git diff --cached` (not the escapable `.session-edits.json`), and a **test does not
+  count** as a memory substitute. Using a fine per-prefix mapping, a staged change under
+  a governance-behavior prefix (`orchestration/`, `constitution/`, `observability/`,
+  `server/`, `compliance/`, `prompts/`, `runtime/decision/`) requires the matching doc
+  (`docs/modules/*`, `docs/TRACES/*`, `docs/decision_policy.md`, `docs/constitution.md`)
+  to be staged. Bypass a justified exception with `MEMORY_GUARD_SKIP=1`.
+- **Stop docs-gate hardened**: adding a test no longer silences the gate, and only a
+  verified-memory ledger (`docs/CODEBASE_FACTS.md`, `docs/MORALSTACK_CODEBASE_INDEX.md`,
+  `docs/TRACES/`, `docs/modules/`) satisfies it — an arbitrary `docs/` file no longer
+  does. The `PostToolUse` formatter/edit-recorder now also fires on `MultiEdit`, closing
+  a blind spot where multi-edits never reached `.session-edits.json`.
 
 ## 0.7.0 — 2026-07-06
 

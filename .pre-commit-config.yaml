@@ -30,3 +30,9 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: memory-guard
+        name: memory guard
+        entry: python scripts/check_memory_updated.py
+        language: system
+        pass_filenames: false
+        always_run: true

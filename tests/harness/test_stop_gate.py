@@ -95,13 +95,36 @@ def test_docs_gate_blocks_then_caps(stop_gate, run_hook, project, monkeypatch):
     assert code == 0 and out is None
 
 
-def test_docs_gate_satisfied_by_touching_tests(stop_gate, run_hook, project, monkeypatch):
+def test_docs_gate_not_satisfied_by_touching_tests(stop_gate, run_hook, project, monkeypatch):
+    """A test must NOT silence the docs gate — the loophole this fix closes.
+
+    The workflow almost always adds a test, so counting a test as a docs substitute
+    made the gate inert in exactly the cases that matter.
+    """
     stub_subprocess(monkeypatch, stop_gate, returncode=0)
     write_code_file(project, "moralstack/orchestration/foo.py")
     write_code_file(project, "tests/test_foo.py")
     write_session_edits(project, "s1", ["moralstack/orchestration/foo.py", "tests/test_foo.py"])
     code, out = run_hook(stop_gate, _payload(), project)
+    assert code == 0 and out["decision"] == "block"
+
+
+def test_docs_gate_satisfied_by_memory_ledger(stop_gate, run_hook, project, monkeypatch):
+    """Touching a verified-memory ledger (CODEBASE_FACTS) satisfies the docs gate."""
+    stub_subprocess(monkeypatch, stop_gate, returncode=0)
+    write_code_file(project, "moralstack/orchestration/foo.py")
+    write_session_edits(project, "s1", ["moralstack/orchestration/foo.py", "docs/CODEBASE_FACTS.md"])
+    code, out = run_hook(stop_gate, _payload(), project)
     assert code == 0 and out.get("decision") != "block"
+
+
+def test_docs_gate_not_satisfied_by_arbitrary_docs(stop_gate, run_hook, project, monkeypatch):
+    """An unrelated docs/ file no longer counts (the old any-``docs/`` loophole)."""
+    stub_subprocess(monkeypatch, stop_gate, returncode=0)
+    write_code_file(project, "moralstack/orchestration/foo.py")
+    write_session_edits(project, "s1", ["moralstack/orchestration/foo.py", "docs/refactoring_diary.md"])
+    code, out = run_hook(stop_gate, _payload(), project)
+    assert code == 0 and out["decision"] == "block"
 
 
 def test_symbols_from_diff_is_pure(stop_gate):
