@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Measured on a COMPL-AI replay: 63.0% of input tokens cached (−31.5% input cost).
   Cached tokens are billed at a reduced rate; they do not reduce token counts.
 
+### Documentation
+
+- Archive the agentic-pipeline process artifacts of the recent cycles under `ai/`
+  (plans, Codex plan/diff reviews, implementation handoffs and reports, the
+  deliberation investigation), plus the root technical analysis and the Claude/Codex
+  upgrade plans. Documentation only, no behavior change.
+
 ### Changed
 
 - **Bounded, tenant/principal-aware proxy conversation correlation store** (P3):
