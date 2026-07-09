@@ -7,6 +7,13 @@ a process-local conversation identifier using parent/child history hashes, and
 records completed turns (including assistant replies) so the next request can
 link back to the same conversation.
 
+The internal lineage map is keyed by ``(principal, history_hash)`` so that two
+byte-identical histories from different principals (tenants) resolve to
+different ``conversation_id``s (P3 / P0-3 / A3). The hash functions themselves
+are unchanged; isolation lives entirely in the map key. The store is also
+bounded (TTL + max entries, FIFO eviction) to avoid unbounded memory growth
+under long-running benchmarks.
+
 Limitation (informatic): two distinct samples whose histories and assistant
 outputs are byte-identical cannot be distinguished without an external id.
 """
@@ -15,15 +22,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
+import time
 import uuid
-from typing import Any
+from collections import OrderedDict
+from dataclasses import dataclass
+from typing import Any, Callable
+
+_LOG = logging.getLogger(__name__)
 
 _MAX_CONTENT_PER_MESSAGE = 4096
 
 # Canonical hash of an empty message list — used as the parent lineage root
 # before the first user message in a user-only opening turn.
 _EMPTY_HISTORY_CANONICAL_HASH = hashlib.sha256(b"[]").hexdigest()
+
+# Bounded-store defaults (P3 / P0-3 / A3): mirror InMemorySessionStore
+# (moralstack/sdk/session_store.py) so a lineage entry and its governance
+# session state expire on roughly the same horizon.
+DEFAULT_CORRELATION_TTL_SECONDS = 3600
+DEFAULT_MAX_CORRELATION_ENTRIES = 20_000
 
 
 def _truncate(s: str) -> str:
@@ -85,33 +104,88 @@ def canonical_parent_history_hash(messages: list[dict[str, Any]]) -> str | None:
     return canonical_history_hash(messages[:-1])
 
 
+@dataclass
+class _Entry:
+    """Internal wrapper combining a resolved conversation_id with insertion time."""
+
+    conversation_id: str
+    inserted_at: float
+
+
 class ConversationCorrelationStore:
     """
-    Thread-safe in-memory mapping from canonical history hashes to conversation_id.
+    Thread-safe, bounded in-memory mapping from ``(principal, canonical history
+    hash)`` to ``conversation_id``.
 
-    See module docstring for the resolution algorithm and limitations.
+    Bounded via TTL (lazy expiry on read) and a max-entries FIFO cap, mirroring
+    ``moralstack.sdk.session_store.InMemorySessionStore``. See module docstring
+    for the resolution algorithm and limitations.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        ttl_seconds: float = DEFAULT_CORRELATION_TTL_SECONDS,
+        max_entries: int = DEFAULT_MAX_CORRELATION_ENTRIES,
+        time_fn: Callable[[], float] = time.time,
+    ) -> None:
+        if ttl_seconds <= 0:
+            raise ValueError(f"ttl_seconds must be > 0, got {ttl_seconds}")
+        if max_entries < 1:
+            raise ValueError(f"max_entries must be >= 1, got {max_entries}")
+        self._ttl_seconds = ttl_seconds
+        self._max_entries = max_entries
+        self._time_fn = time_fn
         self._lock = threading.RLock()
-        self._history_to_conversation: dict[str, str] = {}
+        # OrderedDict preserves insertion order for FIFO eviction.
+        self._history_to_conversation: OrderedDict[tuple[str, str], _Entry] = OrderedDict()
 
-    def resolve(self, messages: list[dict[str, Any]]) -> str:
+    def resolve(self, messages: list[dict[str, Any]], *, principal: str = "") -> str:
+        """
+        Resolve (or mint) the ``conversation_id`` for a request history.
+
+        Best-effort on the TTL/eviction lookup and insert paths (PROJECT_SPEC
+        §5 invariant #6): this runs on the request path, before the proxy's
+        fail-closed ``try`` block, so a failure in ``_get_id``/``_put_id``
+        (e.g. from the injected clock or ``popitem`` during eviction) must
+        never propagate out of ``resolve()``. On any such failure we log at
+        debug and fall through to minting a fresh id, which is always
+        returned regardless of whether the store lookup/insert succeeded.
+        """
         request_hash = canonical_history_hash(messages)
         parent_hash = canonical_parent_history_hash(messages)
+        request_key = (principal, request_hash)
 
-        with self._lock:
-            if request_hash in self._history_to_conversation:
-                return self._history_to_conversation[request_hash]
+        try:
+            with self._lock:
+                existing = self._get_id(request_key)
+                if existing is not None:
+                    return existing
 
-            if parent_hash is not None and parent_hash in self._history_to_conversation:
-                conversation_id = self._history_to_conversation[parent_hash]
-                self._history_to_conversation[request_hash] = conversation_id
-                return conversation_id
+                if parent_hash is not None:
+                    parent_key = (principal, parent_hash)
+                    parent_conversation_id = self._get_id(parent_key)
+                    if parent_conversation_id is not None:
+                        self._put_id(request_key, parent_conversation_id)
+                        return parent_conversation_id
+        except Exception:
+            _LOG.debug(
+                "Lookup lineage nello store di correlazione fallito (TTL/eviction); "
+                "verrà generato un nuovo conversation_id.",
+                exc_info=True,
+            )
 
-            conversation_id = f"msconv-{uuid.uuid4().hex[:16]}"
-            self._history_to_conversation[request_hash] = conversation_id
-            return conversation_id
+        conversation_id = f"msconv-{uuid.uuid4().hex[:16]}"
+        try:
+            with self._lock:
+                self._put_id(request_key, conversation_id)
+        except Exception:
+            _LOG.debug(
+                "Inserimento del nuovo conversation_id nello store di correlazione fallito; "
+                "l'id generato viene comunque restituito.",
+                exc_info=True,
+            )
+        return conversation_id
 
     def observe_completed_turn(
         self,
@@ -119,6 +193,7 @@ class ConversationCorrelationStore:
         messages: list[dict[str, Any]],
         assistant_content: str,
         conversation_id: str,
+        principal: str = "",
     ) -> None:
         """Register the completed history including the assistant reply for future turns."""
         if not conversation_id:
@@ -126,4 +201,32 @@ class ConversationCorrelationStore:
         completed_messages = list(messages) + [{"role": "assistant", "content": assistant_content or ""}]
         completed_hash = canonical_history_hash(completed_messages)
         with self._lock:
-            self._history_to_conversation[completed_hash] = conversation_id
+            self._put_id((principal, completed_hash), conversation_id)
+
+    def size(self) -> int:
+        """Number of stored entries, including expired ones (lazy eviction)."""
+        with self._lock:
+            return len(self._history_to_conversation)
+
+    def _get_id(self, key: tuple[str, str]) -> str | None:
+        """Read under the lock, evicting the entry if expired. Hit path does not refresh TTL."""
+        with self._lock:
+            entry = self._history_to_conversation.get(key)
+            if entry is None:
+                return None
+            if self._time_fn() - entry.inserted_at > self._ttl_seconds:
+                self._history_to_conversation.pop(key, None)
+                return None
+            return entry.conversation_id
+
+    def _put_id(self, key: tuple[str, str], conversation_id: str) -> None:
+        """Insert/refresh an entry under the lock and enforce the max-entries FIFO cap."""
+        with self._lock:
+            if key in self._history_to_conversation:
+                del self._history_to_conversation[key]
+            self._history_to_conversation[key] = _Entry(
+                conversation_id=conversation_id,
+                inserted_at=self._time_fn(),
+            )
+            while len(self._history_to_conversation) > self._max_entries:
+                self._history_to_conversation.popitem(last=False)

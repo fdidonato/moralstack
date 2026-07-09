@@ -26,19 +26,19 @@ import sys
 # Tieni i prefissi allineati a .claude/hooks/stop_gate.py:BEHAVIOR_PREFIXES.
 BEHAVIOR_DOC_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("moralstack/runtime/decision/", ("docs/decision_policy.md",)),
-    ("moralstack/compliance/", ("docs/TRACES/complai_llm_rules_flow.md",)),
+    ("moralstack/compliance/", ("docs/traces/complai_llm_rules_flow.md",)),
     (
         "moralstack/orchestration/",
-        ("docs/modules/orchestrator.md", "docs/TRACES/governance_decision_flow.md"),
+        ("docs/modules/orchestrator.md", "docs/traces/governance_decision_flow.md"),
     ),
     ("moralstack/prompts/", ("docs/decision_policy.md",)),
     (
         "moralstack/observability/",
-        ("docs/modules/observability.md", "docs/TRACES/observability_db_to_ui.md"),
+        ("docs/modules/observability.md", "docs/traces/observability_db_to_ui.md"),
     ),
     (
         "moralstack/server/",
-        ("docs/TRACES/openai_compatible_multiturn.md", "docs/TRACES/observability_db_to_ui.md"),
+        ("docs/traces/openai_compatible_multiturn.md", "docs/traces/observability_db_to_ui.md"),
     ),
     ("moralstack/constitution/", ("docs/modules/constitution_store.md", "docs/constitution.md")),
 )

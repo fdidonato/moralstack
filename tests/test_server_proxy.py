@@ -5,7 +5,10 @@ Integration tests for the FastAPI server proxy (design v1.3 §4.2).
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
+import logging
 import random
 import threading
 import time
@@ -20,6 +23,7 @@ pytest.importorskip("httpx", reason="httpx not installed (install with [server] 
 import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from httpx import ASGITransport  # noqa: E402
+from starlette.datastructures import Headers  # noqa: E402
 
 from moralstack.orchestration.types import (  # noqa: E402
     FinalResponse,
@@ -29,6 +33,7 @@ from moralstack.orchestration.types import (  # noqa: E402
 )
 from moralstack.runtime.orchestrator import create_minimal_orchestrator  # noqa: E402
 from moralstack.sdk.config import GovernanceConfig  # noqa: E402
+from moralstack.server.conversation_correlation import ConversationCorrelationStore  # noqa: E402
 from moralstack.server.proxy import create_app  # noqa: E402
 from tests.test_orchestrator import MockPolicyLLM, MockRiskEstimator  # noqa: E402
 
@@ -1275,3 +1280,364 @@ class TestObservabilityPersistence:
         assert payload["governed_delivery"] is True
         assert payload["wrapped_client_delivery_call"] is False
         assert payload["finish_reason"] == "stop"
+
+
+# ─── Bounded, tenant/principal-aware conversation correlation (P3 / P0-3 / A3) ───
+
+
+def _build_correlation_client(
+    final_action: str = "NORMAL_COMPLETE",
+    *,
+    correlation_store: ConversationCorrelationStore | None = None,
+    refuse_content: str = "Cannot help with that.",
+):
+    """Standalone variant of the ``client_factory`` fixture that additionally
+    supports injecting a ``correlation_store`` (mirrors ``session_store=``)."""
+    mock_orchestrator = MagicMock()
+    if final_action == "REFUSE":
+        mock_orchestrator.process = MagicMock(return_value=_make_result("REFUSE", content=refuse_content))
+    else:
+        mock_orchestrator.process = MagicMock(return_value=_make_result(final_action, content="guidance"))
+
+    mock_openai = MagicMock()
+    mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion())
+
+    kwargs: dict[str, Any] = {}
+    if correlation_store is not None:
+        kwargs["correlation_store"] = correlation_store
+    app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig(), **kwargs)
+    return TestClient(app), mock_openai, mock_orchestrator
+
+
+def _extract_default_correlation_store(app) -> ConversationCorrelationStore:
+    """
+    Recover the ``ConversationCorrelationStore`` that ``create_app`` built
+    internally (when no ``correlation_store=`` is injected) via the
+    ``chat_completions`` closure — the store is not exposed on ``app.state``,
+    so this is the only way to assert env-parsed values actually reached it
+    without modifying ``proxy.py``.
+    """
+    for route in app.routes:
+        if getattr(route, "path", None) == "/v1/chat/completions":
+            endpoint = route.endpoint
+            idx = endpoint.__code__.co_freevars.index("correlation_store")
+            return endpoint.__closure__[idx].cell_contents
+    raise AssertionError("/v1/chat/completions route not found on app")
+
+
+class _FakeRequest:
+    """Minimal ``Request``-like stand-in exposing only ``.headers`` (Starlette
+    ``Headers``, case-insensitive) — enough for ``_extract_principal`` unit tests."""
+
+    def __init__(self, headers: dict[str, str]):
+        self.headers = Headers(headers)
+
+
+class TestPrincipalAwareCorrelation:
+    def test_tenant_header_isolates_conversation_id(self):
+        client, _, _ = _build_correlation_client("NORMAL_COMPLETE")
+        body = {"model": "gpt-4o", "messages": [{"role": "user", "content": "Identical body"}]}
+
+        r_a = client.post("/v1/chat/completions", json=body, headers={"X-Moralstack-Tenant-Id": "tenant-A"})
+        r_b = client.post("/v1/chat/completions", json=body, headers={"X-Moralstack-Tenant-Id": "tenant-B"})
+
+        cid_a = r_a.headers.get("X-Moralstack-Conversation-Id")
+        cid_b = r_b.headers.get("X-Moralstack-Conversation-Id")
+        assert cid_a is not None and cid_b is not None
+        assert cid_a != cid_b
+
+    def test_anonymous_when_bearer_present_but_no_tenant_and_no_secret(self, monkeypatch):
+        """Strengthened re-run: an Authorization Bearer is present with no
+        tenant header and no HMAC secret configured — lineage stays stable
+        across turns via the anonymous ("", hash) path (asserts B is skipped,
+        not merely that the header is ignored)."""
+        monkeypatch.delenv("MORALSTACK_PRINCIPAL_HMAC_SECRET", raising=False)
+        client, _, _ = _build_correlation_client("NORMAL_COMPLETE")
+
+        r1 = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": "Sys"},
+                    {"role": "user", "content": "Q1"},
+                ],
+            },
+            headers={"Authorization": "Bearer key-X"},
+        )
+        cid1 = r1.headers.get("X-Moralstack-Conversation-Id")
+        assert cid1 is not None and cid1.startswith("msconv-")
+
+        r2 = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": "Sys"},
+                    {"role": "user", "content": "Q1"},
+                    {"role": "assistant", "content": "guidance"},
+                    {"role": "user", "content": "Q2"},
+                ],
+            },
+            headers={"Authorization": "Bearer key-X"},
+        )
+        cid2 = r2.headers.get("X-Moralstack-Conversation-Id")
+        assert cid2 == cid1
+
+    def test_authorization_hmac_derives_distinct_principal(self, monkeypatch, caplog):
+        """Path B: identical body, different bearer tokens -> different
+        conversation_ids. Security regression guard: neither the raw
+        Authorization value nor the derived HMAC digest may appear in
+        ``_collect_safe_headers`` output or captured log records."""
+        from moralstack.server.proxy import _collect_safe_headers
+
+        monkeypatch.setenv("MORALSTACK_PRINCIPAL_HMAC_SECRET", "dummy-test-secret")
+        client, _, _ = _build_correlation_client("NORMAL_COMPLETE")
+        body = {"model": "gpt-4o", "messages": [{"role": "user", "content": "same body"}]}
+
+        with caplog.at_level(logging.DEBUG, logger="moralstack.server.proxy"):
+            r_a = client.post("/v1/chat/completions", json=body, headers={"Authorization": "Bearer key-A"})
+            r_b = client.post("/v1/chat/completions", json=body, headers={"Authorization": "Bearer key-B"})
+
+        cid_a = r_a.headers.get("X-Moralstack-Conversation-Id")
+        cid_b = r_b.headers.get("X-Moralstack-Conversation-Id")
+        assert cid_a is not None and cid_b is not None
+        assert cid_a != cid_b
+
+        expected_digest_a = hmac.new(b"dummy-test-secret", b"key-A", hashlib.sha256).hexdigest()
+        expected_digest_b = hmac.new(b"dummy-test-secret", b"key-B", hashlib.sha256).hexdigest()
+        log_text = caplog.text
+        assert "key-A" not in log_text
+        assert "key-B" not in log_text
+        assert "Bearer" not in log_text
+        assert expected_digest_a not in log_text
+        assert expected_digest_b not in log_text
+
+        safe_headers = _collect_safe_headers(_FakeRequest({"Authorization": "Bearer key-A"}))
+        assert "key-A" not in str(safe_headers)
+        assert expected_digest_a not in str(safe_headers)
+
+    def test_hmac_secret_unset_falls_back_to_anonymous(self, monkeypatch):
+        """Path B/C: secret unset -> B disabled, no hardcoded fallback. Two
+        different bearer tokens with an identical body collide onto the same
+        anonymous ("", hash) id."""
+        monkeypatch.delenv("MORALSTACK_PRINCIPAL_HMAC_SECRET", raising=False)
+        client, _, _ = _build_correlation_client("NORMAL_COMPLETE")
+        body = {"model": "gpt-4o", "messages": [{"role": "user", "content": "collide via anonymous path"}]}
+
+        r_a = client.post("/v1/chat/completions", json=body, headers={"Authorization": "Bearer key-A"})
+        r_b = client.post("/v1/chat/completions", json=body, headers={"Authorization": "Bearer key-B"})
+
+        cid_a = r_a.headers.get("X-Moralstack-Conversation-Id")
+        cid_b = r_b.headers.get("X-Moralstack-Conversation-Id")
+        assert cid_a == cid_b
+
+    def test_tenant_header_precedence_over_authorization(self, monkeypatch):
+        """(A) wins over (B): both headers present -> same id as tenant-header-only."""
+        monkeypatch.setenv("MORALSTACK_PRINCIPAL_HMAC_SECRET", "dummy-test-secret")
+        client, _, _ = _build_correlation_client("NORMAL_COMPLETE")
+        body = {"model": "gpt-4o", "messages": [{"role": "user", "content": "tenant precedence body"}]}
+
+        r_tenant_only = client.post("/v1/chat/completions", json=body, headers={"X-Moralstack-Tenant-Id": "tenant-Z"})
+        r_tenant_and_auth = client.post(
+            "/v1/chat/completions",
+            json=body,
+            headers={"X-Moralstack-Tenant-Id": "tenant-Z", "Authorization": "Bearer some-token"},
+        )
+
+        cid1 = r_tenant_only.headers.get("X-Moralstack-Conversation-Id")
+        cid2 = r_tenant_and_auth.headers.get("X-Moralstack-Conversation-Id")
+        assert cid1 == cid2
+
+    def test_conversation_id_header_still_overrides_correlation(self):
+        """Explicit header wins regardless of principal keying: differing tenant
+        headers across two calls with the same explicit conversation_id header
+        must not change the resolved id."""
+        client, _, _ = _build_correlation_client("NORMAL_COMPLETE")
+        r1 = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+            headers={"X-Moralstack-Conversation-Id": "explicit-conv-1", "X-Moralstack-Tenant-Id": "tenant-A"},
+        )
+        r2 = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+            headers={"X-Moralstack-Conversation-Id": "explicit-conv-1", "X-Moralstack-Tenant-Id": "tenant-B"},
+        )
+        assert r1.headers.get("X-Moralstack-Conversation-Id") == "explicit-conv-1"
+        assert r2.headers.get("X-Moralstack-Conversation-Id") == "explicit-conv-1"
+
+    def test_correlation_store_bound_does_not_break_request_on_eviction(self):
+        """Invariant #6: a tiny-bound store forcing eviction mid-run must never
+        break the request — every response is still 200."""
+        tiny_store = ConversationCorrelationStore(max_entries=1)
+        client, _, _ = _build_correlation_client("NORMAL_COMPLETE", correlation_store=tiny_store)
+
+        for i in range(5):
+            response = client.post(
+                "/v1/chat/completions",
+                json={"model": "gpt-4o", "messages": [{"role": "user", "content": f"Q{i}"}]},
+            )
+            assert response.status_code == 200
+        assert tiny_store.size() <= 1
+
+    def test_correlation_store_raising_helper_does_not_break_request(self):
+        """Invariant #6 / blocking fix (diff review 2026-07-09): a correlation
+        store whose internal TTL/eviction helper raises must NOT escape into
+        the endpoint. Unlike the eviction test above (which exercises normal,
+        successful eviction), this forces `_get_id`/`_put_id` to raise so the
+        request path exercises `resolve()`'s best-effort swallow-and-mint
+        fallback ahead of the proxy's fail-closed `try` block."""
+        raising_store = ConversationCorrelationStore()
+        raising_store._get_id = MagicMock(side_effect=RuntimeError("lineage lookup boom"))
+        raising_store._put_id = MagicMock(side_effect=RuntimeError("lineage insert boom"))
+        client, _, _ = _build_correlation_client("NORMAL_COMPLETE", correlation_store=raising_store)
+
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+        )
+        assert response.status_code == 200
+        cid = response.headers.get("X-Moralstack-Conversation-Id")
+        assert cid is not None and cid.startswith("msconv-")
+
+    def test_explicit_header_then_correlation_chains_under_principal(self):
+        """Turn 1 uses the explicit conversation_id header under tenant A; turn 2
+        drops the header (same tenant, extended history) and must chain back to
+        the header-supplied id: observe_completed_turn records (principal,
+        completed_hash) -> cid even when the cid came from the explicit header,
+        for a non-empty principal."""
+        client, _, _ = _build_correlation_client("NORMAL_COMPLETE")
+
+        r1 = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": "Sys"},
+                    {"role": "user", "content": "First Q"},
+                ],
+            },
+            headers={"X-Moralstack-Conversation-Id": "explicit-chain-1", "X-Moralstack-Tenant-Id": "tenant-chain"},
+        )
+        assert r1.headers.get("X-Moralstack-Conversation-Id") == "explicit-chain-1"
+
+        r2 = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": "Sys"},
+                    {"role": "user", "content": "First Q"},
+                    {"role": "assistant", "content": "guidance"},
+                    {"role": "user", "content": "Second Q"},
+                ],
+            },
+            headers={"X-Moralstack-Tenant-Id": "tenant-chain"},
+        )
+        assert r2.headers.get("X-Moralstack-Conversation-Id") == "explicit-chain-1"
+
+
+class TestExtractPrincipal:
+    """Direct unit tests of ``_extract_principal`` layering (A -> B -> C)."""
+
+    def test_tenant_header_used_verbatim(self):
+        from moralstack.server.proxy import _extract_principal
+
+        req = _FakeRequest({"X-Moralstack-Tenant-Id": "tenant-x"})
+        assert _extract_principal(req) == "tenant-x"
+
+    def test_whitespace_only_tenant_header_treated_as_absent(self, monkeypatch):
+        from moralstack.server.proxy import _extract_principal
+
+        monkeypatch.delenv("MORALSTACK_PRINCIPAL_HMAC_SECRET", raising=False)
+        req = _FakeRequest({"X-Moralstack-Tenant-Id": "   "})
+        assert _extract_principal(req) == ""
+
+    def test_no_tenant_bearer_with_secret_returns_hmac_digest(self, monkeypatch):
+        from moralstack.server.proxy import _extract_principal
+
+        monkeypatch.setenv("MORALSTACK_PRINCIPAL_HMAC_SECRET", "test-secret")
+        req = _FakeRequest({"Authorization": "Bearer tok-123"})
+        principal = _extract_principal(req)
+        assert principal
+        assert principal != "tok-123"
+        expected = hmac.new(b"test-secret", b"tok-123", hashlib.sha256).hexdigest()
+        assert principal == expected
+
+    def test_no_tenant_bearer_without_secret_returns_empty(self, monkeypatch):
+        from moralstack.server.proxy import _extract_principal
+
+        monkeypatch.delenv("MORALSTACK_PRINCIPAL_HMAC_SECRET", raising=False)
+        req = _FakeRequest({"Authorization": "Bearer tok-123"})
+        assert _extract_principal(req) == ""
+
+    def test_non_bearer_scheme_returns_empty(self, monkeypatch):
+        from moralstack.server.proxy import _extract_principal
+
+        monkeypatch.setenv("MORALSTACK_PRINCIPAL_HMAC_SECRET", "test-secret")
+        req = _FakeRequest({"Authorization": "Basic dXNlcjpwYXNz"})
+        assert _extract_principal(req) == ""
+
+    def test_no_headers_returns_empty(self):
+        from moralstack.server.proxy import _extract_principal
+
+        req = _FakeRequest({})
+        assert _extract_principal(req) == ""
+
+
+class TestCorrelationEnvWiring:
+    def test_env_wiring_valid_values_parsed(self, monkeypatch):
+        from moralstack.server.proxy import _resolve_correlation_store_env_config
+
+        monkeypatch.setenv("MORALSTACK_CORRELATION_TTL_SECONDS", "42")
+        monkeypatch.setenv("MORALSTACK_CORRELATION_MAX_ENTRIES", "7")
+        ttl_seconds, max_entries = _resolve_correlation_store_env_config()
+        assert ttl_seconds == 42.0
+        assert max_entries == 7
+
+    def test_env_wiring_garbage_and_out_of_range_falls_back_to_defaults(self, monkeypatch):
+        from moralstack.server.proxy import (
+            DEFAULT_CORRELATION_TTL_SECONDS,
+            DEFAULT_MAX_CORRELATION_ENTRIES,
+            _resolve_correlation_store_env_config,
+        )
+
+        for bad_ttl in ("abc", "-5", "0"):
+            monkeypatch.setenv("MORALSTACK_CORRELATION_TTL_SECONDS", bad_ttl)
+            monkeypatch.delenv("MORALSTACK_CORRELATION_MAX_ENTRIES", raising=False)
+            ttl_seconds, max_entries = _resolve_correlation_store_env_config()
+            assert ttl_seconds == DEFAULT_CORRELATION_TTL_SECONDS
+            assert max_entries == DEFAULT_MAX_CORRELATION_ENTRIES
+
+        monkeypatch.delenv("MORALSTACK_CORRELATION_TTL_SECONDS", raising=False)
+        for bad_max in ("abc", "-5", "0"):
+            monkeypatch.setenv("MORALSTACK_CORRELATION_MAX_ENTRIES", bad_max)
+            ttl_seconds, max_entries = _resolve_correlation_store_env_config()
+            assert ttl_seconds == DEFAULT_CORRELATION_TTL_SECONDS
+            assert max_entries == DEFAULT_MAX_CORRELATION_ENTRIES
+
+    def test_create_app_never_raises_on_garbage_correlation_env(self, monkeypatch):
+        monkeypatch.setenv("MORALSTACK_CORRELATION_TTL_SECONDS", "-5")
+        monkeypatch.setenv("MORALSTACK_CORRELATION_MAX_ENTRIES", "0")
+        client, _, _ = _build_correlation_client("NORMAL_COMPLETE")
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+        )
+        assert response.status_code == 200
+
+    def test_env_wiring_valid_values_reach_default_store(self, monkeypatch):
+        """
+        FIX 4 (diff review 2026-07-09): prove parsed valid env values actually
+        reach the ``ConversationCorrelationStore`` that ``create_app`` builds
+        by default (no ``correlation_store=`` injection) — not only that
+        ``_resolve_correlation_store_env_config()`` parses them in isolation.
+        """
+        monkeypatch.setenv("MORALSTACK_CORRELATION_TTL_SECONDS", "42")
+        monkeypatch.setenv("MORALSTACK_CORRELATION_MAX_ENTRIES", "7")
+        client, _, _ = _build_correlation_client("NORMAL_COMPLETE")
+
+        store = _extract_default_correlation_store(client.app)
+        assert store._ttl_seconds == 42.0
+        assert store._max_entries == 7

@@ -15,8 +15,11 @@ under parallel COMPL-AI-style samples (single uvicorn worker).
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -49,7 +52,11 @@ from moralstack.orchestration.types import ProcessedRequest
 from moralstack.sdk.bootstrap import _resolve_model
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.session_store import InMemorySessionStore, SessionStoreProtocol
-from moralstack.server.conversation_correlation import ConversationCorrelationStore
+from moralstack.server.conversation_correlation import (
+    DEFAULT_CORRELATION_TTL_SECONDS,
+    DEFAULT_MAX_CORRELATION_ENTRIES,
+    ConversationCorrelationStore,
+)
 from moralstack.server.headers import build_governance_headers
 
 logger = logging.getLogger("moralstack.server.proxy")
@@ -80,6 +87,13 @@ class ConversationLockManager:
     """
 
     def __init__(self) -> None:
+        # TODO(P3-followup): bound _locks via refcounted-waiter design
+        # (increment waiters under _meta_lock BEFORE the blocking acquire;
+        # prune only entries with waiters==0 AND unlocked). Deferred: the
+        # naive idle-prune sketch races with acquire() releasing _meta_lock
+        # before blocking on lock.acquire() (see plan §5). The correlation
+        # store's TTL/max-entries bound already removes the dominant growth
+        # source (~2 entries/turn vs 1 lock/conversation).
         self._locks: dict[str, threading.Lock] = {}
         self._meta_lock = threading.Lock()
 
@@ -121,18 +135,21 @@ def _resolve_conversation_id_from_body_and_correlation(
     messages: list[dict[str, Any]],
     extra_body: dict[str, Any] | None,
     correlation_store: ConversationCorrelationStore,
+    principal: str = "",
 ) -> str:
     """
     Resolve ``conversation_id`` from ``extra_body`` or lineage correlation.
 
     The HTTP ``X-Moralstack-Conversation-Id`` header is handled in the route
-    handler and takes precedence over this function.
+    handler and takes precedence over this function. ``principal`` (empty by
+    default) keys the correlation store's internal lineage map so identical
+    histories from different principals do not collide (P3 / P0-3 / A3).
     """
     if extra_body:
         explicit = extra_body.get("moralstack_conversation_id")
         if explicit:
             return str(explicit)
-    return correlation_store.resolve(messages)
+    return correlation_store.resolve(messages, principal=principal)
 
 
 _SENSITIVE_HEADER_MARKERS = (
@@ -156,6 +173,49 @@ def _collect_safe_headers(request: Request) -> dict[str, str]:
         val = value if len(value) <= 200 else value[:200] + "\u2026"
         out[str(key)] = val
     return out
+
+
+def _extract_principal(request: Request) -> str:
+    """
+    Derive a per-request principal for conversation-correlation isolation
+    (P3 / P0-3 / A3). Layered derivation, first match wins:
+
+    (A) Trusted internal header ``X-Moralstack-Tenant-Id`` \u2014 used verbatim
+        (after stripping whitespace) when present and non-empty. Set by a
+        trusted fronting layer; a hostile client can forge this header unless
+        that layer strips client-supplied copies (documented trust boundary,
+        not enforced here).
+    (B) HMAC-SHA256 of an ``Authorization: Bearer <token>`` value, keyed by
+        the env secret ``MORALSTACK_PRINCIPAL_HMAC_SECRET`` (read per-request,
+        rotation-friendly \u2014 never captured once at ``create_app``). Only a
+        Bearer scheme triggers this path; a non-Bearer scheme (e.g. ``Basic``)
+        or a malformed/empty value skips straight to (C). If the secret is
+        unset, (B) is silently skipped (no hardcoded fallback, no per-request
+        log spam).
+    (C) Empty-string sentinel \u2014 the ``("", hash)`` keyspace, identical to the
+        pre-change (no-principal) resolution behavior.
+
+    Composite keying built on this principal is anti-collision only, not an
+    authentication/authorization boundary (documented, not enforced here).
+    The raw ``Authorization`` value is never logged nor stored: this function
+    reads ``request.headers`` directly and returns only the resulting principal
+    string. The derived HMAC digest is likewise never logged and never
+    persisted to disk; it is used solely as an in-memory component of the
+    correlation-store map key (``(principal, history_hash)``).
+    """
+    tenant_header = (request.headers.get("X-Moralstack-Tenant-Id") or "").strip()
+    if tenant_header:
+        return tenant_header
+
+    auth_header = request.headers.get("Authorization") or ""
+    scheme, _, token = auth_header.partition(" ")
+    token = token.strip()
+    if scheme.strip().lower() == "bearer" and token:
+        secret = os.environ.get("MORALSTACK_PRINCIPAL_HMAC_SECRET")
+        if secret:
+            return hmac.new(secret.encode("utf-8"), token.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    return ""
 
 
 def _build_synthetic_chat_completion(
@@ -265,15 +325,20 @@ def _handle_chat_completion_sync(
     openai_client: Any,
     orchestrator: Any,
     cfg: GovernanceConfig,
+    principal: str = "",
 ) -> Response:
     """
     Synchronous request handler: governance, session store, upstream OpenAI call.
 
     Intended to run inside ``run_in_threadpool`` so blocking SDK calls do not stall
-    the ASGI event loop.
+    the ASGI event loop. ``principal`` (empty by default) is threaded into the
+    correlation store's map key so identical histories from different tenants
+    resolve to different conversation_ids (P3 / P0-3 / A3).
     """
     hdr = (moralstack_conversation_id_header or "").strip()
-    conversation_id = hdr or _resolve_conversation_id_from_body_and_correlation(messages, extra_body, correlation_store)
+    conversation_id = hdr or _resolve_conversation_id_from_body_and_correlation(
+        messages, extra_body, correlation_store, principal=principal
+    )
 
     request_id_for_audit: str = ""
     final_response_text: str = ""
@@ -420,6 +485,7 @@ def _handle_chat_completion_sync(
                     messages=messages,
                     assistant_content=final_response_text,
                     conversation_id=conversation_id,
+                    principal=principal,
                 )
             except Exception:
                 logger.debug("observe_completed_turn failed (non-fatal)", exc_info=True)
@@ -479,12 +545,46 @@ def _handle_chat_completion_sync(
     return out_response
 
 
+def _resolve_correlation_store_env_config() -> tuple[float, int]:
+    """
+    Read the process-default correlation store bounds from the environment.
+
+    Best-effort parse **and** range-validate ``MORALSTACK_CORRELATION_TTL_SECONDS``
+    (> 0) and ``MORALSTACK_CORRELATION_MAX_ENTRIES`` (>= 1); a missing var, a
+    parse error, or an out-of-range value falls back to the constructor
+    defaults. This function never raises — ``create_app`` must never fail to
+    start on a malformed ``MORALSTACK_CORRELATION_*`` env value.
+    """
+    ttl_seconds: float = DEFAULT_CORRELATION_TTL_SECONDS
+    raw_ttl = os.environ.get("MORALSTACK_CORRELATION_TTL_SECONDS")
+    if raw_ttl is not None:
+        try:
+            parsed_ttl = float(raw_ttl)
+        except ValueError:
+            parsed_ttl = None
+        if parsed_ttl is not None and parsed_ttl > 0:
+            ttl_seconds = parsed_ttl
+
+    max_entries: int = DEFAULT_MAX_CORRELATION_ENTRIES
+    raw_max = os.environ.get("MORALSTACK_CORRELATION_MAX_ENTRIES")
+    if raw_max is not None:
+        try:
+            parsed_max = int(raw_max)
+        except ValueError:
+            parsed_max = None
+        if parsed_max is not None and parsed_max >= 1:
+            max_entries = parsed_max
+
+    return ttl_seconds, max_entries
+
+
 def create_app(
     *,
     openai_client: Any,
     orchestrator: OrchestrationController,
     config: GovernanceConfig | None = None,
     session_store: SessionStoreProtocol | None = None,
+    correlation_store: ConversationCorrelationStore | None = None,
 ) -> FastAPI:
     """
     Build a FastAPI app instance.
@@ -495,6 +595,9 @@ def create_app(
         orchestrator: a configured OrchestrationController.
         config: optional GovernanceConfig. Defaults to GovernanceConfig().
         session_store: optional SessionStoreProtocol (defaults to InMemorySessionStore).
+        correlation_store: optional ConversationCorrelationStore (defaults to a
+            store bounded via MORALSTACK_CORRELATION_TTL_SECONDS /
+            MORALSTACK_CORRELATION_MAX_ENTRIES, or their constructor defaults).
 
     Returns:
         A FastAPI app ready to be served by uvicorn.
@@ -504,7 +607,9 @@ def create_app(
     logger.info("MoralStack proxy upstream generation model: %s", upstream_generation_model)
     store: SessionStoreProtocol = session_store if session_store is not None else InMemorySessionStore()
     lock_manager = ConversationLockManager()
-    correlation_store = ConversationCorrelationStore()
+    if correlation_store is None:
+        _ttl_seconds, _max_entries = _resolve_correlation_store_env_config()
+        correlation_store = ConversationCorrelationStore(ttl_seconds=_ttl_seconds, max_entries=_max_entries)
     # Initialize observability for the proxy lifetime so all governance events
     # are persisted to DB / JSONL per MORALSTACK_OBSERVABILITY_* env vars.
     # Pattern parallels cli/shell.py: init_db + create_run + set_current_run_id.
@@ -576,6 +681,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="`messages` must not be empty")
 
         extra_body = body.get("extra_body") if isinstance(body.get("extra_body"), dict) else None
+        principal = _extract_principal(request)
 
         safe_headers = _collect_safe_headers(request)
         has_extra_conv = bool(extra_body and extra_body.get("moralstack_conversation_id"))
@@ -601,6 +707,7 @@ def create_app(
             openai_client=openai_client,
             orchestrator=orchestrator,
             cfg=cfg,
+            principal=principal,
         )
 
     return app
