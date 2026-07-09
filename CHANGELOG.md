@@ -54,6 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Development
 
+- **memory-guard trace-doc path casing fixed**: `scripts/check_memory_updated.py`
+  referenced `docs/TRACES/*` while the repository directory is `docs/traces/*`, making
+  the guard structurally unsatisfiable for `moralstack/server/` and
+  `moralstack/compliance/` changes (their only mapped docs were the mis-cased trace
+  files). Aligned the four `BEHAVIOR_DOC_MAP` entries to the actual `docs/traces/`
+  paths so the gate enforces the intended doc updates again.
 - **AI harness**: added a self-maintaining memory contract and evolved the Claude Code
   hook mechanics (Stop verify dedup, PreCompact snapshot, SessionEnd diary, docs-gate)
   with offline harness tests under `tests/harness/`. Test-suite isolation hardened
