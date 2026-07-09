@@ -20,16 +20,17 @@ def _policy_with_response(usage: object | None) -> OpenAIPolicy:
 def test_complete_returns_exact_source_when_usage_has_split():
     usage = SimpleNamespace(prompt_tokens=70, completion_tokens=30, total_tokens=100)
     policy = _policy_with_response(usage)
-    _, _, _, pt, ct, source = policy._complete([{"role": "user", "content": "hi"}])
+    _, _, _, pt, ct, cached, source = policy._complete([{"role": "user", "content": "hi"}])
     assert source == "exact"
     assert pt == 70
     assert ct == 30
+    assert cached is None
 
 
 def test_complete_returns_estimated_source_on_70_30_fallback():
     usage = SimpleNamespace(prompt_tokens=None, completion_tokens=None, total_tokens=100)
     policy = _policy_with_response(usage)
-    _, tokens, _, pt, ct, source = policy._complete([{"role": "user", "content": "hi"}])
+    _, tokens, _, pt, ct, _cached, source = policy._complete([{"role": "user", "content": "hi"}])
     assert source == "estimated"
     assert tokens == 100
     assert pt == 70
@@ -38,14 +39,15 @@ def test_complete_returns_estimated_source_on_70_30_fallback():
 
 def test_complete_returns_missing_source_when_usage_is_none():
     policy = _policy_with_response(None)
-    _, tokens, _, pt, ct, source = policy._complete([{"role": "user", "content": "hi"}])
+    _, tokens, _, pt, ct, cached, source = policy._complete([{"role": "user", "content": "hi"}])
     assert source == "missing"
     assert tokens == 0
     assert pt == 0
     assert ct == 0
+    assert cached is None
 
 
-def test_complete_6_tuple_call_sites_updated():
+def test_complete_tuple_call_sites_updated():
     usage = SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15)
     policy = _policy_with_response(usage)
 
@@ -54,3 +56,19 @@ def test_complete_6_tuple_call_sites_updated():
 
     msgs = policy.generate_messages([{"role": "user", "content": "hello"}])
     assert msgs.token_usage_source == "exact"
+
+
+def test_complete_propagates_cached_prompt_tokens_to_generation_result():
+    usage = SimpleNamespace(
+        prompt_tokens=2000,
+        completion_tokens=30,
+        total_tokens=2030,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=1024),
+    )
+    policy = _policy_with_response(usage)
+
+    _, _, _, _, _, cached, _ = policy._complete([{"role": "user", "content": "hi"}])
+    assert cached == 1024
+
+    assert policy.generate("hello").cached_prompt_tokens == 1024
+    assert policy.generate_messages([{"role": "user", "content": "hi"}]).cached_prompt_tokens == 1024

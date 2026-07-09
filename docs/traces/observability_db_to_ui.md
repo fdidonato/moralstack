@@ -113,6 +113,14 @@ both `EnhancedDomainAgent` and legacy `DomainAgent`).
   llm_calls WHERE … AND COALESCE(billable_provider_call,1)=1` is the most complete
   view among rows actually written to SQLite — still not a completeness guarantee
   because the async queue may drop envelopes before they reach the DB.
+- **Cached input tokens**: `llm_calls.cached_input_tokens` (nullable) carries the
+  provider-reported prompt-cache hit for that call. `NULL` = the provider reported no
+  cache details (this includes every row written before the column existed);
+  `0` = a measured cache miss. `get_token_usage_breakdown` returns `cached_input_tokens`
+  (`SUM`, NULL-skipping) and `cached_usage_known` (`COUNT` of non-NULL) so the two are
+  never conflated; it guards the `SELECT` with `_column_exists` so a pre-migration DB
+  still yields a breakdown instead of failing. Cached tokens are billed at a reduced
+  rate — they do not reduce token counts. See `docs/modules/observability.md`.
 - **UI**: `ReadStore.get_token_usage_totals`/`get_token_usage_breakdown` and the
   per-model aggregations `get_token_usage_by_model_{global,for_run,for_request,
   for_conversation}` all filter non-billable diagnostic rows the same way as the

@@ -9,14 +9,22 @@
 {% if tt is not none %}
 {% set est = call.get('token_usage_estimated') %}
 {% set miss = call.get('token_usage_missing') %}
+{% set cached = call.get('cached_input_tokens') %}
 <span class="badge badge-tokens"
-      title="input {{ call.get('input_tokens') or 0 }} · output {{ call.get('output_tokens') or 0 }} · total {{ tt }} tokens{% if est %} — estimated 70/30 split{% elif miss %} — provider returned no usage{% endif %}">
+      title="input {{ call.get('input_tokens') or 0 }} · output {{ call.get('output_tokens') or 0 }} · total {{ tt }} tokens{% if cached is not none %} — {{ cached }} input tokens from the prompt cache (billed at a reduced rate){% endif %}{% if est %} — estimated 70/30 split{% elif miss %} — provider returned no usage{% endif %}">
     &#9930; {{ '{:,}'.format(tt) }} tok{% if est %} <span class="tok-flag tok-flag-est">est</span>{% elif miss %} <span class="tok-flag tok-flag-miss">?</span>{% endif %}
 </span>
+{# Only a measured hit gets a badge: a measured 0 and an unreported call would both be noise here. #}
+{% if cached %}
+<span class="badge badge-cached" title="{{ cached }} of {{ call.get('input_tokens') or 0 }} input tokens served from the provider's prompt cache">
+    &#8635; {{ '{:,}'.format(cached) }}
+</span>
+{% endif %}
 {% endif %}
 {% endmacro %}
 <style>
 .badge-tokens { background: rgba(45, 212, 191, 0.15); color: #2dd4bf; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.badge-cached { background: rgba(129, 140, 248, 0.15); color: #818cf8; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tok-flag { font-size: 0.62rem; padding: 0 0.25rem; border-radius: 4px; margin-left: 0.1rem; }
 .tok-flag-est { background: var(--yellow-bg); color: var(--yellow); }
 .tok-flag-miss { background: var(--red-bg); color: var(--red); }
@@ -302,6 +310,11 @@
         <div></div>
         <div class="token-usage-totals">
             <span class="badge badge-tokens">&#9930; {{ '{:,}'.format(domain_retrieval.total_tokens) }} tokens</span>
+            {% if domain_retrieval.cache_hit_pct is not none %}
+            <span class="badge badge-cached" title="{{ '{:,}'.format(domain_retrieval.total_cached) }} input tokens served from the prompt cache">
+                &#8635; {{ domain_retrieval.cache_hit_pct }}% cached
+            </span>
+            {% endif %}
             {% if domain_retrieval.estimated_calls %}<span class="tok-flag tok-flag-est">{{ domain_retrieval.estimated_calls }} est</span>{% endif %}
             {% if domain_retrieval.missing_calls %}<span class="tok-flag tok-flag-miss">{{ domain_retrieval.missing_calls }} no-usage</span>{% endif %}
         </div>
@@ -317,6 +330,7 @@
                 <th class="domain-retrieval-num">Input</th>
                 <th class="domain-retrieval-num">Output</th>
                 <th class="domain-retrieval-num">Total</th>
+                <th class="domain-retrieval-num">Cache hit</th>
                 <th class="domain-retrieval-num">ms</th>
                 <th>Quality</th>
             </tr>
@@ -331,6 +345,9 @@
                 <td class="domain-retrieval-num">{{ '{:,}'.format(r.input_tokens) }}</td>
                 <td class="domain-retrieval-num">{{ '{:,}'.format(r.output_tokens) }}</td>
                 <td class="domain-retrieval-num"><strong>{{ '{:,}'.format(r.total_tokens) }}</strong></td>
+                <td class="domain-retrieval-num" {% if r.cached_tokens is not none %}title="{{ '{:,}'.format(r.cached_tokens) }} cached input tokens"{% endif %}>
+                    {% if r.cache_hit_pct is not none %}{{ r.cache_hit_pct }}%{% else %}<span class="muted">—</span>{% endif %}
+                </td>
                 <td class="domain-retrieval-num">{% if r.duration_ms %}{{ r.duration_ms | round(0) | int }}{% else %}—{% endif %}</td>
                 <td>
                     {% if r.estimated %}<span class="tok-flag tok-flag-est">est</span>
@@ -1099,6 +1116,11 @@
         {% if info.total_tokens %}
         <span class="meta-value module-token-line">
             <span class="badge badge-tokens">&#9930; {{ '{:,}'.format(info.total_tokens) }} tok</span>
+            {% if info.cache_hit_pct is not none %}
+            <span class="badge badge-cached" title="{{ '{:,}'.format(info.cached_tokens) }} of {{ '{:,}'.format(info.input_tokens) }} input tokens served from the prompt cache">
+                &#8635; {{ info.cache_hit_pct }}% cached
+            </span>
+            {% endif %}
             {% if info.estimated_calls %}<span class="tok-flag tok-flag-est">{{ info.estimated_calls }} est</span>{% endif %}
             {% if info.missing_calls %}<span class="tok-flag tok-flag-miss">{{ info.missing_calls }} no-usage</span>{% endif %}
         </span>

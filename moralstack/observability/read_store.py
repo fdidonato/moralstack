@@ -31,6 +31,19 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
         return False
 
 
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    """Return True when ``table`` has ``column``.
+
+    Columns added by the additive migrations are absent from databases written by
+    older versions; a read path over such a DB must degrade, not fail.
+    """
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return any(r[1] == column for r in rows)
+    except Exception:
+        return False
+
+
 class ReadStore(Protocol):
     """Protocol: all query operations available to UI and reports."""
 
@@ -349,12 +362,26 @@ class SqliteReadStore:
             return []
         try:
             conn = _get_connection(path)
+            # cached_input_tokens is absent from pre-migration databases; SUM/COUNT over
+            # it would raise and drop the whole breakdown, so select it only when present.
+            # COUNT(col) skips NULLs, so cached_usage_known separates a measured 0 (cache
+            # miss) from "the provider reported nothing".
+            if _column_exists(conn, "llm_calls", "cached_input_tokens"):
+                cached_select = (
+                    "SUM(cached_input_tokens) AS cached_input_tokens, "
+                    "COUNT(cached_input_tokens) AS cached_usage_known, "
+                    "SUM(CASE WHEN cached_input_tokens IS NOT NULL THEN COALESCE(input_tokens, 0) ELSE 0 END) "
+                    "AS cached_input_base,"
+                )
+            else:
+                cached_select = "NULL AS cached_input_tokens, 0 AS cached_usage_known, 0 AS cached_input_base,"
             rows = conn.execute(
-                """
+                f"""
                 SELECT module, phase, action, model,
                        SUM(input_tokens) AS input_tokens,
                        SUM(output_tokens) AS output_tokens,
                        SUM(total_tokens) AS total_tokens,
+                       {cached_select}
                        COUNT(*) AS calls,
                        SUM(token_usage_missing) AS missing_usage
                 FROM llm_calls
@@ -381,9 +408,22 @@ class SqliteReadStore:
                SUM(COALESCE(lc.total_tokens, 0)) AS total_tokens,
                COUNT(*) AS calls,
                SUM(COALESCE(lc.token_usage_missing, 0)) AS missing_usage,
-               SUM(COALESCE(lc.token_usage_estimated, 0)) AS estimated_usage
+               SUM(COALESCE(lc.token_usage_estimated, 0)) AS estimated_usage,
+               {cached_select}
         FROM llm_calls lc
     """
+    # Absent from pre-migration databases; COUNT(col) skips NULLs, so
+    # cached_usage_known separates a measured 0 (miss) from "provider said nothing".
+    # ``cached_input_base`` is the input-token denominator restricted to the calls the
+    # provider actually reported on: mixing in the input of unreported calls would
+    # silently understate the hit rate wherever old and new rows share a model.
+    _CACHED_SELECT = (
+        "SUM(COALESCE(lc.cached_input_tokens, 0)) AS cached_input_tokens, "
+        "COUNT(lc.cached_input_tokens) AS cached_usage_known, "
+        "SUM(CASE WHEN lc.cached_input_tokens IS NOT NULL THEN COALESCE(lc.input_tokens, 0) ELSE 0 END) "
+        "AS cached_input_base"
+    )
+    _CACHED_SELECT_ABSENT = "NULL AS cached_input_tokens, 0 AS cached_usage_known, 0 AS cached_input_base"
     _TOKEN_BY_MODEL_TAIL = """
         GROUP BY COALESCE(NULLIF(TRIM(lc.model), ''), '')
         ORDER BY total_tokens DESC, model ASC
@@ -403,8 +443,14 @@ class SqliteReadStore:
         try:
             conn = _get_connection(path)
             join = "JOIN requests req ON req.run_id = lc.run_id AND req.request_id = lc.request_id" if join_requests else ""
+            cached_select = (
+                self._CACHED_SELECT
+                if _column_exists(conn, "llm_calls", "cached_input_tokens")
+                else self._CACHED_SELECT_ABSENT
+            )
+            select = self._TOKEN_BY_MODEL_SELECT.format(cached_select=cached_select)
             sql = (
-                f"{self._TOKEN_BY_MODEL_SELECT} {join} "
+                f"{select} {join} "
                 f"WHERE COALESCE(lc.billable_provider_call, 1) = 1 AND {where} "
                 f"{self._TOKEN_BY_MODEL_TAIL}"
             )

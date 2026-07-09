@@ -604,8 +604,9 @@ _LLM_CALLS_INSERT = """
                            attempts, error, sequence_in_cycle,
                            call_kind, call_outcome, cache_status, related_event_id,
                            input_tokens, output_tokens, total_tokens,
-                           token_usage_missing, token_usage_estimated, billable_provider_call)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           token_usage_missing, token_usage_estimated, billable_provider_call,
+                           cached_input_tokens)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _DECISION_TRACES_INSERT = """
@@ -666,6 +667,8 @@ def _derive_llm_call_token_columns(payload: Mapping[str, Any]) -> tuple[Any, ...
         token_usage_missing,
         token_usage_estimated,
         billable_provider_call,
+        # NULL when the provider reported no prompt-cache details: unknown, not zero.
+        usage.cached_input_tokens,
     )
 
 
@@ -792,6 +795,7 @@ def init_db(db_path: str | None = None) -> bool:
             ("token_usage_missing", "ALTER TABLE llm_calls ADD COLUMN token_usage_missing INTEGER"),
             ("token_usage_estimated", "ALTER TABLE llm_calls ADD COLUMN token_usage_estimated INTEGER"),
             ("billable_provider_call", "ALTER TABLE llm_calls ADD COLUMN billable_provider_call INTEGER"),
+            ("cached_input_tokens", "ALTER TABLE llm_calls ADD COLUMN cached_input_tokens INTEGER"),
         ):
             try:
                 conn.execute(_sql)

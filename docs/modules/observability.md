@@ -240,13 +240,80 @@ context into each worker via `contextvars.copy_context().run`, otherwise
 `persist_llm_call` would short-circuit on the empty run/request id and drop the
 row entirely (so their tokens would be missing from every scope).
 
-`TokenUsage.from_openai_usage` (`observability/token_usage.py:32-59`) marks a call
-`source="exact"` only when the provider returns separate `prompt_tokens` and
-`completion_tokens`. When only `total_tokens` is available, it estimates the
-input/output split as **70%/30%** of the total and marks `source="estimated"` —
-an arbitrary heuristic, not derived from the actual prompt/completion shape.
-Consumers that need a precise split (not just the total) should check `source`
-before trusting `input_tokens`/`output_tokens` on estimated rows.
+`TokenUsage.from_openai_usage` marks a call `source="exact"` only when the provider
+returns separate `prompt_tokens` and `completion_tokens`. When only `total_tokens` is
+available, it estimates the input/output split as **70%/30%** of the total and marks
+`source="estimated"` — an arbitrary heuristic, not derived from the actual
+prompt/completion shape. Consumers that need a precise split (not just the total)
+should check `source` before trusting `input_tokens`/`output_tokens` on estimated rows.
+
+### Cached input tokens (prompt-caching observability)
+
+`TokenUsage.cached_input_tokens` carries the provider-reported subset of
+`input_tokens` served from the prompt cache, extracted from
+`usage.prompt_tokens_details.cached_tokens` by `extract_cached_input_tokens`
+(`observability/token_usage.py`). It is persisted to `llm_calls.cached_input_tokens`
+(nullable, added by the additive migration list) and exposed by
+`get_token_usage_breakdown()` as `cached_input_tokens` plus `cached_usage_known`.
+
+**`None` and `0` are different answers, and the distinction is load-bearing:**
+
+- `None` (SQL `NULL`) — the provider reported no cache details at all. Every row
+  written before this column existed reads as `None`; so does any non-OpenAI or
+  OpenAI-compatible provider that omits `prompt_tokens_details`, and every
+  embeddings call (that endpoint has no prompt cache).
+- `0` — the provider measured the call and found **no** cache hit.
+
+Collapsing the two would make a hit-rate meaningless, so `to_json()` omits the key
+when unknown (keeping payloads byte-identical to the pre-caching format) and emits it
+when it is `0`. `TokenUsage.combine` sums only the known values and stays `None` when
+none are known. Extraction is defensive by contract (§5.6): it tolerates a missing or
+`None` `prompt_tokens_details`, a `Mapping`-shaped one, an `Optional[int]`
+`cached_tokens` of `None`, and rejects non-`int` values (a `MagicMock` coerces to
+`int(1)` silently) — it never raises into the caller. Values are clamped to
+`input_tokens`.
+
+Because the deliberative modules copy token fields into their own report objects
+rather than passing the `GenerationResult` down, `cached_prompt_tokens` is threaded
+explicitly through `GenerationResult`, `CriticReport`, `SimulationResult`,
+`HindsightResult`, `PerspectiveResult` and `EnsembleResult`. Omitting any of those
+copy sites silently drops the signal for that module while retaining it on its
+failed-retry rows. Locked by `tests/test_cached_token_propagation.py`.
+
+Interpreting a hit-rate: OpenAI prompt caching engages only above a minimum prompt
+length (~1024 tokens) and only on an exact, stable prefix. A **0% hit-rate on short
+prompts is not evidence that caching is broken** — report mean `input_tokens` and the
+known/unknown split alongside the ratio. Cached tokens are billed at a reduced rate;
+they do **not** reduce the number of tokens consumed.
+
+**UI surfaces.** The cache hit rate appears everywhere per-module / per-model token
+metrics already appear:
+
+- the shared per-model panel (`_token_usage_view()` → `templates/_token_usage.html`) at
+  all four scopes (dashboard, run, conversation, single question): a `% cached` header
+  badge plus `Cached in` / `Cache hit` columns per model;
+- the per-module rollup on the request page (`_module_summaries()`);
+- the per-call `token_badge` macro (a `↻ N` badge, shown only on a measured hit);
+- the Domain retrieval table (`_domain_retrieval_view()`), per call and in total.
+
+All of them render `—` when the provider reported nothing and `0.0%` when it measured a
+miss; `_cache_hit_pct()` returns `None` for the former.
+
+**Denominator.** The hit rate divides cached tokens by `cached_input_base` — the input
+tokens of *only the calls the provider reported on* — never by total input. A model or
+module whose rows mix reported and unreported calls (e.g. a database holding runs from
+before this column existed) would otherwise show a silently diluted percentage. The SQL
+aggregations expose `cached_input_base` alongside `cached_input_tokens` and
+`cached_usage_known`.
+
+Locked by `tests/test_ui_cache_hit_visibility.py` (helpers + end-to-end HTML render,
+including a legacy-row page that must not print `0%`, and explicit no-dilution cases)
+and `tests/test_observability_read_store_token_usage.py`.
+
+Deliberately out of scope: the request-level accumulator and `request_token_usage` do
+not carry cached tokens (`cached ⊆ input`, so existing totals stay correct — and that
+table is a request total, not a per-module/per-model metric), and the proxy's
+client-facing `usage` does not expose `prompt_tokens_details`.
 
 ---
 

@@ -679,6 +679,20 @@ domain, phase, model and tokens. Per-domain attribution relies on the `domain`
 field that `constitution/retriever.py::_persist_constitution_llm_call` now writes
 into `parsed_summary_json` for the enhanced/legacy domain agents.
 
+**Prompt-cache observability.** `llm_calls.cached_input_tokens` (nullable) records the
+provider-reported cached prefix per call, extracted by
+`observability/token_usage.py::extract_cached_input_tokens` and threaded through
+`GenerationResult` → the module report objects (`CriticReport`, `SimulationResult`,
+`HindsightResult`, `PerspectiveResult`/`EnsembleResult`), which copy token fields
+rather than forwarding the `GenerationResult`. `NULL` means "provider reported
+nothing" and `0` means "measured cache miss"; the two are never merged.
+`get_token_usage_breakdown` and the per-model aggregations expose
+`cached_input_tokens` + `cached_usage_known`. The UI shows the hit rate at every scope
+where token metrics already appear: the shared per-model panel (4 scopes), the
+per-module rollup, the per-call badge, and the Domain retrieval table — `—` when
+unknown, `0.0%` when measured. Contract and hit-rate caveats:
+`docs/modules/observability.md`.
+
 ---
 
 ## 15. COMPL-AI integration points

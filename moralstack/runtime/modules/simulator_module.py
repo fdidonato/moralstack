@@ -122,6 +122,7 @@ class SimulationResult:
     tokens_used: int = 0
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    cached_prompt_tokens: int | None = None
     token_usage_source: TokenUsageSource = "unknown"
     from_cache: bool = False
 
@@ -451,6 +452,7 @@ class LLMConsequenceSimulator:
                     tokens_used=tokens_used,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    cached_prompt_tokens=attempt_token_usage.cached_input_tokens,
                     token_usage_source=attempt_token_usage.source,
                 )
             except (JSONParseError, Exception) as e:
@@ -592,7 +594,10 @@ class LLMConsequenceSimulator:
 
         if not consequences:
             raise RuntimeError(f"Simulator produced no valid structured output after {total_attempts} attempts")
-        combined_source = TokenUsage.combine(seed_token_usages).source if seed_token_usages else "missing"
+        # combine() sums only the seeds whose provider reported cache details, and
+        # returns None when none did — so "unknown" never collapses into "zero".
+        combined = TokenUsage.combine(seed_token_usages) if seed_token_usages else None
+        combined_source = combined.source if combined is not None else "missing"
         return self._build_result(
             consequences=consequences,
             raw_response="\n---\n".join(raw_responses),
@@ -602,6 +607,7 @@ class LLMConsequenceSimulator:
             tokens_used=total_tokens_used,
             prompt_tokens=(total_prompt_tokens if has_prompt_tokens else None),
             completion_tokens=(total_completion_tokens if has_completion_tokens else None),
+            cached_prompt_tokens=(combined.cached_input_tokens if combined is not None else None),
             token_usage_source=combined_source,
         )
 
@@ -637,6 +643,7 @@ class LLMConsequenceSimulator:
         tokens_used: int = 0,
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
+        cached_prompt_tokens: int | None = None,
         token_usage_source: TokenUsageSource = "unknown",
     ) -> SimulationResult:
         """
@@ -691,6 +698,7 @@ class LLMConsequenceSimulator:
             tokens_used=tokens_used,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cached_prompt_tokens=cached_prompt_tokens,
             token_usage_source=token_usage_source,
         )
 

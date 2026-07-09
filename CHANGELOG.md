@@ -6,6 +6,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Prompt-cache observability**: every LLM call now records how many input tokens the
+  provider served from its prompt cache (`usage.prompt_tokens_details.cached_tokens`),
+  persisted to the new nullable `llm_calls.cached_input_tokens` column (additive
+  migration, no backfill). `TokenUsage.cached_input_tokens` is `int | None`: `None` means
+  the provider reported nothing (pre-migration rows, embeddings, providers that omit the
+  field), `0` means it measured a cache miss — the two are never conflated, because a hit
+  rate needs both. Extraction is defensive and never raises (`prompt_tokens_details` may
+  be absent, `None`, or a `Mapping`; `cached_tokens` is `Optional[int]`; non-`int` values
+  are rejected). The field is threaded through `GenerationResult` **and** the deliberative
+  modules' own report objects (`CriticReport`, `SimulationResult`, `HindsightResult`,
+  `PerspectiveResult`/`EnsembleResult`), which copy token fields rather than forwarding
+  the `GenerationResult`. The UI surfaces the hit rate wherever per-module/per-model token
+  metrics already appear: the shared per-model panel (dashboard, run, conversation,
+  request), the per-module rollup, the per-call badge, and the Domain retrieval table;
+  `—` when unknown, `0.0%` when measured. The rate divides by the input tokens of the
+  reported calls only, so a model mixing old and new rows is not diluted. Read paths guard
+  the new column, so a database written before the migration still renders.
+  Measured on a COMPL-AI replay: 63.0% of input tokens cached (−31.5% input cost).
+  Cached tokens are billed at a reduced rate; they do not reduce token counts.
+
 ### Changed
 
 - **Bounded, tenant/principal-aware proxy conversation correlation store** (P3):

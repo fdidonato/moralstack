@@ -178,10 +178,12 @@ class OpenAIPolicy:
         prediction: dict[str, str] | None = None,
         model_override: str | None = None,
         omit_unset: bool = False,
-    ) -> tuple[str, int, str, int, int, TokenUsageSource]:
+    ) -> tuple[str, int, str, int, int, int | None, TokenUsageSource]:
         """
         Completions call with retry on transient errors (429/503/timeout).
-        Returns (text, tokens_used, finish_reason, prompt_tokens, completion_tokens, token_usage_source).
+        Returns (text, tokens_used, finish_reason, prompt_tokens, completion_tokens,
+        cached_prompt_tokens, token_usage_source). ``cached_prompt_tokens`` is None when
+        the provider reports no prompt-cache details.
         Uses classifier and jittered backoff.
 
         Args:
@@ -244,7 +246,15 @@ class OpenAIPolicy:
                 if self._cost_tracker is not None and hasattr(self._cost_tracker, "add_call"):
                     self._cost_tracker.add_call(effective_model, prompt_tokens, completion_tokens)
                 reason = choice.finish_reason or "stop"
-                return text, tokens, reason, prompt_tokens, completion_tokens, token_usage.source
+                return (
+                    text,
+                    tokens,
+                    reason,
+                    prompt_tokens,
+                    completion_tokens,
+                    token_usage.cached_input_tokens,
+                    token_usage.source,
+                )
             except Exception as e:
                 last_error = e
                 if classify_provider_error(e) == "transient" and attempt < self._max_retries - 1:
@@ -325,7 +335,7 @@ class OpenAIPolicy:
                 response_format = getattr(config, "response_format", None)
             max_tokens, temperature, top_p = self._apply_overrides(overrides, max_tokens, temperature, top_p)
 
-        text, tokens_used, finish_reason, p_tok, c_tok, source = self._complete(
+        text, tokens_used, finish_reason, p_tok, c_tok, cached_tok, source = self._complete(
             messages,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -344,6 +354,7 @@ class OpenAIPolicy:
             system_used=system if system else None,
             prompt_tokens=p_tok,
             completion_tokens=c_tok,
+            cached_prompt_tokens=cached_tok,
             token_usage_source=source,
         )
 
@@ -381,7 +392,7 @@ class OpenAIPolicy:
                 response_format = getattr(config, "response_format", None)
             max_tokens, temperature, top_p = self._apply_overrides(overrides, max_tokens, temperature, top_p)
 
-        text, tokens_used, finish_reason, p_tok, c_tok, source = self._complete(
+        text, tokens_used, finish_reason, p_tok, c_tok, cached_tok, source = self._complete(
             messages,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -401,6 +412,7 @@ class OpenAIPolicy:
             messages_used=messages,
             prompt_tokens=p_tok,
             completion_tokens=c_tok,
+            cached_prompt_tokens=cached_tok,
             token_usage_source=source,
         )
 

@@ -87,6 +87,7 @@ class PerspectiveResult:
     tokens_used: int = 0
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    cached_prompt_tokens: int | None = None
     token_usage_source: TokenUsageSource = "unknown"
 
     def __post_init__(self) -> None:
@@ -175,6 +176,7 @@ class EnsembleResult:
     tokens_used: int = 0
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    cached_prompt_tokens: int | None = None
     token_usage_source: TokenUsageSource = "unknown"
     from_cache: bool = False
 
@@ -632,6 +634,7 @@ class LLMPerspectiveEnsemble:
         system_prompts_list = [getattr(r, "system_prompt", "") for r in results]
         prompt_tokens = _sum_optional_token_field(results, "prompt_tokens")
         completion_tokens = _sum_optional_token_field(results, "completion_tokens")
+        cached_prompt_tokens = _sum_optional_token_field(results, "cached_prompt_tokens")
         combined_source = TokenUsage.combine(
             [
                 TokenUsage(
@@ -655,6 +658,7 @@ class LLMPerspectiveEnsemble:
             tokens_used=sum(int(getattr(r, "tokens_used", 0) or 0) for r in results),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cached_prompt_tokens=cached_prompt_tokens,
             token_usage_source=combined_source,
         )
 
@@ -700,6 +704,7 @@ class LLMPerspectiveEnsemble:
         system_prompts_list = [getattr(r, "system_prompt", "") for r in results]
         prompt_tokens = _sum_optional_token_field(results, "prompt_tokens")
         completion_tokens = _sum_optional_token_field(results, "completion_tokens")
+        cached_prompt_tokens = _sum_optional_token_field(results, "cached_prompt_tokens")
         combined_source = TokenUsage.combine(
             [
                 TokenUsage(
@@ -723,6 +728,7 @@ class LLMPerspectiveEnsemble:
             tokens_used=sum(int(getattr(r, "tokens_used", 0) or 0) for r in results),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cached_prompt_tokens=cached_prompt_tokens,
             token_usage_source=combined_source,
         )
 
@@ -790,6 +796,7 @@ class LLMPerspectiveEnsemble:
                 pr.tokens_used = attempt_token_usage.total_tokens
                 pr.prompt_tokens = getattr(result, "prompt_tokens", None)
                 pr.completion_tokens = getattr(result, "completion_tokens", None)
+                pr.cached_prompt_tokens = attempt_token_usage.cached_input_tokens
                 pr.token_usage_source = attempt_token_usage.source
                 return pr
             except (JSONParseError, Exception) as e:

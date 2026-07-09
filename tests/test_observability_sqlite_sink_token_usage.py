@@ -103,6 +103,71 @@ def test_sqlite_sink_write_llm_call_without_usage_leaves_columns_null(tmp_path, 
     assert row["token_usage_json"] is None
 
 
+def _emit_llm_call(usage_json: str | None) -> None:
+    payload = {
+        "phase": "deliberation",
+        "module": "policy",
+        "action": "generate",
+        "prompt": "p",
+        "raw_response": "{}",
+    }
+    if usage_json is not None:
+        payload["token_usage_json"] = usage_json
+    SqliteEventSink().write_envelope(make_envelope(EVENT_LLM_CALL, run_id="run-1", request_id="req-1", payload=payload))
+
+
+def test_sqlite_sink_persists_cached_input_tokens(tmp_path, monkeypatch):
+    dbp = _setup(tmp_path, monkeypatch)
+    create_run("run-1", run_type="test", meta={})
+    upsert_request("run-1", "req-1", prompt="hi", domain="")
+    usage = json.dumps(
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "total_tokens": 150,
+            "source": "exact",
+            "cached_input_tokens": 64,
+        }
+    )
+    _emit_llm_call(usage)
+    conn = _get_connection(dbp)
+    row = conn.execute("SELECT cached_input_tokens FROM llm_calls").fetchone()
+    conn.close()
+    assert row["cached_input_tokens"] == 64
+
+
+def test_sqlite_sink_persists_measured_zero_cached_tokens(tmp_path, monkeypatch):
+    """A measured cache miss (0) must not be stored as NULL/unknown."""
+    dbp = _setup(tmp_path, monkeypatch)
+    create_run("run-1", run_type="test", meta={})
+    upsert_request("run-1", "req-1", prompt="hi", domain="")
+    usage = json.dumps(
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "total_tokens": 150,
+            "source": "exact",
+            "cached_input_tokens": 0,
+        }
+    )
+    _emit_llm_call(usage)
+    conn = _get_connection(dbp)
+    row = conn.execute("SELECT cached_input_tokens FROM llm_calls").fetchone()
+    conn.close()
+    assert row["cached_input_tokens"] == 0
+
+
+def test_sqlite_sink_cached_tokens_null_when_provider_reported_nothing(tmp_path, monkeypatch):
+    dbp = _setup(tmp_path, monkeypatch)
+    create_run("run-1", run_type="test", meta={})
+    upsert_request("run-1", "req-1", prompt="hi", domain="")
+    _emit_llm_call(_usage_json(100, 50, 150))
+    conn = _get_connection(dbp)
+    row = conn.execute("SELECT cached_input_tokens FROM llm_calls").fetchone()
+    conn.close()
+    assert row["cached_input_tokens"] is None
+
+
 def test_init_db_migration_idempotent_adds_new_llm_calls_columns(tmp_path, monkeypatch):
     dbp = _setup(tmp_path, monkeypatch)
     init_db(dbp)
@@ -116,6 +181,7 @@ def test_init_db_migration_idempotent_adds_new_llm_calls_columns(tmp_path, monke
         "token_usage_missing",
         "token_usage_estimated",
         "billable_provider_call",
+        "cached_input_tokens",
     ):
         assert name in cols
 
@@ -152,6 +218,7 @@ def test_init_db_migration_on_preexisting_db_without_new_columns(tmp_path, monke
     conn.close()
     assert "input_tokens" in cols
     assert "billable_provider_call" in cols
+    assert "cached_input_tokens" in cols
 
 
 def test_new_index_idx_llm_calls_module_model_created(tmp_path, monkeypatch):

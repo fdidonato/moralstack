@@ -120,6 +120,7 @@ class GenerationResult:
     messages_used: Optional[List[dict[str, Any]]] = None
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
+    cached_prompt_tokens: Optional[int] = None
     token_usage_source: TokenUsageSource = "unknown"
 
     def token_usage_json(self) -> str | None:

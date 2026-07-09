@@ -15,6 +15,7 @@ benchmark_outputs/
 
 # Runtime artifacts (DB, probe outputs, root logs) — never commit these
 /moralstack.db
+/moralstackbkp.db
 /logs/
 risk_probe_out.*
 

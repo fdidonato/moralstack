@@ -7,6 +7,12 @@
         <div class="token-usage-totals">
             <span class="badge badge-type" title="Total tokens across all models">{{ '{:,}'.format(token_usage.total_tokens) }} tokens</span>
             <span class="muted small">in {{ '{:,}'.format(token_usage.total_input) }} · out {{ '{:,}'.format(token_usage.total_output) }} · {{ token_usage.total_calls }} calls</span>
+            {% if token_usage.cache_hit_pct is not none %}
+            <span class="badge badge-ok"
+                  title="{{ '{:,}'.format(token_usage.total_cached) }} of {{ '{:,}'.format(token_usage.total_input) }} input tokens were served from the provider's prompt cache (billed at a reduced rate). Cached tokens do not reduce the token count. Measured on {{ token_usage.cached_known_calls }} call(s).">
+                &#8635; {{ token_usage.cache_hit_pct }}% cached
+            </span>
+            {% endif %}
             {% if token_usage.estimated_calls %}
             <span class="badge badge-running" title="Provider returned no token split; counts use a 70/30 estimate">{{ token_usage.estimated_calls }} estimated</span>
             {% endif %}
@@ -23,6 +29,8 @@
                 <th class="num">Input</th>
                 <th class="num">Output</th>
                 <th class="num">Total</th>
+                <th class="num">Cached in</th>
+                <th class="num">Cache hit</th>
                 <th class="num">Calls</th>
                 <th>Quality</th>
             </tr>
@@ -34,6 +42,9 @@
                 <td class="num">{{ '{:,}'.format(m.input_tokens or 0) }}</td>
                 <td class="num">{{ '{:,}'.format(m.output_tokens or 0) }}</td>
                 <td class="num"><strong>{{ '{:,}'.format(m.total_tokens or 0) }}</strong></td>
+                {# '—' means the provider reported no cache details; 0.0% is a measured miss. #}
+                <td class="num">{% if m.cache_hit_pct is not none %}{{ '{:,}'.format(m.cached_input_tokens or 0) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+                <td class="num">{% if m.cache_hit_pct is not none %}{{ m.cache_hit_pct }}%{% else %}<span class="muted" title="Provider reported no prompt-cache details for these calls">—</span>{% endif %}</td>
                 <td class="num">{{ m.calls or 0 }}</td>
                 <td>
                     {% if not m.estimated_usage and not m.missing_usage %}

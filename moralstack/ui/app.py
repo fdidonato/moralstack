@@ -2174,6 +2174,12 @@ def _module_summaries(llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
         total_tokens = sum(int(x.get("total_tokens") or 0) for x in calls)
         estimated_calls = sum(1 for x in calls if x.get("token_usage_estimated"))
         missing_calls = sum(1 for x in calls if x.get("token_usage_missing"))
+        input_tokens = sum(int(x.get("input_tokens") or 0) for x in calls)
+        # Hit rate is measured only over the calls the provider reported on, so the
+        # denominator is their input tokens — not every call's.
+        cached_calls = [x for x in calls if x.get("cached_input_tokens") is not None]
+        cached_tokens = sum(int(x.get("cached_input_tokens") or 0) for x in cached_calls)
+        cached_input_base = sum(int(x.get("input_tokens") or 0) for x in cached_calls)
         summaries[mod] = {
             "count": len(calls),
             "total_ms": round(total_ms, 0),
@@ -2181,8 +2187,22 @@ def _module_summaries(llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
             "total_tokens": total_tokens,
             "estimated_calls": estimated_calls,
             "missing_calls": missing_calls,
+            "input_tokens": input_tokens,
+            "cached_tokens": cached_tokens if cached_calls else None,
+            "cache_hit_pct": _cache_hit_pct(cached_tokens, cached_input_base) if cached_calls else None,
         }
     return summaries
+
+
+def _cache_hit_pct(cached_tokens: int | None, input_tokens: int | None) -> float | None:
+    """Share of input tokens served from the provider's prompt cache.
+
+    None when the cache share is unknowable (no measured rows, or no input
+    tokens); a measured 0 renders as 0.0%, which is a real answer, not "unknown".
+    """
+    if not input_tokens or cached_tokens is None:
+        return None
+    return round(100.0 * int(cached_tokens) / int(input_tokens), 1)
 
 
 def _token_usage_view(
@@ -2195,16 +2215,34 @@ def _token_usage_view(
     the template stays presentation-only. ``totals`` is the optional
     ``request_token_usage`` summary row (request scope only): when it flags the
     request as incomplete, the reason is surfaced as a note.
+
+    Cached tokens: rows carry ``cached_input_tokens`` (SUM, NULL-skipping),
+    ``cached_usage_known`` (count of calls the provider reported on) and
+    ``cached_input_base`` (input tokens of exactly those calls). The hit rate divides
+    by the base, not by total input: a model whose rows mix reported and unreported
+    calls would otherwise show a diluted percentage. A row whose provider never
+    reported cache details gets ``cache_hit_pct = None`` ("—"), which must not be
+    confused with a measured 0%.
     """
     rows = [r for r in (by_model or []) if int(r.get("total_tokens") or 0) > 0 or int(r.get("calls") or 0) > 0]
+    for r in rows:
+        known = int(r.get("cached_usage_known") or 0)
+        r["cache_hit_pct"] = _cache_hit_pct(r.get("cached_input_tokens"), r.get("cached_input_base")) if known else None
+    total_input = sum(int(r.get("input_tokens") or 0) for r in rows)
+    total_cached = sum(int(r.get("cached_input_tokens") or 0) for r in rows)
+    total_cached_base = sum(int(r.get("cached_input_base") or 0) for r in rows)
+    cached_known_calls = sum(int(r.get("cached_usage_known") or 0) for r in rows)
     view: dict[str, Any] = {
         "by_model": rows,
-        "total_input": sum(int(r.get("input_tokens") or 0) for r in rows),
+        "total_input": total_input,
         "total_output": sum(int(r.get("output_tokens") or 0) for r in rows),
         "total_tokens": sum(int(r.get("total_tokens") or 0) for r in rows),
         "total_calls": sum(int(r.get("calls") or 0) for r in rows),
         "estimated_calls": sum(int(r.get("estimated_usage") or 0) for r in rows),
         "missing_calls": sum(int(r.get("missing_usage") or 0) for r in rows),
+        "total_cached": total_cached,
+        "cached_known_calls": cached_known_calls,
+        "cache_hit_pct": _cache_hit_pct(total_cached, total_cached_base) if cached_known_calls else None,
         "has_data": bool(rows),
         "incomplete_reason": None,
     }
@@ -2243,18 +2281,25 @@ def _domain_retrieval_view(llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
                 "total_tokens": int(c.get("total_tokens") or 0),
                 "input_tokens": int(c.get("input_tokens") or 0),
                 "output_tokens": int(c.get("output_tokens") or 0),
+                "cached_tokens": (None if c.get("cached_input_tokens") is None else int(c["cached_input_tokens"])),
+                "cache_hit_pct": _cache_hit_pct(c.get("cached_input_tokens"), c.get("input_tokens")),
                 "estimated": bool(c.get("token_usage_estimated")),
                 "missing": bool(c.get("token_usage_missing")),
                 "duration_ms": c.get("duration_ms"),
             }
         )
     rows.sort(key=lambda r: (r["phase"], r["action"], r["domain"]))
+    cached_rows = [r for r in rows if r["cached_tokens"] is not None]
+    total_input = sum(r["input_tokens"] for r in cached_rows)
+    total_cached = sum(r["cached_tokens"] or 0 for r in cached_rows)
     return {
         "rows": rows,
         "call_count": len(rows),
         "total_tokens": sum(r["total_tokens"] for r in rows),
         "estimated_calls": sum(1 for r in rows if r["estimated"]),
         "missing_calls": sum(1 for r in rows if r["missing"]),
+        "total_cached": total_cached if cached_rows else None,
+        "cache_hit_pct": _cache_hit_pct(total_cached, total_input) if cached_rows else None,
         "has_data": bool(rows),
     }
 
