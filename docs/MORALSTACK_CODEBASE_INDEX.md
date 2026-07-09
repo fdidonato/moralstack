@@ -270,10 +270,11 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 - `emit_helpers.py` — `persist_*` / `async_persist_*` telemetry wrappers.
 
 ### Server proxy — `moralstack/server/`
-- `proxy.py` — `create_app(openai_client, orchestrator, config, session_store)`
-  returns a FastAPI app exposing `POST /v1/chat/completions`, `/chat/completions`,
-  `GET /healthz`. `ConversationLockManager` (per-conversation locks),
-  `_handle_chat_completion_sync` (runs in a threadpool). Reads client
+- `proxy.py` — `create_app(openai_client, orchestrator, config, session_store,
+  correlation_store)` returns a FastAPI app exposing `POST /v1/chat/completions`,
+  `/chat/completions`, `GET /healthz`. `ConversationLockManager` (per-conversation
+  locks; `_locks` growth-bounding is deferred — see FACTS), `_handle_chat_completion_sync`
+  (runs in a threadpool). Reads client
   `max_tokens`/`max_completion_tokens`/`temperature`/`top_p` into
   `ProcessedRequest.generation_overrides` via
   `GenerationOverrides.from_mapping(body, passthrough_unset=True)`; the SDK
@@ -283,11 +284,22 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   defaults do not apply there; on the **SDK/CLI** an unset field falls back to the env
   default (precedence override > `GenerationConfig` > env defaults
   `OPENAI_MAX_TOKENS`/`OPENAI_TEMPERATURE`/`OPENAI_TOP_P`). REFUSE wording is excluded
-  on every path. See `docs/modules/policy.md`.
-- `conversation_correlation.py` — `ConversationCorrelationStore` (lineage hashing
-  → conversation_id) + `canonical_history_hash`, `canonical_parent_history_hash`.
+  on every path. See `docs/modules/policy.md`. Per request, `_extract_principal(request)`
+  derives a tenant/principal string (A: `X-Moralstack-Tenant-Id` header → B: HMAC-SHA256
+  of an `Authorization: Bearer` token via `MORALSTACK_PRINCIPAL_HMAC_SECRET`, read
+  per-request → C: empty-string sentinel) that keys the correlation store's lineage map
+  (P3 / P0-3 / A3; see `docs/traces/openai_compatible_multiturn.md`).
+- `conversation_correlation.py` — `ConversationCorrelationStore` (bounded, TTL +
+  max-entries FIFO eviction; lineage hashing → conversation_id, internal map keyed by
+  `(principal, history_hash)`) + `canonical_history_hash`, `canonical_parent_history_hash`
+  (unchanged by the principal-keying design — isolation lives entirely in the map key).
+  Constructor: `ttl_seconds` (default `DEFAULT_CORRELATION_TTL_SECONDS=3600`),
+  `max_entries` (default `DEFAULT_MAX_CORRELATION_ENTRIES=20_000`), `time_fn` (clock seam
+  for tests). `create_app` wires `MORALSTACK_CORRELATION_TTL_SECONDS` /
+  `MORALSTACK_CORRELATION_MAX_ENTRIES` (best-effort parse + range-validate, never raises).
 - `headers.py` — `build_governance_headers` (X-Moralstack-* response headers).
-- `fingerprint.py` — request fingerprinting.
+- `fingerprint.py` — request fingerprinting (calls the unchanged `canonical_history_hash`;
+  verified unaffected by the principal-keying change).
 
 ### UI — `moralstack/ui/`
 - `app.py` — FastAPI dashboard (`moralstack-ui`). Reads exclusively from the
@@ -718,10 +730,19 @@ See `docs/traces/complai_llm_rules_flow.md`.
 
 ## 17. Known fragile areas
 
-- **Lineage-based conversation correlation can collide.** Two samples with
-  byte-identical histories (and identical assistant outputs) map to the same
-  `conversation_id` (`conversation_correlation.py` docstring + `resolve`). This
-  is the central COMPL-AI risk — see `docs/traces/complai_llm_rules_flow.md`.
+- **Lineage-based conversation correlation can still collide within a principal.**
+  Two samples with byte-identical histories (and identical assistant outputs) **for
+  the same principal** map to the same `conversation_id` (`conversation_correlation.py`
+  docstring + `resolve`) — this is the central COMPL-AI risk (see
+  `docs/traces/complai_llm_rules_flow.md`). As of P3 / P0-3 / A3, this no longer
+  crosses tenant/principal boundaries: the internal lineage map is keyed by
+  `(principal, history_hash)`, so identical histories from *different* principals
+  never collide (see `docs/traces/openai_compatible_multiturn.md`).
+- **`ConversationLockManager._locks` growth is still unbounded (deferred).** One
+  `threading.Lock` is created per distinct `conversation_id` and never removed
+  (`proxy.py:83` area, `# TODO(P3-followup)`); the correlation store's TTL/max-entries
+  bound already removes the dominant growth source (~2 entries/turn vs 1 lock/conversation).
+  A safe idle-prune has a real race (see the plan for P3 / P0-3 / A3) and is a follow-up.
 - **UI requires SQLite.** `file_only` runs never appear in the dashboard; the UI
   reads only the DB.
 - **Cache governance.** Ledger fast-path can reuse a prior decision; the

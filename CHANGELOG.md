@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Bounded, tenant/principal-aware proxy conversation correlation store** (P3):
+  the proxy `ConversationCorrelationStore` lineage map is now keyed by
+  `(principal, canonical_history_hash)` instead of the bare history hash, so
+  byte-identical conversation histories from different tenants no longer collide
+  onto one `conversation_id`. The two hash functions
+  (`canonical_history_hash` / `canonical_parent_history_hash`) are **byte-for-byte
+  unchanged** — isolation lives entirely in the map key, and an empty principal
+  reproduces the previous behavior exactly (`("", hash)` keyspace), so existing
+  single-turn and history-based multi-turn correlation is preserved. The store is
+  now bounded (TTL lazy-expiry on read + a max-entries FIFO cap, mirroring
+  `InMemorySessionStore`; defaults 3600 s / 20 000 entries, overridable via
+  `MORALSTACK_CORRELATION_TTL_SECONDS` / `MORALSTACK_CORRELATION_MAX_ENTRIES`),
+  removing the previous unbounded-growth/OOM risk. Principal is derived per
+  request as `X-Moralstack-Tenant-Id` header → HMAC-SHA256 of an
+  `Authorization: Bearer` token (secret from `MORALSTACK_PRINCIPAL_HMAC_SECRET`,
+  read per request, raw token/digest never logged) → empty-string sentinel.
+  `create_app` gains an optional `correlation_store=` parameter. `resolve()` is
+  best-effort on the TTL/eviction path (PROJECT_SPEC §5 invariant #6): a helper
+  failure never propagates into the request handler and a valid `msconv-*` id is
+  always minted. `ConversationLockManager._locks` bounding is deferred
+  (`TODO(P3-followup)`). No P0 decision/governance invariant is affected.
 - **Constitution retrieval unified to a single pass**: `get_relevant_principles`
   now runs exactly once per request, owned inside the risk thread
   (`models/risk/estimator.py:_get_principles_context`) at the unified

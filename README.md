@@ -408,6 +408,9 @@ Environment is loaded via `moralstack/utils/env_loader.py`.
 | `MORALSTACK_OBSERVABILITY_JSONL_DIR` | `logs/observability` | JSONL output directory |
 | `MORALSTACK_DB_PATH` / `MORALSTACK_PERSIST_MODE` | — | Deprecated aliases — still work |
 | `MORALSTACK_ORCHESTRATOR_BORDERLINE_REFUSE_UPPER` | `0.95` | Upper boundary for the borderline-refuse zone |
+| `MORALSTACK_CORRELATION_TTL_SECONDS` | `3600` | TTL (seconds) for the server proxy's lineage correlation store; must exceed the max expected inter-turn delay, and should stay aligned with the session-store TTL so a lineage entry doesn't outlive (or expire well before) its governance session |
+| `MORALSTACK_CORRELATION_MAX_ENTRIES` | `20000` | Max entries in the server proxy's lineage correlation store (FIFO eviction beyond this cap) |
+| `MORALSTACK_PRINCIPAL_HMAC_SECRET` | *(unset)* | Secret used to HMAC the bearer token into a tenant/principal identifier for conversation correlation; when unset, the HMAC principal path is disabled (falls back to the empty-string sentinel) |
 
 ### Default models by component
 
