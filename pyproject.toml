@@ -146,14 +146,8 @@ module = "openai._extras.numpy_proxy"
 follow_imports = "skip"
 
 [[tool.mypy.overrides]]
-module = "moralstack.ui.app"
-ignore_missing_imports = true
-disable_error_code = ["untyped-decorator"]
-
-[[tool.mypy.overrides]]
 module = "moralstack.server.*"
-ignore_missing_imports = true
-disable_error_code = ["untyped-decorator"]
+strict = true
 
 [[tool.mypy.overrides]]
 module = "moralstack.orchestration.*"

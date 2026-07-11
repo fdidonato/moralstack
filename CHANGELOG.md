@@ -67,6 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **mypy `strict` now covers `moralstack.server.*`** (the network-facing proxy package),
+  matching the strictness level of `moralstack.orchestration.*`. The stale lenient
+  overrides for `moralstack.server.*` and `moralstack.ui.app` (`ignore_missing_imports`
+  + disabled `untyped-decorator`) were removed — both packages already type-checked
+  clean, so no code changed. Tooling-only; no runtime behavior change.
 - **Bounded, tenant/principal-aware proxy conversation correlation store** (P3):
   the proxy `ConversationCorrelationStore` lineage map is now keyed by
   `(principal, canonical_history_hash)` instead of the bare history hash, so

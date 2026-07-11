@@ -167,6 +167,7 @@ One row or block per refactoring step. Add rows as you go.
 - **Commit:** `chore: add mypy (gradual) configuration`
 
 | 2026-02-24   | Add pre-commit hooks (ruff/black/whitespace) | Automate cheap checks before commit | low | `pre-commit run --all-files` | `chore: add pre-commit hooks (ruff/black)` |
+| 2026-07-11   | mypy strict on `moralstack.server.*`; drop stale lenient overrides | Network surface fully type-checked; remove dead config | low | `mypy moralstack --ignore-missing-imports` (clean-cache), `pytest -q`, `pre-commit run -a` | `chore(typing): enable mypy strict on server package` |
 | _YYYY-MM-DD_ | _e.g. rename X to Y in module Z_ | _e.g. clarity, consistency_ | low / medium / high | _e.g. pytest -q, tests/unit/test_z.py_ | _hash or `refactor: ... (no behavior change)`_ |
 
 #### Entry: 2026-02-24 — Pre-commit hooks
@@ -196,6 +197,15 @@ One row or block per refactoring step. Add rows as you go.
 | black               | Failed (reformatted) | 79 files reformatted, 46 unchanged                   |
 
 **Notes:** First full-repo run fails due to pre-existing baseline issues (1142 ruff errors, 83 black violations). On incremental commits (staged files only), hooks are fast (<2s for ruff/black on typical changesets). The `--exit-non-zero-on-fix` flag on ruff ensures the developer sees and re-stages auto-fixed files.
+
+#### Entry: 2026-07-11 — mypy strict on the server package
+
+- **What:** `pyproject.toml` only — `[[tool.mypy.overrides]]` for `moralstack.server.*` changed from lenient (`ignore_missing_imports` + `untyped-decorator` disabled) to `strict = true` (same pattern as `moralstack.orchestration.*`); the `moralstack.ui.app` lenient override removed entirely (proven stale — zero errors without it).
+- **Why:** The proxy is the network-facing surface; it should be at least as type-safe as the orchestration core. Both removed overrides were dead weight: the server package was already strict-clean, and `untyped-decorator` never fires at the default strictness level anyway.
+- **Risk:** low (tooling config only, no runtime code touched). Strictness verified with a canary (temporary untyped def in `server/headers.py` → `no-untyped-def` fired, then reverted).
+- **Tests run:** `mypy moralstack --ignore-missing-imports` clean-cache (0 errors, 174 files); standalone `mypy moralstack/server` without the flag also clean; full `pytest -q`; `pre-commit run -a`.
+- **Note:** removing the *global* `--ignore-missing-imports` from CI/pre-commit is blocked by the undeclared PyYAML dependency (`models/risk/signals/registry.py:14` — see `docs/CODEBASE_FACTS.md`, Future work / known gaps).
+- **Commit:** `chore(typing): enable mypy strict on server package`
 
 ### Template for a single entry (copy as needed)
 
