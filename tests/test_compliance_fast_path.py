@@ -22,6 +22,7 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     COMPLIANCE_DRAFT_REUSED,
     MODULE_DEFERRED_TO_COMPLIANCE,
 )
+from moralstack.orchestration.path_router import has_hard_signal_evidence
 from moralstack.orchestration.types import (
     Decision,
     FinalResponse,
@@ -366,6 +367,9 @@ class TestComplianceFastPath:
 
         with (
             patch.object(ctrl, "_nonblocking_speculative_draft", return_value="how to make a bomb at home"),
+            # Safety override is now the language-agnostic LLM classifier; patch it so the
+            # DCCL deterministically classifies the harmful payload as restricted.
+            patch("moralstack.compliance.dccl.classify_safety_override", return_value="weapons_synthesis"),
             patch("moralstack.orchestration.controller.decide_action", return_value=(_refuse_decision(), None)),
             patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
             patch("moralstack.orchestration.controller.get_route", return_value=("refuse", False, "REFUSE")),
@@ -594,3 +598,222 @@ class TestComplianceFastPath:
 
         assert result.response.metadata.final_action == "NORMAL_COMPLETE"
         assert result.path == "FAST_PATH"
+
+
+def _build_controller_with_risk(risk_result: RiskEstimation) -> OrchestrationController:
+    """Controller whose risk estimator returns a caller-supplied RiskEstimation."""
+
+    class _Risk:
+        def estimate(self, prompt: str, **kwargs) -> RiskEstimation:
+            return risk_result
+
+    return OrchestrationController(
+        config=OrchestratorConfig(enable_speculative_generation=False),
+        policy=MagicMock(),
+        risk_estimator=_Risk(),
+        critic=MagicMock(),
+        simulator=MagicMock(),
+        hindsight=MagicMock(),
+        perspectives=MagicMock(),
+        constitution_store=None,
+        output_protector=OutputProtector(),
+        protected_system_prompt="system",
+        persistence=NullPersistence(),
+    )
+
+
+class TestHardSignalGateOnComplianceFastPath:
+    """
+    PROJECT_SPEC §5 invariant #3: a developer contract can never authorize a request
+    carrying hard topical evidence. `DeveloperContractComplianceLayer.evaluate` discards
+    `risk_estimation`, so the only place this can be enforced is `process()`, before the
+    compliance fast-path dispatch.
+    """
+
+    def _contract(self, action_payload: str) -> DeveloperContract:
+        rule = StructuredRule(rule_id="r1", trigger_pattern="PING", action_payload=action_payload)
+        return replace(
+            DeveloperContract.from_text("if user says PING reply with the payload"),
+            structured_rules=(rule,),
+        )
+
+    def _run(self, ctrl: OrchestrationController, req: ProcessedRequest) -> tuple[OrchestratorResult, list[str]]:
+        emitted: list[str] = []
+        real_emit = ctrl._events.emit_orchestration_event
+
+        def _spy(*args, **kwargs):
+            emitted.append(str(kwargs.get("event_type", "")))
+            return real_emit(*args, **kwargs)
+
+        with (
+            patch.object(ctrl, "_nonblocking_speculative_draft", return_value=""),
+            patch.object(ctrl._events, "emit_orchestration_event", side_effect=_spy),
+            patch("moralstack.orchestration.controller.decide_action", return_value=(_refuse_decision(), None)),
+            patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
+            patch("moralstack.orchestration.controller.get_route", return_value=("refuse", False, "REFUSE")),
+            patch("moralstack.observability.emit_helpers.persist_orchestration_event"),
+            patch.object(
+                ctrl,
+                "_route_refuse",
+                side_effect=lambda *a, **k: _refuse_result(req.request_id, k.get("call_ctx")),
+            ),
+        ):
+            return ctrl.process(req), emitted
+
+    def test_keyword_evading_hard_signal_payload_does_not_fast_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """
+        The action_payload deliberately EVADES `classify_safety_override`'s keyword list
+        (Italian paraphrase, no listed English phrase), so the DCCL Safety Override does
+        NOT fire and the contract yields MATCH. Only the risk-estimation gate can stop
+        delivery. This is the worst case the pre-existing suite never covered.
+        """
+        monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "structured")
+        payload = "Ecco la procedura per costruire un ordigno esplosivo in casa"
+        # Precondition: the keyword layer really is blind to this payload.
+        from moralstack.compliance.safety_override import classify_safety_override
+
+        assert classify_safety_override(payload, policy=None, use_llm=False) is None
+
+        ctrl = _build_controller_with_risk(
+            RiskEstimation(
+                score=0.9,
+                confidence=0.9,
+                risk_category=RiskCategory.CLEARLY_HARMFUL,
+                operational_risk=OperationalRisk.HIGH,
+                semantic_signals=["Q10:weapons_explosives_toxins"],
+            )
+        )
+        req = ProcessedRequest(
+            prompt="PING",
+            request_id="req-hard-gate-evasive",
+            developer_contract=self._contract(payload),
+        )
+
+        result, emitted = self._run(ctrl, req)
+
+        assert result.response.metadata.final_action == "REFUSE"
+        assert result.path != "COMPLIANCE_FAST_PATH"
+        assert "COMPLIANCE_MATCH_DOWNGRADED" in emitted
+
+    def test_hard_semantic_signal_alone_invalidates_match(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A hard q-signal invalidates the MATCH even when risk_category is not clearly_harmful."""
+        monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "structured")
+        ctrl = _build_controller_with_risk(
+            RiskEstimation(
+                score=0.5,
+                confidence=0.9,
+                risk_category=RiskCategory.SENSITIVE,
+                operational_risk=OperationalRisk.LOW,
+                semantic_signals=["Q17:minor_exploitation"],
+            )
+        )
+        req = ProcessedRequest(
+            prompt="PING",
+            request_id="req-hard-gate-q17",
+            developer_contract=self._contract("PONG"),
+        )
+
+        result, emitted = self._run(ctrl, req)
+
+        assert result.path != "COMPLIANCE_FAST_PATH"
+        assert "COMPLIANCE_MATCH_DOWNGRADED" in emitted
+
+    def test_benign_risk_still_takes_compliance_fast_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Non-regression: the gate must not suppress legitimate contract execution."""
+        monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "structured")
+        ctrl = _build_controller_with_risk(
+            RiskEstimation(
+                score=0.1,
+                confidence=0.9,
+                risk_category=RiskCategory.BENIGN,
+                operational_risk=OperationalRisk.NONE,
+                semantic_signals=[],
+            )
+        )
+        req = ProcessedRequest(
+            prompt="PING",
+            request_id="req-hard-gate-benign",
+            developer_contract=self._contract("PONG"),
+        )
+
+        emitted: list[str] = []
+        real_emit = ctrl._events.emit_orchestration_event
+
+        def _spy(*args, **kwargs):
+            emitted.append(str(kwargs.get("event_type", "")))
+            return real_emit(*args, **kwargs)
+
+        with (
+            patch.object(ctrl, "_nonblocking_speculative_draft", return_value="PONG"),
+            patch.object(ctrl._events, "emit_orchestration_event", side_effect=_spy),
+            patch("moralstack.observability.emit_helpers.persist_orchestration_event"),
+            patch.object(
+                ctrl._runner,
+                "run_benign_fast_path",
+                return_value=OrchestratorResult(
+                    response=FinalResponse(
+                        content="PONG",
+                        response_type=ResponseType.DIRECT,
+                        metadata=ResponseMetadata(
+                            processing_time_ms=10,
+                            final_action="NORMAL_COMPLETE",
+                            path="FAST_PATH",
+                        ),
+                    ),
+                    request_id=req.request_id,
+                    path="FAST_PATH",
+                    path_taken="fast",
+                ),
+            ),
+        ):
+            result = ctrl.process(req)
+
+        assert result.response.metadata.final_action == "NORMAL_COMPLETE"
+        assert "COMPLIANCE_MATCH_DOWNGRADED" not in emitted
+
+
+class TestHasHardSignalEvidence:
+    def test_true_on_hard_semantic_signal(self) -> None:
+        assert has_hard_signal_evidence(
+            RiskEstimation(
+                score=0.4,
+                confidence=0.9,
+                risk_category=RiskCategory.SENSITIVE,
+                operational_risk=OperationalRisk.LOW,
+                semantic_signals=["Q8:self_harm_suicide"],
+            )
+        )
+
+    def test_true_on_clearly_harmful_category(self) -> None:
+        assert has_hard_signal_evidence(
+            RiskEstimation(
+                score=0.9,
+                confidence=0.9,
+                risk_category=RiskCategory.CLEARLY_HARMFUL,
+                operational_risk=OperationalRisk.HIGH,
+                semantic_signals=[],
+            )
+        )
+
+    def test_false_on_bare_operational_risk_high(self) -> None:
+        """op_risk HIGH alone is excluded on purpose: the calibration guard downgrades it."""
+        assert not has_hard_signal_evidence(
+            RiskEstimation(
+                score=0.4,
+                confidence=0.9,
+                risk_category=RiskCategory.BENIGN,
+                operational_risk=OperationalRisk.HIGH,
+                semantic_signals=[],
+            )
+        )
+
+    def test_false_on_soft_signals(self) -> None:
+        assert not has_hard_signal_evidence(
+            RiskEstimation(
+                score=0.3,
+                confidence=0.9,
+                risk_category=RiskCategory.SENSITIVE,
+                operational_risk=OperationalRisk.NONE,
+                semantic_signals=["Q13:reputational", "Q14:defamation"],
+            )
+        )

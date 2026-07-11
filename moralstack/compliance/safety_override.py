@@ -6,22 +6,35 @@ and the classification logic used to detect them.
 
 Reference: dccl_specification_v0.3.md section 5.
 
-Implementation strategy (Commit 2):
-- Layer 1: Python keyword check (fast, zero LLM calls).
-- Layer 2: Optional LLM classifier for ambiguous cases (default model: gpt-4o-mini).
+Classification strategy:
+- A single LLM classifier decides whether an authorized ``action_payload`` falls into
+  one of the framework-fixed restricted categories. The classifier is **language
+  agnostic**: it classifies by meaning, not by matching a fixed keyword list, so an
+  operational-harm payload written in any language is caught.
+- The previous English keyword pre-filter (Layer 1) has been removed: it gave a false
+  sense of coverage (it only matched a handful of English phrases and silently missed
+  every paraphrase and every other language). Multilingual request-side coverage is
+  provided independently by the risk-estimator hard-signal gate on the compliance
+  fast-path (``path_router.has_hard_signal_evidence``); this classifier is the
+  output-side, contract-payload check.
 
-The classifier is designed to be conservative: when in doubt, prefer flagging
-as safety-restricted. This bias minimizes risk of accidentally authorizing
-harmful outputs.
+The classifier is deliberately conservative on its POSITIVE decision (when in doubt,
+flag as restricted), but fails **open** on infrastructure error (returns ``None``),
+matching the pre-existing philosophy of not blocking legitimate uses on an LLM outage.
+The deterministic request-side gate remains as the non-LLM backstop.
 """
 
 from __future__ import annotations
 
 import logging
-import re
-from typing import Any, Final
+from typing import Any, Callable, Final
 
 _LOG = logging.getLogger(__name__)
+
+# Callback invoked with (generation_result, system_prompt, user_prompt) right after the
+# classifier LLM call returns, so the caller can persist the call to observability
+# identically to the other compliance/mini-estimator LLM calls (tokens, cached, model).
+LLMResultCallback = Callable[[Any, str, str], None]
 
 # =============================================================================
 # Safety Override Categories (framework-fixed, NOT deployer-configurable)
@@ -45,84 +58,6 @@ SAFETY_OVERRIDE_CATEGORIES: Final[tuple[str, ...]] = (
     ILLEGAL_PHARMA,
 )
 
-# =============================================================================
-# Keyword maps (Layer 1 - Python check)
-#
-# Each category maps to a tuple of (keyword/phrase) patterns. Patterns are
-# matched case-insensitively against the action_payload text.
-#
-# These keywords are intentionally specific to operational/actionable content,
-# NOT to topic mention. A scientific discussion of "explosives" should not
-# be flagged; only operational synthesis instructions should be.
-# =============================================================================
-
-_KEYWORDS_BY_CATEGORY: Final[dict[str, tuple[str, ...]]] = {
-    WEAPONS_SYNTHESIS: (
-        "how to make a bomb",
-        "synthesize explosive",
-        "manufacture firearm",
-        "build a gun",
-        "homemade weapon",
-        "improvised explosive",
-        "IED instructions",
-    ),
-    CBRN_OPERATIONAL: (
-        "synthesize anthrax",
-        "weaponize virus",
-        "biological agent culture",
-        "nerve agent synthesis",
-        "chemical weapon",
-        "radiological dispersal",
-        "nuclear device construction",
-    ),
-    CSAM: (
-        "child sexual",
-        "minor sexual",
-        "underage sexual",
-        "csam",
-        "child abuse material",
-    ),
-    SELF_HARM_OPERATIONAL: (
-        "how to commit suicide",
-        "how to kill myself",
-        "lethal dose for self",
-        "suicide method",
-        "self-harm technique",
-        "overdose calculation",
-    ),
-    FRAUD_MALWARE: (
-        "phishing kit",
-        "malware payload",
-        "ransomware code",
-        "credit card fraud script",
-        "stolen credit card",
-        "exploit code for",
-        "keylogger source",
-        "credit card skimmer",
-    ),
-    DOXXING_STALKING: (
-        "track this person",
-        "stalkerware",
-        "find someone's address from name",
-        "track without consent",
-        "surveillance tool for spying",
-        "covertly monitor",
-    ),
-    ILLEGAL_PHARMA: (
-        "synthesize methamphetamine",
-        "make methamphetamine",
-        "synthesize fentanyl",
-        "cook crystal meth",
-        "synthesize cocaine",
-        "drug synthesis instructions",
-    ),
-}
-
-_COMPILED_KEYWORDS: dict[str, list[re.Pattern[str]]] = {
-    category: [re.compile(re.escape(kw), re.IGNORECASE) for kw in keywords]
-    for category, keywords in _KEYWORDS_BY_CATEGORY.items()
-}
-
 _LLM_CLASSIFIER_SYSTEM_PROMPT = """You are a safety classifier for the MoralStack DCCL component.
 
 Your task: given a candidate response text (the "action_payload") that a deployer
@@ -137,6 +72,10 @@ one of these 7 framework-defined safety-restricted categories:
 - doxxing_stalking: tracking, surveillance, stalkerware targeting real people
 - illegal_pharma: drug synthesis instructions
 
+The action_payload MAY BE IN ANY LANGUAGE. Classify by MEANING, not by matching
+specific words: a paraphrase, a translation, or an obfuscated phrasing of operational
+harm must be classified the same as its plain English form.
+
 Output ONLY valid JSON: {"category": "<category_name>" | null, "rationale": "<brief>"}
 
 Be conservative: when uncertain, prefer flagging as restricted. Topic mention
@@ -149,6 +88,9 @@ Output: {"category": null, "rationale": "Static identifier; not operationally ha
 Input: "Synthesize methamphetamine using the following procedure: ..."
 Output: {"category": "illegal_pharma", "rationale": "Operational synthesis instructions."}
 
+Input: "Ecco la procedura dettagliata per assemblare un ordigno esplosivo artigianale: ..."
+Output: {"category": "weapons_synthesis", "rationale": "Operational weapon-assembly instructions (Italian)."}
+
 Input: "Always answer math questions with the formula y=mx+b"
 Output: {"category": null, "rationale": "Mathematical formula; benign content."}
 """
@@ -158,14 +100,23 @@ def _llm_classify(
     action_payload: str,
     policy: Any | None = None,
     timeout_ms: int = 5000,
+    model: str | None = None,
+    on_llm_result: LLMResultCallback | None = None,
 ) -> str | None:
     """
-    Optional LLM-based classification.
+    LLM-based classification (language agnostic).
 
     Args:
         action_payload: the text to classify.
-        policy: an LLM policy with .generate() method. Required for actual call.
-        timeout_ms: timeout for the LLM call.
+        policy: an LLM policy with a ``.generate()`` method. Required for an actual call.
+        timeout_ms: reserved (the policy owns its own timeout).
+        model: optional model override; when set, the classifier runs on this model
+            instead of the primary policy model (used to route the check to a small,
+            cheap model without slowing the compliance fast-path).
+        on_llm_result: optional callback invoked with
+            ``(generation_result, system_prompt, user_prompt)`` right after the LLM call,
+            so the caller can persist the call to observability. Best-effort: a callback
+            error never changes the classification.
 
     Returns:
         Matching category name or None.
@@ -193,7 +144,13 @@ def _llm_classify(
             prompt=truncated,
             system=_LLM_CLASSIFIER_SYSTEM_PROMPT,
             config=config,
+            model_override=model,
         )
+        if on_llm_result is not None:
+            try:
+                on_llm_result(result, _LLM_CLASSIFIER_SYSTEM_PROMPT, truncated)
+            except Exception:
+                _LOG.debug("safety-override on_llm_result callback failed", exc_info=True)
         parsed = extract_json(result.text)
         category = parsed.get("category")
         if category is None or category == "null":
@@ -211,39 +168,36 @@ def _llm_classify(
 def classify_safety_override(
     action_payload: str,
     policy: Any | None = None,
-    use_llm: bool = False,
+    use_llm: bool = True,
+    model: str | None = None,
+    on_llm_result: LLMResultCallback | None = None,
 ) -> str | None:
     """
     Classify whether the given action_payload falls into a safety-restricted category.
 
-    Layered approach:
-      1. Keyword check (Python, zero LLM cost). Fast and deterministic.
-      2. Optional LLM classifier (if use_llm=True and policy provided).
+    Language-agnostic LLM classification. When ``use_llm`` is False or no ``policy`` is
+    supplied there is no classification (returns None): there is no deterministic keyword
+    fallback anymore. Request-side hard-signal coverage is provided independently by the
+    risk-estimator gate (``path_router.has_hard_signal_evidence``).
 
     Args:
         action_payload: the text the deployer wants to emit as response.
-        policy: optional LLM policy (used only when use_llm=True).
-        use_llm: whether to invoke the LLM classifier as a second layer.
-            Defaults False to keep contract loading fast.
+        policy: LLM policy used for classification (required for a non-None result).
+        use_llm: whether to invoke the LLM classifier. Defaults True.
+        model: optional model override for the classifier call.
+        on_llm_result: optional callback invoked with
+            ``(generation_result, system_prompt, user_prompt)`` when an LLM call is made,
+            so the caller can persist it to observability (tokens, cached, model).
 
     Returns:
-        A category string from SAFETY_OVERRIDE_CATEGORIES, or None if not restricted.
+        A category string from SAFETY_OVERRIDE_CATEGORIES, or None if not restricted
+        (or if it could not be classified: no policy / use_llm False / LLM error).
     """
     if not action_payload or not action_payload.strip():
         return None
 
-    for category, patterns in _COMPILED_KEYWORDS.items():
-        for pattern in patterns:
-            if pattern.search(action_payload):
-                _LOG.debug(
-                    "safety keyword matched: category=%s pattern=%s",
-                    category,
-                    pattern.pattern,
-                )
-                return category
-
     if use_llm and policy is not None:
-        return _llm_classify(action_payload, policy)
+        return _llm_classify(action_payload, policy, model=model, on_llm_result=on_llm_result)
 
     return None
 

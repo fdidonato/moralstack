@@ -29,6 +29,7 @@ from moralstack.compliance.config import (
     get_dccl_llm_model,
     get_dccl_llm_timeout_ms,
     get_dccl_max_rules_per_contract,
+    get_dccl_safety_override_model,
     get_dccl_safety_override_strict,
 )
 from moralstack.compliance.safety_override import classify_safety_override
@@ -237,6 +238,7 @@ class DeveloperContractComplianceLayer:
         self._confidence_threshold = get_dccl_confidence_threshold()
         self._max_rules_per_contract = get_dccl_max_rules_per_contract()
         self._safety_override_strict = get_dccl_safety_override_strict()
+        self._safety_override_model = get_dccl_safety_override_model()
 
         if self._enabled:
             _LOG.debug(
@@ -331,6 +333,72 @@ class DeveloperContractComplianceLayer:
             )
         return verdict
 
+    def _record_safety_override_llm_call(
+        self,
+        result: Any,
+        system_prompt: str,
+        user_prompt: str,
+        started_at_ms: int,
+        duration_ms: float,
+    ) -> None:
+        """
+        Persist the safety-override classifier LLM call identically to the DCCL evaluate
+        call (``module="compliance_layer"``), so it appears in ``llm_calls`` with token
+        usage (including cached) and flows into the per-model/per-module UI and the
+        request token totals. Best-effort: never raises into the request.
+        """
+        try:
+            from moralstack.orchestration.persistence_helpers import record_llm_call
+
+            record_llm_call(
+                None,
+                None,
+                {
+                    "cycle": None,
+                    "phase": "compliance_layer",
+                    "module": "compliance_layer",
+                    "action": "safety_override",
+                    "model": self._safety_override_model,
+                    "started_at": started_at_ms,
+                    "duration_ms": duration_ms,
+                    "prompt": user_prompt,
+                    "system_prompt": system_prompt,
+                    "raw_response": getattr(result, "text", "") or "",
+                    "parsed_summary_json": json.dumps({"check": "safety_override"}, ensure_ascii=False),
+                    "token_usage_json": (result.token_usage_json() if hasattr(result, "token_usage_json") else None),
+                    "sequence_in_cycle": -6,
+                    "call_kind": "compliance_layer",
+                },
+            )
+        except Exception:
+            _LOG.debug("safety-override LLM call logging failed", exc_info=True)
+
+    def _classify_safety_override(self, action_payload: str) -> str | None:
+        """
+        Run the language-agnostic safety-override classifier on ``action_payload`` and
+        persist its LLM call to observability (see ``_record_safety_override_llm_call``).
+        Returns the restricted category or None.
+        """
+        wall_start_ms = int(time.time() * 1000)
+        perf_start = time.perf_counter()
+
+        def _persist(result: Any, system_prompt: str, user_prompt: str) -> None:
+            self._record_safety_override_llm_call(
+                result,
+                system_prompt,
+                user_prompt,
+                wall_start_ms,
+                (time.perf_counter() - perf_start) * 1000,
+            )
+
+        return classify_safety_override(
+            action_payload,
+            policy=self._policy,
+            use_llm=True,
+            model=self._safety_override_model,
+            on_llm_result=_persist,
+        )
+
     def _evaluate_structured(
         self,
         contract: Any,
@@ -369,7 +437,7 @@ class DeveloperContractComplianceLayer:
         matched.sort(key=lambda r: (-r.priority, r.rule_id))
         chosen = matched[0]
 
-        override_cat = classify_safety_override(chosen.action_payload, policy=None, use_llm=False)
+        override_cat = self._classify_safety_override(chosen.action_payload)
         if override_cat is not None:
             return ComplianceVerdict(
                 decision=ComplianceDecision.SAFETY_OVERRIDE,
@@ -664,7 +732,7 @@ class DeveloperContractComplianceLayer:
             low_confidence_degraded = confidence < self._confidence_threshold
 
             action_text_for_check = action_excerpt or speculative_draft
-            override_cat = classify_safety_override(action_text_for_check, policy=None, use_llm=False)
+            override_cat = self._classify_safety_override(action_text_for_check)
             if override_cat is not None:
                 return ComplianceVerdict(
                     decision=ComplianceDecision.SAFETY_OVERRIDE,
@@ -757,7 +825,12 @@ class DeveloperContractComplianceLayer:
                 continue
 
             if self._safety_override_strict:
-                override_cat = classify_safety_override(rule.action_payload, policy=None, use_llm=False)
+                override_cat = classify_safety_override(
+                    rule.action_payload,
+                    policy=self._policy,
+                    use_llm=True,
+                    model=self._safety_override_model,
+                )
                 if override_cat is not None:
                     rejected.append((rule.rule_id, f"safety_override:{override_cat}"))
                     continue

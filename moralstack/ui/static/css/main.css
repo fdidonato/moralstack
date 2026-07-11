@@ -1174,6 +1174,8 @@ h3 {
 .flow-node[data-module="constitution"]    { border-left-color: #2dd4bf; }
 .flow-node[data-module="orchestrator"]    { border-left-color: #94a3b8; }
 .flow-node[data-module="upstream_provider"] { border-left-color: #38bdf8; }
+.flow-node[data-module="compliance_layer"] { border-left-color: #ec4899; }
+.flow-node[data-module="final_revalidation"] { border-left-color: #0f766e; }
 
 /* Node header (always visible) */
 .flow-node-header {
@@ -1306,6 +1308,8 @@ h3 {
 .flow-node[data-module="constitution"]:hover     { box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.2); }
 .flow-node[data-module="orchestrator"]:hover     { box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.35); }
 .flow-node[data-module="upstream_provider"]:hover { box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.25); }
+.flow-node[data-module="compliance_layer"]:hover { box-shadow: 0 0 0 1px rgba(236, 72, 153, 0.25); }
+.flow-node[data-module="final_revalidation"]:hover { box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.3); }
 
 /* Expanded node: subtle accent glow matching module */
 .flow-node--expanded {

@@ -24,6 +24,7 @@ _ENV_LLM_MAX_TOKENS = "MORALSTACK_DCCL_LLM_MAX_TOKENS"
 _ENV_CONFIDENCE_THRESHOLD = "MORALSTACK_DCCL_CONFIDENCE_THRESHOLD"
 _ENV_MAX_RULES = "MORALSTACK_DCCL_MAX_RULES_PER_CONTRACT"
 _ENV_SAFETY_OVERRIDE_STRICT = "MORALSTACK_DCCL_SAFETY_OVERRIDE_STRICT"
+_ENV_SAFETY_OVERRIDE_MODEL = "MORALSTACK_DCCL_SAFETY_OVERRIDE_MODEL"
 
 # Defaults
 _DEFAULT_ENABLED = True
@@ -34,6 +35,10 @@ _DEFAULT_LLM_MAX_TOKENS = 512
 _DEFAULT_CONFIDENCE_THRESHOLD = 0.85
 _DEFAULT_MAX_RULES = 100
 _DEFAULT_SAFETY_OVERRIDE_STRICT = True
+# Small, cheap model for the language-agnostic safety-override classifier: it runs on
+# every DCCL MATCH, so it must not slow the compliance fast-path down to the primary
+# policy model's latency.
+_DEFAULT_SAFETY_OVERRIDE_MODEL = "gpt-4o-mini"
 
 EvaluationPathLiteral = Literal["structured", "llm", "hybrid"]
 
@@ -121,6 +126,12 @@ def get_dccl_llm_model() -> str:
     """Model used by the LLM path. Default 'gpt-4o'."""
     raw = (os.getenv(_ENV_LLM_MODEL, "") or "").strip()
     return raw if raw else _DEFAULT_LLM_MODEL
+
+
+def get_dccl_safety_override_model() -> str:
+    """Model used by the language-agnostic safety-override classifier. Default 'gpt-4o-mini'."""
+    raw = (os.getenv(_ENV_SAFETY_OVERRIDE_MODEL, "") or "").strip()
+    return raw if raw else _DEFAULT_SAFETY_OVERRIDE_MODEL
 
 
 def get_dccl_llm_timeout_ms() -> int:

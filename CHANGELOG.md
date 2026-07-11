@@ -6,8 +6,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Hard-signal gate on the compliance fast-path (P0 invariant #3).** Before a DCCL
+  `MATCH` is delivered through the compliance fast-path, the controller now invalidates it
+  (emitting `COMPLIANCE_MATCH_DOWNGRADED`) when the risk estimator produced hard topical
+  evidence (`path_router.has_hard_signal_evidence`: a hard q-signal or a `clearly_harmful`
+  category). Previously a developer contract could authorize a hard-signal request through
+  the fast-path before any deterministic hard-signal check ran; `DeveloperContractComplianceLayer.evaluate`
+  discards `risk_estimation`, so this gate is the only enforcement point.
+- **Safety-override classification is now language-agnostic (LLM-based).** The English
+  keyword pre-filter in `compliance/safety_override.py` was removed: it only matched a
+  handful of English phrases and silently missed every paraphrase and every other
+  language. `classify_safety_override` now uses the existing LLM classifier
+  (`use_llm=True` by default; returns `None` with no policy / on LLM error — no keyword
+  fallback), routed to a small model via `MORALSTACK_DCCL_SAFETY_OVERRIDE_MODEL`
+  (default `gpt-4o-mini`) so the compliance fast-path stays fast. Consequence: a
+  structured-path contract MATCH now makes one small-model call for the safety check
+  (it was previously keyword-only/LLM-free). Multilingual request-side coverage is
+  provided independently by the new hard-signal gate. The classifier LLM call is
+  **persisted and observable identically to the other module calls**: it is written to
+  `llm_calls` with `module="compliance_layer"`, `action="safety_override"`, its model, and
+  full token usage (including `cached_input_tokens`), so it flows into `request_token_usage`,
+  the per-model/per-module UI token panels, the per-call badge, and the prompt-cache hit
+  rate. Configurable via `MORALSTACK_DCCL_SAFETY_OVERRIDE_MODEL` (documented in the README
+  configuration table).
+
 ### Added
 
+- **Governance steps are now visible in the execution graph (audit completeness).** The
+  request-detail flow graph gained synthetic nodes for governance steps that previously
+  vanished from the graph: the compliance `MATCH` downgrade / hard-signal safety gate
+  (`_synthetic_compliance_downgrade_nodes` — the P0 gate renders as a `safety_gate` alert
+  node and the execution-path badge shows `compliance_blocked_p0`), modules deferred to a
+  contract (`_synthetic_module_deferred_nodes`), the multi-turn ledger fast-path
+  (`_synthetic_ledger_fast_path_node`), early convergence
+  (`_synthetic_convergence_node`), and gated/skipped modules
+  (`_synthetic_module_skipped_nodes`). The `compliance_layer` (DCCL) and
+  `final_revalidation` nodes also gained a legend colour. Presentation only — no change to
+  governance decisions. Tests: `tests/test_ui_tier_order.py`.
 - **Prompt-cache observability**: every LLM call now records how many input tokens the
   provider served from its prompt cache (`usage.prompt_tokens_details.cached_tokens`),
   persisted to the new nullable `llm_calls.cached_input_tokens` column (additive

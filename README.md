@@ -1,49 +1,35 @@
-<p align="center">
-  <img src="assets/banner.png" alt="MoralStack" width="512"/>
-</p>
+<div align="center">
 
-# MoralStack
+<img src="assets/banner.png" alt="MoralStack" width="512"/>
 
 ### Your LLM thinks. MoralStack judges.
 
-A deliberative governance engine that decides *whether*, *how*, and *under what constraints* an LLM should respond — before a single token is generated.
+**A deliberative governance engine that decides *whether*, *how*, and *under what constraints*
+an LLM should respond — before a single token is generated.**
 
-![License](https://img.shields.io/badge/license-Apache%202.0-orange)
-![Python](https://img.shields.io/badge/python-3.11+-blue)
-![Status](https://img.shields.io/badge/status-research--stage-yellow)
-![Compliance](https://img.shields.io/badge/benchmark-98.8%25%20compliance-brightgreen)
-![Model](https://img.shields.io/badge/model-GPT--4o-412991)
 [![CI](https://github.com/fdidonato/moralstack/actions/workflows/ci.yml/badge.svg)](https://github.com/fdidonato/moralstack/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/fdidonato/moralstack/graph/badge.svg)](https://codecov.io/gh/fdidonato/moralstack)
+[![PyPI](https://img.shields.io/pypi/v/moralstack)](https://pypi.org/project/moralstack/)
+![Python](https://img.shields.io/badge/python-3.11+-blue)
+![License](https://img.shields.io/badge/license-Apache%202.0-orange)
+![Compliance](https://img.shields.io/badge/benchmark-98.8%25%20compliance-brightgreen)
+
+[Quickstart](#-quickstart) ·
+[How it works](#-how-it-works) ·
+[Benchmarks](#-benchmark-results) ·
+[Configuration](#-configuration) ·
+[Docs](#-documentation) ·
+[Contributing](#-contributing)
+
+</div>
 
 ---
 
 > **Most AI safety tools are filters. MoralStack is a judge.**
 >
-> It runs a full deliberative pipeline — risk estimation, constitutional critique, consequence simulation,
-> multi-perspective reasoning — and issues an explicit, auditable decision *before* your LLM generates anything.
-
----
-
-## Table of Contents
-
-- [What it does](#what-it-does)
-- [Decision Model](#decision-model)
-- [Architecture](#architecture)
-- [Benchmark Results](#benchmark-results)
-- [Installation](#installation)
-- [30-Second Quickstart](#30-second-quickstart)
-- [SDK Usage](#sdk-usage)
-- [Configuration](#configuration)
-- [Running the Benchmark](#running-the-benchmark)
-- [Web UI](#web-ui)
-- [Why not just use a filter?](#why-not-just-use-a-filter)
-- [Documentation](#documentation)
-- [Limitations & Trade-offs](#limitations--trade-offs)
-
----
-
-## What it does
+> It runs a full deliberative pipeline — risk estimation, constitutional critique, consequence
+> simulation, multi-perspective reasoning — and issues an explicit, auditable decision *before*
+> your LLM generates anything.
 
 ```
 Traditional pipeline:   prompt ──► generate ──► (maybe filter)
@@ -51,102 +37,90 @@ Traditional pipeline:   prompt ──► generate ──► (maybe filter)
 MoralStack:             prompt ──► deliberate ──► decide ──► generate within bounds
 ```
 
-Traditional LLM pipelines optimize for helpfulness first. MoralStack adds an explicit policy layer that separates:
+**Why teams pick MoralStack over a filter:**
 
-- **Decision**: `NORMAL_COMPLETE`, `SAFE_COMPLETE`, or `REFUSE`
-- **Generation**: produce text consistent with the selected decision
-
-This keeps decision logic auditable and minimizes unsafe false negatives in sensitive contexts.
-
----
-
-## Decision Model
-
-Every request produces an explicit `final_action`:
-
-| Action | Meaning |
-|---|---|
-| `NORMAL_COMPLETE` | Direct response |
-| `SAFE_COMPLETE` | Responsible response with safeguards |
-| `REFUSE` | Refusal with safe redirection |
-
-Single source of truth for bounds and action selection:
-
-- `moralstack/runtime/decision/safe_complete_policy.py`
-- API: `compute_action_bounds(...)`, `decide_final_action(...)`
-
-`SAFE_COMPLETE` is a first-class policy action and is not inferred from text disclaimers.
+- 🧠 **Deliberative, not reactive** — a multi-module reasoning pipeline, not a keyword classifier
+- ⚖️ **Explicit decisions** — every request yields `NORMAL_COMPLETE`, `SAFE_COMPLETE`, or `REFUSE`, computed from structured signals, never inferred from response text
+- 📜 **Full audit trail** — every decision is explainable, logged, and queryable (AI Act art. 12-ready markdown exports)
+- 🧩 **Domain overlays** — YAML-configurable per sector (healthcare, legal, finance…), no code changes
+- 🔌 **Drop-in** — wrap any OpenAI-compatible client in one line, or point clients at the OpenAI-compatible HTTP proxy
 
 ---
 
-## Architecture
+## ⚡ Quickstart
 
-High-level flow:
-
-```
-Request
-  │
-  ▼
-[Risk Estimator] ─────────── parallel mini-estimators:
-  │                          intent · signal detection (q1–q17) · operational risk
-  ▼
-[Policy Router] ──────────── applies domain overlay, computes action bounds
-  │
-  ├── FAST_PATH ──────────────────────────────────────────────────────────┐
-  │   (clearly benign or clearly harmful — deliberation skipped)          │
-  │                                                                       │
-  └── DELIBERATIVE_PATH                                                   │
-        │                                                                 │
-        ├── [Constitutional Critic]    checks principle violations        │
-        ├── [Consequence Simulator]    projects downstream harm           │
-        ├── [Perspectives Ensemble]    multi-stakeholder reasoning        │
-        └── [Hindsight Evaluator]      retrospective quality check        │
-                    │                                                     │
-                    ▼                                                     │
-             [Convergence Engine] ──── issues final_action ◄─────────────┘
-                    │
-                    ▼
-             [Response Assembler] ─── generates within the decided bounds
+```bash
+pip install moralstack
+export OPENAI_API_KEY=sk-...
 ```
 
-Main packages:
+```python
+from moralstack import govern
+from openai import OpenAI
 
-- `moralstack/sdk/` — Python SDK (`govern()`, `GovernedClient`, `GovernanceConfig`)
-- `moralstack/runtime/` — orchestration runtime
-- `moralstack/orchestration/` — controller, routing, deliberation services
-- `moralstack/models/risk/` — risk estimation and calibration
-- `moralstack/constitution/` — constitution schema, loader, store (YAML-driven)
-- `moralstack/ui/` — FastAPI dashboard (`moralstack-ui`)
-- `moralstack/server/` — OpenAI-compatible governance HTTP proxy (`create_app`; install with `.[server]` or `.[ui]`)
+client = govern(OpenAI())          # one line — full OpenAI API compatibility
+
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "How do I pick a lock?"}],
+)
+
+print(response.choices[0].message.content)
+# I'm unable to assist with that request.
+
+meta = response.governance_metadata   # governance metadata on every call
+print(meta.final_action)               # REFUSE
+print(meta.risk_score)                 # 0.87
+print(meta.decision_reason)            # human-readable explanation
+```
+
+Benign requests pass through untouched; sensitive ones get deliberated; harmful ones get a
+governed refusal with safe redirection. More patterns in [`examples/`](./examples/) —
+multi-turn, jailbreak resistance, audit export, HTTP proxy.
+
+<details>
+<summary><b>Install from source (contributors)</b></summary>
+
+```bash
+git clone https://github.com/fdidonato/moralstack.git
+cd moralstack
+python -m venv venv
+source venv/bin/activate
+pip install -e ".[dev,ui]"
+cp .env.minimal .env    # then set OPENAI_API_KEY
+```
+
+Optional extras: `moralstack[ui]` (admin dashboard), `moralstack[server]` (HTTP proxy).
+Full guide: [INSTALL.md](./INSTALL.md).
+
+</details>
 
 ---
 
-## Benchmark Results
+## 📊 Benchmark results
 
-Evaluated on 84 questions spanning adversarial prompts, dual-use domains, regulated topics (legal, medical, financial), and false-positive torture tests. Judge model (GPT-5.2) is independent from both baseline and MoralStack generation.
+Evaluated on 84 questions spanning adversarial prompts, dual-use domains, regulated topics
+(legal, medical, financial), and false-positive torture tests. The judge model (GPT-5.2) is
+independent from both baseline and MoralStack generation.
 
-### Safety & Utility
+<div align="center">
 
-| Metric | Baseline (GPT-4o) | MoralStack |
-|---|---|---|
-| **False Negatives** (no refusal when needed) | 13 | **0** |
-| **Information Leakage** | 14 (16.7%) | **0 (0%)** |
-| **False Positives** (refusal on legitimate queries) | 0 | **0** |
-| **Utility Preservation** (legitimate queries answered) | 62/62 | **62/62** |
-| **Safe Redirection on Refusal** | 1/22 (4.5%) | **22/22 (100%)** |
+| | Baseline (GPT-4o) | **MoralStack** |
+|---|:---:|:---:|
+| **False negatives** (missing refusal) | 13 | **0** |
+| **Information leakage** | 14 (16.7%) | **0 (0%)** |
+| **False positives** (over-refusal) | 0 | **0** |
+| **Utility preservation** | 62/62 | **62/62** |
+| **Safe redirection on refusal** | 1/22 (4.5%) | **22/22 (100%)** |
+| **Head-to-head wins** (GPT-5.2 judge) | 6 | **54** (24 ties) |
+| **Avg safety score** | 7.83/10 | **9.27/10** |
 
-### Head-to-Head (judged by GPT-5.2)
+**98.8% decision compliance · zero system errors**
 
-| | Baseline | MoralStack | Tie |
-|---|---|---|---|
-| **Wins** | 6 | **54** | 24 |
-| **Avg Safety Score** | 7.83/10 | **9.27/10** | — |
+</div>
 
-*(Latest full run: benchmark 12, same 84-question suite and judge.)*
-
-### Decision Accuracy
-
-**98.8% compliance rate. Zero system errors.**
+<details>
+<summary><b>Decision confusion matrix & methodology notes</b></summary>
 
 ```
              Predicted
@@ -157,109 +131,124 @@ SC             0    52     0
 REFUSE         0     0    22
 ```
 
-The single off-diagonal cell (1 NC→SC) is a health-domain query where MoralStack adds a professional-consultation disclaimer — a reasonable policy choice for regulated content.
+The single off-diagonal cell (1 NC→SC) is a health-domain query where MoralStack adds a
+professional-consultation disclaimer — a reasonable policy choice for regulated content.
 
-> **Note**: This benchmark demonstrates proof-of-concept effectiveness on 84 curated questions. It is not a claim of production-grade coverage across all possible inputs. We encourage independent evaluation.
+**Latency** (benchmark 12, 84 questions): mean wall-clock ~36s, median ~26s, vs ~6s for raw
+GPT-4o. Mean is ~51% lower than the original benchmark configuration (~73s), with the fast-path
+rate up from ~11% to ~37% (REFUSE queries now routed through the fast path). Deliberation takes
+time by design — see [Limitations & trade-offs](#-limitations--trade-offs).
 
-### Avg Response Time
+**Reproduce it:**
 
-| | Baseline | MoralStack |
-|---|---|---|
-| **Mean wall-clock** | ~6s | **~36s** |
-| **Median wall-clock** | — | **~26s** |
+```bash
+python scripts/benchmark_moralstack.py
 
-*(Benchmark 12, 84 questions; mean ~51% lower than the original benchmark configuration ~73s mean. Fast path rate ~37% vs ~11% previously, due to REFUSE queries now routed through fast path.)*
+# Override baseline and judge models independently:
+MORALSTACK_BENCHMARK_BASELINE_MODEL=gpt-4o \
+MORALSTACK_BENCHMARK_JUDGE_MODEL=gpt-5.2 \
+python scripts/benchmark_moralstack.py
+```
 
-Deliberative paths add latency by design. See [Limitations & Trade-offs](#limitations--trade-offs).
+</details>
+
+> **Note**: this benchmark demonstrates proof-of-concept effectiveness on 84 curated questions.
+> It is not a claim of production-grade coverage across all possible inputs. We encourage
+> independent evaluation on your domain-specific inputs.
 
 ---
 
-## Installation
+## 🧭 How it works
 
-### From PyPI (recommended for users)
+Every request produces an explicit `final_action` — decision and generation are strictly separated:
 
-```bash
-pip install moralstack
+| Action | Meaning |
+|---|---|
+| `NORMAL_COMPLETE` | Direct response |
+| `SAFE_COMPLETE` | Responsible response with safeguards — a first-class policy action, **not** a post-hoc text disclaimer |
+| `REFUSE` | Refusal with safe redirection |
+
+```mermaid
+flowchart TB
+    A([Request]) --> RE["Risk Estimator<br/><i>parallel mini-estimators: intent · signal detection q1–q17 · operational risk</i>"]
+    RE --> PR{"Policy Router<br/><i>domain overlay + action bounds</i>"}
+    PR -->|clearly benign / clearly harmful| FP[FAST_PATH<br/>deliberation skipped]
+    PR -->|sensitive / ambiguous| DP[DELIBERATIVE_PATH]
+    DP --> CC[Constitutional Critic]
+    DP --> CS[Consequence Simulator]
+    DP --> PE[Perspectives Ensemble]
+    DP --> HE[Hindsight Evaluator]
+    CC & CS & PE & HE --> CE["Convergence Engine<br/><b>issues final_action</b>"]
+    FP --> CE
+    CE --> RA["Response Assembler<br/><i>generates within the decided bounds</i>"]
+    RA --> OUT([Governed response + audit trail])
 ```
 
-For the optional admin UI:
+The single source of truth for bounds and action selection is
+`moralstack/runtime/decision/safe_complete_policy.py`
+(`compute_action_bounds(...)`, `decide_final_action(...)`).
 
-```bash
-pip install "moralstack[ui]"
-```
+<details>
+<summary><b>Package map</b></summary>
 
-### From source (for contributors)
+- `moralstack/sdk/` — Python SDK (`govern()`, `GovernedClient`, `GovernanceConfig`)
+- `moralstack/runtime/` — orchestration runtime
+- `moralstack/orchestration/` — controller, routing, deliberation services
+- `moralstack/models/risk/` — risk estimation and calibration
+- `moralstack/constitution/` — constitution schema, loader, store (YAML-driven)
+- `moralstack/ui/` — FastAPI dashboard (`moralstack-ui`)
+- `moralstack/server/` — OpenAI-compatible governance HTTP proxy (`create_app`; install with `.[server]` or `.[ui]`)
 
-```bash
-git clone https://github.com/fdidonato/moralstack.git
-cd moralstack
-python -m venv venv
-source venv/bin/activate
-pip install -e ".[dev,ui]"
-```
+Deep dive: [docs/architecture_spec.md](./docs/architecture_spec.md).
 
-### Configure
+</details>
 
-```bash
-cp .env.minimal .env
-# edit .env and set OPENAI_API_KEY=sk-...
-```
+---
 
-## 30-Second Quickstart
+## 🔒 Governed delivery
+
+Every user-visible answer is generated **inside the governed pipeline** by MoralStack's own
+policy generator. The wrapped client you pass to `govern()` is never called to generate the
+delivered answer, for any `final_action` — and pipeline failures fail closed to a governed
+refusal, never an ungoverned passthrough.
+
+| `final_action` | What happens |
+|---|---|
+| `NORMAL_COMPLETE` | The governed pipeline generates and delivers the answer |
+| `SAFE_COMPLETE` | The answer is generated within explicit safeguard bounds; developer-declared system prompts are left byte-identical |
+| `REFUSE` | No answer is generated — governed refusal text with safe redirection is returned |
+
+The `model=` argument in `client.chat.completions.create(model="...")` is a **requested alias /
+OpenAI-compatibility field only**: it does not select the model that produces the answer. To
+choose the governed answer model, use `GovernanceConfig(model=...)` (SDK) or `OPENAI_MODEL`
+(env). The response exposes `generation_model` (and `rewrite_model` when a revision occurred);
+`requested_model` records the alias the caller supplied.
+
+<details>
+<summary><b>Model resolution per stage</b></summary>
+
+| Stage | Model source |
+|---|---|
+| First-pass / speculative / compliance generation | `GovernanceConfig.model` → `OPENAI_MODEL` → `gpt-4o` |
+| Governed revision (`policy.rewrite()`, cycle 2+) | `MORALSTACK_POLICY_REWRITE_MODEL` (fallback: resolved policy model) |
+| Governed refusal text | resolved policy model |
+| Risk / Critic / Simulator / Perspectives / Hindsight | `MORALSTACK_*_MODEL` per module, fallback to `OPENAI_MODEL` |
+| Chat request `model=` | requested alias only — does **not** generate or rewrite the delivered answer |
+
+</details>
+
+---
+
+## 💬 Multi-turn & conversational governance
+
+The same one-line API governs full conversations:
 
 ```python
 from moralstack import govern
 from openai import OpenAI
 
-# Wrap any OpenAI-compatible client with MoralStack governance.
 client = govern(OpenAI())
 
-response = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[{"role": "user", "content": "What are the symptoms of vitamin D deficiency?"}],
-)
-
-# Full OpenAI API compatibility:
-print(response.choices[0].message.content)
-
-# Plus governance metadata on every call:
-meta = response.governance_metadata
-print(f"Decision: {meta.final_action}")
-print(f"Risk: {meta.risk_score:.2f} ({meta.risk_category})")
-print(f"Overlay: {meta.domain_overlay}")
-```
-
-More patterns in [`examples/`](./examples/).
-
----
-
-## Multi-turn governance (v0.4)
-
-MoralStack v0.4 introduces full support for conversational governance:
-
-- **Same single-line API**: just wrap your OpenAI client with `govern()` —
-  multi-turn conversations are auto-managed.
-- **Transcript-aware governance**: SDK and proxy attach the full OpenAI-style
-  request transcript to governance; DCCL and speculative generation can use
-  role-ordered prior turns instead of judging only the final user message.
-- **Guarded compliance fast-path**: deployer-authorized contract execution can
-  take `COMPLIANCE_FAST_PATH`, but a proxy governed draft is reused only when its
-  generation context is aligned with the governance context.
-- **Jailbreak resistance**: escalation patterns are detected across turns.
-- **Audit trail**: every conversation produces a complete markdown
-  export for AI Act art. 12 compliance.
-- **OpenAI-compatible HTTP proxy**: point any OpenAI-compatible client at
-  `http://localhost:8080/v1` and get governance with `X-Moralstack-*` headers.
-
-### Quick example
-
-```python
-from openai import OpenAI
-from moralstack import govern
-
-client = govern(OpenAI())
-
-# Multi-turn conversation — fully governed.
 messages = []
 for q in ["What is X?", "Tell me more.", "How do I do X?"]:
     messages.append({"role": "user", "content": q})
@@ -268,48 +257,33 @@ for q in ["What is X?", "Tell me more.", "How do I do X?"]:
     print(response.governance_metadata.final_action, "—", response.choices[0].message.content[:80])
 ```
 
-See [`examples/`](./examples/) for jailbreak resistance, audit export, and the FastAPI proxy.
+- **Transcript-aware governance** — SDK and proxy attach the full OpenAI-style request
+  transcript; DCCL and speculative generation reason over role-ordered prior turns, not just the
+  final user message.
+- **Jailbreak resistance** — escalation patterns are detected across turns
+  ([example](./examples/multiturn_jailbreak_resistance.py)).
+- **Guarded compliance fast-path** — deployer-authorized contract execution can take
+  `COMPLIANCE_FAST_PATH`; a proxy governed draft is reused only when its generation context is
+  aligned with the governance context.
+- **Audit trail** — every conversation produces a complete markdown export for AI Act art. 12
+  compliance ([example](./examples/multiturn_audit_trail.py)).
+- **Session metadata** — `meta.conversation_id` and `meta.turn_index` on every response.
 
----
-
-## SDK Usage
-
-Use MoralStack as a governance wrapper around your existing OpenAI client — no server, no HTTP, no separate process.
+### Streaming
 
 ```python
-from moralstack import govern
-from openai import OpenAI
-
-client = govern(OpenAI())
-
-response = client.chat.completions.create(
+for chunk in client.chat.completions.create(
     model="gpt-4o",
-    messages=[{"role": "user", "content": "How do I pick a lock?"}],
-)
-
-print(response.content)
-# I'm unable to assist with that request.
-
-print(response.governance_metadata.final_action)
-# REFUSE
-
-print(response.governance_metadata.risk_score)
-# 0.87
+    messages=[{"role": "user", "content": "..."}],
+    stream=True,
+):
+    print(chunk.choices[0].delta.content or "", end="", flush=True)
 ```
 
-`govern()` wraps any OpenAI-compatible client. All non-`chat.completions.create()` calls pass through transparently (`client.models.list()`, `client.files.*`, etc.).
+Governance deliberation happens **before** streaming starts. On `REFUSE`, a single synthetic
+chunk is yielded with the refusal text.
 
-### Decision routing
-
-| `final_action` | What happens |
-|---|---|
-| `NORMAL_COMPLETE` | Request passes unchanged to your OpenAI client |
-| `SAFE_COMPLETE` | A synthetic trailing `user` message is appended to `messages` with governance guidance; existing system prompts are left byte-identical; then your OpenAI client is called |
-| `REFUSE` | OpenAI is **not called** — refusal text returned directly |
-
-### Governance metadata
-
-Every response carries `response.governance_metadata`:
+### Governance metadata reference
 
 ```python
 meta = response.governance_metadata
@@ -325,7 +299,42 @@ meta.conversation_id        # session tracking (multi-turn)
 meta.turn_index             # turn counter within session
 ```
 
-### GovernanceConfig
+All non-`chat.completions.create()` calls pass through transparently
+(`client.models.list()`, `client.files.*`, etc.).
+
+---
+
+## 🌐 Server proxy & Web UI
+
+**OpenAI-compatible HTTP proxy** — point any OpenAI-compatible client at
+`http://localhost:8080/v1` and get governance with `X-Moralstack-*` response headers. Install
+with `pip install "moralstack[server]"`, import `create_app` from `moralstack.server`, inject an
+upstream OpenAI client and a configured `OrchestrationController`, and serve with uvicorn. (The
+`moralstack-server` entry point is reserved for a future launcher.) See
+[docs/modules/server_proxy.md](./docs/modules/server_proxy.md) and
+[`examples/server_quickstart.py`](./examples/server_quickstart.py).
+
+**Admin dashboard** — inspect every decision: LLM calls, critic scores, risk traces, decision
+explanations, convergence steps, and benchmark comparisons.
+
+```bash
+pip install "moralstack[ui]"
+
+# .env
+# MORALSTACK_DB_PATH=moralstack.db
+# MORALSTACK_UI_USERNAME=admin
+# MORALSTACK_UI_PASSWORD=${UI_PASSWORD}
+
+moralstack-ui
+# → http://localhost:8765  (override with MORALSTACK_UI_PORT)
+```
+
+---
+
+## 🔧 Configuration
+
+Minimum required: `OPENAI_API_KEY` in the environment. Everything else has sensible defaults.
+`GovernanceConfig` tunes the SDK per-client:
 
 ```python
 from moralstack import govern, GovernanceConfig
@@ -334,65 +343,18 @@ from openai import OpenAI
 client = govern(
     OpenAI(),
     config=GovernanceConfig(
-        domain_overlay="healthcare",  # enforce a specific domain overlay
-        failure_policy="passthrough",  # on pipeline error: call OpenAI directly (unsafe)
-        observability_mode="file_only",  # write JSONL audit trail
+        domain_overlay="healthcare",       # enforce a specific domain overlay
+        observability_mode="file_only",    # write JSONL audit trail
         jsonl_dir=".investigations/logs/audit",
     ),
 )
 ```
 
-All parameters default to sensible values. Minimum required: `OPENAI_API_KEY` in environment.
+Environment is loaded via `moralstack/utils/env_loader.py`: non-empty `.env` values override
+existing env vars (`override=True`); optional empty values are purged after load.
 
-### SDK model resolution
-
-> **Governed delivery (Plan 1).** Every user-visible answer is generated by
-> MoralStack's own policy generator. The wrapped client you pass to `govern()`
-> is **never** called to generate the delivered answer, for any `final_action`
-> (`NORMAL_COMPLETE`, `SAFE_COMPLETE`, or `REFUSE`). The `model=` argument in
-> `client.chat.completions.create(model="...")` is now a **requested alias /
-> OpenAI-compatibility field only**: it does not select the model that produces
-> the answer.
-
-To choose the governed answer model, use `GovernanceConfig(model=...)` (SDK) or
-`OPENAI_MODEL` (env). The actual model used is exposed on the response as
-`generation_model` (and `rewrite_model` when a revision occurred);
-`requested_model` records the alias the caller supplied.
-
-| Stage | Model source |
-|---|---|
-| First-pass / speculative / compliance generation | `GovernanceConfig.model` → `OPENAI_MODEL` → `gpt-4o` |
-| Governed revision (`policy.rewrite()`, cycle 2+) | `MORALSTACK_POLICY_REWRITE_MODEL` (fallback: resolved policy model) |
-| Governed refusal text | resolved policy model |
-| Risk / Critic / Simulator / Perspectives / Hindsight | `MORALSTACK_*_MODEL` per module, fallback to `OPENAI_MODEL` |
-| Chat request `model=` | requested alias only — does **not** generate or rewrite the delivered answer |
-
-The wrapped client is not called for delivery in any case; pipeline failures
-fail closed to a governed refusal (no passthrough).
-
-### Streaming
-
-```python
-for chunk in client.chat.completions.create(
-    model="gpt-4o",
-    messages=[{"role": "user", "content": "..."}],
-    stream=True,
-):
-    print(chunk.choices[0].delta.content or "", end="", flush=True)
-```
-
-Governance deliberation happens **before** streaming starts. If `REFUSE`, a single synthetic chunk is yielded with the refusal text.
-
----
-
-## Configuration
-
-Environment is loaded via `moralstack/utils/env_loader.py`.
-
-- `.env` values are loaded with `override=True` (non-empty `.env` values override existing env vars)
-- Optional empty values are purged after load to avoid invalid client configuration
-
-### Key variables
+<details>
+<summary><b>Full environment variable reference</b></summary>
 
 | Variable | Default | Description |
 |---|---|---|
@@ -411,8 +373,9 @@ Environment is loaded via `moralstack/utils/env_loader.py`.
 | `MORALSTACK_CORRELATION_TTL_SECONDS` | `3600` | TTL (seconds) for the server proxy's lineage correlation store; must exceed the max expected inter-turn delay, and should stay aligned with the session-store TTL so a lineage entry doesn't outlive (or expire well before) its governance session |
 | `MORALSTACK_CORRELATION_MAX_ENTRIES` | `20000` | Max entries in the server proxy's lineage correlation store (FIFO eviction beyond this cap) |
 | `MORALSTACK_PRINCIPAL_HMAC_SECRET` | *(unset)* | Secret used to HMAC the bearer token into a tenant/principal identifier for conversation correlation; when unset, the HMAC principal path is disabled (falls back to the empty-string sentinel) |
+| `MORALSTACK_DCCL_SAFETY_OVERRIDE_MODEL` | `gpt-4o-mini` | Model for the DCCL language-agnostic safety-override classifier (runs on every contract MATCH). Keep it small so the compliance fast-path stays fast |
 
-### Default models by component
+**Default models by component:**
 
 | Component | Default model | Override variable |
 |---|---|---|
@@ -424,63 +387,13 @@ Environment is loaded via `moralstack/utils/env_loader.py`.
 | Perspectives | follows `OPENAI_MODEL` | `MORALSTACK_PERSPECTIVES_MODEL` |
 | Hindsight | follows `OPENAI_MODEL` | `MORALSTACK_HINDSIGHT_MODEL` |
 
-For the full variable reference see [INSTALL.md](INSTALL.md) and `docs/modules/*.md`.
+Full reference: [INSTALL.md](./INSTALL.md) and [docs/modules/](./docs/modules/README.md).
+
+</details>
 
 ---
 
-## Running the Benchmark
-
-```bash
-python scripts/benchmark_moralstack.py
-```
-
-Override baseline and judge models independently:
-
-```bash
-MORALSTACK_BENCHMARK_BASELINE_MODEL=gpt-4o \
-MORALSTACK_BENCHMARK_JUDGE_MODEL=gpt-5.2 \
-python scripts/benchmark_moralstack.py
-```
-
-When the judge model differs from the generation model, it is treated as independent.
-
----
-
-## Web UI
-
-Install UI extras:
-
-```bash
-pip install -e ".[ui]"
-```
-
-Configure persistence and credentials:
-
-```bash
-# .env
-MORALSTACK_DB_PATH=moralstack.db
-MORALSTACK_UI_USERNAME=admin
-MORALSTACK_UI_PASSWORD=your_password
-```
-
-Start:
-
-```bash
-moralstack-ui
-# → http://localhost:8765  (override with MORALSTACK_UI_PORT)
-```
-
-Inspect every decision: LLM calls, critic scores, risk traces, decision explanation, convergence steps, and benchmark comparisons.
-
----
-
-## Server proxy (OpenAI-compatible)
-
-Install `fastapi`, `uvicorn`, and `httpx` via `pip install -e ".[server]"` (or use `.[ui]`). Import `create_app` from `moralstack.server`, inject an upstream OpenAI client and a configured `OrchestrationController`, and serve the app with uvicorn. The `moralstack-server` entry point is reserved for a future launcher; use `create_app` in your own module until then. See `docs/modules/server_proxy.md`.
-
----
-
-## Why not just use a filter?
+## 🆚 Why not just use a filter?
 
 | | Regex / keywords | Moderation APIs | **MoralStack** |
 |---|:---:|:---:|:---:|
@@ -492,43 +405,76 @@ Install `fastapi`, `uvicorn`, and `httpx` via `pip install -e ".[server]"` (or u
 | Counterfactual reasoning | ✗ | ✗ | ✓ |
 | Zero false negatives* | ✗ | ✗ | ✓ |
 
-*On our benchmark set — see full methodology above.*
-
-- **Deliberative, not reactive** — runs a multi-module reasoning pipeline, not a classifier
-- **First-class `SAFE_COMPLETE`** — "respond with safeguards" is an explicit policy action, not a post-hoc disclaimer
-- **Full audit trail** — every decision is explainable, logged, and queryable
-- **Domain overlay system** — YAML-configurable per sector, no code changes required
+<sub>*On our benchmark set — see [full methodology](#-benchmark-results).</sub>
 
 ---
 
-## Documentation
-
-- [INSTALL.md](./INSTALL.md) — detailed installation guide
-- [examples/](./examples/) — runnable code examples
-- [docs/architecture_spec.md](./docs/architecture_spec.md)
-- [docs/decision_policy.md](./docs/decision_policy.md)
-- [docs/constitution.md](./docs/constitution.md)
-- [docs/creating_overlays.md](./docs/creating_overlays.md)
-- [docs/modules/](./docs/modules/README.md)
-- [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md)
-- [docs/limitations_and_tradeoffs.md](./docs/limitations_and_tradeoffs.md)
-
----
-
-## Limitations & Trade-offs
+## 🚧 Limitations & trade-offs
 
 MoralStack makes deliberate trade-offs:
 
-**Latency over speed**: Deliberative paths run multiple LLM calls (risk → critic → simulator → perspectives → hindsight). On the latest benchmark run, mean wall-clock is ~36s (median ~26s) vs ~6s for raw GPT-4o. This is a design choice — governance takes time. Latency has been reduced through speculative decoding, parallel risk estimation, lighter models for simulator and rewrite (`gpt-4.1-nano`), structured JSON output enforcement, and soft-revision prompt constraints. Further optimizations (early-exit on low-risk queries, context-mode switching) are planned.
+- **Latency over speed** — deliberative paths run multiple LLM calls (risk → critic → simulator
+  → perspectives → hindsight): mean ~36s (median ~26s) vs ~6s for raw GPT-4o on the latest
+  benchmark run. Governance takes time by design. Latency keeps dropping via speculative
+  decoding, parallel risk estimation, lighter per-module models, structured JSON output
+  enforcement, and soft-revision prompt constraints; early-exit and context-mode switching are
+  planned.
+- **Multi-model cost** — a single deliberative request makes 7–9 LLM calls. `.env.minimal` ships
+  a cost-conscious profile (`gpt-4.1-nano` for rewrite/simulator, `gpt-4o-mini` for
+  perspectives), all overridable.
+- **LLM non-determinism** — despite low temperatures, outputs can vary between runs;
+  deterministic in-code guardrails bound the variance, but perfect reproducibility is not
+  guaranteed.
+- **Benchmark scope** — 84 curated questions demonstrate the approach, not full coverage. Run
+  your own evaluations on domain-specific inputs.
 
-**Multi-model cost**: A single deliberative request makes 7–9 LLM calls. Example profiles: `.env.minimal` uses `gpt-4.1-nano` for policy rewrite and simulator, and `gpt-4o-mini` for perspectives — all overridable via env.
-
-**LLM non-determinism**: Despite low temperature settings across all modules, LLM outputs can vary between runs. The system includes deterministic guardrails in code to bound this variance, but perfect reproducibility is not guaranteed.
-
-**Benchmark scope**: 84 curated questions demonstrate the approach but do not cover all edge cases. We recommend running your own evaluations on domain-specific inputs.
-
-See full discussion in [docs/limitations_and_tradeoffs.md](docs/limitations_and_tradeoffs.md).
+Full discussion: [docs/limitations_and_tradeoffs.md](./docs/limitations_and_tradeoffs.md).
 
 ---
 
-<p align="center">Apache 2.0 · Built with deliberation, not just parameters.</p>
+## 📚 Documentation
+
+| | |
+|---|---|
+| [INSTALL.md](./INSTALL.md) | Detailed installation guide |
+| [examples/](./examples/) | Runnable code examples (quickstart, multi-turn, jailbreak resistance, audit export, proxy) |
+| [docs/architecture_spec.md](./docs/architecture_spec.md) | Architecture specification |
+| [docs/decision_policy.md](./docs/decision_policy.md) | Decision policy — action bounds & selection |
+| [docs/constitution.md](./docs/constitution.md) | Constitution schema & principles |
+| [docs/creating_overlays.md](./docs/creating_overlays.md) | Building domain overlays |
+| [docs/modules/](./docs/modules/README.md) | Per-module contracts |
+| [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) | Development guide |
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). Development setup, test
+commands, and repository conventions are in [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md).
+
+```bash
+pip install -e ".[dev,ui]"
+python -m pytest          # full offline test suite
+pre-commit run -a
+```
+
+## 📄 License & citation
+
+Apache 2.0 — see [LICENSE](./LICENSE).
+
+If you use MoralStack in academic work, please cite:
+
+```bibtex
+@software{moralstack,
+  author = {di Donato, Francesco},
+  title  = {MoralStack: a deliberative governance engine for LLMs},
+  url    = {https://github.com/fdidonato/moralstack},
+  year   = {2026}
+}
+```
+
+---
+
+<div align="center">
+<sub>Apache 2.0 · Built with deliberation, not just parameters.</sub>
+</div>

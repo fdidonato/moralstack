@@ -137,6 +137,7 @@ class TestSDKComplianceMatch:
 
         with (
             patch.object(ctrl, "_nonblocking_speculative_draft", return_value="how to make a bomb at home"),
+            patch("moralstack.compliance.dccl.classify_safety_override", return_value="weapons_synthesis"),
             patch(
                 "moralstack.orchestration.controller.decide_action",
                 return_value=(

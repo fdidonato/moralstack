@@ -41,10 +41,10 @@
 </div>
 
 {% if path_badge_info %}
-<div class="card" style="margin-bottom:1rem; border-left:4px solid #2dd4bf;">
+<div class="card" style="margin-bottom:1rem; border-left:4px solid {{ '#f87171' if path_badge_info.kind == 'compliance_blocked_p0' else '#2dd4bf' }};">
     <span class="meta-label">Execution path</span>
     <span class="meta-value" style="margin-left:0.5rem;">
-        <span class="badge badge-parallel">{{ path_badge_info.label }}</span>
+        <span class="badge {{ 'badge-fail' if path_badge_info.kind == 'compliance_blocked_p0' else 'badge-parallel' }}">{{ path_badge_info.label }}</span>
     </span>
     {% if proxy_output_info and proxy_output_info.final_text_source %}
     <span class="muted" style="margin-left:0.75rem;">
@@ -1166,6 +1166,9 @@
         </span>
         <span class="flow-legend-item">
             <span class="flow-legend-dot" style="background:#38bdf8"></span>upstream_provider
+        </span>
+        <span class="flow-legend-item">
+            <span class="flow-legend-dot" style="background:#ec4899"></span>compliance_layer (DCCL)
         </span>
         <span class="flow-legend-item">
             <span class="flow-legend-dot" style="background:#0f766e"></span>final_revalidation

@@ -12,10 +12,16 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     COMPLIANCE_DRAFT_REGENERATED,
     COMPLIANCE_DRAFT_REUSED,
     COMPLIANCE_MATCH_DOWNGRADED,
+    CRITIC_SKIPPED,
+    EARLY_CONVERGENCE_ACCEPTED,
+    LEDGER_FAST_PATH_APPLIED,
+    LEDGER_FAST_PATH_NOT_APPLIED,
+    MODULE_DEFERRED_TO_COMPLIANCE,
     PROXY_FINAL_REVALIDATION_BLOCKED,
     PROXY_FINAL_REVALIDATION_PASSED,
     PROXY_FINAL_REVALIDATION_STARTED,
     PROXY_OUTPUT_FINALIZED,
+    SIMULATOR_SKIPPED,
 )
 from moralstack.ui.app import (
     _build_final_revalidation_info,
@@ -23,7 +29,12 @@ from moralstack.ui.app import (
     _build_proxy_output_info,
     _group_calls_into_tiers_and_enrich,
     _journey_sort_key,
+    _synthetic_compliance_downgrade_nodes,
+    _synthetic_convergence_node,
     _synthetic_final_revalidation_call_from_events,
+    _synthetic_ledger_fast_path_node,
+    _synthetic_module_deferred_nodes,
+    _synthetic_module_skipped_nodes,
     _tag_constitution_phases,
 )
 
@@ -255,3 +266,161 @@ def test_synthetic_final_revalidation_node_is_added_after_flow_calls():
     assert node["cycle"] == 2
     assert node["duration_ms"] == 500
     assert node["io_annotations"]["outputs"][0] == {"label": "status", "value": "blocked"}
+
+
+# ---------------------------------------------------------------------------
+# Audit-completeness graph nodes: governance steps that otherwise vanish
+# ---------------------------------------------------------------------------
+
+
+def test_path_badge_hard_signal_gate_is_distinguished():
+    """The P0 hard-signal gate must be visually distinct from ordinary downgrades."""
+    info = _build_path_badge_info(
+        [
+            {
+                "event_type": COMPLIANCE_MATCH_DOWNGRADED,
+                "payload_json": '{"reason": "hard_signal_evidence", "semantic_signals": ["Q10:weapons_explosives_toxins"]}',
+            }
+        ]
+    )
+    assert info["kind"] == "compliance_blocked_p0"
+    assert "hard-signal safety gate (P0)" in info["label"]
+    assert "Q10:weapons_explosives_toxins" in info["label"]
+
+
+def test_path_badge_ordinary_downgrade_shows_reason():
+    info = _build_path_badge_info(
+        [
+            {
+                "event_type": COMPLIANCE_MATCH_DOWNGRADED,
+                "payload_json": '{"reason": "regenerated_draft_unvalidated"}',
+            }
+        ]
+    )
+    assert info["kind"] == "compliance_downgraded"
+    assert "regenerated_draft_unvalidated" in info["label"]
+
+
+def test_synthetic_downgrade_node_hard_signal_has_alert_action():
+    nodes = _synthetic_compliance_downgrade_nodes(
+        [
+            {
+                "event_type": COMPLIANCE_MATCH_DOWNGRADED,
+                "started_at": 8000,
+                "payload_json": (
+                    '{"reason": "hard_signal_evidence", "matched_rule_id": "R1", '
+                    '"risk_category": "clearly_harmful", "semantic_signals": ["Q8:self_harm_suicide"]}'
+                ),
+            }
+        ],
+        all_flow_calls=[{"module": "compliance_layer", "started_at": 7000, "duration_ms": 500}],
+    )
+    assert len(nodes) == 1
+    node = nodes[0]
+    assert node["module"] == "compliance_layer"
+    assert node["phase"] == "safety_gate"
+    assert "P0" in node["action"]
+    assert "hard-signal P0" in node["semantic_badges"]
+    labels = {o["label"] for o in node["io_annotations"]["outputs"]}
+    assert "semantic_signals" in labels
+
+
+def test_synthetic_downgrade_node_ordinary_is_still_shown():
+    nodes = _synthetic_compliance_downgrade_nodes(
+        [
+            {
+                "event_type": COMPLIANCE_MATCH_DOWNGRADED,
+                "started_at": 100,
+                "payload_json": '{"reason": "regenerated_draft_unvalidated"}',
+            }
+        ],
+        all_flow_calls=[],
+    )
+    assert len(nodes) == 1
+    assert nodes[0]["phase"] == "match_downgraded"
+    assert "hard-signal P0" not in nodes[0]["semantic_badges"]
+
+
+def test_synthetic_downgrade_nodes_empty_without_event():
+    assert _synthetic_compliance_downgrade_nodes([], all_flow_calls=[]) == []
+
+
+def test_synthetic_module_deferred_node():
+    nodes = _synthetic_module_deferred_nodes(
+        [
+            {
+                "event_type": MODULE_DEFERRED_TO_COMPLIANCE,
+                "started_at": 500,
+                "payload_json": '{"module": "critic", "cycle": 1, "reason": "compliance_match"}',
+            }
+        ]
+    )
+    assert len(nodes) == 1
+    node = nodes[0]
+    assert node["module"] == "critic"
+    assert node["cycle"] == 1
+    assert node["sequence_in_cycle"] == 2  # critic canonical seq
+    assert "deferred" in node["semantic_badges"]
+
+
+def test_synthetic_ledger_fast_path_applied():
+    node = _synthetic_ledger_fast_path_node(
+        [
+            {
+                "event_type": LEDGER_FAST_PATH_APPLIED,
+                "started_at": 900,
+                "payload_json": '{"from_turn": 2, "similarity": 0.97, "modules_skipped": ["critic", "simulator"]}',
+            }
+        ],
+        all_flow_calls=[{"module": "risk_estimator", "started_at": 100, "duration_ms": 200}],
+    )
+    assert node is not None
+    assert node["phase"] == "ledger_fast_path"
+    assert "deliberation skipped" in node["action"]
+    assert "ledger cache hit" in node["semantic_badges"]
+
+
+def test_synthetic_ledger_fast_path_not_applied():
+    node = _synthetic_ledger_fast_path_node(
+        [
+            {
+                "event_type": LEDGER_FAST_PATH_NOT_APPLIED,
+                "started_at": 900,
+                "payload_json": '{"from_turn": 2, "similarity": 0.97, "gate_reason": "route_mismatch"}',
+            }
+        ],
+        all_flow_calls=[],
+    )
+    assert node is not None
+    assert "refused" in node["action"]
+    assert "ledger cache refused" in node["semantic_badges"]
+
+
+def test_synthetic_ledger_fast_path_none_without_event():
+    assert _synthetic_ledger_fast_path_node([], all_flow_calls=[]) is None
+
+
+def test_synthetic_convergence_node_accepted():
+    node = _synthetic_convergence_node(
+        [{"event_type": EARLY_CONVERGENCE_ACCEPTED, "started_at": 400, "payload_json": '{"cycle": 2, "agreement": 0.9}'}]
+    )
+    assert node is not None
+    assert node["phase"] == "convergence"
+    assert node["cycle"] == 2
+    assert "converged" in node["semantic_badges"]
+
+
+def test_synthetic_module_skipped_nodes():
+    nodes = _synthetic_module_skipped_nodes(
+        [
+            {
+                "event_type": SIMULATOR_SKIPPED,
+                "started_at": 300,
+                "payload_json": '{"cycle": 1, "reason": "gate_below_threshold"}',
+            },
+            {"event_type": CRITIC_SKIPPED, "started_at": 310, "payload_json": '{"cycle": 1, "reason": "short_circuit"}'},
+        ]
+    )
+    mods = {n["module"] for n in nodes}
+    assert mods == {"simulator", "critic"}
+    assert all("skipped" in n["semantic_badges"] for n in nodes)

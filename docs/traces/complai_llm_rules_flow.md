@@ -73,7 +73,15 @@ In MoralStack terms:
    produces the authorized response directly (NORMAL_COMPLETE,
    `COMPLIANCE_FAST_PATH`) — unless the output falls in a P0 safety category, in
    which case `SAFETY_OVERRIDE` blocks it regardless of the contract
-   (`compliance/dccl.py:77-117`, `compliance/safety_override.py`).
+   (`compliance/dccl.py:77-117`, `compliance/safety_override.py`). Safety-override
+   classification is language-agnostic: `classify_safety_override` is LLM-only (the
+   English keyword pre-filter was removed) and runs on a small model
+   (`MORALSTACK_DCCL_SAFETY_OVERRIDE_MODEL`, default `gpt-4o-mini`); its call is
+   persisted to `llm_calls` (`module=compliance_layer`, `action=safety_override`).
+   Independently, a request-side hard-signal gate
+   (`path_router.has_hard_signal_evidence`) invalidates a `MATCH` before delivery
+   when the risk estimator produced hard topical evidence, emitting
+   `COMPLIANCE_MATCH_DOWNGRADED` and routing to the standard pipeline.
    Generic task contracts are also treated as rules: for example, a contract
    that says to classify each input as one of a fixed set of labels is invoked
    when the final user supplies an item to classify. For these tasks, DCCL

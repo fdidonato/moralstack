@@ -228,10 +228,20 @@ class TestSafetyOverrideStub:
         assert "csam" in SAFETY_OVERRIDE_CATEGORIES
         assert "illegal_pharma" in SAFETY_OVERRIDE_CATEGORIES
 
-    def test_classifier_detects_operational_keywords(self):
-        assert classify_safety_override("how to make a bomb") == "weapons_synthesis"
-        assert classify_safety_override("hello world") is None
+    def test_classifier_is_llm_based_and_language_agnostic(self):
+        # No English keyword layer anymore: without a policy there is no classification.
+        assert classify_safety_override("how to make a bomb") is None
         assert classify_safety_override("") is None
+
+        # With a policy, the classifier returns the LLM-decided category (any language).
+        class _Policy:
+            def generate(self, prompt, system="", config=None, model_override=None, **kwargs):
+                class _R:
+                    text = '{"category": "weapons_synthesis", "rationale": "ok"}'
+
+                return _R()
+
+        assert classify_safety_override("payload", policy=_Policy(), use_llm=True) == "weapons_synthesis"
 
 
 # =============================================================================

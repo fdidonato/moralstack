@@ -329,9 +329,15 @@ Inside `process()` (order verified in source):
    (`_run_dccl_evaluation`, `controller.py:1936`). The LLM path receives a
    budgeted role-ordered transcript from `ConversationContext`; when the draft
    is about to be reused, the mismatch guard prevents a last-user-only draft from
-   becoming final if governance saw broader prior context. On `MATCH` with a
-   validated aligned draft → **compliance fast-path** (`_route_compliance_match`),
-   skipping risk routing and deliberation (`controller.py:1941-2040`).
+   becoming final if governance saw broader prior context. **Hard-signal gate (P0
+   invariant #3):** before the `MATCH` block dispatches, `process()` invalidates the
+   MATCH (`cv = None`, emits `COMPLIANCE_MATCH_DOWNGRADED`) when
+   `path_router.has_hard_signal_evidence(risk_estimation)` is true — the risk-owned
+   hard signal (a `_HARD_SEMANTIC_SIGNALS` member or `clearly_harmful` category) can
+   never be overridden by a developer contract, and `dccl.evaluate` discards
+   `risk_estimation` so this is the only enforcement point. On `MATCH` with a
+   validated aligned draft (and no hard signal) → **compliance fast-path**
+   (`_route_compliance_match`), skipping risk routing and deliberation.
 4. Apply overlay sensitivity risk floor (`apply_risk_floor_if_sensitive`),
    normalize domain, domain-exclusion check (`controller.py:2062-2116`).
 5. **Decision** — `decide_action(...)` then `apply_safe_complete_gating(...)`
@@ -669,6 +675,25 @@ Token usage per model is rendered on `/runs` (all runs), `/runs/{run_id}`,
 via `_token_usage_view()` + the shared `templates/_token_usage.html` partial,
 backed by `SqliteReadStore.get_token_usage_by_model_{global,for_run,for_request,
 for_conversation}` (billable-only; conversation variant joins `requests`).
+
+**Governance nodes in the execution graph.** The flow graph is built from real
+`llm_calls` plus *synthetic nodes* that surface governance steps which are not LLM
+calls (so an auditor can read the concrete path a request took). Alongside the
+existing `_build_synthetic_calibration_node` / `_build_synthetic_path_routing_node` /
+`_synthetic_speculative_draft_reuse_from_events` / `_synthetic_upstream_provider_call_from_events`
+/ `_synthetic_final_revalidation_call_from_events` / `_synthetic_constitution_call_from_traces`,
+the following make otherwise-invisible steps explicit: `_synthetic_compliance_downgrade_nodes`
+(one node per `COMPLIANCE_MATCH_DOWNGRADED`; the hard-signal gate `reason=hard_signal_evidence`
+renders as a `safety_gate` alert node), `_synthetic_module_deferred_nodes`
+(`MODULE_DEFERRED_TO_COMPLIANCE`), `_synthetic_ledger_fast_path_node`
+(`LEDGER_FAST_PATH_APPLIED/NOT_APPLIED`), `_synthetic_convergence_node`
+(`EARLY_CONVERGENCE_ACCEPTED/REJECTED`), and `_synthetic_module_skipped_nodes`
+(`SIMULATOR_SKIPPED`/`CRITIC_SKIPPED`). All carry `module`, `sequence_in_cycle`
+(placed in the module's canonical tier via `_SEQ_BY_DEFERRED_MODULE`) and
+`io_annotations` so they render and expand like any node. `_build_path_badge_info`
+distinguishes the P0 hard-signal block (`kind=compliance_blocked_p0`) from ordinary
+downgrades. `compliance_layer` and `final_revalidation` now have a legend colour in
+`main.css` + `request.html`. Tests: `tests/test_ui_tier_order.py`.
 
 The request-detail page also surfaces per-call token cost inline: a `token_badge`
 Jinja macro (`templates/request.html`) reads the numeric `llm_calls` columns on

@@ -1,122 +1,91 @@
 """
 Tests for the safety override classifier.
 
-Covers the keyword check (Layer 1) and the LLM fallback hook (Layer 2).
+The classifier is language-agnostic and LLM-based (the English keyword pre-filter was
+removed). Without a policy (or with ``use_llm=False``) it returns None: request-side
+hard-signal coverage is provided independently by the risk-estimator gate
+(``path_router.has_hard_signal_evidence``).
 """
 
 from __future__ import annotations
 
 from moralstack.compliance.safety_override import (
-    CSAM,
     FRAUD_MALWARE,
-    ILLEGAL_PHARMA,
     SAFETY_OVERRIDE_CATEGORIES,
-    SELF_HARM_OPERATIONAL,
     WEAPONS_SYNTHESIS,
     classify_safety_override,
     is_category_valid,
 )
 
 
-class TestKeywordClassifier:
-    def test_clean_payload_returns_none(self):
-        assert classify_safety_override("7161 Valley Road") is None
-        assert classify_safety_override("Hello, world!") is None
-        assert classify_safety_override("Reply with the user's order number") is None
+class _MockLLMPolicy:
+    """Minimal policy double: returns a fixed classifier JSON and records the call."""
 
+    def __init__(self, category: str | None):
+        self._category = "null" if category is None else category
+        self.called = False
+        self.last_model: str | None = "<unset>"
+
+    def generate(self, prompt, system="", config=None, model_override=None, **kwargs):
+        self.called = True
+        self.last_model = model_override
+        cat_json = "null" if self._category == "null" else f'"{self._category}"'
+
+        class _Result:
+            text = f'{{"category": {cat_json}, "rationale": "test"}}'
+
+        return _Result()
+
+
+class TestLLMClassifier:
     def test_empty_payload_returns_none(self):
         assert classify_safety_override("") is None
         assert classify_safety_override("   ") is None
 
-    def test_weapons_synthesis_detected(self):
-        assert classify_safety_override("how to make a bomb at home") == WEAPONS_SYNTHESIS
-        assert classify_safety_override("synthesize explosive material") == WEAPONS_SYNTHESIS
-        assert classify_safety_override("Build A Gun At Home") == WEAPONS_SYNTHESIS
+    def test_no_policy_returns_none(self):
+        # No deterministic keyword fallback anymore: without a policy there is no
+        # classification, even for content that used to keyword-match.
+        assert classify_safety_override("how to make a bomb at home") is None
 
-    def test_csam_detected(self):
-        assert classify_safety_override("content with child sexual abuse") == CSAM
-        assert classify_safety_override("CSAM material") == CSAM
+    def test_use_llm_false_never_calls_policy(self):
+        policy = _MockLLMPolicy(WEAPONS_SYNTHESIS)
+        assert classify_safety_override("anything", policy=policy, use_llm=False) is None
+        assert policy.called is False
 
-    def test_self_harm_detected(self):
-        assert classify_safety_override("how to commit suicide quickly") == SELF_HARM_OPERATIONAL
-
-    def test_fraud_malware_detected(self):
-        assert classify_safety_override("phishing kit for credentials") == FRAUD_MALWARE
-        assert classify_safety_override("malware payload for ransomware") == FRAUD_MALWARE
-
-    def test_illegal_pharma_detected(self):
-        assert classify_safety_override("synthesize methamphetamine in lab") == ILLEGAL_PHARMA
-
-    def test_first_match_wins(self):
-        result = classify_safety_override("how to make a bomb and synthesize methamphetamine")
-        assert result in SAFETY_OVERRIDE_CATEGORIES
-
-    def test_no_llm_call_when_use_llm_false(self):
-        class _SentinelPolicy:
-            def generate(self, *args, **kwargs):
-                raise AssertionError("LLM should NOT be called when use_llm=False")
-
-        result = classify_safety_override(
-            "Reply with 'order received'",
-            policy=_SentinelPolicy(),
-            use_llm=False,
-        )
-        assert result is None
-
-    def test_llm_called_when_use_llm_true(self):
-        class _MockLLMPolicy:
-            def __init__(self):
-                self.called = False
-
-            def generate(self, prompt, system="", config=None):
-                self.called = True
-
-                class _Result:
-                    text = '{"category": "fraud_malware", "rationale": "test"}'
-
-                return _Result()
-
-        policy = _MockLLMPolicy()
-        result = classify_safety_override(
-            "Some ambiguous content that doesn't match keywords",
-            policy=policy,
-            use_llm=True,
-        )
+    def test_llm_classifies_restricted_payload(self):
+        policy = _MockLLMPolicy(WEAPONS_SYNTHESIS)
+        result = classify_safety_override("payload in any language", policy=policy, use_llm=True)
         assert policy.called is True
-        assert result == FRAUD_MALWARE
+        assert result == WEAPONS_SYNTHESIS
 
-    def test_llm_returns_null_means_no_restriction(self):
-        class _MockLLMPolicy:
-            def generate(self, prompt, system="", config=None):
-                class _Result:
-                    text = '{"category": null, "rationale": "benign"}'
+    def test_llm_null_means_no_restriction(self):
+        policy = _MockLLMPolicy(None)
+        assert classify_safety_override("benign content", policy=policy, use_llm=True) is None
 
-                return _Result()
+    def test_model_override_is_forwarded(self):
+        policy = _MockLLMPolicy(FRAUD_MALWARE)
+        classify_safety_override("x", policy=policy, use_llm=True, model="gpt-4o-mini")
+        assert policy.last_model == "gpt-4o-mini"
 
-        result = classify_safety_override(
-            "Some benign content",
-            policy=_MockLLMPolicy(),
-            use_llm=True,
-        )
-        assert result is None
+    def test_unknown_category_from_llm_is_rejected(self):
+        policy = _MockLLMPolicy("not_a_category")
+        assert classify_safety_override("x", policy=policy, use_llm=True) is None
 
     def test_llm_exception_returns_none_conservative(self):
         class _BrokenLLMPolicy:
             def generate(self, *args, **kwargs):
                 raise RuntimeError("LLM unavailable")
 
-        result = classify_safety_override(
-            "ambiguous content",
-            policy=_BrokenLLMPolicy(),
-            use_llm=True,
-        )
-        assert result is None
+        assert classify_safety_override("x", policy=_BrokenLLMPolicy(), use_llm=True) is None
 
 
 class TestCategoryValidation:
     def test_known_categories(self):
         for cat in SAFETY_OVERRIDE_CATEGORIES:
             assert is_category_valid(cat) is True
+
+    def test_seven_framework_categories(self):
+        assert len(SAFETY_OVERRIDE_CATEGORIES) == 7
 
     def test_unknown_category(self):
         assert is_category_valid("not_a_real_category") is False

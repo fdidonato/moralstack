@@ -103,7 +103,15 @@ adds no retrieval.
 - The DCCL LLM prompt includes a budgeted role-ordered transcript from
   `ConversationContext`, not only the final user request. If budget trimming
   occurs, the prompt explicitly says not to claim prior turns are absent.
-- If verdict is `MATCH`:
+- **Hard-signal gate (P0 invariant #3, `controller.py` before the MATCH block).**
+  Because `DCCL.evaluate` discards `risk_estimation`, a `MATCH` would otherwise be
+  delivered on the fast-path before any deterministic hard-signal check runs. If
+  `path_router.has_hard_signal_evidence(risk_estimation)` is true (a hard q-signal or
+  a `clearly_harmful` category), the `MATCH` is invalidated (`cv = None`),
+  `COMPLIANCE_MATCH_DOWNGRADED` is emitted with `reason="hard_signal_evidence"`, and the
+  request falls through to the standard governed pipeline. A developer contract can
+  never authorize a hard-signal request by short-circuiting the pipeline.
+- If verdict is `MATCH` (and the hard-signal gate did not fire):
   - The delivery/governance mismatch guard records `governance_context_mode`,
     `candidate_context_mode`, `prior_turn_count`,
     `delivery_context_broader_than_governance`, and `mismatch_guard_action`.

@@ -76,7 +76,7 @@ from moralstack.orchestration.overlay_policy import (
     is_domain_excluded,
     is_overlay_sensitive,
 )
-from moralstack.orchestration.path_router import get_route, is_hard_signal_refuse
+from moralstack.orchestration.path_router import get_route, has_hard_signal_evidence, is_hard_signal_refuse
 from moralstack.orchestration.persistence_port import PersistencePort
 from moralstack.orchestration.process_context import ProcessCallContext
 from moralstack.orchestration.refusal_handler import RefusalHandler
@@ -2256,6 +2256,32 @@ class OrchestrationController:
             from moralstack.compliance.types import ComplianceDecision
 
             cv = call_ctx.compliance_verdict
+            # P0 (PROJECT_SPEC §5 invariant #3): hard topical signals are never
+            # overridable by a developer contract. The DCCL evaluates the contract
+            # without seeing `risk_estimation` (dccl.evaluate discards it), so a MATCH
+            # would otherwise deliver through the compliance fast-path before the
+            # deterministic hard-signal gate ever runs. Invalidate the MATCH here and
+            # let the normal pipeline (risk routing + deliberation) decide.
+            if cv is not None and cv.decision == ComplianceDecision.MATCH and has_hard_signal_evidence(risk_estimation):
+                self._events.emit_orchestration_event(
+                    request_id=request.request_id or "",
+                    stage="compliance_layer",
+                    component="dccl",
+                    event_type=COMPLIANCE_MATCH_DOWNGRADED,
+                    decision="downgraded",
+                    status="ok",
+                    payload={
+                        "reason": "hard_signal_evidence",
+                        "matched_rule_id": (cv.matched_rule.rule_id if cv.matched_rule else None),
+                        "risk_category": risk_category_str(risk_estimation),
+                        "risk_score": getattr(risk_estimation, "score", None),
+                        "semantic_signals": list(getattr(risk_estimation, "semantic_signals", None) or []),
+                        "mismatch_guard_action": "downgraded_to_pipeline",
+                    },
+                )
+                call_ctx.mismatch_guard_action = "downgraded_to_pipeline"
+                cv = None
+
             if cv is not None and cv.decision == ComplianceDecision.MATCH:
                 draft = speculative_draft_for_dccl
                 draft_ok = cv.speculative_draft_validated and draft.strip()

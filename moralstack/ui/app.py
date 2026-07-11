@@ -28,6 +28,11 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     COMPLIANCE_DRAFT_REGENERATED,
     COMPLIANCE_DRAFT_REUSED,
     COMPLIANCE_MATCH_DOWNGRADED,
+    CRITIC_SKIPPED,
+    EARLY_CONVERGENCE_ACCEPTED,
+    EARLY_CONVERGENCE_REJECTED,
+    LEDGER_FAST_PATH_APPLIED,
+    LEDGER_FAST_PATH_NOT_APPLIED,
     MODULE_DEFERRED_TO_COMPLIANCE,
     PROXY_FINAL_REVALIDATION_BLOCKED,
     PROXY_FINAL_REVALIDATION_ERROR,
@@ -35,6 +40,7 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     PROXY_FINAL_REVALIDATION_SKIPPED,
     PROXY_FINAL_REVALIDATION_STARTED,
     PROXY_OUTPUT_FINALIZED,
+    SIMULATOR_SKIPPED,
     SPECULATIVE_DRAFT_REUSED,
     SPECULATIVE_RESULT_USED,
 )
@@ -500,6 +506,16 @@ _CYCLE0_SEQ_TO_VISUAL_TIER: dict[int, int] = {
     1: 6,  # compliance-regenerate policy
 }
 
+# Canonical per-module sequence used to place synthetic "deferred"/"skipped" markers
+# in the same visual tier the module would have occupied (mirrors _SEQ_TO_VISUAL_TIER).
+_SEQ_BY_DEFERRED_MODULE: dict[str, int] = {
+    "policy": 1,
+    "critic": 2,
+    "simulator": 3,
+    "perspectives": 4,
+    "hindsight": 5,
+}
+
 
 def _visual_tier_for_call(call: dict[str, Any]) -> int:
     """Map a call to a visual tier for grouping parallel modules."""
@@ -825,9 +841,39 @@ def _build_path_badge_info(orchestration_events: list[dict[str, Any]]) -> dict[s
         return {"label": label, "kind": "compliance_regenerated", "degraded": degraded}
 
     if COMPLIANCE_MATCH_DOWNGRADED in event_types:
+        # Distinguish the P0 hard-signal safety gate from ordinary downgrades
+        # (regenerated_draft_unvalidated, delivery_context). The gate is the
+        # audit-critical case: a developer contract tried to authorize a
+        # hard-signal request and was blocked. Prefer it when present.
+        reasons: list[str] = []
+        hard_signal_signals: list[str] = []
+        for e in orchestration_events:
+            if (e.get("event_type") or "") != COMPLIANCE_MATCH_DOWNGRADED:
+                continue
+            ep = _parse_json_field(e.get("payload_json")) or _parse_json_field(e.get("payload")) or {}
+            reason = (ep.get("reason") or "").strip()
+            if reason:
+                reasons.append(reason)
+            if reason == "hard_signal_evidence":
+                hard_signal_signals = [str(s) for s in (ep.get("semantic_signals") or []) if str(s).strip()]
+        if "hard_signal_evidence" in reasons:
+            label = "Contract MATCH blocked - hard-signal safety gate (P0) -> standard pipeline"
+            if hard_signal_signals:
+                label += " [" + ", ".join(hard_signal_signals) + "]"
+            return {
+                "label": label,
+                "kind": "compliance_blocked_p0",
+                "reason": "hard_signal_evidence",
+                "semantic_signals": hard_signal_signals,
+            }
+        primary_reason = reasons[0] if reasons else ""
+        label = "MATCH downgraded -> standard pipeline"
+        if primary_reason:
+            label = f"MATCH downgraded ({primary_reason}) -> standard pipeline"
         return {
-            "label": "MATCH downgraded -> standard pipeline",
+            "label": label,
             "kind": "compliance_downgraded",
+            "reason": primary_reason,
         }
 
     return {"label": "Standard deliberative pipeline", "kind": "deliberative"}
@@ -1848,6 +1894,246 @@ def _synthetic_upstream_provider_call_from_events(
     }
 
 
+def _governance_event_payload(event: dict[str, Any]) -> dict[str, Any]:
+    """Parse an orchestration event payload into a dict (never None)."""
+    payload = _parse_json_field(event.get("payload_json")) or _parse_json_field(event.get("payload")) or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _payload_outputs(payload: dict[str, Any], skip: frozenset[str] = frozenset()) -> list[dict[str, str]]:
+    """Render every payload key as a graph io-output row (defensive: unknown schemas still surface)."""
+    outputs: list[dict[str, str]] = []
+    for key, value in payload.items():
+        if key in skip:
+            continue
+        if isinstance(value, (list, tuple)):
+            rendered = ", ".join(str(v) for v in value)
+        elif isinstance(value, dict):
+            rendered = json.dumps(value, ensure_ascii=False)
+        else:
+            rendered = str(value)
+        outputs.append({"label": str(key), "value": rendered[:800]})
+    return outputs
+
+
+def _event_cycle(payload: dict[str, Any], event: dict[str, Any], default: int = 0) -> int:
+    """Resolve the cycle for a synthetic governance node from payload then event, typed as int."""
+    value = payload.get("cycle")
+    if value is None:
+        value = event.get("cycle")
+    return int(value) if value is not None else default
+
+
+def _synthetic_compliance_downgrade_nodes(
+    orchestration_events: list[dict[str, Any]],
+    all_flow_calls: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Governance nodes for every COMPLIANCE_MATCH_DOWNGRADED (gate + ordinary downgrades).
+
+    The hard-signal safety gate (reason=hard_signal_evidence) is rendered with an
+    alert action so the P0 block is visible at a glance. Ordinary downgrades
+    (regenerated_draft_unvalidated, delivery_context) also get a node so the graph
+    never silently drops a MATCH that was invalidated.
+    """
+    events = [e for e in orchestration_events if (e.get("event_type") or "") == COMPLIANCE_MATCH_DOWNGRADED]
+    if not events:
+        return []
+
+    # Anchor just after the DCCL judge node (compliance_layer, seq -5) when present.
+    last_compliance_end = 0
+    for c in all_flow_calls:
+        if (c.get("module") or "").strip().lower() == "compliance_layer":
+            last_compliance_end = max(last_compliance_end, int((c.get("started_at") or 0) + (c.get("duration_ms") or 0)))
+
+    nodes: list[dict[str, Any]] = []
+    for idx, event in enumerate(events):
+        payload = _governance_event_payload(event)
+        reason = (payload.get("reason") or "").strip()
+        is_hard_signal = reason == "hard_signal_evidence"
+        started_at = event.get("started_at")
+        if started_at is None:
+            started_at = last_compliance_end + 1 + idx
+        action = (
+            "MATCH blocked - hard-signal gate (P0)" if is_hard_signal else f"MATCH downgraded ({reason or 'unspecified'})"
+        )
+        prompt_text = (
+            "Hard-signal safety gate (PROJECT_SPEC invariant #3): a developer contract MATCH "
+            "was invalidated because the risk estimator produced hard topical evidence, so the "
+            "request is routed to the standard governed pipeline instead of the compliance fast-path."
+            if is_hard_signal
+            else "Compliance MATCH could not be delivered on the fast-path and was routed to the standard pipeline."
+        )
+        nodes.append(
+            {
+                "module": "compliance_layer",
+                "phase": "safety_gate" if is_hard_signal else "match_downgraded",
+                "action": action,
+                "cycle": 0,
+                "sequence_in_cycle": -4,
+                "started_at": int(started_at),
+                "duration_ms": 0.0,
+                "is_synthetic": True,
+                "semantic_badges": (["hard-signal P0"] if is_hard_signal else []),
+                "prompt": prompt_text,
+                "system_prompt": "[orchestrator] Compliance MATCH downgrade (structured governance step, not an LLM call)",
+                "raw_response": json.dumps(payload, indent=2, ensure_ascii=False),
+                "io_annotations": {
+                    "inputs": [
+                        {"label": "compliance_verdict", "source": "dccl", "value": "MATCH"},
+                        {
+                            "label": "matched_rule_id",
+                            "source": "contract",
+                            "value": str(payload.get("matched_rule_id") or "-"),
+                        },
+                    ],
+                    "outputs": _payload_outputs(payload, skip=frozenset({"mismatch_guard_action"})),
+                },
+            }
+        )
+    return nodes
+
+
+def _synthetic_module_deferred_nodes(orchestration_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Marker node for each module that returned early because the contract authorized the rule (G4)."""
+    nodes: list[dict[str, Any]] = []
+    for event in orchestration_events:
+        if (event.get("event_type") or "") != MODULE_DEFERRED_TO_COMPLIANCE:
+            continue
+        payload = _governance_event_payload(event)
+        module = (payload.get("module") or "").strip().lower()
+        if not module:
+            continue
+        cycle = _event_cycle(payload, event, default=0)
+        started_at = event.get("started_at") or 0
+        nodes.append(
+            {
+                "module": module,
+                "phase": "deferred_to_compliance",
+                "action": "skipped - contract authorized",
+                "cycle": cycle,
+                "sequence_in_cycle": _SEQ_BY_DEFERRED_MODULE.get(module, 0),
+                "started_at": int(started_at),
+                "duration_ms": 0.0,
+                "is_synthetic": True,
+                "semantic_badges": ["deferred"],
+                "prompt": (
+                    f"{module} did not run: the developer contract authorized rule execution, " "so this module was skipped."
+                ),
+                "system_prompt": "[orchestration] MODULE_DEFERRED_TO_COMPLIANCE",
+                "raw_response": json.dumps(payload, indent=2, ensure_ascii=False),
+                "io_annotations": {"inputs": [], "outputs": _payload_outputs(payload, skip=frozenset({"module"}))},
+            }
+        )
+    return nodes
+
+
+def _synthetic_ledger_fast_path_node(
+    orchestration_events: list[dict[str, Any]],
+    all_flow_calls: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Governance node for a multi-turn ledger fast-path decision (applied or refused) (G5)."""
+    event: dict[str, Any] | None = None
+    for e in orchestration_events:
+        if (e.get("event_type") or "") in (LEDGER_FAST_PATH_APPLIED, LEDGER_FAST_PATH_NOT_APPLIED):
+            event = e
+            break
+    if event is None:
+        return None
+    payload = _governance_event_payload(event)
+    applied = (event.get("event_type") or "") == LEDGER_FAST_PATH_APPLIED
+    last_risk_end = 0
+    for c in all_flow_calls:
+        if (c.get("module") or "").strip().lower() == "risk_estimator":
+            last_risk_end = max(last_risk_end, int((c.get("started_at") or 0) + (c.get("duration_ms") or 0)))
+    started_at = event.get("started_at") or (last_risk_end + 2)
+    return {
+        "module": "orchestrator",
+        "phase": "ledger_fast_path",
+        "action": "cache applied - deliberation skipped" if applied else "cache found but refused (safety gate)",
+        "cycle": 0,
+        "sequence_in_cycle": -3,
+        "started_at": int(started_at),
+        "duration_ms": 0.0,
+        "is_synthetic": True,
+        "semantic_badges": (["ledger cache hit"] if applied else ["ledger cache refused"]),
+        "prompt": (
+            "Multi-turn SemanticDecisionLedger fast-path: a cached decision from a prior turn "
+            "was applied, so critic / simulator / perspectives / hindsight did not run for this turn."
+            if applied
+            else "A ledger cache hit was found but the safety gate refused to apply it; the turn "
+            "proceeds with full deliberation."
+        ),
+        "system_prompt": "[orchestration] LEDGER_FAST_PATH decision (structured governance step, not an LLM call)",
+        "raw_response": json.dumps(payload, indent=2, ensure_ascii=False),
+        "io_annotations": {"inputs": [], "outputs": _payload_outputs(payload)},
+    }
+
+
+def _synthetic_convergence_node(orchestration_events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Governance node explaining an early-convergence decision that stopped deliberation (G6)."""
+    event: dict[str, Any] | None = None
+    for e in orchestration_events:
+        if (e.get("event_type") or "") in (EARLY_CONVERGENCE_ACCEPTED, EARLY_CONVERGENCE_REJECTED):
+            event = e
+    if event is None:
+        return None
+    payload = _governance_event_payload(event)
+    accepted = (event.get("event_type") or "") == EARLY_CONVERGENCE_ACCEPTED
+    cycle = _event_cycle(payload, event, default=1)
+    return {
+        "module": "orchestrator",
+        "phase": "convergence",
+        "action": "early convergence accepted" if accepted else "early convergence rejected",
+        "cycle": cycle,
+        "sequence_in_cycle": 90,
+        "started_at": int(event.get("started_at") or 0),
+        "duration_ms": 0.0,
+        "is_synthetic": True,
+        "semantic_badges": (["converged"] if accepted else ["not converged"]),
+        "prompt": (
+            "Convergence check: the deliberation loop stopped early because policy and critic agreed."
+            if accepted
+            else "Convergence check: agreement was insufficient, so deliberation continued."
+        ),
+        "system_prompt": "[orchestration] EARLY_CONVERGENCE decision (structured governance step, not an LLM call)",
+        "raw_response": json.dumps(payload, indent=2, ensure_ascii=False),
+        "io_annotations": {"inputs": [], "outputs": _payload_outputs(payload)},
+    }
+
+
+def _synthetic_module_skipped_nodes(orchestration_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Marker node for gated modules that were skipped (simulator / critic) (G7)."""
+    nodes: list[dict[str, Any]] = []
+    for event in orchestration_events:
+        event_type = event.get("event_type") or ""
+        if event_type == SIMULATOR_SKIPPED:
+            module = "simulator"
+        elif event_type == CRITIC_SKIPPED:
+            module = "critic"
+        else:
+            continue
+        payload = _governance_event_payload(event)
+        cycle = _event_cycle(payload, event, default=1)
+        nodes.append(
+            {
+                "module": module,
+                "phase": "skipped",
+                "action": "skipped (gated)",
+                "cycle": cycle,
+                "sequence_in_cycle": _SEQ_BY_DEFERRED_MODULE.get(module, 2),
+                "started_at": int(event.get("started_at") or 0),
+                "duration_ms": 0.0,
+                "is_synthetic": True,
+                "semantic_badges": ["skipped"],
+                "prompt": f"{module} was gated out for this cycle (no LLM call). The payload explains the gate reason.",
+                "system_prompt": f"[orchestration] {event_type}",
+                "raw_response": json.dumps(payload, indent=2, ensure_ascii=False),
+                "io_annotations": {"inputs": [], "outputs": _payload_outputs(payload)},
+            }
+        )
+    return nodes
+
+
 def _normalize_post_output_cycles(calls: list[dict[str, Any]]) -> None:
     """Place provider delivery and revalidation nodes after deliberation in UI graphs."""
 
@@ -2809,6 +3095,19 @@ button:hover{opacity:0.9}
         )
         if final_revalidation_node is not None:
             all_flow_calls.append(final_revalidation_node)
+
+        # Governance steps that otherwise vanish from the graph (audit completeness):
+        # compliance MATCH downgrade / hard-signal gate, deferred modules, ledger
+        # fast-path, early convergence, and gated (skipped) modules.
+        all_flow_calls.extend(_synthetic_compliance_downgrade_nodes(orchestration_events, all_flow_calls))
+        all_flow_calls.extend(_synthetic_module_deferred_nodes(orchestration_events))
+        ledger_fast_path_node = _synthetic_ledger_fast_path_node(orchestration_events, all_flow_calls)
+        if ledger_fast_path_node is not None:
+            all_flow_calls.append(ledger_fast_path_node)
+        convergence_node = _synthetic_convergence_node(orchestration_events)
+        if convergence_node is not None:
+            all_flow_calls.append(convergence_node)
+        all_flow_calls.extend(_synthetic_module_skipped_nodes(orchestration_events))
 
         _normalize_post_output_cycles(all_flow_calls)
 

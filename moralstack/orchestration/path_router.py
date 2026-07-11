@@ -39,6 +39,30 @@ _NON_OVERRIDABLE_REFUSE_REASON_CODES: frozenset[str] = frozenset(
 )
 
 
+def has_hard_signal_evidence(risk_estimation: RiskEstimationProtocol) -> bool:
+    """
+    True when the risk estimator produced hard topical evidence (P0 categories),
+    independently of any ``Decision``.
+
+    ``is_hard_signal_refuse`` cannot serve this purpose: it requires a ``Decision``
+    whose ``final_action`` is already REFUSE, so it is unusable on governance
+    shortcuts that bypass the risk router and never build such a Decision (the DCCL
+    compliance fast-path). This predicate reads the risk estimation alone, so a
+    developer contract can never authorize a hard-signal request by short-circuiting
+    the pipeline (PROJECT_SPEC §5 invariant #3).
+
+    Deliberately excludes a bare ``operational_risk == HIGH``: the calibration guard
+    routinely downgrades that on benign request types, so gating on it would suppress
+    the fast-path for legitimate contract execution without adding P0 coverage.
+    """
+    signals = {str(sig).strip() for sig in (getattr(risk_estimation, "semantic_signals", None) or []) if str(sig).strip()}
+    if signals & _HARD_SEMANTIC_SIGNALS:
+        return True
+    category = getattr(risk_estimation, "risk_category", None)
+    category_str = str(getattr(category, "value", category) or "").strip().lower()
+    return category_str == "clearly_harmful"
+
+
 def is_hard_signal_refuse(
     decision: Decision,
     risk_estimation: RiskEstimationProtocol,

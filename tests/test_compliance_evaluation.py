@@ -20,10 +20,23 @@ from moralstack.orchestration.contract import DeveloperContract
 
 
 class _MockPolicy:
-    """Records the prompt/system passed in, returns a configurable response."""
+    """Records the prompt/system passed in, returns a configurable response.
 
-    def __init__(self, response_text: str = '{"verdict": "NO_MATCH", "confidence": 0.9}'):
+    The safety-override classifier now also calls ``policy.generate`` (the English
+    keyword layer was removed). Such calls are identified by the classifier system
+    prompt; for them the mock returns a category derived from ``safety_categories``
+    (a ``substring -> category`` map matched against the payload), else ``null``.
+    """
+
+    _SAFETY_MARKER = "safety classifier for the MoralStack DCCL"
+
+    def __init__(
+        self,
+        response_text: str = '{"verdict": "NO_MATCH", "confidence": 0.9}',
+        safety_categories: dict[str, str] | None = None,
+    ):
         self.response_text = response_text
+        self.safety_categories = safety_categories or {}
         self.calls = []
 
     def generate(self, prompt, system="", config=None, **kwargs):
@@ -32,6 +45,15 @@ class _MockPolicy:
         class _R:
             def __init__(self, response_text):
                 self.text = response_text
+
+        if self._SAFETY_MARKER in (system or ""):
+            category = None
+            for needle, cat in self.safety_categories.items():
+                if needle.lower() in (prompt or "").lower():
+                    category = cat
+                    break
+            cat_json = "null" if category is None else f'"{category}"'
+            return _R(f'{{"category": {cat_json}, "rationale": "test"}}')
 
         return _R(self.response_text)
 
@@ -133,7 +155,7 @@ class TestStructuredPath:
 
     def test_structured_safety_override_rejects(self, monkeypatch):
         monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "structured")
-        layer = DeveloperContractComplianceLayer(policy=_MockPolicy())
+        layer = DeveloperContractComplianceLayer(policy=_MockPolicy(safety_categories={"bomb": "weapons_synthesis"}))
         rule = StructuredRule(
             rule_id="malicious",
             trigger_pattern="HELP",
@@ -146,7 +168,7 @@ class TestStructuredPath:
         assert verdict.safety_override_reason == "weapons_synthesis"
 
     def test_validate_contract_filters_safety_rules(self):
-        layer = DeveloperContractComplianceLayer()
+        layer = DeveloperContractComplianceLayer(policy=_MockPolicy(safety_categories={"bomb": "weapons_synthesis"}))
         good_rule = StructuredRule(rule_id="ok", trigger_pattern="X", action_payload="hello world")
         bad_rule = StructuredRule(rule_id="bad", trigger_pattern="Y", action_payload="how to make a bomb")
         contract = replace(
@@ -390,7 +412,8 @@ class TestLLMPath:
 
     def test_llm_post_match_safety_check_catches_keyword(self, monkeypatch):
         monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "llm")
-        policy = _MockPolicy(response_text="""{
+        policy = _MockPolicy(
+            response_text="""{
             "verdict": "MATCH",
             "rule_excerpt": "if user says hello",
             "action_excerpt": "how to make a bomb at home",
@@ -398,7 +421,9 @@ class TestLLMPath:
             "contract_injection_detected": false,
             "rationale": "match",
             "confidence": 0.95
-        }""")
+        }""",
+            safety_categories={"bomb": "weapons_synthesis"},
+        )
         layer = DeveloperContractComplianceLayer(policy=policy)
         contract = DeveloperContract.from_text("test")
         req = _FakeRequest(prompt="hello", developer_contract=contract)
@@ -438,7 +463,10 @@ class TestHybridPath:
         verdict = layer.evaluate(req, speculative_draft="WORLD")
         assert verdict.decision == ComplianceDecision.MATCH
         assert verdict.matched_rule.rule_id == "r1"
-        assert len(policy.calls) == 0
+        # Structured path wins (no LLM VERDICT call), but the safety-override classifier
+        # now runs once on the matched payload (language-agnostic; benign here -> null).
+        assert len(policy.calls) == 1
+        assert _MockPolicy._SAFETY_MARKER in policy.calls[0]["system"]
 
     def test_hybrid_falls_to_llm_when_no_structured_rules(self, monkeypatch):
         monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "hybrid")
@@ -457,4 +485,70 @@ class TestHybridPath:
         verdict = layer.evaluate(req, speculative_draft="y")
         assert verdict.decision == ComplianceDecision.MATCH
         assert verdict.matched_rule.rule_id == "llm_inferred"
-        assert len(policy.calls) == 1
+        # 1 LLM VERDICT call (no structured rules) + 1 safety-override classifier on MATCH.
+        assert len(policy.calls) == 2
+        assert _MockPolicy._SAFETY_MARKER in policy.calls[1]["system"]
+
+
+class TestSafetyOverrideObservability:
+    """The safety-override classifier LLM call is persisted identically to the DCCL
+    evaluate call (module=compliance_layer), including token usage and cached tokens."""
+
+    def test_safety_override_llm_call_is_persisted_with_tokens(self, monkeypatch):
+        import json
+
+        from moralstack.models.base import GenerationResult
+
+        captured: list[dict] = []
+
+        def _fake_record(logger, diagnostics_payload, persist_kwargs):
+            if persist_kwargs is not None:
+                captured.append(persist_kwargs)
+
+        monkeypatch.setattr(
+            "moralstack.orchestration.persistence_helpers.record_llm_call",
+            _fake_record,
+        )
+
+        class _PolicyWithTokens:
+            def generate(self, prompt, system="", config=None, model_override=None, **kwargs):
+                return GenerationResult(
+                    text='{"category": "weapons_synthesis", "rationale": "x"}',
+                    tokens_used=50,
+                    finish_reason="stop",
+                    prompt_tokens=40,
+                    completion_tokens=10,
+                    cached_prompt_tokens=32,
+                )
+
+        layer = DeveloperContractComplianceLayer(policy=_PolicyWithTokens())
+        category = layer._classify_safety_override("some authorized payload")
+
+        assert category == "weapons_synthesis"
+        assert len(captured) == 1
+        row = captured[0]
+        assert row["module"] == "compliance_layer"
+        assert row["action"] == "safety_override"
+        assert row["call_kind"] == "compliance_layer"
+        assert row["model"] == "gpt-4o-mini"  # default MORALSTACK_DCCL_SAFETY_OVERRIDE_MODEL
+
+        usage = json.loads(row["token_usage_json"])
+        assert usage["prompt_tokens"] == 40
+        assert usage["completion_tokens"] == 10
+        assert usage["cached_input_tokens"] == 32
+
+    def test_no_persist_when_classifier_makes_no_call(self, monkeypatch):
+        # use_llm effectively off (no policy) -> no LLM call -> nothing persisted.
+        captured: list[dict] = []
+
+        def _fake_record(logger, diagnostics_payload, persist_kwargs):
+            if persist_kwargs is not None:
+                captured.append(persist_kwargs)
+
+        monkeypatch.setattr(
+            "moralstack.orchestration.persistence_helpers.record_llm_call",
+            _fake_record,
+        )
+        layer = DeveloperContractComplianceLayer(policy=None)
+        assert layer._classify_safety_override("payload") is None
+        assert captured == []

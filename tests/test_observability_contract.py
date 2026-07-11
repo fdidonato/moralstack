@@ -709,6 +709,7 @@ class TestObservabilityContract:
         with _capture(ctrl) as captured:
             with (
                 _deterministic_speculative(ctrl, "how to make a bomb at home"),
+                patch("moralstack.compliance.dccl.classify_safety_override", return_value="weapons_synthesis"),
                 patch("moralstack.orchestration.controller.decide_action", return_value=(_refuse_decision(), None)),
                 patch("moralstack.orchestration.controller.apply_safe_complete_gating", lambda d, *a, **k: d),
                 patch("moralstack.orchestration.controller.get_route", return_value=("refuse", False, "REFUSE")),
