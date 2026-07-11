@@ -61,9 +61,16 @@ htmlcov/
 .claude/.docs-stub.md
 .claude/session-diary.md
 
-# AI harness — generated, reproducible artifacts (keep plans/handoffs/review summaries)
-ai/reviews/diff-*.md
+# AI harness — keep the folder skeleton and the prompt templates only;
+# internal process artifacts (plans, reviews, handoffs, investigations) stay local
+ai/**
+!ai/*/
+!ai/**/.gitkeep
+!ai/prompts/**
 ai/prompts/generated-*.md
+/ANALISI_TECNICA_MORALSTACK.md
+/claude_upgrade_plan.md
+/codex_upgrade_plan.md
 
 # OS
 .DS_Store
