@@ -67,6 +67,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **mypy `strict` now covers `moralstack.ui.*`** (the FastAPI observability UI,
+  including the 3300-line `ui/app.py`), completing the strict rollout across the three
+  user-facing packages (`orchestration.*`, `server.*`, `ui.*`). The package already
+  type-checked clean under strict, so no code changed; strictness was proven active
+  with a canary (temporary untyped def → `no-untyped-def` fired, then reverted).
+  Tooling-only; no runtime behavior change.
 - **mypy `strict` now covers `moralstack.server.*`** (the network-facing proxy package),
   matching the strictness level of `moralstack.orchestration.*`. The stale lenient
   overrides for `moralstack.server.*` and `moralstack.ui.app` (`ignore_missing_imports`

@@ -150,5 +150,9 @@ module = "moralstack.server.*"
 strict = true
 
 [[tool.mypy.overrides]]
+module = "moralstack.ui.*"
+strict = true
+
+[[tool.mypy.overrides]]
 module = "moralstack.orchestration.*"
 strict = true

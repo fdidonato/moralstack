@@ -223,6 +223,14 @@ One row or block per refactoring step. Add rows as you go.
 - **Tests run:** `.mypy_cache` removed, `pre-commit run mypy -a` → Passed (clean-cache `mypy moralstack` with no flag); full `pre-commit run -a` before commit.
 - **Commit:** `chore(typing): drop global ignore-missing-imports from mypy`
 
+#### Entry: 2026-07-13 — mypy strict on the ui package
+
+- **What:** `pyproject.toml` only — added `[[tool.mypy.overrides]]` `module = "moralstack.ui.*"` with `strict = true`. The package is just `__init__.py` + `app.py`, but the wildcard matches the established pattern (`server.*`, `orchestration.*`) and covers future ui modules automatically.
+- **Why:** completes the strict rollout across the three user-facing packages; `ui/app.py` (~3300 lines) was the last major surface at default strictness after its stale lenient override was removed on 2026-07-11.
+- **Risk:** none observed. `moralstack.ui.*` was **already strict-clean** (0 errors, 174 files); strictness proven active with a canary on the final wildcard config (temporary untyped def in `app.py` → `no-untyped-def` fired at app.py:3339, then reverted via `git checkout --`).
+- **Tests run:** `mypy moralstack` clean; canary check; full `pytest -q` + `pre-commit run -a` before commit.
+- **Commit:** `chore(typing): enable mypy strict on ui package`
+
 ### Template for a single entry (copy as needed)
 
 #### Entry: 2026-05-21 — DCCL Commit 3 (compliance fast-path)
