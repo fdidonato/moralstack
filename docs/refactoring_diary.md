@@ -204,8 +204,16 @@ One row or block per refactoring step. Add rows as you go.
 - **Why:** The proxy is the network-facing surface; it should be at least as type-safe as the orchestration core. Both removed overrides were dead weight: the server package was already strict-clean, and `untyped-decorator` never fires at the default strictness level anyway.
 - **Risk:** low (tooling config only, no runtime code touched). Strictness verified with a canary (temporary untyped def in `server/headers.py` → `no-untyped-def` fired, then reverted).
 - **Tests run:** `mypy moralstack --ignore-missing-imports` clean-cache (0 errors, 174 files); standalone `mypy moralstack/server` without the flag also clean; full `pytest -q`; `pre-commit run -a`.
-- **Note:** removing the *global* `--ignore-missing-imports` from CI/pre-commit is blocked by the undeclared PyYAML dependency (`models/risk/signals/registry.py:14` — see `docs/CODEBASE_FACTS.md`, Future work / known gaps).
+- **Note:** removing the *global* `--ignore-missing-imports` from CI/pre-commit is blocked by the undeclared PyYAML dependency (`models/risk/signals/registry.py:14` — see `docs/CODEBASE_FACTS.md`, Future work / known gaps). *Update 2026-07-13: unblocked by the ruamel migration below.*
 - **Commit:** `chore(typing): enable mypy strict on server package`
+
+#### Entry: 2026-07-13 — migrate signal registry from PyYAML to ruamel.yaml
+
+- **What:** `moralstack/models/risk/signals/registry.py` — the single `import yaml` / `yaml.safe_load` in the codebase replaced with the already-declared `ruamel.yaml` (`YAML(typ="safe").load`). No other file imported PyYAML.
+- **Why:** PyYAML was an **undeclared** runtime dependency (worked locally only because the dev toolchain pulls it transitively) — a clean `pip install moralstack` would likely fail at import of the risk estimator. Migrating (rather than declaring `pyyaml`) keeps one YAML library in the package, matches the design intent in `constitution/loader.py` ("only ruamel reads YAML"), and unblocks dropping the global `--ignore-missing-imports` mypy flag without adding `types-PyYAML`.
+- **Risk:** low. ruamel `typ="safe"` speaks YAML 1.2 vs PyYAML's 1.1; `signals.yaml` was checked for 1.1-only tokens (unquoted `yes/no/on/off` booleans) — none present, so parsing is semantics-preserving. Registry loads the same 17 signals at import.
+- **Tests run:** scoped signals/prefix/fast-path tests (57 passed); `mypy moralstack` **without** `--ignore-missing-imports` clean (174 files); full `pytest -q` + `pre-commit run -a` before commit.
+- **Commit:** `fix(deps): migrate signal registry from pyyaml to ruamel.yaml`
 
 ### Template for a single entry (copy as needed)
 

@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import yaml
+from ruamel.yaml import YAML
 
 from .schema import (
     CalibrationRules,
@@ -115,7 +115,7 @@ class SignalRegistry:
 
     def __init__(self, path: Path = _YAML_PATH) -> None:
         with open(path, encoding="utf-8") as f:
-            raw = yaml.safe_load(f)
+            raw = YAML(typ="safe").load(f)
 
         version = raw.get("version")
         if version not in _SUPPORTED_VERSIONS:

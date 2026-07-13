@@ -137,6 +137,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (core + up to 3 domains) run in a single `ThreadPoolExecutor` batch instead of two.
   The `MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS` env override still wins when set.
 
+### Fixed
+
+- **Undeclared PyYAML runtime dependency removed.** `moralstack/models/risk/signals/registry.py`
+  (the only PyYAML import in the package, on the main runtime path via the risk estimator)
+  now loads `signals.yaml` with the already-declared `ruamel.yaml` (`YAML(typ="safe")`)
+  instead of `yaml.safe_load`. A clean `pip install moralstack` (no dev extras) no longer
+  depends on PyYAML arriving transitively. `signals.yaml` contains no YAML 1.1-only
+  constructs, so the parser switch is semantics-preserving. This also unblocks dropping
+  the global `--ignore-missing-imports` mypy flag from CI/pre-commit (follow-up).
+
 ### Development
 
 - **memory-guard trace-doc path casing fixed**: `scripts/check_memory_updated.py`
