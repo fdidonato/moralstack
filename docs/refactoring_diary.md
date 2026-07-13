@@ -215,6 +215,14 @@ One row or block per refactoring step. Add rows as you go.
 - **Tests run:** scoped signals/prefix/fast-path tests (57 passed); `mypy moralstack` **without** `--ignore-missing-imports` clean (174 files); full `pytest -q` + `pre-commit run -a` before commit.
 - **Commit:** `fix(deps): migrate signal registry from pyyaml to ruamel.yaml`
 
+#### Entry: 2026-07-13 — drop global --ignore-missing-imports from mypy invocations
+
+- **What:** `.github/workflows/ci.yml` (Type Check step) and `.pre-commit-config.yaml` (local mypy hook) — both now run plain `mypy moralstack`. No pyproject change needed: the targeted per-module overrides (`ruamel.yaml.*`, `langdetect.*`, `fastembed`/`numpy`) already cover the third-party packages without stubs.
+- **Why:** the global flag silently suppressed *every* missing-stub error, including for first-party imports — it is what masked the undeclared PyYAML dependency in the first place. With the ruamel migration landed, the blanket suppression is dead weight; stub gaps should be declared per-module, visibly, in `pyproject.toml`.
+- **Risk:** low. Config-only; makes mypy strictly more sensitive, not less. Residual: the CI env (`pip install -e ".[dev,ui]"`) could differ from local on transitively installed packages — first CI run after push is the real proof.
+- **Tests run:** `.mypy_cache` removed, `pre-commit run mypy -a` → Passed (clean-cache `mypy moralstack` with no flag); full `pre-commit run -a` before commit.
+- **Commit:** `chore(typing): drop global ignore-missing-imports from mypy`
+
 ### Template for a single entry (copy as needed)
 
 #### Entry: 2026-05-21 — DCCL Commit 3 (compliance fast-path)

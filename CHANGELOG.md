@@ -149,6 +149,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Development
 
+- **Global `--ignore-missing-imports` dropped from mypy.** Both the CI Type Check step
+  and the pre-commit mypy hook now run plain `mypy moralstack`: the blanket flag
+  suppressed every missing-stub error (it is what masked the undeclared PyYAML
+  dependency). Third-party packages without stubs are handled by the existing targeted
+  per-module overrides in `pyproject.toml` (`ruamel.yaml.*`, `langdetect.*`,
+  `fastembed`/`numpy`). Clean-cache run verified green; tooling-only change.
 - **memory-guard trace-doc path casing fixed**: `scripts/check_memory_updated.py`
   referenced `docs/TRACES/*` while the repository directory is `docs/traces/*`, making
   the guard structurally unsatisfiable for `moralstack/server/` and

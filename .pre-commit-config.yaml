@@ -21,7 +21,7 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        entry: mypy moralstack --ignore-missing-imports
+        entry: mypy moralstack
         language: system
         pass_filenames: false
       - id: changelog-guard
