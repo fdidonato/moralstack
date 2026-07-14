@@ -59,12 +59,15 @@
     <div class="delivery-path-header">
         <div>
             <span class="meta-label">Authoritative delivery path</span>
+            {% if delivery_path_summary.status == 'pipeline_failure' %}
+            <span class="badge badge-fail delivery-path-failure-badge">PIPELINE FAILURE</span>
+            {% endif %}
             <h2>{{ delivery_path_summary.headline }}</h2>
             <p class="muted">{{ delivery_path_summary.explanation }}</p>
         </div>
         <div class="delivery-path-result">
             <span class="meta-label">Delivered</span>
-            <span class="badge {% if delivery_path_summary.status == 'reused' %}badge-ok{% elif delivery_path_summary.status == 'blocked' %}badge-fail{% else %}badge-parallel{% endif %}">
+            <span class="badge {% if delivery_path_summary.status == 'reused' %}badge-ok{% elif delivery_path_summary.status in ('blocked', 'pipeline_failure') %}badge-fail{% else %}badge-parallel{% endif %}">
                 {{ delivery_path_summary.delivered_action }}
             </span>
             <span class="mono">{{ delivery_path_summary.delivered_source }}</span>
@@ -1039,9 +1042,20 @@
 
 {% if req.final_response %}
 <h2>Final Response</h2>
+{% if pipeline_failure %}
+<div class="card final-response-failure">
+    <p class="final-response-failure-caption">
+        <span class="badge badge-fail">SYSTEM ERROR</span>
+        The text below is a system-error placeholder recorded when the governance pipeline crashed before
+        reaching a governed decision — it is not a governed answer.
+    </p>
+    <pre class="block">{{ req.final_response }}</pre>
+</div>
+{% else %}
 <div class="card">
     <pre class="block">{{ req.final_response }}</pre>
 </div>
+{% endif %}
 {% endif %}
 
 {% if journey_steps %}

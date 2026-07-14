@@ -494,6 +494,28 @@ body {
     border-left-color: #38bdf8;
 }
 
+.delivery-path-pipeline_failure {
+    border-left-color: var(--red);
+}
+
+.delivery-path-failure-badge {
+    margin: 0.2rem 0;
+}
+
+/* Final response block styled as system-error evidence, not a governed answer */
+.final-response-failure {
+    border-left: 4px solid var(--red);
+}
+
+.final-response-failure-caption {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    color: var(--red);
+    font-size: 0.85rem;
+}
+
 .delivery-path-header {
     display: flex;
     align-items: flex-start;
@@ -1529,6 +1551,28 @@ h3 {
     box-shadow: 0 0 0 2px #fb923c inset;
 }
 
+/* Pipeline-failure turn: distinct hatched pattern (never colour-only —
+   the visible T<n> label also carries the "pipeline failure" text). */
+.conv-strip-cell-failure {
+    background: repeating-linear-gradient(
+        45deg,
+        var(--red-bg),
+        var(--red-bg) 6px,
+        rgba(0, 0, 0, 0.3) 6px,
+        rgba(0, 0, 0, 0.3) 12px
+    );
+    border-color: var(--red);
+}
+
+.pipeline-failure-note {
+    margin: 0.75rem 0 0;
+    padding: 0.5rem 0.75rem;
+    border-left: 3px solid var(--red);
+    background: var(--red-bg);
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+}
+
 .conv-strip-label {
     position: absolute;
     top: -1.1rem;
@@ -1538,6 +1582,14 @@ h3 {
     color: var(--muted, #9ca3af);
     font-family: ui-monospace, monospace;
     white-space: nowrap;
+}
+
+/* The failure label is much wider than the 36px cell: anchor it to the
+   cell's left edge so it can never be clipped past the scroll container's
+   left boundary (right overflow stays inside the scrollable track). */
+.conv-strip-label-failure {
+    left: 0;
+    transform: none;
 }
 
 .conv-strip-cache-icon {

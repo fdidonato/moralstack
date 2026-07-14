@@ -76,6 +76,13 @@
     </div>
 </div>
 
+{% if timeline.pipeline_failure_count %}
+<p class="pipeline-failure-note">
+    &#9888; {{ timeline.pipeline_failure_count }} turn{{ 's' if timeline.pipeline_failure_count != 1 else '' }}
+    ended in a pipeline failure — its final_action is not a governed outcome.
+</p>
+{% endif %}
+
 {% set token_usage_title = 'Token usage by model (conversation)' %}
 {% include "_token_usage.html" %}
 
@@ -101,21 +108,22 @@
                 {% set was_cached = state.get('was_cached') or meta.get('was_cached') %}
                 {% set cached_from = state.get('cached_from_turn') %}
                 {% set bar_height = (24 + ((risk_score or 0.0) * 56)) | int %}
-                {% set action_class = 'conv-strip-cell-' + (action | lower) %}
+                {% set is_pipeline_failure = r.get('pipeline_failure') %}
+                {% set action_class = 'conv-strip-cell-failure' if is_pipeline_failure else ('conv-strip-cell-' + (action | lower)) %}
                 {% set escalated = (posture == 'ESCALATED') %}
                 <div
                     class="conv-strip-cell {{ action_class }}{% if escalated %} conv-strip-cell-escalated{% endif %}"
                     style="height: {{ bar_height }}px;"
                     data-turn="{{ r.turn_index }}"
                     {% if cached_from is not none %}data-cached-from="{{ cached_from }}"{% endif %}
-                    title="Turn {{ r.turn_index }}: {{ action }}{% if risk_score is not none %} (risk={{ '%.3f' | format(risk_score) }}){% endif %}{% if posture %} [{{ posture }}]{% endif %}{% if meta.get('domain_overlay') %} domain={{ meta.get('domain_overlay') }}{% endif %}{% if was_cached %} — cached from T{{ cached_from }}{% endif %}"
+                    title="Turn {{ r.turn_index }}: {% if is_pipeline_failure %}PIPELINE FAILURE (delivered {{ action }} is not a governed outcome){% else %}{{ action }}{% endif %}{% if risk_score is not none %} (risk={{ '%.3f' | format(risk_score) }}){% endif %}{% if posture %} [{{ posture }}]{% endif %}{% if meta.get('domain_overlay') %} domain={{ meta.get('domain_overlay') }}{% endif %}{% if was_cached %} — cached from T{{ cached_from }}{% endif %}"
                 >
-                    <span class="conv-strip-label">T{{ r.turn_index }}</span>
+                    <span class="conv-strip-label{% if is_pipeline_failure %} conv-strip-label-failure{% endif %}">T{{ r.turn_index }}{% if is_pipeline_failure %} — pipeline failure{% endif %}</span>
                     {% if was_cached %}
                         <span class="conv-strip-cache-icon" aria-label="cached">⚡</span>
                     {% endif %}
                     {% if r.run_id and r.request_id %}
-                        <a class="conv-strip-link" href="/runs/{{ r.run_id }}/requests/{{ r.request_id }}" aria-label="Open turn {{ r.turn_index }}"></a>
+                        <a class="conv-strip-link" href="/runs/{{ r.run_id }}/requests/{{ r.request_id }}" aria-label="Open turn {{ r.turn_index }}{% if is_pipeline_failure %} (pipeline failure){% endif %}"></a>
                     {% endif %}
                 </div>
             {% endfor %}

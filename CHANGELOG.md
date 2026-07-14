@@ -147,6 +147,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **UI: governance pipeline failures are no longer rendered as a normal delivered
+  outcome.** When a request crashes before a `FINAL` decision-trace row is written
+  (`OrchestratorController._handle_error`, `meta_json.triggered_principles` contains
+  `SYSTEM.ERROR`), the request page now shows a distinct, text-labelled "PIPELINE
+  FAILURE" delivery-path state (canonical delivered action code still visible beside
+  it) with the last recorded pre-crash decision from the `PRE_POLICY` trace when
+  available, and the delivered `[SYSTEM_ERROR]` text is wrapped in an error-styled
+  block captioned as a system-error placeholder, not a governed answer. The
+  conversation strip marks a failed turn distinctly (never colour-only) and shows an
+  aggregate note when any turn failed, without altering the existing raw counts. The
+  previously fabricated "unknown path chose unknown before proxy delivery checks"
+  sentence (rendered whenever no `FINAL` trace exists, failure or not) is replaced
+  with "no recorded pre-delivery decision (no FINAL decision trace)". Detection uses
+  structured signals only (no FINAL trace + `SYSTEM.ERROR` principle), never the
+  response text, per the decision-policy invariant.
 - **Undeclared PyYAML runtime dependency removed.** `moralstack/models/risk/signals/registry.py`
   (the only PyYAML import in the package, on the main runtime path via the risk estimator)
   now loads `signals.yaml` with the already-declared `ruamel.yaml` (`YAML(typ="safe")`)

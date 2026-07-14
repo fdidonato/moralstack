@@ -204,6 +204,34 @@ def _parse_json_field(value: Any) -> Any:
         return None
 
 
+def _detect_pipeline_failure(
+    traces: list[dict[str, Any]],
+    meta_json: dict[str, Any] | None,
+) -> bool:
+    """
+    Detect a governance pipeline failure from STRUCTURED signals only.
+
+    A pipeline failure is a request whose controller crashed (see
+    ``OrchestratorController._handle_error``) before the pipeline reached a
+    governed FINAL decision: no ``FINAL`` decision-trace row was ever written,
+    and ``meta_json.triggered_principles`` records the synthetic
+    ``"SYSTEM.ERROR"`` principle set by ``ResponseMetadata.for_system_error``.
+
+    This must never be inferred from the delivered response text (e.g. the
+    literal ``"[SYSTEM_ERROR]"`` placeholder) — ``final_action`` is only ever
+    computed from structured signals (decision-policy invariant, see
+    ``.claude/rules/decision-policy.md``). Both the request view and the
+    conversation view use this single predicate.
+    """
+    if not isinstance(meta_json, dict):
+        return False
+    triggered = meta_json.get("triggered_principles")
+    if not isinstance(triggered, list) or "SYSTEM.ERROR" not in triggered:
+        return False
+    has_final_trace = any((t.get("stage") or "").strip().upper() == "FINAL" for t in traces)
+    return not has_final_trace
+
+
 def _enrich_event_row(row: dict[str, Any], json_keys: tuple[str, ...]) -> dict[str, Any]:
     """Return a shallow copy of ``row`` with the listed JSON columns pre-parsed."""
     out = dict(row)
@@ -987,6 +1015,19 @@ def _last_final_trace_payload(traces: list[dict[str, Any]]) -> dict[str, Any]:
     return _parse_trace_json(final_trace) if final_trace else {}
 
 
+def _last_pre_policy_trace_payload(traces: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return the trace_json of the last ``PRE_POLICY`` decision-trace row, if present.
+
+    Unlike ``_last_final_trace_payload``, this never falls back to an unrelated
+    stage row — used to recover the last recorded pre-crash decision when a
+    pipeline failure means no FINAL trace exists.
+    """
+    pre_policy_rows = [t for t in traces if (t.get("stage") or "").strip().upper() == "PRE_POLICY"]
+    if not pre_policy_rows:
+        return {}
+    return _parse_trace_json(pre_policy_rows[-1])
+
+
 def _build_delivery_path_summary(
     *,
     orchestration_events: list[dict[str, Any]],
@@ -994,6 +1035,7 @@ def _build_delivery_path_summary(
     llm_calls: list[dict[str, Any]],
     final_revalidation_info: dict[str, Any] | None,
     proxy_output_info: dict[str, Any] | None,
+    pipeline_failure: bool = False,
 ) -> dict[str, Any]:
     """Build a reviewer-facing delivery timeline distinct from internal governance traces."""
     event_types = {(e.get("event_type") or "") for e in orchestration_events}
@@ -1005,8 +1047,27 @@ def _build_delivery_path_summary(
     status = "delivered"
     headline = f"Delivered {delivered_action}"
     explanation = "The proxy finalization event is the authoritative delivered result."
+    pre_delivery_decision_note = ""
 
-    if final_revalidation_info and final_revalidation_info.get("status") == "blocked":
+    if pipeline_failure:
+        status = "pipeline_failure"
+        pre_policy_td = _last_pre_policy_trace_payload(traces)
+        if pre_policy_td.get("final_action") or pre_policy_td.get("winning_rule") or pre_policy_td.get("path"):
+            pre_delivery_decision_note = (
+                "last recorded decision before failure: "
+                f"{pre_policy_td.get('final_action') or 'unknown'} via "
+                f"{pre_policy_td.get('winning_rule') or 'unknown'}, path {pre_policy_td.get('path') or 'unknown'}"
+            )
+        else:
+            pre_delivery_decision_note = "no pre-delivery decision was recorded"
+        headline = f"Delivered {delivered_action} is a system-error placeholder, not a governed decision"
+        explanation = (
+            "The governance pipeline failed before reaching a governed FINAL decision — no FINAL decision-trace "
+            "row was recorded, and meta_json.triggered_principles records SYSTEM.ERROR. The proxy still "
+            f"finalized delivery as {delivered_action}, but that canonical code does not reflect a governed "
+            f"outcome. {pre_delivery_decision_note}."
+        )
+    elif final_revalidation_info and final_revalidation_info.get("status") == "blocked":
         status = "blocked"
         headline = f"Delivered {delivered_action} after final revalidation blocked the upstream candidate"
         explanation = (
@@ -1098,12 +1159,20 @@ def _build_delivery_path_summary(
             )
 
     if final_trace:
+        if pre_action or pre_path:
+            pre_delivery_detail = (
+                f"{pre_path or 'unknown path'} chose {pre_action or 'unknown'} before proxy delivery checks."
+            )
+        else:
+            # No FINAL decision-trace row exists (see _pick_final_trace_row's positional
+            # fallback): never fabricate a "unknown path chose unknown" sentence.
+            pre_delivery_detail = "no recorded pre-delivery decision (no FINAL decision trace)."
         steps.append(
             {
-                "kind": "neutral",
+                "kind": "warn" if pipeline_failure else "neutral",
                 "title": "Pre-delivery governance decision",
                 "time": None,
-                "detail": f"{pre_path or 'unknown path'} chose {pre_action or 'unknown'} before proxy delivery checks.",
+                "detail": pre_delivery_detail,
                 "source": "decision_traces.FINAL",
             }
         )
@@ -1151,7 +1220,11 @@ def _build_delivery_path_summary(
     if finalized or proxy_output_info:
         steps.append(
             {
-                "kind": "ok" if status == "reused" else ("bad" if delivered_action == "REFUSE" else "neutral"),
+                "kind": (
+                    "ok"
+                    if status == "reused"
+                    else ("bad" if (delivered_action == "REFUSE" or pipeline_failure) else "neutral")
+                ),
                 "title": f"Delivered output: {delivered_action}",
                 "time": (finalized or {}).get("started_at"),
                 "detail": (
@@ -1171,6 +1244,8 @@ def _build_delivery_path_summary(
         "delivered_action": delivered_action,
         "delivered_source": delivered_source,
         "steps": steps,
+        "pipeline_failure": pipeline_failure,
+        "pre_delivery_decision_note": pre_delivery_decision_note,
     }
 
 
@@ -2689,7 +2764,10 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
       * the ``requests`` rows ordered by ``turn_index`` (with parsed ``meta_json``);
       * the per-request ``conversation_states`` snapshot;
       * the per-request ledger / session-store / proxy-finalization events;
-      * an overview document (totals, postures, hit/miss counters).
+      * an overview document (totals, postures, hit/miss counters);
+      * a per-turn ``pipeline_failure`` flag (see ``_detect_pipeline_failure``) and an
+        aggregate ``pipeline_failure_count``, computed here from each turn's decision
+        traces + parsed meta_json — read_store persists neither field.
 
     Best-effort: when individual lookups fail or tables are missing, the
     corresponding sections degrade to empty lists / ``None`` instead of
@@ -2705,6 +2783,7 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
             "session_by_request": {},
             "proxy_by_request": {},
             "run_id": None,
+            "pipeline_failure_count": 0,
         }
 
     requests_rows = get_requests_for_conversation(conversation_id) or []
@@ -2740,17 +2819,26 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
 
     run_id: str | None = None
     enriched_requests: list[dict[str, Any]] = []
+    pipeline_failure_count = 0
     for req in requests_rows:
         rid = str(req.get("request_id") or "")
         rrid = req.get("run_id")
         if rrid and not run_id:
             run_id = str(rrid)
         item = dict(req)
-        item["meta_json__parsed"] = _parse_json_field(item.get("meta_json"))
+        meta_parsed = _parse_json_field(item.get("meta_json"))
+        item["meta_json__parsed"] = meta_parsed
         item["state"] = states_by_request.get(rid)
         item["ledger_events"] = ledger_by_request.get(rid, [])
         item["session_events"] = session_by_request.get(rid, [])
         item["proxy_event"] = proxy_by_request.get(rid)
+        # Failure flag computed here in the UI layer (not persisted by read_store):
+        # a request-level pipeline crash has no FINAL decision-trace row.
+        turn_traces = get_decision_traces_for_request(rrid, rid) if rrid and rid else []
+        turn_pipeline_failure = _detect_pipeline_failure(turn_traces, meta_parsed)
+        item["pipeline_failure"] = turn_pipeline_failure
+        if turn_pipeline_failure:
+            pipeline_failure_count += 1
         enriched_requests.append(item)
 
     return {
@@ -2762,6 +2850,7 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
         "session_by_request": dict(session_by_request),
         "proxy_by_request": proxy_by_request,
         "run_id": run_id,
+        "pipeline_failure_count": pipeline_failure_count,
     }
 
 
@@ -3037,6 +3126,8 @@ button:hover{opacity:0.9}
         traces = get_decision_traces_for_request(run_id, request_id)
         debug_events = get_debug_events_for_request(run_id, request_id)
         orchestration_events = get_orchestration_events_for_request(run_id, request_id)
+        req_meta_parsed = _parse_json_field(req_data.get("meta_json")) if isinstance(req_data, dict) else None
+        pipeline_failure = _detect_pipeline_failure(traces, req_meta_parsed)
         runtime_decision_obs = build_runtime_decision_observability(
             traces=traces,
             orchestration_events=orchestration_events,
@@ -3202,6 +3293,7 @@ button:hover{opacity:0.9}
             llm_calls=llm_calls,
             final_revalidation_info=final_revalidation_info,
             proxy_output_info=proxy_output_info,
+            pipeline_failure=pipeline_failure,
         )
         compliance_fast_path_panel = None
         if (execution_summary.get("path") or "").strip().upper() == "COMPLIANCE_FAST_PATH":
@@ -3245,6 +3337,7 @@ button:hover{opacity:0.9}
                     "conversation_context": conversation_context,
                     "token_usage": token_usage,
                     "domain_retrieval": domain_retrieval,
+                    "pipeline_failure": pipeline_failure,
                 },
             )
         return HTMLResponse(f"<html><body><h1>Request {request_id}</h1></body></html>")
