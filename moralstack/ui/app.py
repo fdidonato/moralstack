@@ -42,6 +42,8 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     PROXY_OUTPUT_FINALIZED,
     SIMULATOR_SKIPPED,
     SPECULATIVE_DRAFT_REUSED,
+    SPECULATIVE_JOIN_SKIPPED,
+    SPECULATIVE_RESULT_DISCARDED,
     SPECULATIVE_RESULT_USED,
 )
 from moralstack.reports.benchmark_report_loader import (
@@ -759,6 +761,53 @@ def _build_compliance_card(orchestration_events: list[dict[str, Any]]) -> dict[s
         if action_excerpt:
             break
 
+    # MATCH consumption story: the verdict alone does not say whether the match was
+    # ever delivered. Branch on the persisted downstream events so the card cannot
+    # imply an approval that was later vetoed (PROJECT_SPEC hard-signal invariant).
+    # Every field below is read literally from a persisted event payload.
+    event_types = {(e.get("event_type") or "") for e in orchestration_events}
+    veto = False
+    veto_reason: str | None = None
+    veto_risk_category: str | None = None
+    veto_risk_score: float | None = None
+    veto_semantic_signals: list[str] = []
+    veto_mismatch_guard_action: str | None = None
+    draft_discarded = False
+    draft_discarded_reason: str | None = None
+    consumption_undetermined = False
+
+    if decision == "MATCH" and COMPLIANCE_MATCH_DOWNGRADED in event_types:
+        veto = True
+        downgrade_events = [e for e in orchestration_events if (e.get("event_type") or "") == COMPLIANCE_MATCH_DOWNGRADED]
+        downgrade_event = downgrade_events[0]
+        dp_json = _parse_json_field(downgrade_event.get("payload_json"))
+        dp_payload = _parse_json_field(downgrade_event.get("payload"))
+        dp = dp_json or dp_payload or {}
+        veto_reason = dp.get("reason")
+        veto_risk_category = dp.get("risk_category")
+        veto_risk_score = dp.get("risk_score")
+        veto_semantic_signals = [str(s) for s in (dp.get("semantic_signals") or []) if str(s).strip()]
+        veto_mismatch_guard_action = dp.get("mismatch_guard_action")
+
+        discard_events = [
+            e
+            for e in orchestration_events
+            if (e.get("event_type") or "") in (SPECULATIVE_RESULT_DISCARDED, SPECULATIVE_JOIN_SKIPPED)
+        ]
+        if discard_events:
+            draft_discarded = True
+            discard_event = discard_events[0]
+            dep_json = _parse_json_field(discard_event.get("payload_json"))
+            dep_payload = _parse_json_field(discard_event.get("payload"))
+            dep = dep_json or dep_payload or {}
+            draft_discarded_reason = dep.get("reason")
+    elif (
+        decision == "MATCH"
+        and COMPLIANCE_DRAFT_REUSED not in event_types
+        and COMPLIANCE_DRAFT_REGENERATED not in event_types
+    ):
+        consumption_undetermined = True
+
     return {
         "decision": decision,
         "evaluation_path": payload.get("evaluation_path", "—"),
@@ -776,6 +825,15 @@ def _build_compliance_card(orchestration_events: list[dict[str, Any]]) -> dict[s
         "rationale": payload.get("rationale_excerpt"),
         "modules_deferred": [m["module"] for m in deferred_modules],
         "modules_deferred_detail": deferred_modules,
+        "veto": veto,
+        "veto_reason": veto_reason,
+        "veto_risk_category": veto_risk_category,
+        "veto_risk_score": veto_risk_score,
+        "veto_semantic_signals": veto_semantic_signals,
+        "veto_mismatch_guard_action": veto_mismatch_guard_action,
+        "draft_discarded": draft_discarded,
+        "draft_discarded_reason": draft_discarded_reason,
+        "consumption_undetermined": consumption_undetermined,
     }
 
 

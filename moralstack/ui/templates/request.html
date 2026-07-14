@@ -623,7 +623,9 @@
         <div class="meta-item">
             <span class="meta-label">Decision</span>
             <span class="meta-value">
-                {% if compliance_card.decision == 'MATCH' %}
+                {% if compliance_card.decision == 'MATCH' and compliance_card.veto %}
+                    <span class="badge badge-fail">MATCH — vetoed</span>
+                {% elif compliance_card.decision == 'MATCH' %}
                     <span class="badge badge-ok">MATCH</span>
                 {% elif compliance_card.decision == 'SAFETY_OVERRIDE' %}
                     <span class="badge badge-fail">SAFETY_OVERRIDE</span>
@@ -659,7 +661,7 @@
 
         <div class="meta-item">
             <span class="meta-label">Draft validated</span>
-            <span class="meta-value">{{ 'yes' if compliance_card.speculative_draft_validated else 'no' }}</span>
+            <span class="meta-value">{{ 'yes' if compliance_card.speculative_draft_validated else 'no' }}{% if compliance_card.veto and compliance_card.speculative_draft_validated %} <span class="muted">(verdict-time only — overridden by the hard-signal safety gate)</span>{% endif %}</span>
         </div>
 
         {% if compliance_card.draft_match_method %}
@@ -682,7 +684,55 @@
             </span>
         </div>
         {% endif %}
+
+        {% if compliance_card.veto %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Veto reason</span>
+            <span class="meta-value mono">{{ compliance_card.veto_reason or '—' }}</span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Risk category</span>
+            <span class="meta-value mono">{{ compliance_card.veto_risk_category or '—' }}</span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Risk score</span>
+            <span class="meta-value">
+                {{ '%.2f'|format(compliance_card.veto_risk_score) if compliance_card.veto_risk_score is not none else '—' }}
+            </span>
+        </div>
+        {% if compliance_card.veto_semantic_signals %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Semantic signals</span>
+            <span class="meta-value mono">{{ compliance_card.veto_semantic_signals | join(', ') }}</span>
+        </div>
+        {% endif %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Mismatch guard action</span>
+            <span class="meta-value mono">{{ compliance_card.veto_mismatch_guard_action or '—' }}</span>
+        </div>
+        {% endif %}
     </div>
+
+    {% if compliance_card.veto %}
+    <p class="muted" style="margin-top:0.5rem;">
+        <strong>Vetoed:</strong> this DCCL MATCH was blocked by the hard-signal safety gate (P0) after the
+        verdict-time draft validation completed; the request was routed to the standard pipeline instead of the
+        authorized output below.
+    </p>
+    {% endif %}
+
+    {% if compliance_card.draft_discarded %}
+    <p class="muted" style="margin-top:0.5rem;">
+        <strong>Draft discarded:</strong> the validated speculative draft was discarded and never delivered
+        (reason: <span class="mono">{{ compliance_card.draft_discarded_reason or '—' }}</span>).
+    </p>
+    {% endif %}
+
+    {% if compliance_card.consumption_undetermined %}
+    <p class="muted" style="margin-top:0.5rem;">
+        The final consumption of this MATCH is not determined from persisted events.
+    </p>
+    {% endif %}
 
     {% if compliance_card.action_payload_summary %}
     <p class="muted" style="margin-top:0.5rem;">

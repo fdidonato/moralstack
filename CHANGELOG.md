@@ -184,6 +184,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   depends on PyYAML arriving transitively. `signals.yaml` contains no YAML 1.1-only
   constructs, so the parser switch is semantics-preserving. This also unblocks dropping
   the global `--ignore-missing-imports` mypy flag from CI/pre-commit (follow-up).
+- **UI: a DCCL `MATCH` vetoed by the hard-signal safety gate no longer renders as a
+  live, approved result.** `_build_compliance_card` (`moralstack/ui/app.py`) now branches
+  on the persisted downstream events instead of only the verdict event: when a `MATCH` is
+  followed by `COMPLIANCE_MATCH_DOWNGRADED`, the decision badge reads "MATCH — vetoed"
+  (canonical `MATCH` code kept visible, never colour-only `badge-ok`) and the card shows
+  the veto reason, risk category/score, semantic signals and `mismatch_guard_action` taken
+  literally from the downgrade payload; when `SPECULATIVE_RESULT_DISCARDED` /
+  `SPECULATIVE_JOIN_SKIPPED` is also present, a "Draft discarded" line states the validated
+  draft was never delivered, with its persisted reason. A `MATCH` with a reused/regenerated
+  draft and no downgrade renders exactly as before (S6). A `MATCH` with no recorded
+  consumption event gets an honest "not determined from persisted events" note instead of
+  implying delivery. Tests: `tests/test_ui_compliance_card.py`.
 
 ### Development
 
