@@ -965,6 +965,19 @@ def _build_path_badge_info(orchestration_events: list[dict[str, Any]]) -> dict[s
     return {"label": "Standard deliberative pipeline", "kind": "deliberative"}
 
 
+def _dccl_draft_reused(orchestration_events: list[dict[str, Any]]) -> bool:
+    """True when the DCCL speculative draft was validated and delivered as final content.
+
+    Mirrors the reuse semantics `_build_path_badge_info` uses for its "Contract MATCH -
+    draft reused" label: COMPLIANCE_DRAFT_REUSED is present and no COMPLIANCE_MATCH_DOWNGRADED
+    veto was recorded for the same request. This is the event-first source of truth —
+    unlike `decision_traces.trace_json.path`, which is persisted as an empty string on
+    COMPLIANCE_LAYER stage rows and therefore never equals "COMPLIANCE_FAST_PATH" on real data.
+    """
+    event_types = {(e.get("event_type") or "") for e in orchestration_events}
+    return COMPLIANCE_DRAFT_REUSED in event_types and COMPLIANCE_MATCH_DOWNGRADED not in event_types
+
+
 def _build_proxy_output_info(orchestration_events: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Extract final_text_source from PROXY_OUTPUT_FINALIZED, if recorded."""
     for e in orchestration_events:
@@ -1120,7 +1133,6 @@ def _build_delivery_path_summary(
     pipeline_failure: bool = False,
 ) -> dict[str, Any]:
     """Build a reviewer-facing delivery timeline distinct from internal governance traces."""
-    event_types = {(e.get("event_type") or "") for e in orchestration_events}
     final_trace = _last_final_trace_payload(traces)
     delivered_action = (proxy_output_info or {}).get("final_action") or final_trace.get("final_action") or "unknown"
     delivered_source = (proxy_output_info or {}).get("final_text_source") or "unknown"
@@ -1156,7 +1168,7 @@ def _build_delivery_path_summary(
             "The orchestrator allowed a pre-delivery response, but the proxy regenerated an upstream candidate "
             "and blocked it before delivery."
         )
-    elif COMPLIANCE_DRAFT_REUSED in event_types and delivered_source == "governed_draft":
+    elif _dccl_draft_reused(orchestration_events) and delivered_source in {"governed", "governed_draft"}:
         status = "reused"
         headline = f"Delivered {delivered_action} from the DCCL-validated governed draft"
         explanation = "The DCCL validated the speculative draft, bypassed downstream modules, and delivered it directly."
@@ -1342,6 +1354,7 @@ def _pick_final_trace_row(traces: list[dict[str, Any]]) -> dict[str, Any]:
 def _execution_summary_from_request(
     traces: list[dict[str, Any]],
     llm_calls: list[dict[str, Any]],
+    orchestration_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build execution summary (path, total_cycles, converged) from traces and llm_calls."""
     path_val = ""
@@ -1390,6 +1403,11 @@ def _execution_summary_from_request(
         path_badge = "COMPLIANCE_FAST_PATH"
     else:
         path_badge = "DELIBERATIVE_PATH"
+    # decision_traces.trace_json.path is persisted empty on COMPLIANCE_LAYER stage rows,
+    # so a genuine DCCL draft-reuse delivery never matches path_upper above. The
+    # orchestration events are the authoritative signal for this path — prefer them.
+    if _dccl_draft_reused(orchestration_events or []):
+        path_badge = "COMPLIANCE_FAST_PATH"
 
     return {
         "path": path_val or "—",
@@ -3257,7 +3275,7 @@ button:hover{opacity:0.9}
             orchestration_events=orchestration_events,
             llm_calls=llm_calls,
         )
-        execution_summary = _execution_summary_from_request(traces, llm_calls)
+        execution_summary = _execution_summary_from_request(traces, llm_calls, orchestration_events)
 
         # Build final decision card
         final_decision_card = _build_final_decision_card(traces)
@@ -3420,7 +3438,10 @@ button:hover{opacity:0.9}
             pipeline_failure=pipeline_failure,
         )
         compliance_fast_path_panel = None
-        if (execution_summary.get("path") or "").strip().upper() == "COMPLIANCE_FAST_PATH":
+        # Gate on the derived path_badge (event-aware), not the raw trace path: the
+        # persisted trace path is empty on COMPLIANCE_LAYER rows, so real DCCL
+        # draft-reuse requests never match the raw field (see _dccl_draft_reused).
+        if (execution_summary.get("path_badge") or "").strip().upper() == "COMPLIANCE_FAST_PATH":
             compliance_fast_path_panel = _build_compliance_fast_path_panel(traces, orchestration_events)
 
         token_usage = _token_usage_view(

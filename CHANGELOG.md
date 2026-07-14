@@ -196,6 +196,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   draft and no downgrade renders exactly as before (S6). A `MATCH` with no recorded
   consumption event gets an honest "not determined from persisted events" note instead of
   implying delivery. Tests: `tests/test_ui_compliance_card.py`.
+- **UI: a genuine DCCL draft-reuse delivery no longer mislabels itself as the
+  deliberative path.** `_execution_summary_from_request` and `_build_delivery_path_summary`
+  (`moralstack/ui/app.py`) derived "which path ran" from `decision_traces.trace_json.path`,
+  which is persisted as an empty string on every real `COMPLIANCE_LAYER` stage row — so
+  `path_badge` fell back to `DELIBERATIVE_PATH` and the delivery card missed the
+  reuse-specific explanation (it also only matched the historical `governed_draft`
+  `final_text_source`, never the active `governed` value) for every real reuse in the
+  observability DB. Both view-builders now consult a new shared, event-first predicate
+  (`_dccl_draft_reused`: `COMPLIANCE_DRAFT_REUSED` present and no `COMPLIANCE_MATCH_DOWNGRADED`
+  veto), mirroring the semantics `_build_path_badge_info` already used for the adjacent
+  reuse label on the same page. `path_badge` now reads `COMPLIANCE_FAST_PATH` and the
+  delivery card renders its "reused" status/headline/explanation for a genuine reuse; a
+  downgraded MATCH or a plain deliberative request is unaffected. Tests:
+  `tests/test_ui_execution_path_label.py`.
 
 ### Development
 
