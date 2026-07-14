@@ -164,11 +164,16 @@ def test_execution_summary_byte_identical_for_plain_deliberative_request():
 
 
 def test_delivery_summary_byte_identical_for_plain_deliberative_request():
+    # Iteration 05: a proxy_output_info can only exist alongside a persisted
+    # PROXY_OUTPUT_FINALIZED orchestration event (real data never has one without
+    # the other), so the fixture carries the event to stay internally consistent
+    # with _proxy_participated. The asserted behavior (proxy runs keep the
+    # proxy-authoritative explanation) is unchanged.
     traces = [_final_trace(path="", final_action="NORMAL_COMPLETE", total_cycles=2)]
     proxy_output_info = {"final_text_source": "governed", "final_action": "NORMAL_COMPLETE"}
 
     summary = _build_delivery_path_summary(
-        orchestration_events=[],
+        orchestration_events=[_proxy_finalized_event("governed")],
         traces=traces,
         llm_calls=[],
         final_revalidation_info=None,

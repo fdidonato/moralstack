@@ -70,13 +70,16 @@
             <span class="badge {% if delivery_path_summary.status == 'reused' %}badge-ok{% elif delivery_path_summary.status in ('blocked', 'pipeline_failure') %}badge-fail{% else %}badge-parallel{% endif %}">
                 {{ delivery_path_summary.delivered_action }}
             </span>
-            <span class="mono">{{ delivery_path_summary.delivered_source }}</span>
         </div>
     </div>
     <div class="meta-grid compact delivery-path-facts">
         <div class="meta-item">
             <span class="meta-label">Pre-delivery governance</span>
+            {% if delivery_path_summary.pre_delivery_na %}
+            <span class="meta-value mono">n/a — DCCL fast-path bypass (no PRE_POLICY/FINAL row by design)</span>
+            {% else %}
             <span class="meta-value mono">{{ delivery_path_summary.pre_delivery_path or 'unknown' }} / {{ delivery_path_summary.pre_delivery_action or 'unknown' }}</span>
+            {% endif %}
         </div>
         <div class="meta-item">
             <span class="meta-label">Authoritative final source</span>

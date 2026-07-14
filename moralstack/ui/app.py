@@ -978,6 +978,30 @@ def _dccl_draft_reused(orchestration_events: list[dict[str, Any]]) -> bool:
     return COMPLIANCE_DRAFT_REUSED in event_types and COMPLIANCE_MATCH_DOWNGRADED not in event_types
 
 
+_PROXY_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        PROXY_OUTPUT_FINALIZED,
+        PROXY_FINAL_REVALIDATION_STARTED,
+        PROXY_FINAL_REVALIDATION_PASSED,
+        PROXY_FINAL_REVALIDATION_BLOCKED,
+        PROXY_FINAL_REVALIDATION_ERROR,
+        PROXY_FINAL_REVALIDATION_SKIPPED,
+    }
+)
+
+
+def _proxy_participated(orchestration_events: list[dict[str, Any]]) -> bool:
+    """True when this request went through the OpenAI-compatible proxy layer.
+
+    Exhaustive over ``orchestration_event_taxonomy``'s six ``PROXY_*`` event types
+    (the taxonomy has exactly these six). A request with none of them present is a
+    direct/SDK-path run — the delivery-path card must not describe it in
+    proxy-authoritative language (see ``_build_delivery_path_summary``).
+    """
+    event_types = {(e.get("event_type") or "") for e in orchestration_events}
+    return bool(event_types & _PROXY_EVENT_TYPES)
+
+
 def _build_proxy_output_info(orchestration_events: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Extract final_text_source from PROXY_OUTPUT_FINALIZED, if recorded."""
     for e in orchestration_events:
@@ -1082,8 +1106,20 @@ def _event_payload(event: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _last_final_trace_payload(traces: list[dict[str, Any]]) -> dict[str, Any]:
-    final_trace = _pick_final_trace_row(traces)
-    return _parse_trace_json(final_trace) if final_trace else {}
+    """Return the trace_json of the last ``FINAL`` decision-trace row, falling back to
+    the last ``PRE_POLICY`` row when no ``FINAL`` row exists.
+
+    Deliberately does NOT call ``_pick_final_trace_row``: that function's
+    ``traces[-1]`` positional fallback exists solely to keep
+    ``_execution_summary_from_request``'s ``converged`` calculation stable and must
+    not change. Reusing it here would let an unrelated last-inserted row (e.g.
+    ``RELEVANT_PRINCIPLES``) masquerade as a governance decision in the delivery-path
+    card, fabricating a false "path chose action" sentence.
+    """
+    finals = [t for t in traces if (t.get("stage") or "").strip().upper() == "FINAL"]
+    if finals:
+        return _parse_trace_json(finals[-1])
+    return _last_pre_policy_trace_payload(traces)
 
 
 def _last_pre_policy_trace_payload(traces: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1123,6 +1159,28 @@ def _last_assessed_risk(traces: list[dict[str, Any]]) -> float | None:
     return float(risk_score) if isinstance(risk_score, (int, float)) else None
 
 
+def _infer_engine_internal_source(llm_calls: list[dict[str, Any]], final_response: str) -> str:
+    """Identify which internal module/action produced the delivered text on a
+    non-proxy run, by comparing persisted artifacts — never by inferring from wording.
+
+    Walks ``llm_calls`` in reverse chronological order (``read_store`` returns them
+    ordered by cycle/sequence/started_at) and returns ``f"{module}/{action-or-phase}"``
+    for the most recent call whose stripped ``raw_response`` is byte-identical to the
+    stripped ``final_response``. Returns ``""`` when there is no exact match or
+    ``final_response`` is empty — this deliberately never guesses.
+    """
+    stripped_final = (final_response or "").strip()
+    if not stripped_final:
+        return ""
+    for call in reversed(llm_calls):
+        raw = (call.get("raw_response") or "").strip()
+        if raw and raw == stripped_final:
+            module = (call.get("module") or "").strip() or "unknown"
+            action = (call.get("action") or "").strip() or (call.get("phase") or "").strip() or "unknown"
+            return f"{module}/{action}"
+    return ""
+
+
 def _build_delivery_path_summary(
     *,
     orchestration_events: list[dict[str, Any]],
@@ -1131,9 +1189,15 @@ def _build_delivery_path_summary(
     final_revalidation_info: dict[str, Any] | None,
     proxy_output_info: dict[str, Any] | None,
     pipeline_failure: bool = False,
+    final_response: str = "",
 ) -> dict[str, Any]:
     """Build a reviewer-facing delivery timeline distinct from internal governance traces."""
     final_trace = _last_final_trace_payload(traces)
+    proxy_participated = _proxy_participated(orchestration_events)
+    # DCCL fast-path bypass (COMPLIANCE_DRAFT_REUSED) never writes a PRE_POLICY/FINAL
+    # decision-trace row (modules are skipped entirely) — that is a structural n/a,
+    # not an "unknown" governance decision. See the template's meta-item rendering.
+    pre_delivery_na = _dccl_draft_reused(orchestration_events) and not final_trace
     delivered_action = (proxy_output_info or {}).get("final_action") or final_trace.get("final_action") or "unknown"
     delivered_source = (proxy_output_info or {}).get("final_text_source") or "unknown"
     pre_action = final_trace.get("final_action") or ""
@@ -1176,6 +1240,22 @@ def _build_delivery_path_summary(
         status = "upstream"
         headline = f"Delivered {delivered_action} from {delivered_source}"
         explanation = "The final response came from an upstream provider candidate after governance."
+    elif not proxy_participated:
+        # No PROXY_* orchestration event was recorded at all: this is a direct/SDK-path
+        # run, so the proxy-authoritative story above is false for this request. Recover
+        # what actually produced the delivered text from persisted llm_calls instead of
+        # asserting a proxy-authoritative story that never happened.
+        inferred_source = _infer_engine_internal_source(llm_calls, final_response)
+        delivered_source = (
+            f"governed (engine-internal, produced by {inferred_source})"
+            if inferred_source
+            else "governed (engine-internal, source undetermined)"
+        )
+        explanation = (
+            "No PROXY_* orchestration event was recorded for this request — delivery did not go through the "
+            "OpenAI-compatible proxy layer (this is a direct/SDK-path run). The last governance decision-trace "
+            "row is the authoritative record of what was delivered."
+        )
 
     steps: list[dict[str, Any]] = []
 
@@ -1252,14 +1332,19 @@ def _build_delivery_path_summary(
                 }
             )
 
-    if final_trace:
+    # pre_delivery_na (DCCL fast-path bypass, no PRE_POLICY/FINAL row by design) is
+    # rendered as a structural n/a in the meta-grid instead — never as a step here.
+    if not pre_delivery_na:
         if pre_action or pre_path:
-            pre_delivery_detail = (
-                f"{pre_path or 'unknown path'} chose {pre_action or 'unknown'} before proxy delivery checks."
+            tail = (
+                "before proxy delivery checks."
+                if proxy_participated
+                else "— this governance decision is the delivered output (no proxy layer in this run)."
             )
+            pre_delivery_detail = f"{pre_path or 'unknown path'} chose {pre_action or 'unknown'} {tail}"
         else:
-            # No FINAL decision-trace row exists (see _pick_final_trace_row's positional
-            # fallback): never fabricate a "unknown path chose unknown" sentence.
+            # No FINAL/PRE_POLICY decision-trace row exists: never fabricate a
+            # "unknown path chose unknown" sentence.
             pre_delivery_detail = "no recorded pre-delivery decision (no FINAL decision trace)."
         steps.append(
             {
@@ -1340,6 +1425,7 @@ def _build_delivery_path_summary(
         "steps": steps,
         "pipeline_failure": pipeline_failure,
         "pre_delivery_decision_note": pre_delivery_decision_note,
+        "pre_delivery_na": pre_delivery_na,
     }
 
 
@@ -3436,6 +3522,7 @@ button:hover{opacity:0.9}
             final_revalidation_info=final_revalidation_info,
             proxy_output_info=proxy_output_info,
             pipeline_failure=pipeline_failure,
+            final_response=req_data.get("final_response") or "",
         )
         compliance_fast_path_panel = None
         # Gate on the derived path_badge (event-aware), not the raw trace path: the

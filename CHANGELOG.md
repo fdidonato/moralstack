@@ -210,6 +210,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delivery card renders its "reused" status/headline/explanation for a genuine reuse; a
   downgraded MATCH or a plain deliberative request is unaffected. Tests:
   `tests/test_ui_execution_path_label.py`.
+- **UI: the delivery-path card no longer tells a proxy-authoritative story on
+  direct/SDK-path (non-proxy) requests, and no longer collapses three distinct
+  "no pre-delivery decision" situations into identical unknown text.**
+  `_build_delivery_path_summary` (`moralstack/ui/app.py`) now computes a new
+  `_proxy_participated` predicate (any of the six `PROXY_*` orchestration event
+  types); when none is present, the card drops the "The proxy finalization event is
+  the authoritative delivered result" claim, states plainly that this request never
+  went through the OpenAI-compatible proxy layer, and reports which internal
+  module/action produced the delivered text via a new `_infer_engine_internal_source`
+  helper (an exact byte-identity comparison of persisted `llm_calls.raw_response`
+  against `requests.final_response`, never a guess from wording). Separately,
+  `_last_final_trace_payload` (used only by the delivery card, not by
+  `_execution_summary_from_request`/`_pick_final_trace_row`, which are unchanged) now
+  falls back to the last `PRE_POLICY` row when no `FINAL` row exists, so a
+  proxy+pipeline-failure request shows its real last pre-crash decision instead of an
+  unrelated last-inserted trace row; a genuine DCCL fast-path bypass (no
+  `PRE_POLICY`/`FINAL` row by design) instead gets a new structural `pre_delivery_na`
+  flag rendered as an explicit "n/a — DCCL fast-path bypass" meta-item, never
+  "unknown / unknown". The unlabelled duplicate delivered-source `<span>` (which
+  repeated the labelled "Authoritative final source" field with no added
+  information) was also removed from the template. Tests:
+  `tests/test_ui_delivery_provenance.py`.
 
 ### Development
 
