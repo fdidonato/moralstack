@@ -68,7 +68,11 @@ REQUEST_RULES: tuple[tuple[str, str, Callable[[Signals], bool]], ...] = (
         "Compliance match without final reuse",
         lambda s: vocab(s, r"(DCCL|COMPLIANCE).*(MATCH|DOWNGRAD|INVALID)") and not vocab(s, r"REUSE"),
     ),
-    ("S8", "Final revalidation blocked or fail-closed", lambda s: vocab(s, r"REVALID.*(BLOCK|FAIL|VIOLAT)|FAIL[_ ]?CLOSED")),
+    (
+        "S8",
+        "Fail-closed delivery (governed refusal substituted for the decided action)",
+        lambda s: vocab(s, r"governed_pipeline_refusal|empty_governed_content") or vocab(s, r"REVALID.*(BLOCK|ERROR)"),
+    ),  # second arm: pre-Plan-1 rows
     ("S9", "Skipped or deferred module", lambda s: vocab(s, r"SKIP|DEFER")),
     ("S10", "Calibration guard applied to risk", lambda s: vocab(s, r"CALIBRAT")),
 )
@@ -166,7 +170,18 @@ def _request_signals(conn: sqlite3.Connection, row: sqlite3.Row) -> Signals:
     if _has_table(conn, "orchestration_events"):
         cols = _columns(conn, "orchestration_events")
         wanted = [
-            c for c in ("cycle", "stage", "component", "event_type", "decision", "status", "reason_codes_json") if c in cols
+            c
+            for c in (
+                "cycle",
+                "stage",
+                "component",
+                "event_type",
+                "decision",
+                "status",
+                "reason_codes_json",
+                "payload_json",
+            )
+            if c in cols
         ]
         if wanted:
             query = f"SELECT {', '.join(wanted)} FROM orchestration_events WHERE run_id=? AND request_id=?"
@@ -175,8 +190,9 @@ def _request_signals(conn: sqlite3.Connection, row: sqlite3.Row) -> Signals:
                 for column in ("stage", "component", "event_type", "decision", "status"):
                     if column in event_keys and event[column]:
                         vocabulary.append(str(event[column]))
-                if "reason_codes_json" in event_keys:
-                    vocabulary.extend(_tokens(event["reason_codes_json"]))
+                for blob in ("reason_codes_json", "payload_json"):
+                    if blob in event_keys:
+                        vocabulary.extend(_tokens(event[blob]))
                 if "cycle" in event_keys and event["cycle"] is not None:
                     try:
                         max_cycle = max(max_cycle, int(event["cycle"]))
