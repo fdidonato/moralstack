@@ -177,6 +177,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with "no recorded pre-delivery decision (no FINAL decision trace)". Detection uses
   structured signals only (no FINAL trace + `SYSTEM.ERROR` principle), never the
   response text, per the decision-policy invariant.
+- **UI: pipeline-failure turns are no longer counted or labelled as a governed
+  delivery on the conversation view.** The "Final actions" tile, the "Last posture"
+  tile, the posture-timeline Action column, and the per-turn card (header badge and
+  "Governance decision → Final action" row) previously asserted a crashed turn's
+  `meta_json.final_action` (e.g. `NORMAL_COMPLETE`) with no caveat, contradicting the
+  same page's own pipeline-failure banner and conversation-strip cell. `_build_conversation_timeline`
+  (`moralstack/ui/app.py`) now also returns `pipeline_failure_action_counts` (a
+  per-action tally of failed turns) and `last_posture_is_from_pipeline_failure` (a
+  conservative attribution — true only when every turn sharing that posture value is
+  a pipeline failure; read_store does not expose which request produced
+  `overview.last_posture`, so an ambiguous match stays `False`). The template appends
+  the banner's exact "not a governed outcome" wording as text beside the canonical
+  value on all four surfaces; the raw counts and badges are never altered or removed.
 - **Undeclared PyYAML runtime dependency removed.** `moralstack/models/risk/signals/registry.py`
   (the only PyYAML import in the package, on the main runtime path via the risk estimator)
   now loads `signals.yaml` with the already-declared `ruamel.yaml` (`YAML(typ="safe")`)

@@ -14,7 +14,11 @@ These tests exercise:
   * the "no recorded pre-delivery decision" replacement for the old
     "unknown path chose unknown" placeholder sentence (both in the failure
     case and in the unrelated no-FINAL/no-SYSTEM.ERROR fast-path case);
-  * the conversation strip's per-turn failure treatment and aggregate note.
+  * the conversation strip's per-turn failure treatment and aggregate note;
+  * the four conversation-page surfaces (final-actions tile, last-posture
+    tile, posture-timeline Action column, per-turn card) that must not
+    present a pipeline-failure turn's delivered ``final_action`` as a
+    governed outcome without a caveat.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from moralstack.observability.conversation_events import emit_conversation_state_updated  # noqa: E402
 from moralstack.observability.emit_helpers import (  # noqa: E402
     persist_decision_trace,
     persist_orchestration_event,
@@ -415,3 +420,179 @@ def test_max_risk_is_fail_closed_false_when_a_non_failed_turn_also_reaches_the_m
     assert "not an assessed score" not in body
     # The per-turn label for the failed turn itself is unaffected by the aggregate.
     assert "fail-closed default" in body
+
+
+def test_conversation_page_flags_pipeline_failure_action_and_posture(ui_client):
+    """A single-turn conversation whose only turn is a pipeline failure must not
+    present its delivered final_action / posture as a governed outcome on any of
+    the four surfaces: final-actions tile, last-posture tile, posture-timeline
+    Action column, and the per-turn card (header badge + governance-decision row).
+    The canonical delivered values stay visible everywhere, unqualified deletion
+    never happens — the qualifier is appended text beside them."""
+    run_id, conv_id = "run-conv-crash-5", "conv-crash-5"
+    create_run(run_id, run_type="single", meta={})
+    upsert_request(run_id, "req-conv-k", prompt="turn 0", domain="general", conversation_id=conv_id, turn_index=0)
+    update_request_meta(
+        run_id,
+        "req-conv-k",
+        {"final_action": "NORMAL_COMPLETE", "risk_score": 1.0, "triggered_principles": ["SYSTEM.ERROR"]},
+    )
+    update_request_response(run_id, "req-conv-k", "[SYSTEM_ERROR]")
+    persist_decision_trace(
+        run_id=run_id,
+        request_id="req-conv-k",
+        stage="RISK_ASSESSMENT",
+        sequence=1,
+        trace_json=json.dumps({"risk_score": 0.6}),
+    )
+    emit_conversation_state_updated(
+        run_id=run_id,
+        request_id="req-conv-k",
+        conversation_id=conv_id,
+        turn_index=0,
+        state_in=None,
+        state_out=None,
+        final_action="NORMAL_COMPLETE",
+        risk_score=1.0,
+        posture="ESCALATED",
+    )
+    get_obs().flush()
+
+    token = _make_session_token(ui_client)
+    resp = ui_client.get(
+        f"/conversations/{conv_id}",
+        cookies={"moralstack_session": token},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.text
+
+    # Canonical delivered values stay visible (never removed).
+    assert "NORMAL_COMPLETE: 1" in body
+    assert "ESCALATED" in body
+
+    # Final-actions tile: qualifier with the correct per-action failure count.
+    assert "includes 1 pipeline failure, not a governed outcome" in body
+
+    # Last-posture tile: qualifier, since this conversation's only turn (and
+    # therefore the only source of last_posture) is a pipeline failure.
+    assert "from a turn that ended in a pipeline failure, not a governed outcome" in body
+
+    # "not a governed outcome" must appear exactly 7 times for this single failed
+    # turn: the iteration-01 banner, the conversation-strip cell title (both
+    # pre-existing), plus the five surfaces this change adds — final-actions tile,
+    # last-posture tile, posture-timeline Action cell, per-turn header badge, and
+    # the per-turn Governance decision -> Final action row.
+    assert body.count("not a governed outcome") == 7
+
+
+def test_normal_conversation_has_no_pipeline_failure_action_qualifiers(ui_client):
+    """A conversation with no pipeline-failed turns must never render the new
+    qualifiers, and the underlying aggregates must be empty/False."""
+    run_id, conv_id = "run-conv-normal-3", "conv-normal-3"
+    create_run(run_id, run_type="single", meta={})
+    upsert_request(run_id, "req-conv-l", prompt="turn 0", domain="general", conversation_id=conv_id, turn_index=0)
+    upsert_request(
+        run_id,
+        "req-conv-m",
+        prompt="turn 1",
+        domain="general",
+        conversation_id=conv_id,
+        turn_index=1,
+        parent_request_id="req-conv-l",
+    )
+    update_request_meta(run_id, "req-conv-l", {"final_action": "NORMAL_COMPLETE", "risk_score": 0.1})
+    update_request_meta(run_id, "req-conv-m", {"final_action": "NORMAL_COMPLETE", "risk_score": 0.2})
+    persist_decision_trace(
+        run_id=run_id,
+        request_id="req-conv-l",
+        stage="FINAL",
+        sequence=1,
+        trace_json=json.dumps({"final_action": "NORMAL_COMPLETE", "path": "FAST_PATH", "winning_rule": "rule_x"}),
+    )
+    persist_decision_trace(
+        run_id=run_id,
+        request_id="req-conv-m",
+        stage="FINAL",
+        sequence=1,
+        trace_json=json.dumps({"final_action": "NORMAL_COMPLETE", "path": "FAST_PATH", "winning_rule": "rule_x"}),
+    )
+    emit_conversation_state_updated(
+        run_id=run_id,
+        request_id="req-conv-m",
+        conversation_id=conv_id,
+        turn_index=1,
+        state_in=None,
+        state_out=None,
+        final_action="NORMAL_COMPLETE",
+        risk_score=0.2,
+        posture="STABLE",
+    )
+    get_obs().flush()
+
+    from moralstack.ui.app import _build_conversation_timeline
+
+    timeline = _build_conversation_timeline(conv_id)
+    assert timeline["pipeline_failure_action_counts"] == {}
+    assert timeline["last_posture_is_from_pipeline_failure"] is False
+
+    token = _make_session_token(ui_client)
+    resp = ui_client.get(
+        f"/conversations/{conv_id}",
+        cookies={"moralstack_session": token},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.text
+    assert "not a governed outcome" not in body
+
+
+def test_mixed_conversation_flags_only_the_failed_turn_action(ui_client):
+    """One failed turn and one normal turn share the same final_action: the raw
+    aggregate total must stay correct, and the qualifier must report exactly the
+    failed-turn count, not the whole distribution."""
+    run_id, conv_id = "run-conv-mixed-1", "conv-mixed-1"
+    create_run(run_id, run_type="single", meta={})
+    upsert_request(run_id, "req-conv-n", prompt="turn 0", domain="general", conversation_id=conv_id, turn_index=0)
+    upsert_request(
+        run_id,
+        "req-conv-o",
+        prompt="turn 1",
+        domain="general",
+        conversation_id=conv_id,
+        turn_index=1,
+        parent_request_id="req-conv-n",
+    )
+    update_request_meta(run_id, "req-conv-n", {"final_action": "NORMAL_COMPLETE", "risk_score": 0.1})
+    update_request_meta(
+        run_id,
+        "req-conv-o",
+        {"final_action": "NORMAL_COMPLETE", "risk_score": 1.0, "triggered_principles": ["SYSTEM.ERROR"]},
+    )
+    update_request_response(run_id, "req-conv-o", "[SYSTEM_ERROR]")
+    persist_decision_trace(
+        run_id=run_id,
+        request_id="req-conv-n",
+        stage="FINAL",
+        sequence=1,
+        trace_json=json.dumps({"final_action": "NORMAL_COMPLETE", "path": "FAST_PATH", "winning_rule": "rule_x"}),
+    )
+    persist_decision_trace(
+        run_id=run_id,
+        request_id="req-conv-o",
+        stage="RISK_ASSESSMENT",
+        sequence=1,
+        trace_json=json.dumps({"risk_score": 1.0}),
+    )
+    get_obs().flush()
+
+    token = _make_session_token(ui_client)
+    resp = ui_client.get(
+        f"/conversations/{conv_id}",
+        cookies={"moralstack_session": token},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.text
+
+    # Raw total across both turns stays correct (never reduced by the failure).
+    assert "NORMAL_COMPLETE: 2" in body
+    # Qualifier reports the failed-turn count only, not the whole distribution.
+    assert "includes 1 pipeline failure, not a governed outcome" in body

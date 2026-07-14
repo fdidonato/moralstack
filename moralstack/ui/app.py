@@ -2958,7 +2958,14 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
         conversation-level aggregates, ``max_assessed_risk`` and
         ``max_risk_is_fail_closed``, so the template can label ``overview.max_risk_score``
         as a fail-closed sentinel instead of an assessed score when it is only reached by
-        crashed turns.
+        crashed turns;
+      * ``pipeline_failure_action_counts``, a per-``final_action`` tally of how many failed
+        turns contributed to ``overview.final_actions``, so the template can flag the
+        delivered action codes that are not governed outcomes without altering the raw
+        distribution;
+      * ``last_posture_is_from_pipeline_failure``, a conservative flag for whether
+        ``overview.last_posture`` can be attributed to a pipeline-failure turn (see the
+        attribution logic below the per-turn loop).
 
     Best-effort: when individual lookups fail or tables are missing, the
     corresponding sections degrade to empty lists / ``None`` instead of
@@ -2977,6 +2984,8 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
             "pipeline_failure_count": 0,
             "max_assessed_risk": None,
             "max_risk_is_fail_closed": False,
+            "pipeline_failure_action_counts": {},
+            "last_posture_is_from_pipeline_failure": False,
         }
 
     requests_rows = get_requests_for_conversation(conversation_id) or []
@@ -3017,6 +3026,9 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
     non_failed_meta_risks: list[float] = []
     failed_meta_risks: list[float] = []
     failed_assessed_risks: list[float] = []
+    # Per-action tally of failed turns, so the template can flag which entries in
+    # overview.final_actions are not governed outcomes without altering the raw counts.
+    pipeline_failure_action_counts: dict[str, int] = {}
     for req in requests_rows:
         rid = str(req.get("request_id") or "")
         rrid = req.get("run_id")
@@ -3037,6 +3049,9 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
         meta_risk = meta_parsed.get("risk_score") if isinstance(meta_parsed, dict) else None
         if turn_pipeline_failure:
             pipeline_failure_count += 1
+            failed_action = meta_parsed.get("final_action") if isinstance(meta_parsed, dict) else None
+            if isinstance(failed_action, str) and failed_action:
+                pipeline_failure_action_counts[failed_action] = pipeline_failure_action_counts.get(failed_action, 0) + 1
             if isinstance(meta_risk, (int, float)):
                 failed_meta_risks.append(float(meta_risk))
             # last_assessed_risk recovers the last genuinely assessed score (RISK_ASSESSMENT/
@@ -3067,6 +3082,26 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
         reached_by_non_failed = any(v == overview_max_risk_f for v in non_failed_meta_risks)
         max_risk_is_fail_closed = reached_by_failed and not reached_by_non_failed
 
+    # last_posture_is_from_pipeline_failure: read_store's get_conversation_overview does not
+    # expose which request produced overview["last_posture"] (it only returns the posture
+    # string, picked from the most recent conversation_states row). We attribute it
+    # conservatively: look at every turn whose own last state snapshot carries that exact
+    # posture value. If at least one such turn exists and *all* of them are pipeline
+    # failures, the posture must have come from a failure regardless of which one produced
+    # it. If a non-failed turn also reached that posture, the attribution is ambiguous and
+    # we leave the flag False rather than guess.
+    overview_last_posture = overview.get("last_posture") if isinstance(overview, dict) else None
+    last_posture_is_from_pipeline_failure = False
+    if isinstance(overview_last_posture, str) and overview_last_posture:
+        matching_turn_failures: list[bool] = []
+        for item in enriched_requests:
+            rid = str(item.get("request_id") or "")
+            state = states_by_request.get(rid)
+            if state and state.get("posture") == overview_last_posture:
+                matching_turn_failures.append(bool(item.get("pipeline_failure")))
+        if matching_turn_failures and all(matching_turn_failures):
+            last_posture_is_from_pipeline_failure = True
+
     return {
         "conversation_id": conversation_id,
         "requests": enriched_requests,
@@ -3079,6 +3114,8 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
         "pipeline_failure_count": pipeline_failure_count,
         "max_assessed_risk": max_assessed_risk,
         "max_risk_is_fail_closed": max_risk_is_fail_closed,
+        "pipeline_failure_action_counts": pipeline_failure_action_counts,
+        "last_posture_is_from_pipeline_failure": last_posture_is_from_pipeline_failure,
     }
 
 
