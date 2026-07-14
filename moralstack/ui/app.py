@@ -1028,6 +1028,30 @@ def _last_pre_policy_trace_payload(traces: list[dict[str, Any]]) -> dict[str, An
     return _parse_trace_json(pre_policy_rows[-1])
 
 
+def _last_assessed_risk(traces: list[dict[str, Any]]) -> float | None:
+    """Return the last genuinely assessed risk score recorded before a pipeline
+    crash, distinct from the fail-closed ``risk_score = 1.0`` sentinel that
+    ``ResponseMetadata.for_system_error`` writes to ``meta_json``.
+
+    Prefers the last ``PRE_POLICY`` decision-trace row's ``risk_score`` (the
+    last point where a governed risk assessment was recorded before the
+    crash); falls back to the last ``RISK_ASSESSMENT`` stage row's
+    ``risk_score`` when no PRE_POLICY row is present. Returns ``None`` when
+    neither is available — never fabricates a value.
+    """
+    pre_policy_score = _last_pre_policy_trace_payload(traces).get("risk_score")
+    if isinstance(pre_policy_score, (int, float)):
+        return float(pre_policy_score)
+    risk_trace = None
+    for t in traces:
+        if (t.get("stage") or "").strip().upper() == "RISK_ASSESSMENT":
+            risk_trace = t
+    if risk_trace is None:
+        return None
+    risk_score = _parse_trace_json(risk_trace).get("risk_score")
+    return float(risk_score) if isinstance(risk_score, (int, float)) else None
+
+
 def _build_delivery_path_summary(
     *,
     orchestration_events: list[dict[str, Any]],
@@ -2767,7 +2791,12 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
       * an overview document (totals, postures, hit/miss counters);
       * a per-turn ``pipeline_failure`` flag (see ``_detect_pipeline_failure``) and an
         aggregate ``pipeline_failure_count``, computed here from each turn's decision
-        traces + parsed meta_json — read_store persists neither field.
+        traces + parsed meta_json — read_store persists neither field;
+      * for failed turns, a ``last_assessed_risk`` (see ``_last_assessed_risk``) and two
+        conversation-level aggregates, ``max_assessed_risk`` and
+        ``max_risk_is_fail_closed``, so the template can label ``overview.max_risk_score``
+        as a fail-closed sentinel instead of an assessed score when it is only reached by
+        crashed turns.
 
     Best-effort: when individual lookups fail or tables are missing, the
     corresponding sections degrade to empty lists / ``None`` instead of
@@ -2784,6 +2813,8 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
             "proxy_by_request": {},
             "run_id": None,
             "pipeline_failure_count": 0,
+            "max_assessed_risk": None,
+            "max_risk_is_fail_closed": False,
         }
 
     requests_rows = get_requests_for_conversation(conversation_id) or []
@@ -2820,6 +2851,10 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
     run_id: str | None = None
     enriched_requests: list[dict[str, Any]] = []
     pipeline_failure_count = 0
+    # Collected to distinguish an assessed max risk from the fail-closed sentinel below.
+    non_failed_meta_risks: list[float] = []
+    failed_meta_risks: list[float] = []
+    failed_assessed_risks: list[float] = []
     for req in requests_rows:
         rid = str(req.get("request_id") or "")
         rrid = req.get("run_id")
@@ -2837,9 +2872,38 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
         turn_traces = get_decision_traces_for_request(rrid, rid) if rrid and rid else []
         turn_pipeline_failure = _detect_pipeline_failure(turn_traces, meta_parsed)
         item["pipeline_failure"] = turn_pipeline_failure
+        meta_risk = meta_parsed.get("risk_score") if isinstance(meta_parsed, dict) else None
         if turn_pipeline_failure:
             pipeline_failure_count += 1
+            if isinstance(meta_risk, (int, float)):
+                failed_meta_risks.append(float(meta_risk))
+            # last_assessed_risk recovers the last genuinely assessed score (RISK_ASSESSMENT/
+            # PRE_POLICY) for a crashed turn, since its meta_json.risk_score is the fail-closed
+            # 1.0 sentinel written by ResponseMetadata.for_system_error, not a computed score.
+            assessed_risk = _last_assessed_risk(turn_traces)
+            item["last_assessed_risk"] = assessed_risk
+            if isinstance(assessed_risk, (int, float)):
+                failed_assessed_risks.append(assessed_risk)
+        else:
+            item["last_assessed_risk"] = None
+            if isinstance(meta_risk, (int, float)):
+                non_failed_meta_risks.append(float(meta_risk))
         enriched_requests.append(item)
+
+    max_assessed_candidates = non_failed_meta_risks + failed_assessed_risks
+    max_assessed_risk = max(max_assessed_candidates) if max_assessed_candidates else None
+
+    # max_risk_is_fail_closed is only asserted when provable from the data in hand: the
+    # overview's max_risk_score is reached by at least one failed turn's meta risk and by
+    # no non-failed turn's meta risk (a non-failed turn reaching the same value means the
+    # max is a genuine assessed score, even if a failed turn also happens to match it).
+    overview_max_risk = overview.get("max_risk_score") if isinstance(overview, dict) else None
+    max_risk_is_fail_closed = False
+    if isinstance(overview_max_risk, (int, float)):
+        overview_max_risk_f = float(overview_max_risk)
+        reached_by_failed = any(v == overview_max_risk_f for v in failed_meta_risks)
+        reached_by_non_failed = any(v == overview_max_risk_f for v in non_failed_meta_risks)
+        max_risk_is_fail_closed = reached_by_failed and not reached_by_non_failed
 
     return {
         "conversation_id": conversation_id,
@@ -2851,6 +2915,8 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
         "proxy_by_request": proxy_by_request,
         "run_id": run_id,
         "pipeline_failure_count": pipeline_failure_count,
+        "max_assessed_risk": max_assessed_risk,
+        "max_risk_is_fail_closed": max_risk_is_fail_closed,
     }
 
 

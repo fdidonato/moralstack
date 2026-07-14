@@ -41,6 +41,9 @@
         <span class="meta-label">Max risk score</span>
         <span class="meta-value">
             {% if ov_max_risk is not none %}{{ "%.3f" | format(ov_max_risk) }}{% else %}—{% endif %}
+            {% if timeline.max_risk_is_fail_closed %}
+            <span class="muted small">fail-closed default (pipeline failure), not an assessed score{% if timeline.max_assessed_risk is not none %} — max assessed: {{ "%.3f" | format(timeline.max_assessed_risk) }}{% endif %}</span>
+            {% endif %}
         </span>
     </div>
     <div class="meta-item">
@@ -116,7 +119,7 @@
                     style="height: {{ bar_height }}px;"
                     data-turn="{{ r.turn_index }}"
                     {% if cached_from is not none %}data-cached-from="{{ cached_from }}"{% endif %}
-                    title="Turn {{ r.turn_index }}: {% if is_pipeline_failure %}PIPELINE FAILURE (delivered {{ action }} is not a governed outcome){% else %}{{ action }}{% endif %}{% if risk_score is not none %} (risk={{ '%.3f' | format(risk_score) }}){% endif %}{% if posture %} [{{ posture }}]{% endif %}{% if meta.get('domain_overlay') %} domain={{ meta.get('domain_overlay') }}{% endif %}{% if was_cached %} — cached from T{{ cached_from }}{% endif %}"
+                    title="Turn {{ r.turn_index }}: {% if is_pipeline_failure %}PIPELINE FAILURE (delivered {{ action }} is not a governed outcome){% else %}{{ action }}{% endif %}{% if risk_score is not none %} (risk={{ '%.3f' | format(risk_score) }}{% if is_pipeline_failure %}, fail-closed default{% if r.get('last_assessed_risk') is not none %}, last assessed {{ '%.3f' | format(r.get('last_assessed_risk')) }}{% endif %}{% endif %}){% endif %}{% if posture %} [{{ posture }}]{% endif %}{% if meta.get('domain_overlay') %} domain={{ meta.get('domain_overlay') }}{% endif %}{% if was_cached %} — cached from T{{ cached_from }}{% endif %}"
                 >
                     <span class="conv-strip-label{% if is_pipeline_failure %} conv-strip-label-failure{% endif %}">T{{ r.turn_index }}{% if is_pipeline_failure %} — pipeline failure{% endif %}</span>
                     {% if was_cached %}
@@ -182,6 +185,9 @@
             <td>
                 {% if risk_score is not none %}
                 {{ "%.3f" | format(risk_score) }}
+                {% if r.get('pipeline_failure') %}
+                <br><span class="muted small">fail-closed default{% if r.get('last_assessed_risk') is not none %} (last assessed {{ "%.3f" | format(r.get('last_assessed_risk')) }}){% endif %}</span>
+                {% endif %}
                 {% else %}—{% endif %}
             </td>
             <td>
@@ -235,6 +241,9 @@
             <span class="badge">{{ meta.get('final_action') or '—' }}</span>
             {% if risk_score is not none %}
             <span class="badge">risk {{ "%.3f" | format(risk_score) }}</span>
+            {% if r.get('pipeline_failure') %}
+            <span class="muted small">fail-closed default{% if r.get('last_assessed_risk') is not none %} (last assessed {{ "%.3f" | format(r.get('last_assessed_risk')) }}){% endif %}</span>
+            {% endif %}
             {% endif %}
             {% set posture = state.get('posture') or summary.get('last_governance_posture') or meta.get('governance_posture') %}
             {% if posture %}<span class="badge">{{ posture }}</span>{% endif %}
@@ -261,7 +270,7 @@
             <table class="table">
                 <tbody>
                 <tr><td>Final action</td><td><span class="badge">{{ meta.get('final_action') or '—' }}</span></td></tr>
-                <tr><td>Risk score</td><td>{% if risk_score is not none %}{{ "%.4f" | format(risk_score) }}{% else %}—{% endif %}</td></tr>
+                <tr><td>Risk score</td><td>{% if risk_score is not none %}{{ "%.4f" | format(risk_score) }}{% if r.get('pipeline_failure') %} <span class="muted small">fail-closed default{% if r.get('last_assessed_risk') is not none %} (last assessed {{ "%.4f" | format(r.get('last_assessed_risk')) }}){% endif %}</span>{% endif %}{% else %}—{% endif %}</td></tr>
                 <tr><td>Path</td><td>{{ meta.get('path') or '—' }}</td></tr>
                 <tr><td>Domain overlay</td><td>{{ meta.get('domain_overlay') or '—' }}</td></tr>
                 <tr><td>Reason codes</td><td>{{ (meta.get('reason_codes') or []) | join(', ') or '—' }}</td></tr>

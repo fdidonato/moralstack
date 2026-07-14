@@ -147,6 +147,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **UI: the fail-closed risk sentinel is no longer shown as an assessed risk score.**
+  On every risk surface of the conversation view (the "Max risk score" tile, the
+  posture-timeline Risk cell, the conversation-strip cell title, the per-turn badge, and
+  the per-turn "Governance decision" Risk score row), a turn's fail-closed
+  `meta_json.risk_score = 1.0` (written by `ResponseMetadata.for_system_error` after a
+  pipeline crash) now carries a plain-language "fail-closed default" label, computed
+  solely from the existing structured `pipeline_failure` flag — never from response text.
+  The raw value is never removed, only annotated: when the crashed turn's decision traces
+  recorded a genuine pre-crash assessment (`PRE_POLICY`, falling back to
+  `RISK_ASSESSMENT`), it is shown beside the label as "last assessed X.XXX"
+  (`_last_assessed_risk`, `moralstack/ui/app.py`). The conversation-level "Max risk score"
+  tile additionally gets a `max_risk_is_fail_closed` flag, set only when the overview's
+  max risk is reached by a failed turn's sentinel and by no non-failed turn's assessed
+  score, plus a `max_assessed_risk` aggregate — so a reviewer no longer sees an
+  unreconciled 1.000 next to a genuinely assessed 0.6 for the same request.
 - **UI: governance pipeline failures are no longer rendered as a normal delivered
   outcome.** When a request crashes before a `FINAL` decision-trace row is written
   (`OrchestratorController._handle_error`, `meta_json.triggered_principles` contains

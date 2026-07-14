@@ -256,3 +256,162 @@ def test_conversation_strip_flags_failed_turn_and_shows_aggregate_note(ui_client
     assert "conv-strip-label-failure" in body
     assert "pipeline failure" in body
     assert "ended in a pipeline failure" in body
+
+
+def test_conversation_fail_closed_risk_is_labelled_beside_the_raw_sentinel(ui_client):
+    """The fail-closed risk_score=1.0 sentinel must never be presented as an
+    assessed score: the raw value stays visible, and a plain-language label plus
+    the last genuinely assessed risk (from PRE_POLICY) is shown beside it, both
+    on the conversation-level 'Max risk score' tile and on the per-turn surfaces."""
+    run_id, conv_id = "run-conv-crash-2", "conv-crash-2"
+    create_run(run_id, run_type="single", meta={})
+    upsert_request(run_id, "req-conv-c", prompt="turn 0", domain="general", conversation_id=conv_id, turn_index=0)
+    upsert_request(
+        run_id,
+        "req-conv-d",
+        prompt="turn 1",
+        domain="general",
+        conversation_id=conv_id,
+        turn_index=1,
+        parent_request_id="req-conv-c",
+    )
+    update_request_meta(run_id, "req-conv-c", {"final_action": "NORMAL_COMPLETE", "risk_score": 0.2})
+    update_request_meta(
+        run_id,
+        "req-conv-d",
+        {"final_action": "NORMAL_COMPLETE", "risk_score": 1.0, "triggered_principles": ["SYSTEM.ERROR"]},
+    )
+    update_request_response(run_id, "req-conv-d", "[SYSTEM_ERROR]")
+    persist_decision_trace(
+        run_id=run_id,
+        request_id="req-conv-c",
+        stage="FINAL",
+        sequence=2,
+        trace_json=json.dumps({"final_action": "NORMAL_COMPLETE", "path": "FAST_PATH", "winning_rule": "rule_x"}),
+    )
+    persist_decision_trace(
+        run_id=run_id,
+        request_id="req-conv-d",
+        stage="PRE_POLICY",
+        sequence=1,
+        trace_json=json.dumps(
+            {"final_action": "SAFE_COMPLETE", "winning_rule": "policy_bounds_fallback", "risk_score": 0.6}
+        ),
+    )
+    get_obs().flush()
+
+    token = _make_session_token(ui_client)
+    resp = ui_client.get(
+        f"/conversations/{conv_id}",
+        cookies={"moralstack_session": token},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.text
+
+    # The canonical raw sentinel value stays visible everywhere (never removed).
+    assert "1.000" in body
+
+    # Aggregate "Max risk score" tile: labelled as fail-closed, with the assessed alternative.
+    assert "fail-closed default (pipeline failure), not an assessed score" in body
+    assert "max assessed: 0.600" in body
+
+    # Per-turn surfaces (strip title, posture-timeline cell, card badge, governance row):
+    # the fail-closed label plus the last assessed risk (0.6 from PRE_POLICY).
+    assert "fail-closed default" in body
+    assert "last assessed 0.600" in body or "last assessed 0.6000" in body
+
+
+def test_normal_conversation_has_no_fail_closed_label(ui_client):
+    """A conversation with no pipeline-failed turns must never render the
+    fail-closed label — the string must be byte-absent."""
+    run_id, conv_id = "run-conv-normal-2", "conv-normal-2"
+    create_run(run_id, run_type="single", meta={})
+    upsert_request(run_id, "req-conv-g", prompt="turn 0", domain="general", conversation_id=conv_id, turn_index=0)
+    upsert_request(
+        run_id,
+        "req-conv-h",
+        prompt="turn 1",
+        domain="general",
+        conversation_id=conv_id,
+        turn_index=1,
+        parent_request_id="req-conv-g",
+    )
+    update_request_meta(run_id, "req-conv-g", {"final_action": "NORMAL_COMPLETE", "risk_score": 0.1})
+    update_request_meta(run_id, "req-conv-h", {"final_action": "NORMAL_COMPLETE", "risk_score": 0.3})
+    persist_decision_trace(
+        run_id=run_id,
+        request_id="req-conv-g",
+        stage="FINAL",
+        sequence=1,
+        trace_json=json.dumps({"final_action": "NORMAL_COMPLETE", "path": "FAST_PATH", "winning_rule": "rule_x"}),
+    )
+    persist_decision_trace(
+        run_id=run_id,
+        request_id="req-conv-h",
+        stage="FINAL",
+        sequence=1,
+        trace_json=json.dumps({"final_action": "NORMAL_COMPLETE", "path": "FAST_PATH", "winning_rule": "rule_x"}),
+    )
+    get_obs().flush()
+
+    token = _make_session_token(ui_client)
+    resp = ui_client.get(
+        f"/conversations/{conv_id}",
+        cookies={"moralstack_session": token},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.text
+    assert "fail-closed default" not in body
+    assert "not an assessed score" not in body
+
+
+def test_max_risk_is_fail_closed_false_when_a_non_failed_turn_also_reaches_the_max(ui_client):
+    """When a non-failed turn's meta risk_score equals the overview max, the max
+    is a genuine assessed score even though a failed turn also happens to match
+    it — the aggregate label must stay off (conservative, provable-only)."""
+    run_id, conv_id = "run-conv-crash-3", "conv-crash-3"
+    create_run(run_id, run_type="single", meta={})
+    upsert_request(run_id, "req-conv-i", prompt="turn 0", domain="general", conversation_id=conv_id, turn_index=0)
+    upsert_request(
+        run_id,
+        "req-conv-j",
+        prompt="turn 1",
+        domain="general",
+        conversation_id=conv_id,
+        turn_index=1,
+        parent_request_id="req-conv-i",
+    )
+    update_request_meta(run_id, "req-conv-i", {"final_action": "NORMAL_COMPLETE", "risk_score": 1.0})
+    update_request_meta(
+        run_id,
+        "req-conv-j",
+        {"final_action": "NORMAL_COMPLETE", "risk_score": 1.0, "triggered_principles": ["SYSTEM.ERROR"]},
+    )
+    update_request_response(run_id, "req-conv-j", "[SYSTEM_ERROR]")
+    persist_decision_trace(
+        run_id=run_id,
+        request_id="req-conv-i",
+        stage="FINAL",
+        sequence=1,
+        trace_json=json.dumps({"final_action": "NORMAL_COMPLETE", "path": "FAST_PATH", "winning_rule": "rule_x"}),
+    )
+    persist_decision_trace(
+        run_id=run_id,
+        request_id="req-conv-j",
+        stage="RISK_ASSESSMENT",
+        sequence=1,
+        trace_json=json.dumps({"risk_score": 1.0}),
+    )
+    get_obs().flush()
+
+    token = _make_session_token(ui_client)
+    resp = ui_client.get(
+        f"/conversations/{conv_id}",
+        cookies={"moralstack_session": token},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.text
+    # The aggregate tile note is not provable here and must not be rendered.
+    assert "not an assessed score" not in body
+    # The per-turn label for the failed turn itself is unaffected by the aggregate.
+    assert "fail-closed default" in body
