@@ -68,11 +68,18 @@ REQUEST_RULES: tuple[tuple[str, str, Callable[[Signals], bool]], ...] = (
         "Compliance match without final reuse",
         lambda s: vocab(s, r"(DCCL|COMPLIANCE).*(MATCH|DOWNGRAD|INVALID)") and not vocab(s, r"REUSE"),
     ),
+    # Degraded delivery. On main this is REACHABLE and mis-rendered: a swallowed
+    # pipeline error (controller._handle_error) is delivered as NORMAL_COMPLETE /
+    # finish_reason=stop with risk_score 1.0, because ResponseMetadata.for_system_error()
+    # never sets final_action. The other two arms (governed_pipeline_refusal,
+    # empty_governed_content) are the genuine fail-closed paths in delivery.py / proxy.py.
     (
         "S8",
-        "Fail-closed delivery (governed refusal substituted for the decided action)",
-        lambda s: vocab(s, r"governed_pipeline_refusal|empty_governed_content") or vocab(s, r"REVALID.*(BLOCK|ERROR)"),
-    ),  # second arm: pre-Plan-1 rows
+        "Degraded or fail-closed delivery (pipeline could not produce a governed answer)",
+        lambda s: s["system_error"]
+        or vocab(s, r"governed_pipeline_refusal|empty_governed_content")
+        or vocab(s, r"REVALID.*(BLOCK|ERROR)"),
+    ),
     ("S9", "Skipped or deferred module", lambda s: vocab(s, r"SKIP|DEFER")),
     ("S10", "Calibration guard applied to risk", lambda s: vocab(s, r"CALIBRAT")),
 )
@@ -99,6 +106,7 @@ REQUEST_EVIDENCE_KEYS = (
     "delivery_differs_from_pre_delivery",
     "max_cycle",
     "risk_category",
+    "system_error",
     "prompt_head",
 )
 CONVERSATION_EVIDENCE_KEYS = ("url", "conversation_id", "turns", "actions", "was_cached", "posture_changes")
@@ -296,6 +304,14 @@ def _request_signals(conn: sqlite3.Connection, row: sqlite3.Row) -> Signals:
 
     delivered_action = delivered or pre_delivery
 
+    final_response = str(row["final_response"] or "") if "final_response" in keys else ""
+    principles = meta.get("triggered_principles")
+    system_error = "[SYSTEM_ERROR]" in final_response or (
+        isinstance(principles, list) and any(str(p).upper().startswith("SYSTEM.ERROR") for p in principles)
+    )
+    if system_error:
+        vocabulary.append("SYSTEM_ERROR_DELIVERED")
+
     return {
         "run_id": run_id,
         "request_id": request_id,
@@ -309,6 +325,7 @@ def _request_signals(conn: sqlite3.Connection, row: sqlite3.Row) -> Signals:
         "delivery_differs_from_pre_delivery": bool(delivered and pre_delivery and delivered != pre_delivery),
         "risk_category": risk_category,
         "max_cycle": max_cycle,
+        "system_error": system_error,
         "was_cached": was_cached,
         "cached_from_turn": cached_from_turn,
         "posture_in": posture_in,

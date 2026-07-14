@@ -18,7 +18,7 @@ Each available scenario is checked at **1440×900** and **390×844**.
 | S5 | Parallel modules | a verified parallel tier, not rendered as a sequence |
 | S6 | DCCL match reused as delivery | compliance match **plus** an authoritative reuse event |
 | S7 | DCCL match without reuse | internal/speculative consumption, clearly distinguished from S6 |
-| S8 | Revalidation blocked / fail-closed | candidate source, violation, fallback, authoritative output |
+| S8 | Degraded / fail-closed delivery | that the pipeline did NOT produce a governed answer — never rendered as a normal completion |
 | S9 | Skipped or deferred module | the reason, and no implication of execution |
 | S10 | Calibration guard applied | raw estimator evidence and the guard-capped result distinguishable (llm_calls: module=risk, action=calibration_guard) |
 
