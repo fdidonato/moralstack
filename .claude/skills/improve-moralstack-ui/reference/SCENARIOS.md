@@ -20,7 +20,7 @@ Each available scenario is checked at **1440×900** and **390×844**.
 | S7 | DCCL match without reuse | internal/speculative consumption, clearly distinguished from S6 |
 | S8 | Revalidation blocked / fail-closed | candidate source, violation, fallback, authoritative output |
 | S9 | Skipped or deferred module | the reason, and no implication of execution |
-| S10 | Calibration-adjusted risk | raw estimator evidence and calibrated result distinguishable |
+| S10 | Calibration guard applied | raw estimator evidence and the guard-capped result distinguishable (llm_calls: module=risk, action=calibration_guard) |
 
 ## Conversation
 
@@ -29,7 +29,7 @@ Each available scenario is checked at **1440×900** and **390×844**.
 | C1 | Stable benign conversation | ordered turns, inherited context, stable posture |
 | C2 | Escalation across turns | the change in risk/posture/action, with provenance |
 | C3 | Cached state reuse | cached-from-turn (or equivalent) provenance |
-| C4 | Refresh required | the refresh reason and the resulting transition |
+| C4 | Turn re-deliberated despite prior state | why the ledger fast path was *not* applied, and what was recomputed |
 | C5 | Mixed final actions | at least two different delivered actions in one conversation |
 | C6 | Turn navigation | the current turn stays obvious while detail is open |
 

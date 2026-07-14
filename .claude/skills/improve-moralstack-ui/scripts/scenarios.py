@@ -70,14 +70,18 @@ REQUEST_RULES: tuple[tuple[str, str, Callable[[Signals], bool]], ...] = (
     ),
     ("S8", "Final revalidation blocked or fail-closed", lambda s: vocab(s, r"REVALID.*(BLOCK|FAIL|VIOLAT)|FAIL[_ ]?CLOSED")),
     ("S9", "Skipped or deferred module", lambda s: vocab(s, r"SKIP|DEFER")),
-    ("S10", "Calibration-adjusted risk", lambda s: vocab(s, r"CALIBRAT")),
+    ("S10", "Calibration guard applied to risk", lambda s: vocab(s, r"CALIBRAT")),
 )
 
 CONVERSATION_RULES: tuple[tuple[str, str, Callable[[Signals], bool]], ...] = (
     ("C1", "Stable benign conversation", lambda c: c["turns"] >= 2 and c["actions"] == {"NORMAL_COMPLETE"}),
     ("C2", "Escalation across turns", lambda c: c["turns"] >= 2 and (c["risk_increases"] or c["posture_changes"])),
     ("C3", "Cached state reuse", lambda c: c["was_cached"] or vocab(c, r"CACHE|LEDGER_HIT|REUSE")),
-    ("C4", "Refresh required", lambda c: vocab(c, r"REFRESH|RECOMPUT|INVALIDAT")),
+    (
+        "C4",
+        "Turn re-deliberated despite prior state (ledger fast path not applied)",
+        lambda c: vocab(c, r"LEDGER_FAST_PATH_NOT_APPLIED|CACHE_INVALIDATED|CACHE_MISS"),
+    ),
     ("C5", "Mixed final actions", lambda c: len(c["actions"]) >= 2),
     ("C6", "Multi-turn navigation", lambda c: c["turns"] >= 3),
 )
@@ -136,7 +140,10 @@ def _tokens(raw: Any) -> list[str]:
                 out.append(node)
         elif isinstance(node, dict):
             for key, item in node.items():
-                if isinstance(item, (str, bool)) and re.search(r"reason|code|status|decision|source|rule|path", key, re.I):
+                if isinstance(item, bool):
+                    if item and len(key) <= 60:
+                        out.append(key.lstrip("_"))
+                elif isinstance(item, str) and re.search(r"reason|code|status|decision|source|rule|path|type", key, re.I):
                     out.append(f"{key}={item}")
                 else:
                     walk(item)
@@ -173,6 +180,22 @@ def _request_signals(conn: sqlite3.Connection, row: sqlite3.Row) -> Signals:
                 if "cycle" in event_keys and event["cycle"] is not None:
                     try:
                         max_cycle = max(max_cycle, int(event["cycle"]))
+                    except (TypeError, ValueError):
+                        pass
+
+    if _has_table(conn, "llm_calls"):
+        cols = _columns(conn, "llm_calls")
+        wanted = [c for c in ("cycle", "phase", "module", "action") if c in cols]
+        if wanted and {"run_id", "request_id"} <= cols:
+            query = f"SELECT {', '.join(wanted)} FROM llm_calls WHERE run_id=? AND request_id=?"
+            for call in conn.execute(query, (run_id, request_id)):
+                call_keys = set(call.keys())
+                for column in ("phase", "module", "action"):
+                    if column in call_keys and call[column]:
+                        vocabulary.append(str(call[column]))
+                if "cycle" in call_keys and call["cycle"] is not None:
+                    try:
+                        max_cycle = max(max_cycle, int(call["cycle"]))
                     except (TypeError, ValueError):
                         pass
 
