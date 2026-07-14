@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **UI Loop for a better UX Design and Readability of conversation** added a loop feature
+  to improve UX Design and Readability in iterative and verificable way
 - **Governance steps are now visible in the execution graph (audit completeness).** The
   request-detail flow graph gained synthetic nodes for governance steps that previously
   vanished from the graph: the compliance `MATCH` downgrade / hard-signal safety gate

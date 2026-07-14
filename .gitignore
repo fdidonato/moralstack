@@ -78,3 +78,8 @@ Thumbs.db
 
 # Environment (secrets)
 .env
+
+# --- moralstack ui-loop ---
+!.claude/commands/
+!.claude/settings.ui-loop.json
+.claude/ui-loop/

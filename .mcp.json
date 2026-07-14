@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--isolated",
+        "--storage-state",
+        ".claude/ui-loop/runtime/storage-state.json",
+        "--output-dir",
+        ".claude/ui-loop/artifacts",
+        "--viewport-size",
+        "1440x900"
+      ]
+    }
+  }
+}
