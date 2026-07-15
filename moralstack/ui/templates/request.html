@@ -1212,14 +1212,9 @@
 
 {% if flow_data_cycles %}
 <h2>Execution graph <span class="muted">({{ llm_calls | length }} LLM calls plus governance steps)</span></h2>
-<div class="view-toggle">
-    <button type="button" class="btn btn-sm toggle-btn active" data-view="by-cycle" aria-pressed="true">By cycle
-    </button>
-    <button type="button" class="btn btn-sm toggle-btn" data-view="chronological" aria-pressed="false">Execution order
-    </button>
-</div>
-<div id="view-by-cycle">
-    <div class="flow-legend">
+<p class="muted" style="margin-bottom:0.5rem;">A single input&rarr;output deliberation spine, in exact execution
+    order. Parallel tiers branch from the line and rejoin it.</p>
+<div class="flow-legend">
         <span class="flow-legend-item">
             <span class="flow-legend-dot" style="background:var(--red)"></span>risk_estimator
         </span>
@@ -1255,18 +1250,55 @@
         </span>
     </div>
     <div class="flow-graph">
-        {% for cycle_data in flow_data_cycles %}
-        <div class="flow-cycle" data-cycle="{{ cycle_data.cycle_num if cycle_data.cycle_num is not none else 0 }}">
-            <div class="flow-cycle-label">
-                {% if cycle_data.cycle_label %}
-                {{ cycle_data.cycle_label }} <span class="flow-cycle-badge">post-output</span>
-                {% elif cycle_data.cycle_num is none or cycle_data.cycle_num == 0 %}
-                Initial assessment <span class="flow-cycle-badge">cycle 0</span>
-                {% else %}
-                Deliberation <span class="flow-cycle-badge">cycle {{ cycle_data.cycle_num }}</span>
-                {% endif %}
-                <span class="flow-cycle-count">{{ cycle_data.total_calls }} call{{ 's' if cycle_data.total_calls != 1 else '' }}</span>
+        {# INPUT anchor: top of the spine. Summarizes req.prompt (full text is
+           already rendered, unabridged, in the "Original Prompt" section above
+           and behind this box's own expand) plus truthful presence chips for a
+           developer contract and prior conversation turns. #}
+        <div class="flow-node flow-node--anchor flow-node--input" data-module="">
+            <div class="flow-node-header" tabindex="0" role="button" aria-expanded="false">
+                <span class="flow-node-chevron">&#9658;</span>
+                <div class="flow-node-title-area">
+                    <div class="flow-node-title">INPUT &middot; request</div>
+                    <div class="flow-node-meta">
+                        {% if final_revalidation_info and final_revalidation_info.developer_contract_present %}
+                        <span class="badge badge-type" title="A developer contract constrains this request">developer contract</span>
+                        {% endif %}
+                        {% if conversation_context and ((conversation_context.turn_count and conversation_context.turn_count > 1) or (conversation_context.turn_index and conversation_context.turn_index > 0)) %}
+                        <span class="badge" title="Part of a multi-turn conversation">conversation history{% if conversation_context.turn_index %} &middot; {{ conversation_context.turn_index }} prior turn{{ 's' if conversation_context.turn_index != 1 else '' }}{% endif %}</span>
+                        {% endif %}
+                    </div>
+                    {% set input_preview = req.prompt or '' %}
+                    <div class="flow-node-pill">{{ (input_preview[:90] + '…') if input_preview | length > 90 else input_preview }}</div>
+                </div>
             </div>
+            <div class="flow-node-body">
+                <span class="meta-label">Full prompt</span>
+                <pre class="block">{{ req.prompt }}</pre>
+            </div>
+        </div>
+
+        <div class="flow-pipe">
+            <div class="flow-pipe-line"></div>
+            <div class="flow-pipe-arrow"></div>
+        </div>
+
+        {% for cycle_data in flow_data_cycles %}
+        {% if not loop.first %}
+        <div class="flow-inter-cycle-connector">
+            <div class="flow-pipe-inter-cycle-line"></div>
+            <div class="flow-inter-cycle-arrow"></div>
+        </div>
+        {% endif %}
+        <div class="flow-cycle-marker" data-cycle="{{ cycle_data.cycle_num if cycle_data.cycle_num is not none else 0 }}">
+            {% if cycle_data.cycle_label %}
+            {{ cycle_data.cycle_label }} <span class="flow-cycle-badge">post-output</span>
+            {% elif cycle_data.cycle_num is none or cycle_data.cycle_num == 0 %}
+            Initial assessment <span class="flow-cycle-badge">cycle 0</span>
+            {% else %}
+            Deliberation <span class="flow-cycle-badge">cycle {{ cycle_data.cycle_num }}</span>
+            {% endif %}
+            <span class="flow-cycle-count">{{ cycle_data.total_calls }} call{{ 's' if cycle_data.total_calls != 1 else '' }}</span>
+        </div>
             <div class="flow-nodes-structured">
                 {% for tier in cycle_data.tiers %}
                 {% if not loop.first %}
@@ -1288,7 +1320,7 @@
                     {% for call in tier %}
                     <div class="flow-node"
                          data-module="{{ call.module or '' }}">
-                        <div class="flow-node-header">
+                        <div class="flow-node-header" tabindex="0" role="button" aria-expanded="false">
                             <span class="flow-node-chevron">&#9658;</span>
                             <div class="flow-node-title-area">
                                 <div class="flow-node-title">{{ call.module }} / {{ call.phase }}{% if call.io_annotations and call.io_annotations.phase_hint %} · {{ call.io_annotations.phase_hint }}{% endif %}</div>
@@ -1404,23 +1436,42 @@
                 </div>
                 {% endfor %}
             </div>
-        </div>
-        {% if not loop.last %}
-        <div class="flow-inter-cycle-connector">
-            <div class="flow-pipe-inter-cycle-line"></div>
-            <div class="flow-inter-cycle-arrow"></div>
-        </div>
-        {% endif %}
         {% endfor %}
 
-        {# Final Decision Card #}
-        {% if final_decision_card %}
+        {# OUTPUT anchor: bottom of the spine. #}
         <div class="flow-inter-cycle-connector">
             <div class="flow-pipe-inter-cycle-line"></div>
             <div class="flow-inter-cycle-arrow"></div>
         </div>
+        <div class="flow-cycle-marker flow-cycle-marker--output">
+            OUTPUT &middot; delivered answer
+        </div>
 
-        <div class="final-decision-card outcome-{{ final_decision_card.final_action }}">
+        {% if delivery_path_summary %}
+        {# Same status&rarr;badge mapping as the "Authoritative delivery path" card
+           above: a pipeline failure is never coloured/labelled as a governed
+           success here, even though delivery_path_summary.delivered_action may
+           carry a coerced action code. #}
+        <div class="flow-output-summary {% if delivery_path_summary.status == 'pipeline_failure' %}flow-output-summary--failure{% endif %}">
+            <span class="meta-label">Delivered</span>
+            <span class="badge {% if delivery_path_summary.status == 'reused' %}badge-ok{% elif delivery_path_summary.status in ('blocked', 'pipeline_failure') %}badge-fail{% else %}badge-parallel{% endif %}">
+                {{ delivery_path_summary.delivered_action }}
+            </span>
+            {% if delivery_path_summary.status == 'pipeline_failure' %}
+            <span class="muted">&mdash; a system-error placeholder, not a governed decision. See &ldquo;Final Response&rdquo; below (marked SYSTEM ERROR).</span>
+            {% else %}
+            {# The authoritative delivered source is rendered once, labelled, in the
+               "Authoritative delivery path" card above — not duplicated here (iteration 05). #}
+            {% if req.final_response %}
+            {% set delivered_preview = req.final_response %}
+            <p class="flow-output-preview">&ldquo;{{ (delivered_preview[:140] + '…') if delivered_preview | length > 140 else delivered_preview }}&rdquo; <span class="muted">(full text in &ldquo;Final Response&rdquo; below)</span></p>
+            {% endif %}
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if final_decision_card %}
+        <div class="final-decision-card flow-node--anchor flow-node--output outcome-{{ final_decision_card.final_action }}">
             <div class="final-decision-header">
                 <div class="final-decision-title">Final Decision</div>
                 <div class="final-decision-meta">
@@ -1555,104 +1606,23 @@
              </div>
             {% endif %}
         </div>
+        {% elif pipeline_failure %}
+        <div class="final-decision-card flow-node--anchor flow-node--output flow-node--output-failure">
+            <div class="final-decision-header">
+                <div class="final-decision-title">Final Decision</div>
+                <div class="final-decision-meta">
+                    <span class="badge badge-fail">PIPELINE FAILURE</span>
+                </div>
+            </div>
+            <p class="muted">
+                The governance pipeline crashed before reaching a governed FINAL decision &mdash; no FINAL
+                decision-trace row exists for this request. There is no <span class="mono">final_action</span> to
+                report; the delivered text is a system-error placeholder, not a governed REFUSE / SAFE_COMPLETE /
+                NORMAL_COMPLETE outcome.
+            </p>
+        </div>
         {% endif %}
     </div>
-</div>
-<div id="view-chronological" class="hidden">
-    {% for call in llm_calls_chronological %}
-    <div class="card call-block">
-        <div class="call-header">
-            <h4><span class="journey-seq-inline">{{ loop.index }}</span> {{ call.module }} / {{ call.phase }}</h4>
-            <div class="call-meta">
-                {% if call.action %}
-                <span class="badge badge-type">{{ call.action }}</span>
-                {% endif %}
-                {% if call.model %}
-                <span class="badge">{{ call.model }}</span>
-                {% endif %}
-                {% if call.call_outcome %}
-                <span class="badge badge-semantic" title="call_outcome">{{ call.call_outcome }}</span>
-                {% endif %}
-                {% if call.semantic_badges %}
-                {% for b in call.semantic_badges %}
-                {% if b != call.call_outcome %}
-                <span class="badge badge-semantic" title="Call semantics">{{ b }}</span>
-                {% endif %}
-                {% endfor %}
-                {% endif %}
-                {% if call.duration_ms %}
-                <span class="muted">{{ call.duration_ms | round(0) | int }}ms</span>
-                {% endif %}
-                <span class="muted ts">{{ call.started_at | fmtdate }}</span>
-            </div>
-        </div>
-        {% set preview = call.parsed_summary_json | module_result(call.module) %}
-        {% if preview %}
-        <div class="call-result-preview">
-            <span class="meta-label">Result / Summary</span>
-            <p class="call-result-text">{{ preview }}</p>
-        </div>
-        {% endif %}
-        {% if call.io_annotations and (call.io_annotations.inputs or call.io_annotations.outputs) %}
-        <div class="flow-node-io" style="margin:0 0 0.75rem 0;">
-            {% for inp in call.io_annotations.inputs %}
-            <div class="io-row">
-                <span class="io-arrow">&larr;</span> {{ inp.label }} <span class="muted">({{ inp.source }})</span>{% if inp.value is defined and inp.value %}: <span class="io-val">{{ inp.value }}</span>{% endif %}
-            </div>
-            {% endfor %}
-            {% for out in call.io_annotations.outputs %}
-            <div class="io-row">
-                <span class="io-arrow">&rarr;</span> {{ out.label }}: <span class="io-val">{{ out.value }}</span>
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-        <details>
-            <summary>Prompt</summary>
-            <pre class="block">{{ call.prompt }}</pre>
-        </details>
-        <details>
-            <summary>System Prompt</summary>
-            <pre class="block">{{ call.system_prompt }}</pre>
-        </details>
-        {% set message_sections = call.parsed_summary_json | message_sections %}
-        {% if message_sections %}
-        <details>
-            <summary>Original System / Developer Messages</summary>
-            {% if message_sections.system_messages %}
-            <div class="meta-label">System</div>
-            <pre class="block">{{ message_sections.system_messages | join('\n\n---\n\n') }}</pre>
-            {% endif %}
-            {% if message_sections.developer_messages %}
-            <div class="meta-label">Developer</div>
-            <pre class="block">{{ message_sections.developer_messages | join('\n\n---\n\n') }}</pre>
-            {% endif %}
-        </details>
-        <details>
-            <summary>Conversation History</summary>
-            {% for msg in message_sections.history_messages or [] %}
-            <div class="meta-label">{{ msg.role }}</div>
-            <pre class="block">{{ msg.content }}</pre>
-            {% endfor %}
-            {% if message_sections.final_user_message %}
-            <div class="meta-label">final user</div>
-            <pre class="block">{{ message_sections.final_user_message }}</pre>
-            {% endif %}
-        </details>
-        {% endif %}
-        <details>
-            <summary>Raw Response</summary>
-            <pre class="block">{{ call.raw_response }}</pre>
-        </details>
-        {% if call.parsed_summary_json %}
-        <details>
-            <summary>Parsed Summary</summary>
-            <pre class="block json-block">{{ call.parsed_summary_json }}</pre>
-        </details>
-        {% endif %}
-    </div>
-    {% endfor %}
-</div>
 {% elif llm_calls %}
 <h2>LLM Calls <span class="muted">({{ llm_calls | length }})</span></h2>
 {% for call in llm_calls %}
@@ -1869,39 +1839,38 @@
 <script>
 (function () {
     /* ----------------------------------------------------------------
-       View toggle (By cycle / Execution order)
-    ---------------------------------------------------------------- */
-    var byCycle = document.getElementById('view-by-cycle');
-    var chronological = document.getElementById('view-chronological');
-    var btns = document.querySelectorAll('.toggle-btn');
-    if (byCycle && chronological && btns.length) {
-        function show(view) {
-            byCycle.classList.toggle('hidden', view !== 'by-cycle');
-            chronological.classList.toggle('hidden', view !== 'chronological');
-            btns.forEach(function (b) {
-                var isActive = b.getAttribute('data-view') === view;
-                b.classList.toggle('active', isActive);
-                b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-            });
-        }
-        btns.forEach(function (b) {
-            b.addEventListener('click', function () { show(b.getAttribute('data-view')); });
-        });
-    }
-
-    /* ----------------------------------------------------------------
        Expand / collapse individual nodes on header click
     ---------------------------------------------------------------- */
     function initNodeExpand() {
+        /* Keyboard parity with the removed chronological view: each node header
+           (module boxes + the INPUT anchor) is server-rendered focusable
+           (tabindex/role) and operable by Enter/Space here, and aria-expanded
+           reflects state for assistive tech, so the raw per-call audit evidence
+           stays reachable without a mouse. */
+        function toggle(header) {
+            var node = header.closest('.flow-node');
+            if (!node) return;
+            var expanded = node.classList.toggle('flow-node--expanded');
+            header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        }
+
         document.addEventListener('click', function (e) {
             /* Ignore clicks inside the expanded body (details, pre, etc.). */
             if (e.target.closest('.flow-node-body')) return;
             var header = e.target.closest('.flow-node-header');
             if (!header) return;
-            var node = header.closest('.flow-node');
-            if (!node) return;
             e.stopPropagation();
-            node.classList.toggle('flow-node--expanded');
+            toggle(header);
+        });
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+            if (e.target.closest('.flow-node-body')) return;
+            var header = e.target.closest('.flow-node-header');
+            if (!header || document.activeElement !== header) return;
+            e.preventDefault();
+            e.stopPropagation();
+            toggle(header);
         });
     }
 

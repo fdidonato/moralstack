@@ -781,19 +781,6 @@ h3 {
     font-weight: 600;
 }
 
-/* View toggle (By cycle / Execution order) */
-.view-toggle {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-}
-
-.toggle-btn.active {
-    background: var(--blue-bg);
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
 .hidden {
     display: none !important;
 }
@@ -1040,24 +1027,29 @@ h3 {
     padding: 0;
 }
 
-/* Cycle block */
-.flow-cycle {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: visible;
-}
-
-.flow-cycle-label {
-    display: flex;
+/* Cycle boundary marker — an inline chip on the spine, not a bordered box
+   (the spine is one continuous line from INPUT to OUTPUT; a cycle boundary
+   is a label on that line, not a container). */
+.flow-cycle-marker {
+    align-self: center;
+    display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.6rem 1rem;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.875rem;
+    padding: 0.35rem 0.9rem;
+    margin: 0.35rem 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 9999px;
+    font-size: 0.8rem;
     font-weight: 600;
     color: var(--text-secondary);
-    background: rgba(255, 255, 255, 0.015);
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.flow-cycle-marker--output {
+    color: var(--accent);
+    border-color: var(--accent);
 }
 
 .flow-cycle-badge {
@@ -1217,6 +1209,14 @@ h3 {
     gap: 0.4rem;
     padding: 0.55rem 0.7rem;
     user-select: none;
+    cursor: pointer;
+}
+
+/* Visible keyboard focus for the (server-focusable) node header. */
+.flow-node-header:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+    border-radius: var(--radius-sm);
 }
 
 .flow-node-chevron {
@@ -1349,11 +1349,85 @@ h3 {
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
 }
 
-/* Horizontal branching bar for parallel tiers with 2+ nodes:
-   a thin horizontal rule above the tier nodes to suggest fan-out */
+/* Branch/rejoin bracket for parallel tiers with 2+ nodes: a horizontal bar
+   above the row (branch, fed by the incoming .flow-pipe stem) and another
+   below it (rejoin, feeding the outgoing .flow-pipe stem), so a parallel
+   tier reads as a fan-out-and-merge on the spine rather than a stack. */
 .flow-tier--parallel {
     position: relative;
-    padding-top: 0;
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+    margin: 0.25rem 0;
+}
+.flow-tier--parallel::before,
+.flow-tier--parallel::after {
+    content: '';
+    position: absolute;
+    left: 12%;
+    right: 12%;
+    height: 2px;
+    background: var(--border);
+}
+.flow-tier--parallel::before { top: 0; }
+.flow-tier--parallel::after { bottom: 0; }
+
+/* ====================================================================
+   Deliberation spine — INPUT / OUTPUT anchors and cross-cycle summary
+   ==================================================================== */
+
+/* Shared accent for the two anchor nodes (INPUT and OUTPUT) that bookend
+   the spine, distinct from ordinary module nodes. */
+.flow-node--anchor {
+    align-self: center;
+    border-width: 2px;
+}
+
+.flow-node--input {
+    width: 100%;
+    max-width: 640px;
+    border-color: var(--accent);
+    cursor: pointer;
+}
+.flow-node--input .flow-node-title {
+    color: var(--accent);
+    font-weight: 700;
+}
+
+/* Output anchor reuses .final-decision-card's own outcome-* border colour;
+   this only adds a stronger top edge so it reads as the spine's terminus. */
+.flow-node--output {
+    border-top: 4px solid var(--accent);
+}
+.flow-node--output.outcome-REFUSE { border-top-color: var(--red); }
+.flow-node--output.outcome-SAFE_COMPLETE { border-top-color: var(--yellow); }
+.flow-node--output.outcome-NORMAL_COMPLETE { border-top-color: var(--green); }
+.flow-node--output-failure {
+    border-color: var(--red) !important;
+    border-top: 4px solid var(--red) !important;
+}
+
+/* Delivered-response summary shown between the OUTPUT marker and the final
+   decision card — reuses the same status→badge mapping as the top-of-page
+   delivery-path card so a pipeline failure never reads as a governed answer. */
+.flow-output-summary {
+    align-self: center;
+    width: 100%;
+    max-width: 640px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.6rem 0.9rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.82rem;
+}
+.flow-output-summary--failure {
+    border-color: var(--red);
+}
+.flow-output-preview {
+    margin: 0.4rem 0 0;
+    font-style: italic;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
 }
 
 /* ====================================================================
@@ -1454,6 +1528,19 @@ h3 {
     .flow-tier {
         flex-direction: column;
         align-items: stretch;
+    }
+    .flow-node--input,
+    .flow-output-summary {
+        max-width: 100%;
+    }
+    .flow-cycle-marker {
+        white-space: normal;
+        text-align: center;
+    }
+    .flow-tier--parallel::before,
+    .flow-tier--parallel::after {
+        left: 4%;
+        right: 4%;
     }
 }
 

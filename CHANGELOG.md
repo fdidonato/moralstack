@@ -311,6 +311,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `risk_policy_action`/`risk_score` before the branch/overlay values. Requests
   with no calibration_guard row, or a guard that did not change the action,
   are unaffected. Tests: `tests/test_ui_calibration_guard_panel.py`.
+- **UI: the request-detail "Execution graph" is now a single linear input→output
+  deliberation spine**, replacing the "By cycle" / "Execution order" toggle and the
+  flat chronological view (`#view-chronological`, now removed along with its JS
+  handler). The graph opens on a new INPUT anchor (prompt preview, plus a
+  developer-contract chip and a conversation-history chip rendered only when
+  `final_revalidation_info.developer_contract_present` / `conversation_context`
+  actually say so) and every cycle's tiers now render in one continuous flow —
+  cycle boundaries are an inline `.flow-cycle-marker` chip on the spine instead of
+  a bordered box — ending on a new OUTPUT anchor (a `delivery_path_summary`-based
+  delivered-answer summary, reusing its existing status→badge mapping, in front of
+  the unchanged `final-decision-card`). For a pipeline-failure-shaped request the
+  OUTPUT anchor renders an explicit failure card instead of the decision card, and
+  the coerced `delivered_action` is never coloured/labelled as a governed success
+  (invariants from iterations 01/06/12). Every module box keeps its exact header,
+  IO annotations, timing bar and full expandable body (Prompt / System Prompt /
+  Original Messages / Conversation History / Raw Response / Parsed Summary)
+  unchanged, and parallel tiers still branch/rejoin the spine with their "parallel"
+  label. Template + CSS only; no view-model or governance data change. Tests:
+  `tests/test_ui_deliberation_spine.py`.
 
 ### Development
 
