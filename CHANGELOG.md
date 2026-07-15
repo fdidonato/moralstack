@@ -147,6 +147,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **UI: deliberation-spine boxes are now genuinely compact — long input/output
+  annotation values are truncated in the collapsed box.** A policy node's
+  `→ draft` output carried the full generated answer (~1300+ chars) in the
+  always-visible `flow-node-io` block, so a collapsed box could be ~440px tall
+  and dump answer text onto the spine. The ← input / → output lines stay on the
+  spine (the module-integration view the user asked for), but their values are
+  truncated to ~100 chars; the complete value stays reachable via the node's
+  Raw Response / Parsed Summary on expand. (Browser-verified: the longest
+  compact io value dropped from 1335 to 101 chars; the policy_generate box from
+  444px to 147px.)
+
 - **UI: the speculative-draft node no longer leaks its content into the compact
   deliberation-spine box.** The `policy / speculative_generate` node was the only
   module box rendering a preview pill in its collapsed state, showing

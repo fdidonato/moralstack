@@ -1360,14 +1360,19 @@
                         {# IO Annotations #}
                         {% if call.io_annotations and (call.io_annotations.inputs or call.io_annotations.outputs) %}
                         <div class="flow-node-io" style="padding: 0 0.7rem 0.5rem 0.7rem; border-top:none; margin-top:0;">
+                             {# Keep the ← input / → output lines on the spine, but truncate long
+                                values in the compact box (e.g. a policy node's full draft) — the
+                                complete value stays reachable in this node's Raw Response / Parsed
+                                Summary on expand. #}
                              {% for inp in call.io_annotations.inputs %}
                              <div class="io-row">
-                                 <span class="io-arrow">&larr;</span> {{ inp.label }} <span class="muted">({{ inp.source }})</span>{% if inp.value is defined and inp.value %}: <span class="io-val">{{ inp.value }}</span>{% endif %}
+                                 <span class="io-arrow">&larr;</span> {{ inp.label }} <span class="muted">({{ inp.source }})</span>{% if inp.value is defined and inp.value %}{% set _iv = inp.value | string %}: <span class="io-val">{{ (_iv[:100] + '…') if _iv | length > 100 else _iv }}</span>{% endif %}
                              </div>
                              {% endfor %}
                              {% for out in call.io_annotations.outputs %}
                              <div class="io-row">
-                                 <span class="io-arrow">&rarr;</span> {{ out.label }}: <span class="io-val">{{ out.value }}</span>
+                                 {% set _ov = out.value | string %}
+                                 <span class="io-arrow">&rarr;</span> {{ out.label }}: <span class="io-val">{{ (_ov[:100] + '…') if _ov | length > 100 else _ov }}</span>
                              </div>
                              {% endfor %}
                         </div>
