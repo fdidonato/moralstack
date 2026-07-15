@@ -147,6 +147,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **UI: colliding `turn_index` values on the conversation timeline no longer render
+  as byte-identical labels.** Two structurally different DB shapes previously produced
+  identical `T{n}` labels/accessible names: two independent runs sharing one
+  `conversation_id` at the same `turn_index` (different `run_id`), and one run whose
+  `turn_index` never advanced across a genuine multi-turn escalation (same `run_id`).
+  `_build_conversation_timeline` (`moralstack/ui/app.py`) now derives a `turn_index`
+  collision grouping from already-persisted fields only (`turn_index`, `run_id`; no new
+  DB reads), classifying each colliding group as spanning separate runs or sitting
+  within one run — the canonical `turn_index` is never renamed or renumbered, and no
+  causal "sequence"/"escalation" is invented, only the verified same-run vs
+  separate-runs fact. Rendered on the conversation strip (label, title, unique
+  `aria-label`), the posture-timeline table, the per-turn detail heading, and a new
+  conversation-level `.turn-index-collision-note` (a neutral/amber note, distinct from
+  the red `.pipeline-failure-note`, since a collision is an observability caveat, not an
+  error). Every new block is gated on the collision flag, so conversations without a
+  collision render unchanged. Tests: `tests/test_ui_conversation_turn_collision.py`.
 - **UI: Decision Traces and Debug Events on the request-detail page are now
   collapsed behind `<details>` by default, consistent with every sibling raw
   block on the page** (Raw Response, Parsed Summary, Original System/Developer

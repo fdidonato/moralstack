@@ -3002,7 +3002,12 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
         distribution;
       * ``last_posture_is_from_pipeline_failure``, a conservative flag for whether
         ``overview.last_posture`` can be attributed to a pipeline-failure turn (see the
-        attribution logic below the per-turn loop).
+        attribution logic below the per-turn loop);
+      * per-request ``turn_index_collision*`` fields plus a conversation-level
+        ``turn_index_collision`` / ``turn_index_collision_multi_run``, derived purely from
+        ``turn_index`` and ``run_id`` grouping (no new DB reads) so the template can
+        disambiguate colliding ``turn_index`` values without inventing a causal sequence:
+        it only classifies whether a collision spans separate runs or sits within one run.
 
     Best-effort: when individual lookups fail or tables are missing, the
     corresponding sections degrade to empty lists / ``None`` instead of
@@ -3023,6 +3028,8 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
             "max_risk_is_fail_closed": False,
             "pipeline_failure_action_counts": {},
             "last_posture_is_from_pipeline_failure": False,
+            "turn_index_collision": False,
+            "turn_index_collision_multi_run": False,
         }
 
     requests_rows = get_requests_for_conversation(conversation_id) or []
@@ -3104,6 +3111,36 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
                 non_failed_meta_risks.append(float(meta_risk))
         enriched_requests.append(item)
 
+    # turn_index collision detection: a rendering-order/grouping derivation, no new
+    # DB reads, independent of pipeline_failure. Colliding turn_index values render
+    # as byte-identical labels otherwise; here we derive a truthful disambiguator
+    # that never invents a causal sequence (it classifies same-run vs separate-run
+    # from run_id and lets the reviewer infer continuity).
+    turn_index_groups: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(enriched_requests):
+        item["seq_pos"] = idx + 1  # 1-based row order == query order (turn_index, created_at)
+        ti = item.get("turn_index")
+        if ti is not None:
+            turn_index_groups[int(ti)].append(item)
+
+    turn_index_collision = any(len(g) > 1 for g in turn_index_groups.values())
+    turn_index_collision_multi_run = False
+    for group in turn_index_groups.values():
+        group_run_ids = {str(g.get("run_id")) for g in group if g.get("run_id")}
+        is_multi_run = len(group) > 1 and len(group_run_ids) > 1
+        for pos, g in enumerate(group, start=1):
+            g["turn_index_collision"] = len(group) > 1
+            g["turn_index_collision_multi_run"] = is_multi_run
+            g["turn_index_collision_pos"] = pos
+            g["turn_index_collision_group_size"] = len(group)
+        if is_multi_run:
+            turn_index_collision_multi_run = True
+    for item in enriched_requests:
+        item.setdefault("turn_index_collision", False)
+        item.setdefault("turn_index_collision_multi_run", False)
+        item.setdefault("turn_index_collision_pos", 1)
+        item.setdefault("turn_index_collision_group_size", 1)
+
     max_assessed_candidates = non_failed_meta_risks + failed_assessed_risks
     max_assessed_risk = max(max_assessed_candidates) if max_assessed_candidates else None
 
@@ -3153,6 +3190,8 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
         "max_risk_is_fail_closed": max_risk_is_fail_closed,
         "pipeline_failure_action_counts": pipeline_failure_action_counts,
         "last_posture_is_from_pipeline_failure": last_posture_is_from_pipeline_failure,
+        "turn_index_collision": turn_index_collision,
+        "turn_index_collision_multi_run": turn_index_collision_multi_run,
     }
 
 

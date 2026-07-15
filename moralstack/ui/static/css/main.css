@@ -1573,6 +1573,19 @@ h3 {
     font-size: 0.85rem;
 }
 
+/* Neutral/amber accent: an observability caveat (turn_index collision), not an
+   error — deliberately not reusing .pipeline-failure-note's red so the two
+   severities stay visually distinct. */
+.turn-index-collision-note {
+    margin: 0.75rem 0 0;
+    padding: 0.5rem 0.75rem;
+    border-left: 3px solid var(--yellow);
+    background: var(--yellow-bg);
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    color: var(--text);
+}
+
 .conv-strip-label {
     position: absolute;
     top: -1.1rem;

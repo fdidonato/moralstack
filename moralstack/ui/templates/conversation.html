@@ -13,6 +13,12 @@
     <p class="subtitle">Multi-turn governance timeline (Step 13 observability)</p>
 </div>
 
+{% if timeline.turn_index_collision %}
+<p class="turn-index-collision-note">
+    &#9888; turn_index repeats within this conversation{% if timeline.turn_index_collision_multi_run %} — at least one repeat spans separate runs (independent runs sharing this conversation id, not one continuous run){% else %} — the repeat is within a single run (turn_index did not advance across turns){% endif %}. See the #pos/size annotations below for exact grouping.
+</p>
+{% endif %}
+
 <div class="actions-bar">
     <a href="/conversations/{{ conversation_id }}/export.md" download class="btn btn-outline">Export Markdown</a>
     {% if timeline.run_id %}
@@ -126,14 +132,14 @@
                     style="height: {{ bar_height }}px;"
                     data-turn="{{ r.turn_index }}"
                     {% if cached_from is not none %}data-cached-from="{{ cached_from }}"{% endif %}
-                    title="Turn {{ r.turn_index }}: {% if is_pipeline_failure %}PIPELINE FAILURE (delivered {{ action }} is not a governed outcome){% else %}{{ action }}{% endif %}{% if risk_score is not none %} (risk={{ '%.3f' | format(risk_score) }}{% if is_pipeline_failure %}, fail-closed default{% if r.get('last_assessed_risk') is not none %}, last assessed {{ '%.3f' | format(r.get('last_assessed_risk')) }}{% endif %}{% endif %}){% endif %}{% if posture %} [{{ posture }}]{% endif %}{% if meta.get('domain_overlay') %} domain={{ meta.get('domain_overlay') }}{% endif %}{% if was_cached %} — cached from T{{ cached_from }}{% endif %}"
+                    title="Turn {{ r.turn_index }}{% if r.turn_index_collision %} (#{{ r.turn_index_collision_pos }}/{{ r.turn_index_collision_group_size }} sharing this turn_index, {{ 'separate runs' if r.turn_index_collision_multi_run else 'same run' }}){% endif %}: {% if is_pipeline_failure %}PIPELINE FAILURE (delivered {{ action }} is not a governed outcome){% else %}{{ action }}{% endif %}{% if risk_score is not none %} (risk={{ '%.3f' | format(risk_score) }}{% if is_pipeline_failure %}, fail-closed default{% if r.get('last_assessed_risk') is not none %}, last assessed {{ '%.3f' | format(r.get('last_assessed_risk')) }}{% endif %}{% endif %}){% endif %}{% if posture %} [{{ posture }}]{% endif %}{% if meta.get('domain_overlay') %} domain={{ meta.get('domain_overlay') }}{% endif %}{% if was_cached %} — cached from T{{ cached_from }}{% endif %}"
                 >
-                    <span class="conv-strip-label{% if is_pipeline_failure %} conv-strip-label-failure{% endif %}">T{{ r.turn_index }}{% if is_pipeline_failure %} — pipeline failure{% endif %}</span>
+                    <span class="conv-strip-label{% if is_pipeline_failure %} conv-strip-label-failure{% endif %}">T{{ r.turn_index }}{% if r.turn_index_collision %} · #{{ r.turn_index_collision_pos }}/{{ r.turn_index_collision_group_size }}{% endif %}{% if is_pipeline_failure %} — pipeline failure{% endif %}</span>
                     {% if was_cached %}
                         <span class="conv-strip-cache-icon" aria-label="cached">⚡</span>
                     {% endif %}
                     {% if r.run_id and r.request_id %}
-                        <a class="conv-strip-link" href="/runs/{{ r.run_id }}/requests/{{ r.request_id }}" aria-label="Open turn {{ r.turn_index }}{% if is_pipeline_failure %} (pipeline failure){% endif %}"></a>
+                        <a class="conv-strip-link" href="/runs/{{ r.run_id }}/requests/{{ r.request_id }}" aria-label="Open turn {{ r.turn_index }}{% if r.turn_index_collision %} (#{{ r.turn_index_collision_pos }}/{{ r.turn_index_collision_group_size }}, request {{ r.request_id[:8] }}){% endif %}{% if is_pipeline_failure %} (pipeline failure){% endif %}"></a>
                     {% endif %}
                 </div>
             {% endfor %}
@@ -180,7 +186,12 @@
         {% set risk_score = meta.get('risk_score') %}
         {% set state_cached_from = state.get('cached_from_turn') %}
         <tr>
-            <td>{{ r.turn_index if r.turn_index is not none else '—' }}</td>
+            <td>
+                {{ r.turn_index if r.turn_index is not none else '—' }}
+                {% if r.turn_index_collision %}
+                <br><span class="muted small">#{{ r.turn_index_collision_pos }}/{{ r.turn_index_collision_group_size }}{% if r.turn_index_collision_multi_run %} — separate runs share this turn_index{% else %} — same run, turn_index did not advance{% endif %}</span>
+                {% endif %}
+            </td>
             <td class="mono">
                 {% if r.run_id and r.request_id %}
                 <a href="/runs/{{ r.run_id }}/requests/{{ r.request_id }}">{{ r.request_id[:12] }}</a>
@@ -247,6 +258,9 @@
         <h3>Turn {{ r.turn_index if r.turn_index is not none else '?' }}
             <span class="muted mono">· {{ (r.request_id or '')[:12] }}</span>
         </h3>
+        {% if r.turn_index_collision %}
+        <p class="muted small">Shares turn_index {{ r.turn_index }} with {{ r.turn_index_collision_group_size - 1 }} other request{{ 's' if r.turn_index_collision_group_size != 2 else '' }} in this conversation ({{ 'separate runs' if r.turn_index_collision_multi_run else 'same run' }}). Position {{ r.turn_index_collision_pos }} of {{ r.turn_index_collision_group_size }} by creation order (row {{ r.seq_pos }} of {{ timeline.requests | length }} overall).</p>
+        {% endif %}
         <div class="conversation-turn-badges">
             <span class="badge">{{ meta.get('final_action') or '—' }}</span>
             {% if r.get('pipeline_failure') %}
