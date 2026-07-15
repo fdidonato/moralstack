@@ -951,6 +951,19 @@
         <li style="margin-bottom:0.35rem;">{{ line }}</li>
         {% endfor %}
     </ul>
+    {% set guard = orchestrator_observability.get('calibration_guard_override') %}
+    {% if guard %}
+    <p class="muted small" style="margin:0.25rem 0 0.75rem;">
+        <strong>Calibration guard reversed the raw operational signal.</strong>
+        The operational-risk estimator returned
+        <span class="mono">{{ guard.raw_risk_policy_action }}</span>
+        at risk_score <span class="mono">{{ guard.raw_risk_score }}</span>;
+        a calibration guard capped it to
+        <span class="mono">{{ guard.capped_risk_policy_action }}</span>
+        at <span class="mono">{{ guard.capped_risk_score }}</span>
+        before the branch and sensitive-overlay values below were computed.
+    </p>
+    {% endif %}
     {% set sig = orchestrator_observability.get('routing_signals', {}) %}
     {% if sig %}
     <div class="meta-grid" style="margin-top:1rem;">

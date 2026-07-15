@@ -245,6 +245,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repeated the labelled "Authoritative final source" field with no added
   information) was also removed from the template. Tests:
   `tests/test_ui_delivery_provenance.py`.
+- **UI: the "Path routing and risk governance" panel no longer hides a
+  calibration-guard reversal of the raw operational-risk signal.** The panel's
+  view-model (`build_orchestrator_observability`) reads only `debug_events` and
+  the FINAL decision trace, both of which post-date calibration, so a
+  `calibration_guard` that capped the raw `estimate_operational` risk (e.g.
+  `DENY` -> `DELIBERATE`) rendered as if `DELIBERATE` were the native
+  assessment. A new `_extract_calibration_guard_override` helper
+  (`moralstack/ui/app.py`) compares the persisted `estimate_operational` and
+  `calibration_guard` `llm_calls` raw responses and, when the guard changed
+  `risk_policy_action`, the panel now states both the raw and capped
+  `risk_policy_action`/`risk_score` before the branch/overlay values. Requests
+  with no calibration_guard row, or a guard that did not change the action,
+  are unaffected. Tests: `tests/test_ui_calibration_guard_panel.py`.
 
 ### Development
 

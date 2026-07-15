@@ -1795,6 +1795,43 @@ def _build_synthetic_calibration_node(
     }
 
 
+def _extract_calibration_guard_override(
+    llm_calls: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Surface a calibration_guard that changed risk_policy_action, for the
+    plain-language 'Path routing and risk governance' panel.
+
+    The panel view-model reads only debug_events + the FINAL trace, which
+    post-date calibration, so a guard that capped the raw operational signal is
+    otherwise invisible there. Returns the raw vs capped risk_policy_action /
+    risk_score from the persisted estimate_operational and calibration_guard
+    llm_calls, or None when no guard fired or the guard did not change
+    risk_policy_action.
+    """
+    _, _, operational_data, _ = _extract_mini_estimator_data(llm_calls)
+    raw_action = str(operational_data.get("risk_policy_action") or "").strip()
+    raw_score = operational_data.get("risk_score")
+    for c in llm_calls:
+        if (c.get("action") or "").lower() != "calibration_guard":
+            continue
+        raw = c.get("raw_response") or ""
+        try:
+            gd = json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            continue
+        caps = gd.get("caps_applied") or {}
+        capped_action = str(caps.get("risk_policy_action_max") or "").strip()
+        if not capped_action or capped_action == raw_action:
+            continue  # guard fired but did not change risk_policy_action
+        return {
+            "raw_risk_policy_action": raw_action or None,
+            "capped_risk_policy_action": capped_action,
+            "raw_risk_score": raw_score,
+            "capped_risk_score": caps.get("risk_score_max"),
+        }
+    return None
+
+
 def _build_synthetic_path_routing_node(
     debug_events: list[dict[str, Any]],
     traces: list[dict[str, Any]],
@@ -3468,6 +3505,7 @@ button:hover{opacity:0.9}
         _normalize_post_output_cycles(all_flow_calls)
 
         orchestrator_observability = build_orchestrator_observability(debug_events, traces)
+        orchestrator_observability["calibration_guard_override"] = _extract_calibration_guard_override(llm_calls)
 
         # Group by cycle for flow graph
         by_cycle_flow: defaultdict[int | None, list[dict[str, Any]]] = defaultdict(list)
