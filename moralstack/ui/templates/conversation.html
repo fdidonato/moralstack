@@ -1,6 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Conversation {{ conversation_id[:12] }} - MoralStack{% endblock %}
 {% block content %}
+{#- Colour a final_action badge by the strip's legend (green=NORMAL_COMPLETE,
+    amber=SAFE_COMPLETE, red=REFUSE). A pipeline-failure turn persists a coerced
+    NORMAL_COMPLETE placeholder, so it stays neutral (never green) — the adjacent
+    "not a governed outcome" text carries the meaning. -#}
+{% macro action_badge(action, is_failure=False) -%}
+{%- if not action -%}
+<span class="badge">—</span>
+{%- elif is_failure -%}
+<span class="badge">{{ action }}</span>
+{%- else -%}
+<span class="badge badge-{{ 'ok' if action == 'NORMAL_COMPLETE' else ('running' if action == 'SAFE_COMPLETE' else 'fail') }}">{{ action }}</span>
+{%- endif -%}
+{%- endmacro %}
 <div class="page-header">
     <nav class="breadcrumb">
         <a href="/runs">Dashboard</a>
@@ -198,7 +211,7 @@
                 {% else %}{{ (r.request_id or '')[:12] }}{% endif %}
             </td>
             <td>
-                <span class="badge">{{ meta.get('final_action') or '—' }}</span>
+                {{ action_badge(meta.get('final_action'), r.get('pipeline_failure')) }}
                 {% if r.get('pipeline_failure') %}
                 <br><span class="muted small">not a governed outcome</span>
                 {% endif %}
@@ -262,7 +275,7 @@
         <p class="muted small">Shares turn_index {{ r.turn_index }} with {{ r.turn_index_collision_group_size - 1 }} other request{{ 's' if r.turn_index_collision_group_size != 2 else '' }} in this conversation ({{ 'separate runs' if r.turn_index_collision_multi_run else 'same run' }}). Position {{ r.turn_index_collision_pos }} of {{ r.turn_index_collision_group_size }} by creation order (row {{ r.seq_pos }} of {{ timeline.requests | length }} overall).</p>
         {% endif %}
         <div class="conversation-turn-badges">
-            <span class="badge">{{ meta.get('final_action') or '—' }}</span>
+            {{ action_badge(meta.get('final_action'), r.get('pipeline_failure')) }}
             {% if r.get('pipeline_failure') %}
             <span class="muted small">not a governed outcome</span>
             {% endif %}
@@ -296,7 +309,7 @@
             <h4>Governance decision</h4>
             <table class="table">
                 <tbody>
-                <tr><td>Final action</td><td><span class="badge">{{ meta.get('final_action') or '—' }}</span>{% if r.get('pipeline_failure') %} <span class="muted small">not a governed outcome</span>{% endif %}</td></tr>
+                <tr><td>Final action</td><td>{{ action_badge(meta.get('final_action'), r.get('pipeline_failure')) }}{% if r.get('pipeline_failure') %} <span class="muted small">not a governed outcome</span>{% endif %}</td></tr>
                 <tr><td>Risk score</td><td>{% if risk_score is not none %}{{ "%.4f" | format(risk_score) }}{% if r.get('pipeline_failure') %} <span class="muted small">fail-closed default{% if r.get('last_assessed_risk') is not none %} (last assessed {{ "%.4f" | format(r.get('last_assessed_risk')) }}){% endif %}</span>{% endif %}{% else %}—{% endif %}</td></tr>
                 <tr><td>Path</td><td>{{ meta.get('path') or '—' }}</td></tr>
                 <tr><td>Domain overlay</td><td>{{ meta.get('domain_overlay') or '—' }}</td></tr>

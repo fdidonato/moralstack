@@ -147,6 +147,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **UI: per-turn `final_action` badges on the conversation view are now
+  colour-coded by the strip's own legend** (green = NORMAL_COMPLETE, amber =
+  SAFE_COMPLETE, red = REFUSE), instead of the generic blue badge. The
+  posture-timeline Action cell, the per-turn header, and the per-turn detail row
+  previously rendered a neutral badge while the strip directly above them
+  colour-coded the same `final_action`, so colour was an unreliable secondary
+  signal in the table/cards. A new `action_badge` Jinja macro applies the legend
+  consistently; a pipeline-failure turn's coerced `NORMAL_COMPLETE` placeholder
+  stays neutral (never the green success colour) beside its unchanged "not a
+  governed outcome" caveat, and the action code text is always rendered (colour
+  is never the sole signal). The delivery card's status-based badge colours
+  (reused/blocked/normal) and all non-`final_action` badges are unchanged. Tests:
+  `tests/test_ui_action_badge_colour.py`.
+
 - **UI: the `.meta-grid` summary tiles no longer clip content on phones.** At
   `max-width: 768px` the grid is two columns (`1fr 1fr`); an unbreakable cell (the
   `white-space: nowrap` "First / last turn" timestamp) pinned a track wider than the
