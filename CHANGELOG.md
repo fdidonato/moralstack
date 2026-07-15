@@ -147,6 +147,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **UI: the `.meta-grid` summary tiles no longer clip content on phones.** At
+  `max-width: 768px` the grid is two columns (`1fr 1fr`); an unbreakable cell (the
+  `white-space: nowrap` "First / last turn" timestamp) pinned a track wider than the
+  clipped `.card` (`overflow: hidden`), silently cutting off content in that column —
+  observed as the conversation "Final actions" REFUSE count truncated at 390px. A new
+  `@media (max-width: 480px)` breakpoint collapses `.meta-grid` to a single full-width
+  column so every tile is fully visible; the >480px layout is unchanged. Tests:
+  `tests/test_ui_meta_grid_responsive.py`.
+
 - **UI: colliding `turn_index` values on the conversation timeline no longer render
   as byte-identical labels.** Two structurally different DB shapes previously produced
   identical `T{n}` labels/accessible names: two independent runs sharing one

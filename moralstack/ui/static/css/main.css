@@ -1017,6 +1017,17 @@ h3 {
     }
 }
 
+/* Phones: collapse the meta-grid to a single column. At two columns an
+   unbreakable cell (e.g. the nowrap "First / last turn" timestamp) pins a
+   track wider than the clipped .card, cutting off content in that column
+   (e.g. the "Final actions" REFUSE count). One column gives every tile the
+   full width, so nothing is clipped. */
+@media (max-width: 480px) {
+    .meta-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* ====================================================================
    Flow Graph — "By cycle" deliberative flow visualization
    ==================================================================== */
