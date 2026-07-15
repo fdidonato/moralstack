@@ -147,6 +147,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **UI: the speculative-draft node no longer leaks its content into the compact
+  deliberation-spine box.** The `policy / speculative_generate` node was the only
+  module box rendering a preview pill in its collapsed state, showing
+  context-envelope internals (`context_shape` / `message_sections`) — and, more
+  importantly, a speculative draft is not the delivered answer, so its text must
+  not compete with the OUTPUT anchor. The compact box now omits the pill for any
+  speculative phase; the full draft stays reachable via the node's expand.
+
 - **UI: per-turn `final_action` badges on the conversation view are now
   colour-coded by the strip's own legend** (green = NORMAL_COMPLETE, amber =
   SAFE_COMPLETE, red = REFUSE), instead of the generic blue badge. The

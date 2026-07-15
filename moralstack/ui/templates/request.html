@@ -1347,7 +1347,11 @@
                                     {{ token_badge(call) }}
                                 </div>
                                 {% set preview = call.parsed_summary_json | module_result(call.module) %}
-                                {% if preview %}
+                                {# A speculative draft is not the delivered answer (and its
+                                   parsed_summary is context-envelope internals, not a governed
+                                   result): keep its content out of the compact box — the full
+                                   draft stays reachable via this node's expand. #}
+                                {% if preview and 'speculative' not in ((call.phase or '') | lower) %}
                                 <div class="flow-node-pill">{{ (preview[:90] + '…') if preview | length > 90 else preview }}</div>
                                 {% endif %}
                             </div>

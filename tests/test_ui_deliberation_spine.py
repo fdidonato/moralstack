@@ -375,3 +375,58 @@ def test_node_headers_are_keyboard_operable(ui_client):
     assert body.count('class="flow-node-header" tabindex="0" role="button" aria-expanded="false"') >= 2
     # The Enter/Space keydown handler is wired.
     assert "addEventListener('keydown'" in body
+
+
+def test_speculative_node_hides_result_text_in_compact_box(ui_client):
+    """A speculative draft is not the delivered answer: its content must not
+    render in the compact (collapsed) box preview pill, only behind expand —
+    unlike a governed module result, which still shows its pill."""
+    run_id, request_id = "run-spine-spec", "req-spine-spec"
+    create_run(run_id, run_type="single", meta={})
+    upsert_request(run_id, request_id, prompt="hello", domain="general")
+    update_request_meta(run_id, request_id, {"final_action": "NORMAL_COMPLETE", "risk_score": 0.1})
+    update_request_response(run_id, request_id, "Hi there!")
+    # Speculative draft node: its parsed_summary is context-envelope internals that
+    # would otherwise leak into the compact box.
+    persist_llm_call(
+        run_id=run_id,
+        request_id=request_id,
+        cycle=0,
+        phase="speculative_generate",
+        module="policy",
+        action="generate",
+        started_at=1_000,
+        duration_ms=40,
+        raw_response="SPECULATIVE_DRAFT_TEXT_BODY",
+        parsed_summary_json=json.dumps({"context_shape": {"module": "speculative_generate"}}),
+    )
+    # A governed module result that SHOULD still show its pill.
+    persist_llm_call(
+        run_id=run_id,
+        request_id=request_id,
+        cycle=1,
+        phase="simulate",
+        module="simulator",
+        action="simulate",
+        started_at=2_000,
+        duration_ms=80,
+        raw_response=json.dumps({"semantic_expected_harm": "low"}),
+        parsed_summary_json=json.dumps({"semantic_expected_harm": "low"}),
+    )
+    _seed_final_trace(run_id, request_id)
+    get_obs().flush()
+
+    token = _make_session_token(ui_client)
+    resp = ui_client.get(
+        f"/runs/{run_id}/requests/{request_id}",
+        cookies={"moralstack_session": token},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.text
+
+    # The speculative node's envelope preview is NOT rendered as a compact pill.
+    assert '<div class="flow-node-pill">context_shape' not in body
+    # A governed module still shows its pill (feature not globally disabled).
+    assert '<div class="flow-node-pill">' in body
+    # The full speculative draft stays reachable via the node's expand body.
+    assert "SPECULATIVE_DRAFT_TEXT_BODY" in body
