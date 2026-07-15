@@ -1741,9 +1741,11 @@
 <h2>Decision Traces <span class="muted">({{ traces | length }})</span></h2>
 {% for t in traces %}
 <div class="card trace-block">
-    <h3>{{ t.stage }} <span class="muted">(seq {{ t.sequence }})</span></h3>
-    <span class="muted ts">{{ t.created_at | fmtdate }}</span>
-    <pre class="block json-block">{{ t.trace_json }}</pre>
+    <details>
+        <summary>{{ t.stage }} <span class="muted">(seq {{ t.sequence }})</span></summary>
+        <span class="muted ts">{{ t.created_at | fmtdate }}</span>
+        <pre class="block json-block">{{ t.trace_json }}</pre>
+    </details>
 </div>
 {% endfor %}
 {% endif %}
@@ -1752,8 +1754,10 @@
 <h2>Debug Events <span class="muted">({{ debug_events | length }})</span></h2>
 {% for ev in debug_events %}
 <div class="card">
-    <span class="muted ts">{{ ev.created_at | fmtdate }}</span>
-    <pre class="block debug-block">{{ ev.payload_json }}</pre>
+    <details>
+        <summary>{{ ev.payload_json | event_label }} <span class="muted ts">{{ ev.created_at | fmtdate }}</span></summary>
+        <pre class="block debug-block">{{ ev.payload_json }}</pre>
+    </details>
 </div>
 {% endfor %}
 {% endif %}

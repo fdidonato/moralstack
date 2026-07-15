@@ -147,6 +147,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **UI: Decision Traces and Debug Events on the request-detail page are now
+  collapsed behind `<details>` by default, consistent with every sibling raw
+  block on the page** (Raw Response, Parsed Summary, Original System/Developer
+  Messages, Conversation History). Previously both sections rendered their raw
+  JSON as a bare `<pre>` directly under the `<h2>`, always fully expanded —
+  contributing roughly a fifth of an example page's height before a reviewer
+  reached anything below them. Each Decision Trace's `<summary>` still shows
+  `stage (seq N)`; each Debug Event's `<summary>` now shows a new scannable
+  `component · message` label (new `event_label` Jinja filter in
+  `moralstack/ui/app.py`, reading the same persisted `payload_json` the `<pre>`
+  already showed, falling back to `component`, then `message`/`event_type`, then
+  "debug event" — never empty). No raw bytes, classes, `<h2>` counts, or card
+  wrappers changed; purely a disclosure/labelling change. Tests:
+  `tests/test_ui_progressive_disclosure.py`.
 - **UI: the fail-closed risk sentinel is no longer shown as an assessed risk score.**
   On every risk surface of the conversation view (the "Max risk score" tile, the
   posture-timeline Risk cell, the conversation-strip cell title, the per-turn badge, and

@@ -3333,6 +3333,28 @@ button:hover{opacity:0.9}
 
         templates.env.filters["message_sections"] = _filter_message_sections
 
+        def _filter_event_label(payload_json: Any) -> str:
+            """Compact scannable label for a raw debug event ('component · message').
+
+            Falls back gracefully so the <summary> is never empty. Reads the same
+            persisted payload the <pre> below already shows; purely presentational.
+            """
+            if not payload_json:
+                return "debug event"
+            try:
+                data = json.loads(payload_json) if isinstance(payload_json, str) else payload_json
+            except (ValueError, TypeError):
+                return "debug event"
+            if not isinstance(data, dict):
+                return "debug event"
+            component = str(data.get("component") or "").strip()
+            message = str(data.get("message") or data.get("event_type") or "").strip()
+            if component and message:
+                return f"{component} · {message}"
+            return component or message or "debug event"
+
+        templates.env.filters["event_label"] = _filter_event_label
+
     @app.get("/runs", response_class=HTMLResponse)
     def list_runs(
         request: Request,
