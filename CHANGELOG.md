@@ -147,6 +147,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **UI: the request page's delivery card now surfaces the causal reason and the
+  decision risk in the first viewport**, instead of only at the tail of the
+  deliberation spine's OUTPUT anchor (~1400 lines / 30-40% scroll depth down).
+  The "Authoritative delivery path" card's `delivery-path-facts` grid gained a
+  causal block that reads `final_decision_card` / `compliance_fast_path_panel`
+  verbatim (a render-site move, no new computation): a governed FINAL decision
+  shows "Decision risk" (`risk_score`/`risk_category` from the FINAL trace,
+  never a raw or calibration-guard-capped operational value — the S10 case with
+  three different risk numbers on one request now unambiguously surfaces the
+  0.35/`sensitive` value that actually governed the decision), "Winning rule",
+  and the one-sentence "Causal reason" (the `why_not_*` field matching the
+  chosen `final_action`); a DCCL fast-path reuse shows the matched-rule summary
+  with no risk sentence (risk was computed but unused there); a pipeline
+  failure or a request with no `decision_traces` renders no causal slot at all,
+  never an invented "unknown" value or the `risk_score=1.0` fail-closed
+  sentinel. The full `why_not_*` set and raw trace stay at the existing tail
+  render site unchanged (progressive disclosure, not duplication removal).
+  Tests: `tests/test_ui_causal_reason_surfacing.py`.
+
 - **UI: the deliberation-spine INPUT anchor's contract/conversation chips now
   come from this request's own persisted evidence.** The "conversation history"
   chip was gated on `conversation_context.turn_count`

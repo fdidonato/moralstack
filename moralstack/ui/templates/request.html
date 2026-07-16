@@ -85,6 +85,52 @@
             <span class="meta-label">Authoritative final source</span>
             <span class="meta-value mono">{{ delivery_path_summary.delivered_source }}</span>
         </div>
+        {# Causal reason surfaced in the first viewport (iteration 15) — a render-site
+           move only, reading _build_final_decision_card / _build_compliance_fast_path_panel
+           verbatim. Branch order mirrors the evidence: a governed FINAL decision, a DCCL
+           fast-path reuse (no FINAL row by design — rule vocabulary, no risk sentence), or
+           neither (pipeline failure / no decision_traces — no causal slot is invented). #}
+        {% if final_decision_card %}
+        <div class="meta-item">
+            <span class="meta-label">Decision risk</span>
+            <span class="meta-value mono">{% if final_decision_card.risk_score is not none %}{{ final_decision_card.risk_score }}{% else %}&mdash;{% endif %}{% if final_decision_card.risk_category %} / {{ final_decision_card.risk_category }}{% endif %}</span>
+        </div>
+        {% if final_decision_card.winning_rule %}
+        <div class="meta-item">
+            <span class="meta-label">Winning rule</span>
+            <span class="meta-value mono">{{ final_decision_card.winning_rule }}</span>
+        </div>
+        {% endif %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Causal reason</span>
+            {% if final_decision_card.final_action == 'SAFE_COMPLETE' and final_decision_card.why_not_safe_complete %}
+            <span class="meta-value">{{ final_decision_card.why_not_safe_complete }}</span>
+            {% elif final_decision_card.final_action == 'REFUSE' and final_decision_card.why_not_refuse %}
+            <span class="meta-value">{{ final_decision_card.why_not_refuse }}</span>
+            {% elif final_decision_card.final_action == 'NORMAL_COMPLETE' and final_decision_card.why_not_normal_complete %}
+            <span class="meta-value">{{ final_decision_card.why_not_normal_complete }}</span>
+            {% else %}
+            <span class="meta-value muted">&mdash;</span>
+            {% endif %}
+        </div>
+        {% if orchestrator_observability.get('calibration_guard_override') %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Operational sub-signal capped</span>
+            <span class="meta-value muted">
+                Calibration guard capped <span class="mono">{{ orchestrator_observability.calibration_guard_override.raw_risk_policy_action }}</span>
+                (<span class="mono">{{ orchestrator_observability.calibration_guard_override.raw_risk_score }}</span>) to
+                <span class="mono">{{ orchestrator_observability.calibration_guard_override.capped_risk_policy_action }}</span>
+                (<span class="mono">{{ orchestrator_observability.calibration_guard_override.capped_risk_score }}</span>)
+                before the decision above &mdash; an operational sub-signal, not the decision risk.
+            </span>
+        </div>
+        {% endif %}
+        {% elif compliance_fast_path_panel %}
+        <div class="meta-item span-2">
+            <span class="meta-label">Causal reason</span>
+            <span class="meta-value mono">{{ compliance_fast_path_panel.matched_rule_summary or compliance_fast_path_panel.matched_rule_id or '—' }}</span>
+        </div>
+        {% endif %}
     </div>
     {% if delivery_path_summary.steps %}
     <ol class="delivery-path-steps">
