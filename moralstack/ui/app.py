@@ -27,7 +27,10 @@ from moralstack.observability.sinks.sqlite_sink import delete_request, delete_ru
 from moralstack.orchestration.orchestration_event_taxonomy import (
     COMPLIANCE_DRAFT_REGENERATED,
     COMPLIANCE_DRAFT_REUSED,
+    COMPLIANCE_LAYER_STARTED,
     COMPLIANCE_MATCH_DOWNGRADED,
+    CONTEXT_SHAPE_RECORDED,
+    CONVERSATION_CONTEXT_ATTACHED,
     CRITIC_SKIPPED,
     EARLY_CONVERGENCE_ACCEPTED,
     EARLY_CONVERGENCE_REJECTED,
@@ -1074,6 +1077,83 @@ def _build_final_revalidation_info(orchestration_events: list[dict[str, Any]]) -
         "final_text_after_revalidation": payload.get("final_text_after_revalidation") or "",
         "final_response_length_before": payload.get("final_response_length_before"),
         "final_response_length_after": payload.get("final_response_length_after"),
+    }
+
+
+def _build_input_anchor_info(
+    orchestration_events: list[dict[str, Any]],
+    conversation_id: str,
+    turn_index: Any,
+    final_revalidation_info: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Truthful presence chips for the deliberation-spine INPUT anchor.
+
+    Derived from THIS request's own persisted orchestration events only — never
+    from a conversation-wide/retrospective aggregate such as
+    ``len(sibling_requests)`` (see .claude/ui-loop/DECISIONS.md invariant 25;
+    that field reflects the conversation's current row count, not what this
+    request actually saw at the time it ran).
+    """
+    developer_contract_present = bool(final_revalidation_info and final_revalidation_info.get("developer_contract_present"))
+    for e in orchestration_events:
+        if (e.get("event_type") or "") != COMPLIANCE_LAYER_STARTED:
+            continue
+        payload = _parse_json_field(e.get("payload_json")) or _parse_json_field(e.get("payload")) or {}
+        if payload.get("has_contract") is True:
+            developer_contract_present = True
+        break
+
+    conversation_chip: dict[str, str] | None = None
+    if conversation_id:
+        cca_event = None
+        for e in orchestration_events:
+            if (e.get("event_type") or "") == CONVERSATION_CONTEXT_ATTACHED:
+                cca_event = e
+                break
+        cca_payload: dict[str, Any] = {}
+        if cca_event is not None:
+            cca_payload = (
+                _parse_json_field(cca_event.get("payload_json")) or _parse_json_field(cca_event.get("payload")) or {}
+            )
+
+        max_prior_turn_count: int | None = None
+        for e in orchestration_events:
+            if (e.get("event_type") or "") != CONTEXT_SHAPE_RECORDED:
+                continue
+            payload = _parse_json_field(e.get("payload_json")) or _parse_json_field(e.get("payload")) or {}
+            value = payload.get("prior_turn_count")
+            if isinstance(value, int):
+                max_prior_turn_count = value if max_prior_turn_count is None else max(max_prior_turn_count, value)
+
+        # Labels use the literal "&middot;" entity (matching this template's
+        # existing static-dot convention, e.g. "INPUT &middot; request") and are
+        # rendered with the Jinja `safe` filter: every interpolated value here
+        # is a fixed literal or a validated int, never untrusted request text.
+        if max_prior_turn_count and max_prior_turn_count > 0:
+            conversation_chip = {
+                "kind": "prior_turns",
+                "label": f"conversation history &middot; {max_prior_turn_count} prior turn"
+                f"{'s' if max_prior_turn_count != 1 else ''}",
+            }
+        elif cca_event is not None and cca_payload.get("conversation_state_provided") is True:
+            conversation_chip = {
+                "kind": "state_inherited",
+                "label": "conversation state inherited",
+            }
+        elif cca_event is None and isinstance(turn_index, int) and turn_index > 0:
+            conversation_chip = {
+                "kind": "prior_turns",
+                "label": f"conversation history &middot; {turn_index} prior turn{'s' if turn_index != 1 else ''}",
+            }
+        else:
+            conversation_chip = {
+                "kind": "no_prior_context",
+                "label": "conversation turn &middot; no prior context",
+            }
+
+    return {
+        "developer_contract_present": developer_contract_present,
+        "conversation_chip": conversation_chip,
     }
 
 
@@ -3649,6 +3729,13 @@ button:hover{opacity:0.9}
                 "meta_json__parsed": _parse_json_field(req_data.get("meta_json")) if isinstance(req_data, dict) else None,
             }
 
+        input_anchor_info = _build_input_anchor_info(
+            orchestration_events,
+            conversation_id_for_req,
+            req_data.get("turn_index") if isinstance(req_data, dict) else None,
+            final_revalidation_info,
+        )
+
         path_badge_info = _build_path_badge_info(orchestration_events)
         proxy_output_info = _build_proxy_output_info(orchestration_events)
         delivery_path_summary = _build_delivery_path_summary(
@@ -3703,6 +3790,7 @@ button:hover{opacity:0.9}
                     "delivery_path_summary": delivery_path_summary,
                     "final_revalidation_info": final_revalidation_info,
                     "conversation_context": conversation_context,
+                    "input_anchor_info": input_anchor_info,
                     "token_usage": token_usage,
                     "domain_retrieval": domain_retrieval,
                     "pipeline_failure": pipeline_failure,

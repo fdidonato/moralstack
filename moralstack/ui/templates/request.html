@@ -1260,11 +1260,11 @@
                 <div class="flow-node-title-area">
                     <div class="flow-node-title">INPUT &middot; request</div>
                     <div class="flow-node-meta">
-                        {% if final_revalidation_info and final_revalidation_info.developer_contract_present %}
+                        {% if input_anchor_info and input_anchor_info.developer_contract_present %}
                         <span class="badge badge-type" title="A developer contract constrains this request">developer contract</span>
                         {% endif %}
-                        {% if conversation_context and ((conversation_context.turn_count and conversation_context.turn_count > 1) or (conversation_context.turn_index and conversation_context.turn_index > 0)) %}
-                        <span class="badge" title="Part of a multi-turn conversation">conversation history{% if conversation_context.turn_index %} &middot; {{ conversation_context.turn_index }} prior turn{{ 's' if conversation_context.turn_index != 1 else '' }}{% endif %}</span>
+                        {% if input_anchor_info and input_anchor_info.conversation_chip %}
+                        <span class="badge" title="Conversation membership and inherited context for this request">{{ input_anchor_info.conversation_chip.label | safe }}</span>
                         {% endif %}
                     </div>
                     {% set input_preview = req.prompt or '' %}

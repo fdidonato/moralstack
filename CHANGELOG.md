@@ -147,6 +147,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **UI: the deliberation-spine INPUT anchor's contract/conversation chips now
+  come from this request's own persisted evidence.** The "conversation history"
+  chip was gated on `conversation_context.turn_count`
+  (`len(sibling_requests)`), the conversation's current, complete row count —
+  so a genuine opening turn falsely claimed prior context once the
+  conversation grew later. The "developer contract" chip was gated only on
+  `final_revalidation_info.developer_contract_present`, which requires a
+  `PROXY_FINAL_REVALIDATION_*` event this deployment never emits, so the chip
+  never rendered even when `COMPLIANCE_LAYER_STARTED.has_contract` was true. A
+  new `_build_input_anchor_info` derives both chips per-request from
+  `CONVERSATION_CONTEXT_ATTACHED`/`CONTEXT_SHAPE_RECORDED`/
+  `COMPLIANCE_LAYER_STARTED` orchestration events (falling back to `turn_index`
+  only when no `CONVERSATION_CONTEXT_ATTACHED` row exists), and distinguishes
+  "N prior turns" (prompt actually carried history) from "conversation state
+  inherited" (state came from the ledger, not the prompt) instead of
+  conflating the two.
+
 - **UI: deliberation-spine boxes are now genuinely compact — long input/output
   annotation values are truncated in the collapsed box.** A policy node's
   `→ draft` output carried the full generated answer (~1300+ chars) in the
