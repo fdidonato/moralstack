@@ -34,6 +34,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Simulator-metrics-measured marker on decision traces (audit honesty).** `DecisionTrace`
+  gained `sim_metrics_measured`, recording whether a FINAL trace's `sim_*` metrics are a
+  real measurement or defaults. The metrics could not self-report it:
+  `sim_semantic_expected_harm=0.0` together with `sim_worst_harm=None` is produced *both*
+  when nothing was measured *and* when a simulation was retained and every consequence was
+  benign (the aggregation skips `harm_type == "none"`, leaving no risk records either way),
+  so a defaulted value was indistinguishable from a measured one. The field is tri-state
+  (`bool | None`, default `None` = not asserted) and is written only by
+  `_populate_trace_from_sim` (as `sim_result is not None`, before its early return);
+  `_log_final_trace` copies it onto the FINAL row. It reflects whether a `SimulationResult`
+  was retained into the trace, **not** whether the simulator module executed — a
+  full-parallel simulation discarded on a critic hard violation ran yet reads `False`,
+  which is correct because those metrics are then defaults. Purely observability — it feeds
+  no gate and changes no decision. No schema migration (`decision_traces` persists a
+  `trace_json` blob). Note: traces written before this release carry no
+  `sim_metrics_measured` key and stay ambiguous; consumers must read absent/`None` as
+  *unknown*, never as "not measured".
 - **UI Loop for a better UX Design and Readability of conversation** added a loop feature
   to improve UX Design and Readability in iterative and verificable way
 - **Governance steps are now visible in the execution graph (audit completeness).** The

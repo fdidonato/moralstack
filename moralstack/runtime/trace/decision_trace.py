@@ -98,6 +98,18 @@ class DecisionTrace:
     hard_violation_source: str = ""
 
     # Simulator semantic metrics (populated when sim_result available)
+    # sim_metrics_measured tells whether the sim_* metrics below are a real
+    # measurement or defaults: they default to 0.0/None, so a defaulted value is
+    # byte-identical to a measured-benign one (0.0 harm, no worst_harm). True iff
+    # a retained SimulationResult populated them — NOT "the simulator executed":
+    # a full-parallel simulation can run and then be discarded on a critic hard
+    # violation (deliberation_runner._run_full_parallel_evaluation), leaving these
+    # metrics at their defaults, in which case this is False. Conversely a
+    # carried-forward result from an earlier cycle counts as measured (True).
+    # Tri-state on purpose: None = not asserted (the stage never consulted the
+    # simulator, or the row predates this field), True/False only ever written by
+    # _populate_trace_from_sim. Never read as a plain bool.
+    sim_metrics_measured: bool | None = None
     sim_expected_valence: float = 0.0
     sim_semantic_expected_harm: float = 0.0
     sim_dominant_harm_types: list[str] = field(default_factory=list)

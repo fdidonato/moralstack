@@ -284,6 +284,7 @@ def _log_final_trace(
     final_trace.why_not_normal_complete = getattr(explanation, "why_not_normal_complete", "") or ""
     final_trace.hard_violation_codes = list(hard_violation_codes or [])
     final_trace.hard_violation_source = hard_violation_source or ""
+    final_trace.sim_metrics_measured = getattr(trace, "sim_metrics_measured", None)
     final_trace.sim_expected_valence = getattr(trace, "sim_expected_valence", 0.0)
     final_trace.sim_semantic_expected_harm = getattr(trace, "sim_semantic_expected_harm", 0.0)
     final_trace.sim_dominant_harm_types = list(getattr(trace, "sim_dominant_harm_types", []) or [])
@@ -392,6 +393,15 @@ def _populate_trace_from_risk(trace: DecisionTrace, risk_assessment: RiskEstimat
 
 def _populate_trace_from_sim(trace: DecisionTrace, sim_result: SimulationResultProtocol | None) -> None:
     """Populates the trace with fields derived from sim_result."""
+    # Asserted before the early return: sim_metrics_measured records whether the sim_*
+    # metrics below are a real measurement or defaults. sim_result is the retained
+    # SimulationResult the controller carries into the decision (state.simulations[-1] or
+    # None); a truthy one means these metrics were measured, separating "never ran / result
+    # discarded" (0.0/None defaults) from "ran and every consequence was benign" (also
+    # 0.0/None, but genuinely measured). It is NOT a did-the-module-execute flag: a
+    # full-parallel simulation discarded on a critic hard violation ran yet leaves
+    # sim_result None here — see _run_full_parallel_evaluation.
+    trace.sim_metrics_measured = sim_result is not None
     if sim_result is None:
         return
     trace.sim_expected_valence = getattr(sim_result, "expected_valence", 0.0)

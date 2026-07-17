@@ -276,7 +276,12 @@ Emitted across the flow (DB rows + JSONL envelopes per observability mode):
 - `requests` row pre-insert (step 2) and finalize (step 12) with
   `final_response`, `domain`, merged `meta_json`.
 - `RISK_ASSESSMENT`, `COMPLIANCE_LAYER`, `DELIBERATION_AGGREGATE`, `FINAL`
-  decision traces.
+  decision traces. The `FINAL` trace's `sim_*` fields are populated by
+  `_populate_trace_from_sim` / copied in `_log_final_trace`
+  (`orchestration/decision_service.py`); `sim_metrics_measured` (tri-state
+  `bool | None`) records whether those metrics are a retained measurement vs
+  defaults — observability only, it gates nothing (see
+  `docs/traces/observability_db_to_ui.md` and `docs/CODEBASE_FACTS.md`).
 - `orchestration_events`: `SPECULATIVE_STARTED`, `COMPLIANCE_LAYER_*`,
   `MODULE_DEFERRED_TO_COMPLIANCE`, `LEDGER_FAST_PATH_*`,
   `CONVERSATION_CONTEXT_ATTACHED`, `CONVERSATION_STATE_UPDATED`,

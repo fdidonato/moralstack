@@ -637,6 +637,26 @@ See `docs/traces/openai_compatible_multiturn.md`.
   `exports_cache`, `conversation_states`, `ledger_events`,
   `session_store_events`, `proxy_request_events`. WAL + foreign keys enabled
   (`_get_connection`, `sinks/sqlite_sink.py:497-504`).
+- `decision_traces` stores the whole `DecisionTrace` as a **`trace_json` blob**
+  (`_DECISION_TRACES_INSERT`, `sinks/sqlite_sink.py:612-615`), not typed columns:
+  adding a trace field is additive and needs no migration, but old rows simply
+  lack the new key — readers must distinguish "absent" from a falsy value.
+- **`DecisionTrace.sim_metrics_measured`** (`runtime/trace/decision_trace.py`)
+  records whether a FINAL trace's `sim_*` metrics are a **measurement or
+  defaults**. Those metrics cannot self-report it: `sim_semantic_expected_harm=0.0`
+  + `sim_worst_harm=None` is produced both when nothing was measured and when a
+  simulation was retained and every consequence was benign
+  (`runtime/modules/simulator_module.py:669-684` skips `harm_type == "none"`, so
+  `risk_records` ends up empty either way). It is **tri-state** (`bool | None`,
+  default `None` = not asserted), written only by `_populate_trace_from_sim`
+  (`orchestration/decision_service.py`) as `sim_result is not None` before its
+  early return; `_log_final_trace` copies it onto the FINAL row. **It is NOT a
+  "did the module execute" flag:** a full-parallel simulation runs but is
+  discarded on a critic hard violation without merging `state.simulations`
+  (`deliberation_runner._run_full_parallel_evaluation:2525-2533`), so the
+  simulator can have executed while this reads `False` — correct, because those
+  FINAL metrics are then defaults. A carried-forward result counts as measured.
+  Never read it as a plain bool.
 - **JSONL** sink writes the same event envelopes to
   `MORALSTACK_OBSERVABILITY_JSONL_DIR` (default `logs/observability`).
 - Read contract: `SqliteReadStore` (`read_store.py`).
@@ -726,9 +746,12 @@ renders the same codes, unmoved). `Final Risk Score` gates on `is not none`
 (fixing a latent falsy-gate bug: `risk_score=0.0` would have been silently
 dropped). `Semantic Harm` stays on HEAD's `sim_semantic_expected_harm`
 truthiness gate — an evidence gate keyed on `sim_worst_harm` was proposed and
-**dropped** (the field is not a "simulator ran" marker; see
-`docs/CODEBASE_FACTS.md`, "Future work / known gaps"). Tests:
-`tests/test_ui_final_decision_completeness.py`.
+**dropped** (the field is not a "metrics measured" marker). That marker now
+exists: `DecisionTrace.sim_metrics_measured` (see §12), persisted on FINAL traces
+from 2026-07-17. The UI does **not** yet gate on it — that was deliberately left
+out of this branch, and rows written before 2026-07-17 carry no
+`sim_metrics_measured` key, so a UI gate must treat absent/None as "unknown",
+never as "not measured". Tests: `tests/test_ui_final_decision_completeness.py`.
 
 **Conversation-level spine (`/conversations/{id}`, `conversation.html`).** The
 horizontal "conversation strip" is replaced by a vertical spine: a first-turn

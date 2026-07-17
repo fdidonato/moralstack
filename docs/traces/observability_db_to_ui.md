@@ -67,7 +67,7 @@ Schema in `observability/sinks/sqlite_sink.py:48-489`; connection uses WAL +
 | `llm_calls` | every LLM call: module, action, model, prompt, system_prompt, raw_response, parsed/summary JSON, token usage, cycle, sequence, call_kind/outcome, cache_status, `billable_provider_call` |
 | `request_token_usage` | synchronous best-effort per-request token summary (one row per `run_id`/`request_id`); not authoritative — see token accounting notes below |
 | `orchestration_events` | pipeline events (speculative, compliance, ledger fast-path, conversation, proxy output finalized) |
-| `decision_traces` | stage snapshots (`RISK_ASSESSMENT`, `COMPLIANCE_LAYER`, `DELIBERATION_AGGREGATE`, `RELEVANT_PRINCIPLES`, `FINAL`, …) as `trace_json` |
+| `decision_traces` | stage snapshots (`RISK_ASSESSMENT`, `COMPLIANCE_LAYER`, `DELIBERATION_AGGREGATE`, `RELEVANT_PRINCIPLES`, `FINAL`, …) as `trace_json` (a blob, not typed columns — new trace fields are additive and need no migration, but old rows lack the key) |
 | `debug_events` | low-level diagnostic payloads |
 | `exports_cache` | cached markdown exports |
 | `conversation_states` | per-turn governance state in/out, posture, final_action, risk, was_cached |
@@ -269,6 +269,18 @@ Yes, **when persistence is to the DB** (`db_only`/`dual`):
 - **Context-shape telemetry is payload JSON.** It is present in
   `orchestration_events` / JSONL payloads and request metadata, not in dedicated
   typed SQLite columns or a UI panel.
+- **`sim_metrics_measured` is absent on pre-2026-07-17 FINAL traces.** The marker
+  (`DecisionTrace.sim_metrics_measured`, see `docs/CODEBASE_FACTS.md`) separates
+  "sim metrics never measured" from "measured, every consequence benign" — the
+  `sim_*` metrics cannot, both cases yield `sim_semantic_expected_harm=0.0` +
+  `sim_worst_harm=None`. It reports whether those FINAL metrics are a measurement,
+  **not** whether the simulator module executed: a full-parallel simulation
+  discarded on a critic hard violation ran yet reads `False` here (its result was
+  not retained into the trace). Rows written before the field existed carry no
+  key, so they stay permanently ambiguous. **Reading contract:** the field is
+  tri-state (`True`/`False`/absent-or-`None`); map absent/`None` to *unknown*. A
+  `.get("sim_metrics_measured", False)` read is a bug — it re-asserts "not
+  measured" on every historical row.
 - **Reconstruction completeness depends on flush/shutdown for high-frequency
   telemetry.** A process killed before `flush()` / `shutdown()` may lose the last
   queued telemetry window. Lifecycle upserts and decision-audit finalization are
