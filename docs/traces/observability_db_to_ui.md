@@ -216,14 +216,19 @@ on wall-clock alone.
 The dashboard reads **only** from SQLite (`get_db_path()` required;
 `_ReadStoreProxy` resolves the read store at call time, `ui/app.py:58-94`). It
 reconstructs:
-- **Per request** (`/runs/{run_id}/requests/{request_id}`, `ui/app.py:1931`): the
-  deliberation timeline / "metro map" — calls grouped into visual tiers
-  (`_group_calls_into_tiers_and_enrich`), risk mini-estimator breakdown, a
-  synthetic calibration node (`_build_synthetic_calibration_node`), a synthetic
-  path-routing node, the final-decision card (`_build_final_decision_card`),
-  relevant/triggered principles, and a DCCL/compliance card.
-- **Per conversation** (`/conversations/{conversation_id}`, `ui/app.py:2143`):
-  full multi-turn timeline via `_build_conversation_timeline`; 404 if no requests.
+- **Per request** (`/runs/{run_id}/requests/{request_id}`, `ui/app.py:3559`,
+  route `request_detail`): the deliberation timeline / "metro map" — calls
+  grouped into visual tiers (`_group_calls_into_tiers_and_enrich`), risk
+  mini-estimator breakdown, a synthetic calibration node
+  (`_build_synthetic_calibration_node`), a synthetic path-routing node, the
+  final-decision card (`_build_final_decision_card` — now also returns
+  `activated_signals`, `hard_violation_codes`; the OUTPUT anchor renders both,
+  in addition to the pre-existing `Semantic Harm` truthiness gate — see
+  `docs/CODEBASE_FACTS.md`), relevant/triggered principles, and a DCCL/
+  compliance card.
+- **Per conversation** (`/conversations/{conversation_id}`, `ui/app.py:3839`,
+  route `conversation_detail`): full multi-turn timeline via
+  `_build_conversation_timeline`; 404 if no requests.
 - **Markdown exports**: per-request, per-run benchmark, and per-conversation
   AI Act art. 12 audit (`/conversations/{id}/export.md` →
   `reports/conversation_export.export_conversation_to_markdown`).
@@ -242,7 +247,8 @@ Yes, **when persistence is to the DB** (`db_only`/`dual`):
 ## 8. Gaps / missing fields
 
 - **`file_only` runs are invisible in the UI.** The dashboard reads SQLite only;
-  JSONL-only runs produce no dashboard views (`ui/app.py:2147-2148`).
+  JSONL-only runs produce no dashboard views (every route gates on
+  `get_db_path()`, e.g. `ui/app.py:3562-3563` in `request_detail`).
 - **Proxy assistant text vs. governed content.** For streaming SDK SAFE/NORMAL
   paths the audit `final_response` is recorded empty (the body is consumed by the
   caller) (`wrapper.py:358-366,386-391`).

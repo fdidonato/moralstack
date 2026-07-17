@@ -1620,6 +1620,22 @@
                     <span class="meta-value mono">{{ final_decision_card.winning_rule }}</span>
                 </div>
                 {% endif %}
+                {% if final_decision_card.activated_signals %}
+                <div class="meta-item">
+                    <span class="meta-label">Risk signals (activated)</span>
+                    <span class="meta-value mono">{{ final_decision_card.activated_signals | join(', ') }}</span>
+                </div>
+                {% endif %}
+                {% if final_decision_card.hard_violation_codes %}
+                <div class="meta-item span-2">
+                    <span class="meta-label">Hard violation codes</span>
+                    <span class="meta-value mono">
+                        {% for code in final_decision_card.hard_violation_codes %}
+                        <span class="badge badge-hard">{{ code }}</span>
+                        {% endfor %}
+                    </span>
+                </div>
+                {% endif %}
                 {% if final_decision_card.policy_min_action or final_decision_card.policy_max_action %}
                 <div class="meta-item">
                     <span class="meta-label">Policy bounds (constitution)</span>
@@ -1627,7 +1643,7 @@
                         max={{ final_decision_card.policy_max_action or '—' }}</span>
                 </div>
                 {% endif %}
-                {% if final_decision_card.risk_score %}
+                {% if final_decision_card.risk_score is not none %}
                 <div class="meta-item">
                     <span class="meta-label">Final Risk Score</span>
                     <span class="meta-value">{{ final_decision_card.risk_score }}</span>

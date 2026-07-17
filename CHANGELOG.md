@@ -66,6 +66,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the new column, so a database written before the migration still renders.
   Measured on a COMPL-AI replay: 63.0% of input tokens cached (−31.5% input cost).
   Cached tokens are billed at a reduced rate; they do not reduce token counts.
+- **UI: the request spine's OUTPUT anchor now surfaces `activated_signals`** (the
+  risk-signal vocabulary the policy consumed, 194/198 FINAL traces nonempty and
+  previously rendered nowhere — labelled "Risk signals (activated)" per invariant
+  36) **and `hard_violation_codes`** as an additional, gated row inside
+  `.final-decision-grid` (§5 #3: added visibility, not moved — the existing
+  "Relevant constitutional principles" card still renders the same codes). The
+  `Final Risk Score` gate was also changed from a truthiness check to
+  `is not none`, fixing a latent falsy-gate bug that would have hidden a
+  genuinely assessed `risk_score=0.0` (0/198 rows currently at that value, so
+  no visible change today). Template-only; `_build_final_decision_card` already
+  returned both fields. Tests: `tests/test_ui_final_decision_completeness.py`.
 
 ### Changed
 

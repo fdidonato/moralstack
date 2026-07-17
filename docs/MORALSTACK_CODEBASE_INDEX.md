@@ -718,6 +718,18 @@ per-module rollup, the per-call badge, and the Domain retrieval table — `—` 
 unknown, `0.0%` when measured. Contract and hit-rate caveats:
 `docs/modules/observability.md`.
 
+**Request-spine completeness (`request.html`, `.final-decision-grid`).** The
+OUTPUT anchor of the deliberation spine now also renders `activated_signals`
+(labelled "Risk signals (activated)") and, when non-empty, `hard_violation_codes`
+(§5 #3 — additive; the "Relevant constitutional principles" card at `:1137` still
+renders the same codes, unmoved). `Final Risk Score` gates on `is not none`
+(fixing a latent falsy-gate bug: `risk_score=0.0` would have been silently
+dropped). `Semantic Harm` stays on HEAD's `sim_semantic_expected_harm`
+truthiness gate — an evidence gate keyed on `sim_worst_harm` was proposed and
+**dropped** (the field is not a "simulator ran" marker; see
+`docs/CODEBASE_FACTS.md`, "Future work / known gaps"). Tests:
+`tests/test_ui_final_decision_completeness.py`.
+
 ---
 
 ## 15. COMPL-AI integration points
