@@ -77,6 +77,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   genuinely assessed `risk_score=0.0` (0/198 rows currently at that value, so
   no visible change today). Template-only; `_build_final_decision_card` already
   returned both fields. Tests: `tests/test_ui_final_decision_completeness.py`.
+- **UI: `/conversations/{id}` opens with a linear conversation-level spine**
+  instead of the horizontal risk-height "conversation strip", one node per
+  turn (decisional input → decision → response outcome, each linking to its
+  request page), a first-turn node for developer-contract/history chips
+  (reusing `_build_input_anchor_info` verbatim, so branch order/invariants
+  31-34 hold by construction), and a terminal node folding the already
+  failure-aware conversation aggregates. Connectors assert only what is
+  persisted: a real cache-reuse link ("reused decision from turn N"), a
+  posture transition, or a bare pipe — colliding `turn_index` renders a
+  dashed non-causal divider ("order not established"), never an invented
+  sequence; `meta_json.parent_request_id` is never used for ordering (131/131
+  conversation-turn rows are self-referential — see `docs/CODEBASE_FACTS.md`).
+  Risk is rendered as an exact value plus a proportional bar — a deliberate
+  substitution for the strip's height encoding, not a 1:1 carryover (no
+  sparkline). The posture timeline and per-turn detail cards are kept,
+  collapsed into `<details>` (invariant 23: reduce density by collapsing,
+  never by deleting evidence). New `_build_conversation_spine_node` in
+  `moralstack/ui/app.py`, wired into `_build_conversation_timeline`'s existing
+  per-turn loop with a best-effort per-turn orchestration-events fetch (§5 #6:
+  one malformed turn cannot break the page). Tests:
+  `tests/test_ui_conversation_spine.py`,
+  `tests/test_ui_conversation_spine_affordances.py` (parity rewrite of the
+  retired `tests/test_ui_conversation_strip.py`), extended
+  `tests/test_ui_conversation_views.py` / `tests/test_ui_conversation_turn_collision.py`.
 
 ### Changed
 

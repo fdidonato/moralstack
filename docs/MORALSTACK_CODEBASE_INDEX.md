@@ -730,6 +730,35 @@ truthiness gate — an evidence gate keyed on `sim_worst_harm` was proposed and
 `docs/CODEBASE_FACTS.md`, "Future work / known gaps"). Tests:
 `tests/test_ui_final_decision_completeness.py`.
 
+**Conversation-level spine (`/conversations/{id}`, `conversation.html`).** The
+horizontal "conversation strip" is replaced by a vertical spine: a first-turn
+node (developer-contract / conversation-history chips, built by calling
+`_build_input_anchor_info` verbatim — the same function the request page uses,
+so branch order/invariants 31-34 hold by construction), one node per turn
+(decisional input → decision → response outcome, linking to the request page),
+and a terminal node folding the already failure-aware conversation aggregates
+(`overview.last_posture`/`final_actions`/`max_risk_score` +
+`pipeline_failure_action_counts`/`max_risk_is_fail_closed`/
+`last_posture_is_from_pipeline_failure`). New `_build_conversation_spine_node`
+(`app.py`, placed immediately before `_build_conversation_timeline`) is called
+inside that function's existing per-turn loop, so it reuses the `turn_traces`
+already fetched there (no new N+1) plus one best-effort per-turn
+`get_orchestration_events_for_request` call (wrapped in `try/except`, §5 #6 —
+one malformed turn cannot break the page). Connectors assert only persisted
+evidence: a cache-reuse link (`state.cached_from_turn`, "reused decision from
+turn N"), a posture transition, or a bare pipe; colliding `turn_index` renders a
+dashed `.conv-spine-pipe--unordered` divider ("order not established"), never an
+invented sequence. `meta_json.parent_request_id` is **never** used for ordering
+— it is 100% self-referential on conversation-turn rows (proxy/SDK pass the
+current request id as the parent); order is the existing `seq_pos`
+(`turn_index ASC, created_at ASC`). Risk renders as an exact value + a
+proportional bar, a deliberate substitution for the strip's height encoding (no
+sparkline). The posture-timeline table and per-turn detail cards survive,
+collapsed into `<details>` (invariant 23). Tests:
+`tests/test_ui_conversation_spine.py`, `tests/test_ui_conversation_spine_affordances.py`
+(parity rewrite of the retired `tests/test_ui_conversation_strip.py`), extended
+`tests/test_ui_conversation_views.py` / `tests/test_ui_conversation_turn_collision.py`.
+
 ---
 
 ## 15. COMPL-AI integration points

@@ -257,8 +257,14 @@ def test_conversation_strip_flags_failed_turn_and_shows_aggregate_note(ui_client
     )
     assert resp.status_code == 200, resp.text
     body = resp.text
-    assert "conv-strip-cell-failure" in body
-    assert "conv-strip-label-failure" in body
+    # §7 justification: the strip is retired (conversation.html:118-176 removed);
+    # its per-turn failure classes ("conv-strip-cell-failure" /
+    # "conv-strip-label-failure") no longer exist. Retargeted to the spine's
+    # failure-node styling, which carries the same "this turn is not a governed
+    # outcome" meaning on its new carrier (the strip's two page-text assertions
+    # below are unchanged — they come from the banner, which survives).
+    assert "conv-spine-node--failure" in body
+    assert "not a governed outcome" in body
     assert "pipeline failure" in body
     assert "ended in a pipeline failure" in body
 
@@ -477,12 +483,24 @@ def test_conversation_page_flags_pipeline_failure_action_and_posture(ui_client):
     # therefore the only source of last_posture) is a pipeline failure.
     assert "from a turn that ended in a pipeline failure, not a governed outcome" in body
 
-    # "not a governed outcome" must appear exactly 7 times for this single failed
-    # turn: the iteration-01 banner, the conversation-strip cell title (both
-    # pre-existing), plus the five surfaces this change adds — final-actions tile,
-    # last-posture tile, posture-timeline Action cell, per-turn header badge, and
-    # the per-turn Governance decision -> Final action row.
-    assert body.count("not a governed outcome") == 7
+    # "not a governed outcome" must appear exactly 10 times for this single
+    # failed turn. §7 justification: the strip removal drops the strip cell's
+    # occurrence (-1 from the prior count of 7), and the conversation spine
+    # adds it back on four of its own surfaces (+4) since the failure-aware
+    # aggregates it reuses already carried the qualifier (invariant 21 — the
+    # same verbatim string, only its carrier changed, never a weakening).
+    # Real surfaces, recomputed against the actual rendered output:
+    #   1. iteration-01 banner (top of page)
+    #   2. final-actions tile (top meta-grid)
+    #   3. last-posture tile (top meta-grid)
+    #   4. conversation-spine per-turn node header badge (new carrier)
+    #   5. conversation-spine terminal node "Last posture" slot (new carrier)
+    #   6. conversation-spine terminal node "Final actions" slot (new carrier)
+    #   7. conversation-spine terminal node "Pipeline failures" slot (new carrier)
+    #   8. posture-timeline table Action cell (kept, collapsed into <details>)
+    #   9. per-turn detail card header badge (kept, collapsed into <details>)
+    #  10. per-turn detail Governance decision -> Final action row (kept, in <details>)
+    assert body.count("not a governed outcome") == 10
 
 
 def test_normal_conversation_has_no_pipeline_failure_action_qualifiers(ui_client):

@@ -115,67 +115,184 @@
 {% set token_usage_title = 'Token usage by model (conversation)' %}
 {% include "_token_usage.html" %}
 
-{# Step 14.6 — Conversation strip: horizontal visual summary of turns #}
+{# Conversation-level spine: replaces the horizontal strip. One node per turn
+   (input -> decision -> outcome), a first-turn node for contract/history
+   context, and a terminal node folding the failure-aware aggregates. Overview
+   only — per-turn internals stay on the request page (linked from each node).
+   Order follows seq_pos (turn_index, created_at); parent_request_id is never
+   used for ordering (100% self-referential — see docs/CODEBASE_FACTS.md). #}
 {% if timeline.requests %}
-<h2>Conversation strip</h2>
+<h2>Conversation spine</h2>
 <div class="card">
     <p class="muted small">
-        Each rectangle is one turn. Height encodes risk score (taller = higher risk).
-        Colour encodes final_action (green = NORMAL_COMPLETE, yellow = SAFE_COMPLETE,
-        red = REFUSE). Orange border = ESCALATED posture. ⚡ = cached from a previous turn.
-        Hover for details, click to open the request.
+        One node per turn: what it saw (input), what governance decided (decision),
+        what was delivered (outcome). Risk is the exact decision-trace value plus a
+        proportional bar (not height — a deliberate substitution, see
+        <code>.claude/ui-loop/DECISIONS.md</code>). Order follows creation order
+        (turn_index, created_at); a dashed divider marks turns sharing the same
+        turn_index, where order is not established — never a causal claim.
     </p>
-    <div class="conv-strip-container">
-        <div class="conv-strip">
-            {% for r in timeline.requests %}
-                {% set meta = r.meta_json__parsed or {} %}
-                {% set state = r.state or {} %}
-                {% set summary = state.get('state_summary_json__parsed') or {} %}
-                {% set risk_score = meta.get('risk_score') %}
-                {% set posture = state.get('posture') or summary.get('last_governance_posture') or meta.get('governance_posture') %}
-                {% set action = meta.get('final_action') or 'unknown' %}
-                {% set was_cached = state.get('was_cached') or meta.get('was_cached') %}
-                {% set cached_from = state.get('cached_from_turn') %}
-                {% set bar_height = (24 + ((risk_score or 0.0) * 56)) | int %}
-                {% set is_pipeline_failure = r.get('pipeline_failure') %}
-                {% set action_class = 'conv-strip-cell-failure' if is_pipeline_failure else ('conv-strip-cell-' + (action | lower)) %}
-                {% set escalated = (posture == 'ESCALATED') %}
-                <div
-                    class="conv-strip-cell {{ action_class }}{% if escalated %} conv-strip-cell-escalated{% endif %}"
-                    style="height: {{ bar_height }}px;"
-                    data-turn="{{ r.turn_index }}"
-                    {% if cached_from is not none %}data-cached-from="{{ cached_from }}"{% endif %}
-                    title="Turn {{ r.turn_index }}{% if r.turn_index_collision %} (#{{ r.turn_index_collision_pos }}/{{ r.turn_index_collision_group_size }} sharing this turn_index, {{ 'separate runs' if r.turn_index_collision_multi_run else 'same run' }}){% endif %}: {% if is_pipeline_failure %}PIPELINE FAILURE (delivered {{ action }} is not a governed outcome){% else %}{{ action }}{% endif %}{% if risk_score is not none %} (risk={{ '%.3f' | format(risk_score) }}{% if is_pipeline_failure %}, fail-closed default{% if r.get('last_assessed_risk') is not none %}, last assessed {{ '%.3f' | format(r.get('last_assessed_risk')) }}{% endif %}{% endif %}){% endif %}{% if posture %} [{{ posture }}]{% endif %}{% if meta.get('domain_overlay') %} domain={{ meta.get('domain_overlay') }}{% endif %}{% if was_cached %} — cached from T{{ cached_from }}{% endif %}"
-                >
-                    <span class="conv-strip-label{% if is_pipeline_failure %} conv-strip-label-failure{% endif %}">T{{ r.turn_index }}{% if r.turn_index_collision %} · #{{ r.turn_index_collision_pos }}/{{ r.turn_index_collision_group_size }}{% endif %}{% if is_pipeline_failure %} — pipeline failure{% endif %}</span>
-                    {% if was_cached %}
-                        <span class="conv-strip-cache-icon" aria-label="cached">⚡</span>
+    <div class="conv-spine">
+        {% set first = timeline.requests[0] %}
+        {% set first_anchor = first.spine_node.input.anchor if first.spine_node else none %}
+        <div class="conv-spine-node conv-spine-node--first flow-node--anchor">
+            <div class="conv-spine-node-header">
+                <span class="conv-spine-node-turn">Conversation start</span>
+            </div>
+            {% if first_anchor %}
+            <div class="conv-spine-slot">
+                {% if first_anchor.developer_contract_present %}
+                <span class="badge">developer contract present</span>
+                {% endif %}
+                {% if first_anchor.conversation_chip %}
+                <span class="badge">{{ first_anchor.conversation_chip.label | safe }}</span>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        {% set ns = namespace(prev_posture=none) %}
+        {% for r in timeline.requests %}
+        {% set node = r.spine_node %}
+        <div class="conv-spine-pipe{% if r.turn_index_collision %} conv-spine-pipe--unordered{% endif %}">
+            <div class="conv-spine-pipe-line"></div>
+            {% if r.turn_index_collision %}
+            <span class="conv-spine-pipe-label">same turn_index — order not established</span>
+            {% elif node and node.outcome.cached_from_turn is not none %}
+            <span class="conv-spine-pipe-label">reused decision from turn {{ node.outcome.cached_from_turn }}</span>
+            {% elif node and ns.prev_posture and node.outcome.posture and ns.prev_posture != node.outcome.posture %}
+            <span class="conv-spine-pipe-label">{{ ns.prev_posture }} &rarr; {{ node.outcome.posture }}</span>
+            {% endif %}
+        </div>
+        <div class="conv-spine-node{% if r.get('pipeline_failure') %} conv-spine-node--failure{% endif %}">
+            <div class="conv-spine-node-header">
+                <span class="conv-spine-node-turn">
+                    Turn {{ r.turn_index if r.turn_index is not none else '?' }}{% if r.turn_index_collision %} · #{{ r.turn_index_collision_pos }}/{{ r.turn_index_collision_group_size }}{% endif %}
+                </span>
+                {{ action_badge(node.outcome.final_action if node else none, r.get('pipeline_failure')) }}
+                {% if r.get('pipeline_failure') %}
+                <span class="muted small">not a governed outcome</span>
+                {% endif %}
+            </div>
+            <div class="conv-spine-node-grid">
+                <div class="conv-spine-slot conv-spine-slot--input">
+                    <span class="conv-spine-slot-label">Input</span>
+                    {% if node %}
+                    {% if node.input.anchor.developer_contract_present %}
+                    <span class="badge">developer contract</span>
                     {% endif %}
-                    {% if r.run_id and r.request_id %}
-                        <a class="conv-strip-link" href="/runs/{{ r.run_id }}/requests/{{ r.request_id }}" aria-label="Open turn {{ r.turn_index }}{% if r.turn_index_collision %} (#{{ r.turn_index_collision_pos }}/{{ r.turn_index_collision_group_size }}, request {{ r.request_id[:8] }}){% endif %}{% if is_pipeline_failure %} (pipeline failure){% endif %}"></a>
+                    {% if node.input.anchor.conversation_chip %}
+                    <span class="badge">{{ node.input.anchor.conversation_chip.label | safe }}</span>
+                    {% endif %}
+                    {% set prompt_preview = node.input.prompt_preview %}
+                    {% if prompt_preview %}
+                    <p class="conv-spine-preview">&ldquo;{{ (prompt_preview[:140] + '…') if prompt_preview | length > 140 else prompt_preview }}&rdquo;</p>
+                    {% endif %}
                     {% endif %}
                 </div>
-            {% endfor %}
+                <div class="conv-spine-slot conv-spine-slot--decision">
+                    <span class="conv-spine-slot-label">Decision</span>
+                    {% if not r.get('pipeline_failure') and node and node.decision %}
+                    {% set d = node.decision %}
+                    {% if d.risk_score is not none %}
+                    <div class="conv-spine-risk">
+                        <span class="conv-spine-risk-value">{{ "%.2f" | format(d.risk_score) }}</span>
+                        <span class="conv-spine-risk-bar-track"><span class="conv-spine-risk-bar-fill" style="width: {{ ((d.risk_score * 100) | round(1)) }}%;"></span></span>
+                    </div>
+                    {% endif %}
+                    {% if d.winning_rule %}
+                    <p class="conv-spine-note mono">{{ d.winning_rule }}</p>
+                    {% endif %}
+                    {% if d.hard_violation_codes %}
+                    <p class="conv-spine-note">
+                        {% for code in d.hard_violation_codes %}
+                        <span class="badge badge-hard">{{ code }}</span>
+                        {% endfor %}
+                    </p>
+                    {% endif %}
+                    {% set causal = none %}
+                    {% if d.final_action == 'NORMAL_COMPLETE' %}{% set causal = d.why_not_normal_complete %}
+                    {% elif d.final_action == 'SAFE_COMPLETE' %}{% set causal = d.why_not_safe_complete %}
+                    {% elif d.final_action == 'REFUSE' %}{% set causal = d.why_not_refuse %}
+                    {% endif %}
+                    {% if causal %}
+                    <p class="conv-spine-note">{{ causal }}</p>
+                    {% endif %}
+                    {% elif not r.get('pipeline_failure') %}
+                    <span class="muted small">no risk claim (no FINAL decision row for this turn)</span>
+                    {% endif %}
+                </div>
+                <div class="conv-spine-slot conv-spine-slot--outcome">
+                    <span class="conv-spine-slot-label">Outcome</span>
+                    {% if node %}
+                    {% set response_preview = node.outcome.response_preview %}
+                    {% if response_preview %}
+                    <p class="conv-spine-preview">&ldquo;{{ (response_preview[:140] + '…') if response_preview | length > 140 else response_preview }}&rdquo;</p>
+                    {% endif %}
+                    {% if node.outcome.posture %}
+                    <span class="badge{% if node.outcome.posture == 'ESCALATED' %} conv-spine-posture-escalated{% endif %}">{{ node.outcome.posture }}</span>
+                    {% endif %}
+                    {% if node.outcome.was_cached %}
+                    <span class="conv-spine-cache-icon" aria-label="cached" title="cached{% if node.outcome.cached_from_turn is not none %} from turn {{ node.outcome.cached_from_turn }}{% endif %}">⚡</span>
+                    {% endif %}
+                    {% endif %}
+                </div>
+            </div>
+            {% if r.run_id and r.request_id %}
+            <a class="conv-spine-node-link" href="/runs/{{ r.run_id }}/requests/{{ r.request_id }}" aria-label="Open turn {{ r.turn_index if r.turn_index is not none else '?' }}{% if r.turn_index_collision %} (#{{ r.turn_index_collision_pos }}/{{ r.turn_index_collision_group_size }}, request {{ r.request_id[:8] }}){% endif %}{% if r.get('pipeline_failure') %} (pipeline failure){% endif %}"></a>
+            {% endif %}
         </div>
-        <div class="conv-strip-arrows">
-            {% for r in timeline.requests %}
-                {% set state = r.state or {} %}
-                {% set cached_from = state.get('cached_from_turn') %}
-                {% if cached_from is not none and r.turn_index is not none %}
-                    <span class="conv-strip-arrow"
-                          data-from-turn="{{ cached_from }}"
-                          data-to-turn="{{ r.turn_index }}"
-                          title="Turn {{ r.turn_index }} reused cached decision from turn {{ cached_from }}">
-                        ←
-                    </span>
+        {% set ns.prev_posture = node.outcome.posture if node else ns.prev_posture %}
+        {% endfor %}
+
+        <div class="conv-spine-pipe">
+            <div class="conv-spine-pipe-line"></div>
+        </div>
+        <div class="conv-spine-node conv-spine-node--terminal">
+            <div class="conv-spine-node-header">
+                <span class="conv-spine-node-turn">Conversation end</span>
+            </div>
+            <div class="conv-spine-terminal-grid">
+                <div class="conv-spine-slot">
+                    <span class="conv-spine-slot-label">Last posture</span>
+                    {% if ov.get('last_posture') %}<span class="badge">{{ ov.get('last_posture') }}</span>{% else %}—{% endif %}
+                    {% if timeline.last_posture_is_from_pipeline_failure %}
+                    <span class="muted small">— from a turn that ended in a pipeline failure, not a governed outcome</span>
+                    {% endif %}
+                </div>
+                <div class="conv-spine-slot">
+                    <span class="conv-spine-slot-label">Final actions</span>
+                    {% if ov.get('final_actions') %}
+                    {% for action, count in ov.get('final_actions').items() %}
+                    {% set failure_count = timeline.pipeline_failure_action_counts.get(action) if timeline.pipeline_failure_action_counts else none %}
+                    <span class="badge">{{ action }}: {{ count }}</span>
+                    {% if failure_count %}
+                    <span class="muted small">— includes {{ failure_count }} pipeline failure{{ 's' if failure_count != 1 else '' }}, not a governed outcome</span>
+                    {% endif %}
+                    {% endfor %}
+                    {% else %}—{% endif %}
+                </div>
+                <div class="conv-spine-slot">
+                    <span class="conv-spine-slot-label">Max risk score</span>
+                    {% if ov_max_risk is not none %}{{ "%.3f" | format(ov_max_risk) }}{% else %}—{% endif %}
+                    {% if timeline.max_risk_is_fail_closed %}
+                    <span class="muted small">fail-closed default (pipeline failure), not an assessed score{% if timeline.max_assessed_risk is not none %} — max assessed: {{ "%.3f" | format(timeline.max_assessed_risk) }}{% endif %}</span>
+                    {% endif %}
+                </div>
+                {% if timeline.pipeline_failure_count %}
+                <div class="conv-spine-slot">
+                    <span class="conv-spine-slot-label">Pipeline failures</span>
+                    {{ timeline.pipeline_failure_count }} turn{{ 's' if timeline.pipeline_failure_count != 1 else '' }} ended in a pipeline failure — not a governed outcome.
+                </div>
                 {% endif %}
-            {% endfor %}
+            </div>
         </div>
     </div>
 </div>
 {% endif %}
 
-<h2>Posture timeline</h2>
+<details>
+<summary><h2 style="display:inline;">Posture timeline</h2></summary>
 {% if timeline.requests %}
 <div class="card">
     <table class="table">
@@ -252,8 +369,10 @@
     <p>No turns recorded for this conversation.</p>
 </div>
 {% endif %}
+</details>
 
-<h2>Per-turn detail</h2>
+<details>
+<summary><h2 style="display:inline;">Per-turn detail</h2></summary>
 {% for r in timeline.requests %}
 {% set meta = r.meta_json__parsed or {} %}
 {% set state = r.state or {} %}
@@ -437,6 +556,7 @@
     {% endif %}
 </div>
 {% endfor %}
+</details>
 
 <style>
 .conversation-turn-card { margin-top: 1rem; }

@@ -1610,74 +1610,6 @@ h3 {
     font-size: 0.65rem;
 }
 
-/* ===================================================================== */
-/* Step 14.6 — Conversation strip                                        */
-/* ===================================================================== */
-
-.conv-strip-container {
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding-bottom: 0.5rem;
-    margin-top: 0.75rem;
-}
-
-.conv-strip {
-    display: flex;
-    align-items: flex-end;
-    gap: 6px;
-    min-height: 96px;
-    padding: 0.75rem 0.5rem 0.5rem;
-}
-
-.conv-strip-cell {
-    position: relative;
-    flex: 0 0 36px;
-    min-width: 36px;
-    min-height: 24px;
-    border-radius: 4px;
-    background: var(--blue-bg);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    cursor: pointer;
-    transition: transform 0.1s ease, box-shadow 0.1s ease;
-}
-
-.conv-strip-cell:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-}
-
-.conv-strip-cell-normal_complete {
-    background: var(--green-bg);
-    border-color: var(--green);
-}
-
-.conv-strip-cell-safe_complete {
-    background: var(--yellow-bg);
-    border-color: var(--yellow);
-}
-
-.conv-strip-cell-refuse {
-    background: var(--red-bg);
-    border-color: var(--red);
-}
-
-.conv-strip-cell-escalated {
-    box-shadow: 0 0 0 2px #fb923c inset;
-}
-
-/* Pipeline-failure turn: distinct hatched pattern (never colour-only —
-   the visible T<n> label also carries the "pipeline failure" text). */
-.conv-strip-cell-failure {
-    background: repeating-linear-gradient(
-        45deg,
-        var(--red-bg),
-        var(--red-bg) 6px,
-        rgba(0, 0, 0, 0.3) 6px,
-        rgba(0, 0, 0, 0.3) 12px
-    );
-    border-color: var(--red);
-}
-
 .pipeline-failure-note {
     margin: 0.75rem 0 0;
     padding: 0.5rem 0.75rem;
@@ -1700,60 +1632,198 @@ h3 {
     color: var(--text);
 }
 
-.conv-strip-label {
-    position: absolute;
-    top: -1.1rem;
-    left: 50%;
-    transform: translateX(-50%);
-    font-size: 0.7rem;
-    color: var(--muted, #9ca3af);
-    font-family: ui-monospace, monospace;
-    white-space: nowrap;
-}
-
-/* The failure label is much wider than the 36px cell: anchor it to the
-   cell's left edge so it can never be clipped past the scroll container's
-   left boundary (right overflow stays inside the scrollable track). */
-.conv-strip-label-failure {
-    left: 0;
-    transform: none;
-}
-
-.conv-strip-cache-icon {
-    position: absolute;
-    top: 2px;
-    right: 4px;
+.small {
     font-size: 0.85rem;
-    line-height: 1;
-    color: var(--yellow, #fbbf24);
-    text-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
 }
 
-.conv-strip-link {
+/* ===================================================================== */
+/* Conversation-level spine (replaces the conversation strip)            */
+/* Reuses .flow-node / .flow-pipe / .badge / action_badge() for the      */
+/* parts that are identical to the request-page spine; only the parts    */
+/* that genuinely differ (3-slot turn node, unordered divider, terminal  */
+/* aggregate node) get new rules here.                                   */
+/* ===================================================================== */
+
+.conv-spine {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    padding: 0.5rem 0;
+}
+
+.conv-spine-node {
+    position: relative;
+    width: 100%;
+    max-width: 720px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 1rem;
+}
+
+.conv-spine-node--first,
+.conv-spine-node--terminal {
+    border-width: 2px;
+    border-color: var(--accent);
+    background: var(--surface);
+}
+
+.conv-spine-node--failure {
+    border-color: var(--red);
+}
+
+.conv-spine-node-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+}
+
+.conv-spine-node-turn {
+    font-family: ui-monospace, monospace;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.conv-spine-node-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.75rem;
+}
+
+@media (max-width: 700px) {
+    .conv-spine-node-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.conv-spine-slot {
+    min-width: 0;
+}
+
+.conv-spine-slot-label {
+    display: block;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-bottom: 0.25rem;
+}
+
+.conv-spine-preview {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-style: italic;
+    margin: 0.25rem 0;
+    overflow-wrap: break-word;
+}
+
+.conv-spine-note {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin: 0.25rem 0;
+    overflow-wrap: break-word;
+}
+
+.conv-spine-risk {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.2rem 0;
+}
+
+.conv-spine-risk-value {
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.conv-spine-risk-bar-track {
+    flex: 1 1 auto;
+    height: 6px;
+    background: var(--surface-hover);
+    border-radius: 3px;
+    overflow: hidden;
+    min-width: 40px;
+}
+
+.conv-spine-risk-bar-fill {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+}
+
+.conv-spine-posture-escalated {
+    box-shadow: 0 0 0 2px #fb923c inset;
+}
+
+.conv-spine-cache-icon {
+    font-size: 0.85rem;
+    color: var(--yellow, #fbbf24);
+    margin-left: 0.25rem;
+}
+
+.conv-spine-node-link {
     position: absolute;
     inset: 0;
     display: block;
     text-decoration: none;
+    z-index: 0;
 }
 
-.conv-strip-arrows {
+/* Content sits above the full-card link overlay */
+.conv-spine-node-header,
+.conv-spine-node-grid {
+    position: relative;
+    z-index: 1;
+}
+
+.conv-spine-pipe {
     display: flex;
-    gap: 6px;
-    padding: 0 0.5rem;
-    margin-top: 0.25rem;
-    min-height: 1.2rem;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.5rem 0;
 }
 
-.conv-strip-arrow {
-    flex: 0 0 36px;
-    min-width: 36px;
-    text-align: center;
-    font-size: 0.95rem;
-    color: var(--accent, #60a5fa);
-    cursor: help;
-    font-family: ui-monospace, monospace;
+.conv-spine-pipe-line {
+    width: 2px;
+    height: 20px;
+    background: var(--border);
 }
 
-.small {
-    font-size: 0.85rem;
+.conv-spine-pipe-label {
+    font-size: 0.68rem;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+    padding: 1px 8px;
+    white-space: nowrap;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 9999px;
+}
+
+/* Non-causal divider: colliding turn_index — order not established.
+   Amber/neutral, never the red failure style (reuses the same palette
+   as .turn-index-collision-note; never labelled "escalation"/"sequence"). */
+.conv-spine-pipe--unordered .conv-spine-pipe-line {
+    width: 0;
+    height: 20px;
+    border-left: 2px dashed var(--yellow);
+    background: none;
+}
+.conv-spine-pipe--unordered .conv-spine-pipe-label {
+    color: var(--text);
+    border-color: var(--yellow);
+    background: var(--yellow-bg);
+}
+
+.conv-spine-terminal-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 0.75rem;
 }

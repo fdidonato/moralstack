@@ -3059,6 +3059,57 @@ _SESSION_STORE_EVENT_JSON_KEYS = ("state_summary_json", "payload_json")
 _PROXY_REQUEST_EVENT_JSON_KEYS = ("headers_json", "metadata_json")
 
 
+def _build_conversation_spine_node(
+    *,
+    request_row: dict[str, Any],
+    meta: dict[str, Any],
+    traces: list[dict[str, Any]],
+    orchestration_events: list[dict[str, Any]],
+    state: dict[str, Any] | None,
+    conversation_id: str,
+) -> dict[str, Any]:
+    """One node of the conversation-level spine: what this turn saw, what the
+    governance layer decided, and what was delivered.
+
+    Overview only — per-turn internals stay on the request page. Every field is
+    read from structured persisted signals (meta_json / decision traces /
+    orchestration events); nothing is inferred from the response text
+    (decision-policy invariant, .claude/rules/decision-policy.md).
+    """
+    input_anchor = _build_input_anchor_info(
+        orchestration_events,
+        conversation_id,
+        request_row.get("turn_index"),
+        # Same 4th arg the request page derives (app.py request_detail) from the
+        # same event list — not None. Keeps both pages on one code path by
+        # construction (Codex review finding; see plan B1).
+        _build_final_revalidation_info(orchestration_events),
+    )
+    state = state or {}
+    return {
+        # --- decisional INPUT (what this turn actually saw) ---
+        "input": {
+            "anchor": input_anchor,
+            "prompt_preview": (request_row.get("prompt") or ""),
+            "governance_context_mode": meta.get("governance_context_mode"),
+        },
+        # --- decisional OUTPUT (from traces already in hand; None on a crashed turn) ---
+        "decision": _build_final_decision_card(traces),
+        # --- response OUTCOME ---
+        "outcome": {
+            "final_action": meta.get("final_action"),
+            "risk_score": meta.get("risk_score"),
+            "pipeline_failure": bool(request_row.get("pipeline_failure")),
+            "last_assessed_risk": request_row.get("last_assessed_risk"),
+            "response_preview": (request_row.get("final_response") or ""),
+            "was_cached": bool(state.get("was_cached") or meta.get("was_cached")),
+            "cached_from_turn": state.get("cached_from_turn"),
+            "posture": state.get("posture") or meta.get("governance_posture"),
+            "domain_overlay": meta.get("domain_overlay"),
+        },
+    }
+
+
 def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
     """
     Assemble a fully-resolved timeline for a conversation.
@@ -3087,7 +3138,12 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
         ``turn_index_collision`` / ``turn_index_collision_multi_run``, derived purely from
         ``turn_index`` and ``run_id`` grouping (no new DB reads) so the template can
         disambiguate colliding ``turn_index`` values without inventing a causal sequence:
-        it only classifies whether a collision spans separate runs or sits within one run.
+        it only classifies whether a collision spans separate runs or sits within one run;
+      * per-request ``spine_node`` (see ``_build_conversation_spine_node``): the
+        conversation-level spine's decisional input/output/outcome for that turn,
+        reusing ``turn_traces`` already fetched above plus a best-effort per-turn
+        ``get_orchestration_events_for_request`` fetch. ``None`` when the fetch or
+        the builder raises, so one malformed turn never breaks the page (§5 #6).
 
     Best-effort: when individual lookups fail or tables are missing, the
     corresponding sections degrade to empty lists / ``None`` instead of
@@ -3189,6 +3245,25 @@ def _build_conversation_timeline(conversation_id: str) -> dict[str, Any]:
             item["last_assessed_risk"] = None
             if isinstance(meta_risk, (int, float)):
                 non_failed_meta_risks.append(float(meta_risk))
+        # Per-turn spine node. Reuses turn_traces (already fetched above for the
+        # pipeline-failure probe) so the decisional output costs no extra query.
+        # Best-effort (§5 #6): one malformed turn's events or a builder error must
+        # not raise into conversation_detail.
+        try:
+            turn_events = get_orchestration_events_for_request(rrid, rid) if rrid and rid else []
+        except Exception:
+            turn_events = []
+        try:
+            item["spine_node"] = _build_conversation_spine_node(
+                request_row=item,
+                meta=meta_parsed if isinstance(meta_parsed, dict) else {},
+                traces=turn_traces,
+                orchestration_events=turn_events,
+                state=item.get("state"),
+                conversation_id=conversation_id,
+            )
+        except Exception:
+            item["spine_node"] = None
         enriched_requests.append(item)
 
     # turn_index collision detection: a rendering-order/grouping derivation, no new

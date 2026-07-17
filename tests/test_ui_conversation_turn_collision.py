@@ -109,23 +109,30 @@ def test_multi_run_collision_view_model_and_rendering(ui_client):
     assert resp.status_code == 200, resp.text
     body = html.unescape(resp.text)
 
-    # Canonical turn_index still rendered verbatim.
-    assert "T1" in body
+    # Canonical turn_index still rendered verbatim (spine node header).
+    assert "Turn 1" in body
 
-    # Strip labels disambiguate positions.
+    # Spine node labels disambiguate positions.
     assert "#1/2" in body
     assert "#2/2" in body
 
-    # Posture-timeline table classification.
+    # Posture-timeline table classification (kept, collapsed into <details>).
     assert "separate runs share this turn_index" in body
 
     # Conversation-level note.
     assert "turn-index-collision-note" in body
     assert "spans separate runs" in body
 
-    # Each strip link aria-label must be unique (distinct request fragments).
+    # Each spine node link aria-label must be unique (distinct request fragments).
     assert f"request {req_a[:8]}" in body
     assert f"request {req_b[:8]}" in body
+
+    # The connector into a colliding node is a non-causal divider, never a
+    # claim of causality/sequence.
+    assert "conv-spine-pipe--unordered" in body
+    assert "order not established" in body
+    assert "escalation" not in body.lower()
+    assert "sequence" not in body.lower()
 
 
 def test_same_run_collision_view_model_and_rendering(ui_client):
@@ -165,9 +172,15 @@ def test_same_run_collision_view_model_and_rendering(ui_client):
     assert resp.status_code == 200, resp.text
     body = html.unescape(resp.text)
 
-    assert "T0" in body
+    assert "Turn 0" in body
     assert "same run, turn_index did not advance" in body
     assert "within a single run" in body
+
+    # The connector into each colliding node is a non-causal divider.
+    assert "conv-spine-pipe--unordered" in body
+    assert "order not established" in body
+    assert "escalation" not in body.lower()
+    assert "sequence" not in body.lower()
 
 
 def test_no_collision_renders_byte_identical_to_unmodified_shape(ui_client):
@@ -199,10 +212,10 @@ def test_no_collision_renders_byte_identical_to_unmodified_shape(ui_client):
     assert resp.status_code == 200, resp.text
     body = resp.text
 
-    # Canonical turn_index still rendered verbatim.
-    assert "T0" in body
-    assert "T1" in body
-    assert "T2" in body
+    # Canonical turn_index still rendered verbatim (spine node header).
+    assert "Turn 0" in body
+    assert "Turn 1" in body
+    assert "Turn 2" in body
 
     # None of the new disambiguation surfaces are present.
     assert "turn-index-collision-note" not in body
@@ -210,3 +223,5 @@ def test_no_collision_renders_byte_identical_to_unmodified_shape(ui_client):
     assert "#1/" not in body
     assert "separate runs" not in body
     assert "same run, turn_index" not in body
+    assert "conv-spine-pipe--unordered" not in body
+    assert "order not established" not in body

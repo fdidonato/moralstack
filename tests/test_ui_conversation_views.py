@@ -260,6 +260,25 @@ def test_build_conversation_timeline_returns_structured_data(tmp_path, monkeypat
     assert turn_b["proxy_event"]["was_cached"] == 1
     assert any(ev["operation"] == "lookup" for ev in turn_b["ledger_events"])
 
+    # Per-turn spine node (Part B): built for every turn, never raises even when
+    # no decision-trace rows exist for this seed (no FINAL trace persisted here).
+    assert turn_a["spine_node"] is not None
+    assert set(turn_a["spine_node"].keys()) == {"input", "decision", "outcome"}
+    assert set(turn_a["spine_node"]["input"].keys()) == {
+        "anchor",
+        "prompt_preview",
+        "governance_context_mode",
+    }
+    assert turn_a["spine_node"]["decision"] is None  # no FINAL trace persisted by this seed
+    assert turn_a["spine_node"]["outcome"]["final_action"] == "NORMAL_COMPLETE"
+    assert turn_a["spine_node"]["outcome"]["pipeline_failure"] is False
+
+    assert turn_b["spine_node"] is not None
+    assert turn_b["spine_node"]["outcome"]["final_action"] == "SAFE_COMPLETE"
+    assert turn_b["spine_node"]["outcome"]["was_cached"] is True
+    assert turn_b["spine_node"]["outcome"]["cached_from_turn"] == 0
+    assert turn_b["spine_node"]["outcome"]["posture"] == "ESCALATED"
+
 
 def test_conversation_route_renders_template(ui_client):
     """GET /conversations/{id} produces a valid HTML page (after login)."""

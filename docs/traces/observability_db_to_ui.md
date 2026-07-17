@@ -228,7 +228,15 @@ reconstructs:
   compliance card.
 - **Per conversation** (`/conversations/{conversation_id}`, `ui/app.py:3839`,
   route `conversation_detail`): full multi-turn timeline via
-  `_build_conversation_timeline`; 404 if no requests.
+  `_build_conversation_timeline`; 404 if no requests. Since the
+  conversation-spine change, the per-turn loop inside
+  `_build_conversation_timeline` also calls `_build_conversation_spine_node`
+  (best-effort, one per-turn `get_orchestration_events_for_request` fetch
+  wrapped in `try/except`) to populate `item["spine_node"]` — the input the
+  conversation-level spine template renders (one node per turn: decisional
+  input → decision → response outcome, plus a first-turn contract/history node
+  and a terminal node folding the conversation's failure-aware aggregates).
+  This replaces the previous horizontal "conversation strip".
 - **Markdown exports**: per-request, per-run benchmark, and per-conversation
   AI Act art. 12 audit (`/conversations/{id}/export.md` →
   `reports/conversation_export.export_conversation_to_markdown`).
