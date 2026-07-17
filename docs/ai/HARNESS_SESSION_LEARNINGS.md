@@ -141,6 +141,45 @@ signal in the `session_start` brief.
 **Classification: guidance + optional .gitignore/archive convention.** Low risk, high
 hygiene return; no blocking hook needed.
 
+### B9 — Census data cited as validation when it had no falsification power
+
+**Evidence.** Cycle `feat/improve-readability-and-ux-design` (2026-07-17). Item A4 proposed
+gating the request-spine's semantic-harm display on `sim_worst_harm is not none`, on the
+premise that `sim_worst_harm` marks "the simulator ran". Supporting evidence: a census of
+`moralstack.db` showing **127/127** zero-harm FINAL traces had `sim_worst_harm=None` and
+**71/71** nonzero ones had it set. The correlation is perfect — and worthless. Both fields
+are computed from the same `risk_records` list in the same function
+(`moralstack/runtime/modules/simulator_module.py:669-684`): consequences with
+`harm_type == "none"` are skipped (`:671`), so an all-benign run leaves `risk_records`
+empty, `semantic_expected_harm` falls to `max(..., default=0.0)` (`:676`) and `worst_harm`
+stays `None` (`:678`). `_populate_trace_from_sim` returns early on `sim_result is None`
+(`moralstack/orchestration/decision_service.py:395-396`), leaving the *same* defaults. The
+pair is therefore produced by **both** "never ran" and "ran, all benign" — the census was
+**equally consistent with the premise being false**. It was re-run by the implementer as an
+acceptance gate, matched exactly, and added zero information. A4 was caught at diff review
+(Codex, 2026-07-17, verdict `BLOCK` — the review artifact lives under `ai/reviews/`, which is
+gitignored and therefore local-only) and dropped; the defect it was built on is now a known
+gap in `docs/CODEBASE_FACTS.md`.
+
+**Not an isolated slip.** The same trap produced the `deliberation-soft-revise-noop` **H1**
+hypothesis ("`semantic_expected_harm` may be decision-inert"), inferred from one request
+where a 0.42 reading preceded an unchanged outcome. A grep of the consumers (2026-07-17)
+disproves it: `sem >= 0.4` casts a `revise` vote at
+`moralstack/orchestration/convergence_evaluator.py:364`. One outcome consistent with
+inertness was never evidence of inertness.
+
+**The rule.** *Before citing data as validation, name the result that would have falsified
+the claim. If no such result exists, the data is decoration — go read the emitter.* Perfect
+correlations between two fields computed from one source are the strongest smell: they are
+tautologies of the emitter, not findings.
+
+**Classification: guidance only.** Not gate-able — a hook cannot tell a load-bearing query
+from a decorative one. Belongs in review discipline: `docs/ai/REVIEW_POLICY.md` and the plan
+template should require, for every "evidence" bullet, an explicit *"what would falsify
+this"* line. Note the two existing deterministic levers did **not** catch it: the census ran
+green as an acceptance gate, and Codex's *plan* review approved A4 — only the *diff* review
+did, and only because a reviewer re-read the emitter.
+
 ---
 
 ## Summary: where a hook/rule actually helps
@@ -155,6 +194,7 @@ hygiene return; no blocking hook needed.
 | B6 | DRY drift sync-by-test | Low/latent | No | guidance only / follow-up |
 | B7 | Unstable Cursor CLI | — | — | already resolved (`dfe2460`) |
 | B8 | ai/ + root artifact clutter | Low | Partial | pruning/archive convention; guidance |
+| B9 | Non-falsifiable data cited as validation | High (shipped a wrong premise to review twice) | No | plan/review template: per evidence bullet, a "what would falsify this" line |
 
 **Suggested priorities for the next phases** (to confirm with the user): B4 and B5 are the
 cleanest candidates for a **deterministic** intervention (low risk, measurable effect);
