@@ -229,8 +229,17 @@ Per-request token totals are tracked through two complementary mechanisms:
 The OpenAI-compatible proxy `usage` field mirrors the synchronous accumulator totals
 on the success path (zeros on fail-closed paths with no generation).
 
-`billable_provider_call` on `llm_calls` excludes diagnostic rows (speculative reuse,
-cache hits, skipped modules, leakage-only rows) from totals and breakdown queries.
+`billable_provider_call` on `llm_calls` excludes diagnostic/synthetic rows (speculative
+reuse, cache hits, skipped modules, leakage-only rows, and the risk estimator's synthetic
+`calibration_guard` row) from totals and breakdown queries. Every real provider call must
+also record its generating `model`: an unset `model` collapses into the `'—'` (empty-key)
+row of the per-model token panel. All provider-call sites therefore pass the policy/DCCL
+model explicitly — the fast-path/benign/safe-complete `generate (...)` calls, the REFUSE
+(`refuse (fast_path)`/`(deliberative)`), compliance-regenerate, `draft_revalidate`, and the
+critic/simulator/hindsight/perspectives `retry_failed_attempt_*` rows. Synthetic/diagnostic
+rows that are **not** provider calls (module skip/gate/disable/error/timeout markers,
+output-protection leakage rows) intentionally leave `model` empty and are already
+`billable_provider_call=False`.
 
 Constitution domain-agent calls (`module="constitution_retriever"`,
 `action` ∈ `domain_prefilter`/`enhanced_domain_agent`/`legacy_domain_agent`) are

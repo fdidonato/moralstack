@@ -41,6 +41,7 @@ LOCAL_LLM_CALL_PAYLOAD_KEYS = (
     "attempts",
     "error",
     "sequence_in_cycle",
+    "billable_provider_call",
 )
 
 GENERIC_ONLY_LLM_CALL_KEYS = {"call_kind", "call_outcome", "cache_status", "related_event_id"}
@@ -150,7 +151,7 @@ def test_risk_mini_calls_use_emit_batch_not_router_route_batch(monkeypatch):
     assert len(batches[0]) == 3
 
 
-def test_three_mini_envelopes_have_local_15_key_payload(monkeypatch):
+def test_three_mini_envelopes_have_local_16_key_payload(monkeypatch):
     _set_context()
     batches = _capture_batch(monkeypatch)
     calls = _mini_calls()
@@ -170,6 +171,9 @@ def test_three_mini_envelopes_have_local_15_key_payload(monkeypatch):
         assert payload["phase"] == "risk_estimation"
         assert payload["module"] == "risk_estimator"
         assert payload["model"] == call["llm_model"]
+        # Real mini-estimators leave the billable flag unset (None → NULL → counted
+        # as billable by COALESCE downstream); only synthetic rows force it False.
+        assert payload["billable_provider_call"] is None
         assert payload["sequence_in_cycle"] == -9
         assert payload["token_usage_json"] == call["token_usage_json"]
         assert payload["system_prompt"] == call["system_prompt"]
@@ -208,6 +212,32 @@ def test_calibration_guard_uses_single_emit_not_batch(monkeypatch):
     assert payload["sequence_in_cycle"] == -8
     assert payload["duration_ms"] == 0.0
     assert payload["prompt"] == "<synthetic - no LLM call>"
+
+
+def test_calibration_guard_row_is_marked_non_billable(monkeypatch):
+    """The synthetic guard row must not be counted as a real provider call.
+
+    It carries no ``usage`` object, so if it stayed billable it would surface
+    as a spurious "missing" token row in the UI. It is persisted for audit but
+    excluded from token/cost aggregation via ``billable_provider_call=False``.
+    """
+    _set_context()
+    routed: list[EventEnvelope] = []
+    monkeypatch.setattr(risk_estimator_module, "_obs_route", routed.append)
+
+    _estimator()._persist_mini_llm_call(
+        system_prompt="[calibration_guard] Automatic recalibration of risk metrics",
+        prompt="<synthetic - no LLM call>",
+        raw_response='{"guard_applied":true}',
+        action="calibration_guard",
+        duration_ms=0.0,
+        attempts=1,
+        sequence_in_cycle=-8,
+        billable_provider_call=False,
+    )
+
+    assert len(routed) == 1
+    assert routed[0].payload["billable_provider_call"] is False
 
 
 def test_batch_route_failure_is_best_effort(monkeypatch):

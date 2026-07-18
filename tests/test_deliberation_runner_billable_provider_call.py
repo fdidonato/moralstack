@@ -114,6 +114,39 @@ def test_fast_path_leakage_detected_marked_non_billable(capture_persist, monkeyp
     assert leakage[0]["billable_provider_call"] is False
 
 
+def test_fast_path_generate_records_model(capture_persist):
+    """A real fast-path generation must attribute its tokens to the policy model,
+    otherwise it collapses into the unattributed '—' row of the token panel.
+    The benign_fast_path / safe_complete_path generations share the same
+    ``_policy_llm_model_for_action(self.policy, "generate")`` expression."""
+    runner = _build_runner()
+
+    @dataclass
+    class GenResult:
+        text: str = "answer"
+        tokens_used: int = 10
+
+        def token_usage_json(self) -> str | None:
+            return None
+
+    runner.policy.generate.return_value = GenResult()
+    request = ProcessedRequest(prompt="hello", request_id="req-1")
+    decision = Decision(
+        final_action="NORMAL_COMPLETE",
+        path="FAST_PATH",
+        intent_clarity="HIGH",
+        misuse_plausibility="LOW",
+        actionability_risk="LOW",
+        triggered_principles=[],
+        hard_violations=[],
+        risk_signals=[],
+    )
+    runner.run_fast_path(request, _risk(), start_time=0.0, decision=decision)
+    generate = [c for c in capture_persist if (c.get("action") or "") == "generate (fast_path)"]
+    assert len(generate) == 1
+    assert generate[0]["model"] == "gpt-policy"
+
+
 def test_speculative_reuse_call_marked_non_billable(capture_persist):
     runner = _build_runner()
     request = ProcessedRequest(prompt="hello", request_id="req-1")

@@ -808,6 +808,7 @@ class LLMPerspectiveEnsemble:
                             phase="perspectives_retry",
                             module="perspectives",
                             action=f"retry_failed_attempt_{attempt + 1}",
+                            model=getattr(self.policy, "model", None) or "",
                             prompt=(f"Perspective {perspective.id}/{perspective.name} retry reason: {str(e)[:200]}"),
                             raw_response=raw_response or "",
                             duration_ms=0.0,

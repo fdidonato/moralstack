@@ -199,6 +199,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Per-model token panel: every provider LLM call now records its generating model,
+  and the synthetic `calibration_guard` row is excluded from cost.** Eleven call sites
+  emitted an `llm_calls` record without `model`, so their (billable) tokens collapsed
+  into a single unattributed `'—'` row in the per-model token panel: the
+  fast-path/benign/safe-complete `generate (...)`, the REFUSE (`refuse (fast_path)` /
+  `refuse (deliberative)`), `generate (compliance-regenerate)`, `draft_revalidate` (now
+  attributed to the DCCL model), and the critic/simulator/hindsight/perspectives
+  `retry_failed_attempt_*` rows. Separately, the risk estimator's synthetic
+  `calibration_guard` row (no real provider call, no `usage`) was counted as billable and
+  surfaced as a spurious "missing"-usage row; it is now emitted with
+  `billable_provider_call=False` (still persisted for audit, excluded from token/cost
+  aggregation). The risk estimator's local `llm_call` payload gained a
+  `billable_provider_call` key (16-key shape). No historical rows are rewritten by the
+  code change.
 - **UI: the request page's delivery card now surfaces the causal reason and the
   decision risk in the first viewport**, instead of only at the tail of the
   deliberation spine's OUTPUT anchor (~1400 lines / 30-40% scroll depth down).

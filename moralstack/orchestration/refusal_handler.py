@@ -149,6 +149,7 @@ class RefusalHandler:
             phase="refusal",
             module="orchestration",
             action="refuse (fast_path)",
+            model=getattr(self.policy, "model", None) or "",
             duration_ms=_refusal_duration_ms,
             prompt=refusal_result.user_prompt,
             system_prompt=refusal_result.system_prompt,

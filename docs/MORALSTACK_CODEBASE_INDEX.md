@@ -190,9 +190,13 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   parallel mini-estimators** via a `ThreadPoolExecutor`: `estimate_intent`,
   `estimate_signals` (q1–q17), `estimate_operational`; merged by
   `calibration.merge_mini_estimator_results`. The three real mini-estimator
-  `llm_call` envelopes are built with the local 15-key risk payload and enqueued
-  as one observability batch; a synthetic `calibration_guard` row remains a
-  separate single enqueue.
+  `llm_call` envelopes are built with the local 16-key risk payload (the 16th key
+  is `billable_provider_call`) and enqueued as one observability batch; a synthetic
+  `calibration_guard` row remains a separate single enqueue and is emitted with
+  `billable_provider_call=False` (it is no real provider call: audit-tracked but
+  excluded from token/cost aggregation, so it never surfaces as a spurious "missing"
+  token row). The three real mini rows leave the flag unset (`None` → billable by
+  the `COALESCE(...,1)` default).
 - **Unified single-wave constitution retrieval** (unify-constitution-retrieval-
   single-pass): `_get_principles_context` is the ONE `get_relevant_principles`
   call per request, owned here (risk thread), reused by deliberation/critic/

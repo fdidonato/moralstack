@@ -113,6 +113,17 @@ both `EnhancedDomainAgent` and legacy `DomainAgent`).
   llm_calls WHERE … AND COALESCE(billable_provider_call,1)=1` is the most complete
   view among rows actually written to SQLite — still not a completeness guarantee
   because the async queue may drop envelopes before they reach the DB.
+- **Per-model attribution**: the per-model token panel groups by
+  `COALESCE(NULLIF(TRIM(model),''),'')`, so any billable row written without a `model`
+  collapses into a single `'—'` (empty-key) row. Every provider call must therefore
+  record its generating model — including the fast-path/benign/safe-complete
+  `generate (...)`, the REFUSE (`refuse (fast_path)` / `refuse (deliberative)`),
+  compliance-regenerate, `draft_revalidate`, and the critic/simulator/hindsight/
+  perspectives `retry_failed_attempt_*` rows, which each pass the policy/DCCL model
+  explicitly. Synthetic rows that are *not* provider calls (speculative reuse,
+  `calibration_guard`, module skip/gate/error/timeout and leakage markers) are marked
+  `billable_provider_call=False` (or otherwise carry no tokens) and are excluded from the
+  panel instead.
 - **Cached input tokens**: `llm_calls.cached_input_tokens` (nullable) carries the
   provider-reported prompt-cache hit for that call. `NULL` = the provider reported no
   cache details (this includes every row written before the column existed);

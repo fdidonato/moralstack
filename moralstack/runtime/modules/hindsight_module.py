@@ -820,6 +820,7 @@ class LLMHindsightEvaluator:
                             phase="hindsight_retry",
                             module="hindsight",
                             action=f"retry_failed_attempt_{parse_attempts}",
+                            model=getattr(self.policy, "model", None) or "",
                             prompt=f"Retry reason: {str(e)[:200]}",
                             raw_response=raw_response or "",
                             duration_ms=0.0,

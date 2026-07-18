@@ -185,7 +185,8 @@ Shared steps:
 2. **LLM call(s) with retry** — each mini-call retries up to `max_retries`
    independently; observable persistence actions include `estimate_intent`, `estimate_signals`, `estimate_operational`.
    The three mini-estimator `llm_call` envelopes are persisted synchronously as one `router.route_batch(...)`
-   group, using the risk estimator's local 15-key payload shape. Responses carry **`parse_contract`**
+   group, using the risk estimator's local 16-key payload shape (the 16th key is
+   `billable_provider_call`). Responses carry **`parse_contract`**
    metadata where persisted.
 3. **Parsing / calibration** — Merged JSON flows through `parse_risk_dict` /
    calibration helpers; output remains a `RiskParseResult`-compatible structure before crisis mapping.
@@ -193,7 +194,7 @@ Shared steps:
 5. **Mapping** — `_to_risk_estimation(...)` fills `RiskEstimation`, including `stated_personal_bias`,
    `seeks_norm_circumvention`, `q13_protected_class_targeting`, and `estimation_mode`.
 
-Persistence of LLM calls is best-effort and must not affect risk decisions. The three real mini-estimator rows are written as one synchronous batch; SQLite write failures roll back the whole mini-estimator group. The optional synthetic `calibration_guard` row remains a single synchronous write with `sequence_in_cycle=-8`.
+Persistence of LLM calls is best-effort and must not affect risk decisions. The three real mini-estimator rows are written as one synchronous batch; SQLite write failures roll back the whole mini-estimator group. The optional synthetic `calibration_guard` row remains a single synchronous write with `sequence_in_cycle=-8` and `billable_provider_call=False` (audit-only; excluded from token/cost aggregation so it never appears as a "missing"-usage row in the UI).
 
 ### Constitution retrieval (single upstream wave)
 

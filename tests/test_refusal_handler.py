@@ -142,3 +142,37 @@ def test_refusal_handler_no_client_marks_non_billable():
 
     assert emitter.last_llm_call is not None
     assert emitter.last_llm_call["billable_provider_call"] is False
+
+
+def test_refusal_handler_records_generation_model():
+    """The refusal LLM call must carry the model that produced it, otherwise it
+    surfaces as an unattributed "—" row in the per-model token panel."""
+    emitter = _CapturingEmitter()
+    handler = RefusalHandler(
+        policy=SimpleNamespace(model="gpt-4o-mini"),
+        constitution_store=None,
+        event_emitter=emitter,
+    )
+
+    with patch(
+        "moralstack.orchestration.refusal_handler.generate_llm_safe_refusal_detailed",
+        return_value=RefusalGenerationResult(
+            text="I cannot help with that.",
+            system_prompt="<sys>",
+            user_prompt="<user>",
+            attempts=1,
+            token_usage=TokenUsage(10, 5, 15, "exact"),
+        ),
+    ):
+        handler.handle(
+            request=_request(),
+            decision=_decision(),
+            explanation=_explanation(),
+            risk_estimation=_risk(),
+            risk_score=0.9,
+            start_time=time.time(),
+            trace=_trace(),
+        )
+
+    assert emitter.last_llm_call is not None
+    assert emitter.last_llm_call["model"] == "gpt-4o-mini"

@@ -91,6 +91,7 @@ _LOCAL_LLM_CALL_PAYLOAD_KEYS = (
     "attempts",
     "error",
     "sequence_in_cycle",
+    "billable_provider_call",
 )
 
 
@@ -211,6 +212,7 @@ def _build_local_llm_call_envelope(
     attempts: int | None = None,
     error: str | None = None,
     sequence_in_cycle: int | None = None,
+    billable_provider_call: bool | None = None,
 ) -> EventEnvelope | None:
     _run_id = run_id or _get_run_id()
     _request_id = request_id or _get_request_id()
@@ -233,6 +235,7 @@ def _build_local_llm_call_envelope(
         "attempts": attempts,
         "error": error,
         "sequence_in_cycle": sequence_in_cycle,
+        "billable_provider_call": billable_provider_call,
     }
     _validate_local_llm_call_payload(payload)
     return _make_envelope(
@@ -724,6 +727,7 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
         llm_model: str | None = None,
         sequence_in_cycle: int = -9,
         message_sections: dict[str, Any] | None = None,
+        billable_provider_call: bool | None = None,
     ) -> None:
         """Enqueue a single mini-estimator LLM call. Does not raise."""
         try:
@@ -740,6 +744,7 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
                 llm_model=llm_model,
                 sequence_in_cycle=sequence_in_cycle,
                 message_sections=message_sections,
+                billable_provider_call=billable_provider_call,
             )
             if envelope is not None:
                 _obs_route(envelope)
@@ -761,6 +766,7 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
         llm_model: str | None = None,
         sequence_in_cycle: int = -9,
         message_sections: dict[str, Any] | None = None,
+        billable_provider_call: bool | None = None,
     ) -> EventEnvelope | None:
         import json as _json
 
@@ -791,6 +797,7 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
             attempts=attempts,
             token_usage_json=token_usage_json,
             sequence_in_cycle=sequence_in_cycle,
+            billable_provider_call=billable_provider_call,
         )
 
     def _persist_mini_llm_calls_batch(self, calls: list[dict[str, Any]]) -> None:
@@ -1066,6 +1073,7 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
                 duration_ms=0.0,
                 attempts=1,
                 sequence_in_cycle=-8,
+                billable_provider_call=False,
             )
 
         parsed = parse_risk_dict(merged)
