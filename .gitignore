@@ -16,6 +16,9 @@ benchmark_outputs/
 # Runtime artifacts (DB, probe outputs, root logs) — never commit these
 /moralstack.db
 /moralstackbkp.db
+# DB backups/snapshots (e.g. moralstack.db.premigration.<ts>.bak): they carry
+# persisted prompts, responses and governance audit rows — never commit them.
+*.bak
 /logs/
 risk_probe_out.*
 

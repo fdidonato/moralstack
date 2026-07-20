@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Runtime DB backup artifacts are now git-ignored.** Root snapshots such as
+  `moralstack.db.premigration.<ts>.bak` carry persisted prompts, responses and governance
+  audit rows. The existing rules covered `/moralstack.db` and `moralstack.db-*` but not the
+  `.bak` suffix, so a backup could be staged by an untargeted `git add`.
 - **Hard-signal gate on the compliance fast-path (P0 invariant #3).** Before a DCCL
   `MATCH` is delivered through the compliance fast-path, the controller now invalidates it
   (emitting `COMPLIANCE_MATCH_DOWNGRADED`) when the risk estimator produced hard topical
