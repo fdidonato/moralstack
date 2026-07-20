@@ -49,7 +49,8 @@ from moralstack.orchestration.final_revalidation import (
 )
 from moralstack.orchestration.orchestration_event_taxonomy import PROXY_OUTPUT_FINALIZED
 from moralstack.orchestration.types import ProcessedRequest
-from moralstack.sdk.bootstrap import _resolve_model
+from moralstack.orchestration.upstream_draft import UpstreamDraftGenerator
+from moralstack.sdk.bootstrap import _resolve_generation_mode, _resolve_model
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.session_store import InMemorySessionStore, SessionStoreProtocol
 from moralstack.server.conversation_correlation import (
@@ -326,6 +327,7 @@ def _handle_chat_completion_sync(
     orchestrator: Any,
     cfg: GovernanceConfig,
     principal: str = "",
+    generation_mode: str = "internal",
 ) -> Response:
     """
     Synchronous request handler: governance, session store, upstream OpenAI call.
@@ -354,6 +356,7 @@ def _handle_chat_completion_sync(
     state_out_for_audit: Any | None = None
     lock: threading.Lock | None = None
     out_response: Response | None = None
+    model_for_event: str = upstream_model
 
     try:
         try:
@@ -378,6 +381,19 @@ def _handle_chat_completion_sync(
             generation_overrides=GenerationOverrides.from_mapping(body, passthrough_unset=True),
         )
         request_id_for_audit = processed.request_id
+
+        # Opt-in generation="upstream_then_verify": when a client `model` is
+        # supplied, the wrapped/upstream client produces only the speculative
+        # draft (see moralstack/orchestration/upstream_draft.py). Note:
+        # `body["model"]` is currently unvalidated (proxy model allowlist is a
+        # documented, deferred follow-up — see plan Risks). Internal mode never
+        # constructs `UpstreamDraftGenerator`.
+        requested_model = body.get("model")
+        if generation_mode == "upstream_then_verify" and isinstance(requested_model, str) and requested_model.strip():
+            processed.upstream_draft_generator = UpstreamDraftGenerator(
+                client=openai_client,
+                model=requested_model.strip(),
+            )
 
         turn_index = _resolve_turn_index(messages)
         conv_state = store.get(conversation_id) if conversation_id else None
@@ -454,12 +470,24 @@ def _handle_chat_completion_sync(
             original_final_action_for_event = delivery.original_final_action
             empty_governed_content_for_event = delivery.empty_governed_content
 
+            # `delivery_model` is derived from draft provenance (opt-in
+            # generation="upstream_then_verify"), computed OUTSIDE
+            # `finalize_delivery` (which stays a pure function of content +
+            # final_action). Internal mode: `metadata.draft_origin` defaults
+            # "internal" -> delivery_model == upstream_model, byte-identical.
+            _delivery_meta = result.response.metadata
+            model_for_event = upstream_model
+            if str(getattr(_delivery_meta, "draft_origin", "internal") or "internal") == "upstream" and bool(
+                getattr(_delivery_meta, "internal_draft_reused", False)
+            ):
+                model_for_event = str(getattr(_delivery_meta, "draft_model", "") or "") or upstream_model
+
             if is_stream:
                 # Product decision D2: replay the full governed answer as an
                 # OpenAI-compatible synthetic SSE stream. No live upstream tokens.
                 out_response = _build_synthetic_sse_response(
                     delivery.text,
-                    model=upstream_model,
+                    model=model_for_event,
                     finish_reason=delivery.finish_reason,
                     headers=governance_headers,
                 )
@@ -472,7 +500,7 @@ def _handle_chat_completion_sync(
                 }
                 payload = _build_synthetic_chat_completion(
                     content=delivery.text,
-                    model=upstream_model,
+                    model=model_for_event,
                     finish_reason=delivery.finish_reason,
                     usage=usage,
                 )
@@ -512,7 +540,7 @@ def _handle_chat_completion_sync(
                         "empty_governed_content": empty_governed_content_for_event,
                         "final_response_length": len(final_response_text or ""),
                         "finish_reason": finish_reason_for_event,
-                        "model": upstream_model,
+                        "model": model_for_event,
                         # Stale delivery-guard fields are retained as audit-only
                         # metadata; they no longer route delivery.
                         "delivery_context_broader_than_governance": getattr(
@@ -605,6 +633,9 @@ def create_app(
     cfg = config or GovernanceConfig()
     upstream_generation_model = _resolve_model(cfg)
     logger.info("MoralStack proxy upstream generation model: %s", upstream_generation_model)
+    generation_mode = _resolve_generation_mode(cfg)
+    if generation_mode == "upstream_then_verify":
+        logger.info("MoralStack proxy generation mode: upstream_then_verify (opt-in)")
     store: SessionStoreProtocol = session_store if session_store is not None else InMemorySessionStore()
     lock_manager = ConversationLockManager()
     if correlation_store is None:
@@ -623,10 +654,12 @@ def create_app(
             "(set MORALSTACK_OBSERVABILITY_DB_PATH or MORALSTACK_OBSERVABILITY_MODE=file_only to enable persistence)."
         )
 
+    from moralstack import __version__ as _moralstack_version
+
     app = FastAPI(
         title="MoralStack Server Proxy",
         description="OpenAI-compatible governance proxy. See https://github.com/fdidonato/moralstack",
-        version="0.5.0",
+        version=_moralstack_version,
     )
 
     @app.on_event("shutdown")
@@ -708,6 +741,7 @@ def create_app(
             orchestrator=orchestrator,
             cfg=cfg,
             principal=principal,
+            generation_mode=generation_mode,
         )
 
     return app

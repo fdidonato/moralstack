@@ -58,6 +58,16 @@ Proxy equivalent: `conversation_id` resolution + stateless `turn_index`
   not the wrapped/upstream client. This means an internal LLM call may already
   be in-flight before any routing decision — including on paths that will
   ultimately REFUSE.
+  - **Opt-in exception (`generation="upstream_then_verify"`, default off):**
+    `_speculative_generate` selects `gen = request.upstream_draft_generator or
+    self.policy`. When the SDK/proxy wired an `UpstreamDraftGenerator` (client
+    `model` supplied), the *speculative draft only* is produced by the caller's
+    model — the same hard-signal/REFUSE discard and route-specific validation
+    below still apply unchanged; the draft is never a direct delivered answer.
+    An empty/whitespace upstream draft is "no draft" → internal regeneration
+    with `self.policy` (never a passthrough, never a refusal for that reason).
+    See `moralstack/orchestration/upstream_draft.py` and
+    `.claude/rules/governed-delivery.md`.
 - Else: `risk_estimation = self._estimate_risk(request)` (`controller.py:788`).
 
 `_estimate_risk` forwards the developer-contract text and conversation history to

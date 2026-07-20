@@ -237,6 +237,22 @@ choose the governed answer model, use `GovernanceConfig(model=...)` (SDK) or `OP
 
 </details>
 
+<details>
+<summary><b>Opt-in: <code>generation="upstream_then_verify"</code> (default off)</b></summary>
+
+Set `GovernanceConfig(generation="upstream_then_verify")` (or `MORALSTACK_GENERATION_MODE`)
+and pass a `model=` to let the wrapped/upstream client produce the **speculative draft only**
+— it is still validated exactly as an internal speculative draft is today (risk-only on the
+benign fast-path, DCCL match on compliance, full critique on the deliberative path) and is
+discarded, never delivered, on REFUSE / a hard-signal path. On an upstream error or an empty
+draft, the pipeline falls back to internal governed regeneration — never a passthrough, never
+a refusal for that reason alone. The response's `generation_model` (and `governance_metadata.
+draft_origin` / `draft_model`) report the client model only when the delivered text is that
+verbatim, unrevised draft; a governed rewrite/refusal always reports the governance model, as
+above. Default mode `internal` is unaffected and byte-identical.
+
+</details>
+
 ---
 
 ## 💬 Multi-turn & conversational governance

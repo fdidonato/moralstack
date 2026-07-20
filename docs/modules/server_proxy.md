@@ -28,6 +28,8 @@ Normative reference: multiturn design v1.3 section 4.
 | `X-Moralstack-Cached-From` | Present when a ledger cache hit was applied |
 | `X-Moralstack-Compliance-Decision` | DCCL verdict when a developer contract was evaluated (`MATCH`, `NO_MATCH`, `SAFETY_OVERRIDE`; omitted for `NO_CONTRACT`) |
 | `X-Moralstack-Compliance-Rule` | Matched structured rule id when decision is `MATCH` |
+| `X-Moralstack-Draft-Origin` | Opt-in `generation="upstream_then_verify"` only — emitted **only** when the delivered draft is upstream-origin (`"upstream"`); absent in internal mode |
+| `X-Moralstack-Draft-Model` | The upstream client draft model, present alongside `X-Moralstack-Draft-Origin` |
 
 ## Deployment notes
 
@@ -55,6 +57,22 @@ governed refusal.
 fields (`delivery_context_broader_than_governance`, context modes,
 `prior_turn_count`) as **audit-only** — `delivery_context_broader_than_governance`
 no longer routes delivery to an upstream call.
+
+### Opt-in: `generation="upstream_then_verify"` (default off)
+
+When `GovernanceConfig.generation` / `MORALSTACK_GENERATION_MODE` resolves to
+`upstream_then_verify` **and** the request body sets `model`, `_handle_chat_completion_sync`
+attaches a `moralstack.orchestration.upstream_draft.UpstreamDraftGenerator(client=
+openai_client, model=body["model"])` to `ProcessedRequest.upstream_draft_generator`. The
+wrapped/upstream client then produces **only the speculative draft** the controller
+already generates in parallel with risk estimation — never the delivered answer
+directly; the draft still goes through the same route-specific validation an internal
+draft gets today, and is discarded on any hard-signal/REFUSE path. On an upstream
+generator error or empty draft, the pipeline falls back to internal governed
+regeneration (never a passthrough, never a refusal for that reason alone). `model=` in
+the request body is currently **unvalidated** (no allowlist) — a documented, deferred
+security follow-up. See `.claude/rules/governed-delivery.md` and
+`ai/plans/upstream-then-verify-generation.md`.
 
 ### Historical: Final Output Revalidation
 

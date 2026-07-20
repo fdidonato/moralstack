@@ -252,6 +252,18 @@ reconstructs:
   AI Act art. 12 audit (`/conversations/{id}/export.md` →
   `reports/conversation_export.export_conversation_to_markdown`).
 
+**Opt-in `generation="upstream_then_verify"` draft provenance (default off).** The
+speculative `llm_calls` row (and any reuse row that delivered it) uses the distinct
+`module="upstream_speculative"` when the draft was produced by an upstream/client model
+— never `module="upstream_provider"`, which the UI/export still read as a *final provider
+candidate* (a separate, unrelated concept). `ui/app.py` (`_build_module_io_annotations`,
+`_TIMELINE_MODULE_ORDER` adjacent to `policy`, main.css node style) and
+`reports/markdown_export.py` render `upstream_speculative` as an upstream speculative
+draft; `observability/read_store.get_models_used_for_run` / the markdown "Models used"
+table surface it as a distinct `upstream_draft` row. `requests.meta_json` carries
+`draft_origin`/`draft_model` only when upstream (`observability/governance_audit.py`);
+internal mode adds no new keys anywhere. See `docs/CODEBASE_FACTS.md`.
+
 ## 7. Can full conversations be reconstructed?
 
 Yes, **when persistence is to the DB** (`db_only`/`dual`):

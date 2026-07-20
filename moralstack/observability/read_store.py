@@ -929,6 +929,13 @@ class SqliteReadStore:
                     result.setdefault("policy_rewrite", model)
                 elif "generate" in action:
                     result.setdefault("policy_generate", model)
+            elif module == "upstream_speculative":
+                # Upstream-origin speculative draft (opt-in
+                # generation="upstream_then_verify"): surfaced as a distinct
+                # row so the client draft model is never conflated with the
+                # governance model. `call_outcome="discarded"` rows are
+                # already excluded by the WHERE clause above.
+                result.setdefault("upstream_draft", model)
             elif module == "risk_estimator":
                 result.setdefault("risk", model)
             elif module == "critic":

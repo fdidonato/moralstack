@@ -29,6 +29,24 @@ def _resolve_model(config: GovernanceConfig) -> str:
     return (config.model or os.getenv("OPENAI_MODEL") or "gpt-4o").strip()
 
 
+_VALID_GENERATION_MODES = frozenset({"internal", "upstream_then_verify"})
+
+
+def _resolve_generation_mode(config: GovernanceConfig) -> str:
+    """Resolve the speculative-draft generation mode: env > config, default 'internal'.
+
+    Tolerant to case/whitespace (mirrors ``_resolve_ledger_enabled``). Fails
+    closed: an unknown env/config value never silently activates
+    ``upstream_then_verify`` — it resolves to 'internal' so an opt-in-only
+    feature never activates without an explicit, recognized value.
+    """
+    env_val = os.getenv("MORALSTACK_GENERATION_MODE", "").strip().lower()
+    if env_val:
+        return env_val if env_val in _VALID_GENERATION_MODES else "internal"
+    configured = (getattr(config, "generation", None) or "internal").strip().lower()
+    return configured if configured in _VALID_GENERATION_MODES else "internal"
+
+
 def _resolve_ledger_enabled(config: GovernanceConfig) -> bool:
     """Resolve ledger enable flag: env var overrides config when set."""
     env_val = os.getenv("MORALSTACK_LEDGER_ENABLED", "").strip().lower()

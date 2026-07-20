@@ -22,3 +22,24 @@ generate/rewrite, and refusal wording generation — are the allowed generation 
 The governed answer model is selected by `GovernanceConfig.model` / `OPENAI_MODEL` (and
 `MORALSTACK_POLICY_REWRITE_MODEL` for revisions); the chat request `model=` is a
 requested alias only.
+
+**Opt-in carve-out — `generation="upstream_then_verify"` (deliberate, honest amendment).**
+When `GovernanceConfig.generation` / `MORALSTACK_GENERATION_MODE` is set to
+`upstream_then_verify` **and** a client `model` is supplied, the wrapped/upstream client
+is permitted to generate the **speculative draft** only — never the delivered answer
+directly. This does not weaken the invariant above: an upstream-origin draft is
+delivered only after the same validation an internal speculative draft would receive on
+the selected route (risk-only on benign, DCCL match on compliance, full critique on
+deliberative), and is discarded on any hard/refuse path. This is parity with the
+internal speculative draft, not full-pipeline validation on every path — the benign
+fast-path and DCCL `MATCH` skip critic/simulator/deliberation for an internal draft
+today too. On an upstream generator error or an empty draft, the pipeline falls back to
+internal governed regeneration (never a passthrough, never a refusal for that reason
+alone). Draft provenance (`draft_origin`/`draft_model`) is threaded end-to-end
+(`module="upstream_speculative"` llm_calls rows, `X-Moralstack-Draft-Origin` /
+`X-Moralstack-Draft-Model` headers gated to upstream, `requests.meta_json`, SDK
+`GovernanceMetadata`) so the audit trail always attributes the draft correctly. Default
+mode `internal` (and upstream mode with no client `model`) is byte-identical to today —
+every new key/header/model-attribution is gated on `draft_origin == "upstream"`. See
+`moralstack/orchestration/upstream_draft.py` and
+`ai/plans/upstream-then-verify-generation.md`.

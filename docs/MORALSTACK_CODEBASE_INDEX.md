@@ -70,19 +70,26 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   non-empty `system`/`developer` message wins, `mode="opaque"`),
   `_messages_to_turns`, `_build_safe_complete_user_turn`.
 - `bootstrap.py` — `_bootstrap_pipeline(config)` builds the `Orchestrator`;
-  `_resolve_model(config)` resolves the generation model; `_build_ledger(config)`
-  wires `SemanticDecisionLedger` with a provider-selected embedder (`LocalEmbedder`
-  by default, `OpenAIEmbedder` when `embedder_provider="openai"` or
+  `_resolve_model(config)` resolves the generation model; `_resolve_generation_mode(config)`
+  resolves `generation` ("internal" default | "upstream_then_verify" opt-in; env
+  `MORALSTACK_GENERATION_MODE` overrides; unknown value fails closed to "internal");
+  `_build_ledger(config)` wires `SemanticDecisionLedger` with a provider-selected embedder
+  (`LocalEmbedder` by default, `OpenAIEmbedder` when `embedder_provider="openai"` or
   `MORALSTACK_EMBEDDER_PROVIDER=openai`).
 - `config.py` — `GovernanceConfig` (domain_overlay, failure_policy,
-  observability_mode, jsonl_dir, enable_session_tracking, `embedder_provider`, …).
+  observability_mode, jsonl_dir, enable_session_tracking, `embedder_provider`,
+  `generation` ("internal" | "upstream_then_verify"), …).
 - `session.py` — `SessionState`: per-client conversation_id + turn counter,
   wraps a `SessionStore`.
 - `session_store.py` — `SessionStoreProtocol`, `InMemorySessionStore`.
 - `response.py` — `GovernedResponse`, `GovernanceMetadata` (`final_action`,
   `risk_score`, `risk_category`, `path`, `reason_codes`, `triggered_principles`,
-  `conversation_id`, `turn_index`, …) plus governed-delivery model attribution
-  (`requested_model`, `generation_model`, `rewrite_model`). Constructors:
+  `conversation_id`, `turn_index`, `draft_origin` ("internal" default | "upstream"),
+  `draft_model` (""  default) — additive fields, opt-in `generation=
+  "upstream_then_verify"`, NOT held to byte-identity (the one deliberate exception) …)
+  plus governed-delivery model attribution (`requested_model`, `generation_model`,
+  `rewrite_model` — `generation_model`/`GovernedResponse.model` report the client draft
+  model on an unrevised upstream-origin delivery). Constructors:
   `from_governed_text` (Plan 1 primary), `from_refusal`, `from_pipeline_error`,
   and the deprecated `from_normal` / `from_safe` / `from_governed_draft`;
   `from_passthrough` is a deprecated fail-closed alias (never passthrough).
@@ -167,8 +174,23 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `LedgerResult` (`query_embedding` carries the lookup-time vector for reuse in
   `store(prompt_embedding=…)`, eliminating double-embedding on miss→store).
 - `refusal_handler.py`, `refusal_context.py`, `safe_refusal_generator.py` — refusal text.
-- `response_assembler.py` — `ResponseAssembler` builds the `FinalResponse`.
+- `response_assembler.py` — `ResponseAssembler` builds the `FinalResponse`. `assemble(...,
+  draft_provenance: DraftProvenance | None = None)` — centralized draft-provenance
+  attribution (opt-in `generation="upstream_then_verify"`): sets `metadata.draft_origin`/
+  `draft_model`/`internal_draft_reused` whenever it delivers the reused, still-unmodified
+  `state.draft_response` (`DeliberationState._draft_verbatim_reuse`). Covers FAST_PATH and
+  deliberative reuse (incl. the fast-path→deliberative escalation via
+  `_build_deliberative_result`); the benign route sets provenance via its own
+  `ResponseMetadata.from_decision` call instead (no separate reuse `llm_call`). Default
+  `None` = internal mode, byte-identical to before this feature.
 - `speculative_overlap.py` — `SpeculativeOverlapHandle` (parallel draft + risk).
+- `upstream_draft.py` — **NEW** (opt-in `generation="upstream_then_verify"`).
+  `UpstreamDraftGenerator(client, model)`: adapter exposing `generate`/`generate_messages`
+  (same `GenerationResult` shape as `OpenAIPolicy`) so `_speculative_generate` can route the
+  speculative draft to a caller-supplied client model instead of `self.policy`. Empty
+  completion content returns `GenerationResult(text="")`, never raises — the empty-draft
+  fallback to internal regeneration is handled by the caller. Never used for the delivered
+  answer, rewrite, or refusal wording.
 - `system_prompt_resolver.py` — `effective_system_for_request(...)`.
 - `overlay_policy.py` — `is_overlay_sensitive`, `apply_risk_floor_if_sensitive`,
   `is_domain_excluded`, `get_constitution_safe`, `OVERLAY_SENSITIVE_RISK_FLOOR`.
@@ -301,7 +323,10 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `max_entries` (default `DEFAULT_MAX_CORRELATION_ENTRIES=20_000`), `time_fn` (clock seam
   for tests). `create_app` wires `MORALSTACK_CORRELATION_TTL_SECONDS` /
   `MORALSTACK_CORRELATION_MAX_ENTRIES` (best-effort parse + range-validate, never raises).
-- `headers.py` — `build_governance_headers` (X-Moralstack-* response headers).
+- `headers.py` — `build_governance_headers` (X-Moralstack-* response headers). Emits
+  `X-Moralstack-Draft-Origin` / `X-Moralstack-Draft-Model` only when
+  `metadata.draft_origin == "upstream"` (opt-in `generation="upstream_then_verify"`);
+  internal mode never adds these headers.
 - `fingerprint.py` — request fingerprinting (calls the unchanged `canonical_history_hash`;
   verified unaffected by the principal-keying change).
 
@@ -328,7 +353,17 @@ Inside `process()` (order verified in source):
    pre-insert the `requests` row (`controller.py:1900-1923`).
 2. **Risk estimation** — speculative overlap (risk + draft in parallel) when
    `enable_speculative_generation`, else direct `_estimate_risk`
-   (`controller.py:1928-1935`).
+   (`controller.py:1928-1935`). `_speculative_generate` selects the draft generator:
+   `request.upstream_draft_generator` (opt-in `generation="upstream_then_verify"` +
+   client `model`, wired by the SDK/proxy) when present, else `self.policy` (default,
+   byte-identical). An empty/whitespace upstream draft is treated as "no draft" →
+   internal governed regeneration (never a passthrough, never a refusal). The
+   speculative `llm_call` row is `module="upstream_speculative"` + client model when
+   upstream, else the unchanged `module="policy"`. Draft provenance
+   (`DraftProvenance(origin, model)`) is derived at route time from
+   `(request.upstream_draft_generator, draft_is_speculative)` and threaded to the
+   reuse rows and `ResponseAssembler.assemble` — see `upstream_draft.py` above and
+   `.claude/rules/governed-delivery.md`.
 3. **DCCL evaluation** on the (possibly non-blocking) speculative draft
    (`_run_dccl_evaluation`, `controller.py:1936`). The LLM path receives a
    budgeted role-ordered transcript from `ConversationContext`; when the draft

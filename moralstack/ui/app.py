@@ -371,6 +371,12 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
         else:
             inputs.append({"label": "revision_guidance", "source": "critic"})
             inputs.append({"label": "risk", "source": "risk_estimator"})
+    elif "upstream_speculative" in module:
+        # Upstream-origin speculative draft (opt-in generation="upstream_then_verify"):
+        # a draft, NOT a final provider candidate — same input shape as the
+        # cycle-0 policy speculative draft, produced by the client model instead.
+        inputs.append({"label": "risk", "source": "risk_estimator"})
+        inputs.append({"label": "principles", "source": "constitution"})
     elif "upstream_provider" in module:
         inputs.append({"label": "messages", "source": "request_body"})
         inputs.append({"label": "governance_decision", "source": "moralstack"})
@@ -465,6 +471,11 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
                 }
             )
     elif "policy" in module:
+        raw = call.get("raw_response") or ""
+        outputs.append({"label": "draft", "value": raw if raw else "text"})
+    elif "upstream_speculative" in module:
+        # Draft only (not a final provider candidate) — mirrors the "policy" draft
+        # output shape, with the client model attributed via the row's `model`.
         raw = call.get("raw_response") or ""
         outputs.append({"label": "draft", "value": raw if raw else "text"})
     elif "upstream_provider" in module:
@@ -1345,16 +1356,28 @@ def _build_delivery_path_summary(
     )
     spec_event = _first_event(orchestration_events, "SPECULATIVE_STARTED")
     if spec_event or spec_call:
+        _spec_is_upstream = (spec_call or {}).get("module") == "upstream_speculative" or (
+            _event_payload(spec_event).get("draft_origin") == "upstream"
+        )
         steps.append(
             {
                 "kind": "neutral",
                 "title": "Speculative draft generated",
                 "time": (spec_call or spec_event or {}).get("started_at"),
                 "detail": (
-                    "Policy draft started in parallel with risk estimation. This is a latency optimization, "
-                    "not a delivery decision."
+                    (
+                        "Upstream draft (client model) started in parallel with risk estimation. This is a "
+                        "latency optimization, not a delivery decision."
+                    )
+                    if _spec_is_upstream
+                    else (
+                        "Policy draft started in parallel with risk estimation. This is a latency optimization, "
+                        "not a delivery decision."
+                    )
                 ),
-                "source": "policy/speculative_generate",
+                "source": (
+                    "upstream_speculative/speculative_generate" if _spec_is_upstream else "policy/speculative_generate"
+                ),
             }
         )
 
@@ -2720,6 +2743,9 @@ _TIMELINE_MODULE_ORDER = (
     "orchestrator",
     "constitution",
     "policy",
+    # Upstream-origin speculative draft (opt-in generation="upstream_then_verify"):
+    # grouped adjacent to "policy" (same speculative/reuse lane, distinct label).
+    "upstream_speculative",
     "critic",
     "simulator",
     "perspectives",

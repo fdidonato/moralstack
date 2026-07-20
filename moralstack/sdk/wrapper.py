@@ -23,7 +23,7 @@ from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.conversation_context import build_conversation_context, context_to_turns
 from moralstack.orchestration.delivery import finalize_delivery
 from moralstack.orchestration.types import ProcessedRequest
-from moralstack.sdk.bootstrap import _bootstrap_pipeline, _resolve_model
+from moralstack.sdk.bootstrap import _bootstrap_pipeline, _resolve_generation_mode, _resolve_model
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.errors import GovernancePipelineError
 from moralstack.sdk.response import GovernedResponse
@@ -222,22 +222,27 @@ class GovernedSyntheticStream:
     intermediate generations.
     """
 
-    def __init__(self, text: str, result: Any) -> None:
+    def __init__(self, text: str, result: Any, *, model: str | None = None) -> None:
         self._text = text or ""
         self._result = result
         self.governance_metadata = GovernedResponse.from_normal(None, result).governance_metadata
+        # Opt-in generation="upstream_then_verify": `model` is the provenance-
+        # derived delivery model (set by the caller only when the delivered
+        # text is the verbatim upstream draft). Internal/governed streams keep
+        # the historical hard-coded "moralstack-governed" label unchanged.
+        self._model = model or "moralstack-governed"
 
     def __iter__(self) -> Iterator[Any]:
         chunks = _iter_word_chunks(self._text)
         stream_id = f"governed-{uuid.uuid4().hex[:8]}"
         if not chunks:
-            yield _SyntheticStreamChunk("", model="moralstack-governed", chunk_id=stream_id, finish_reason="stop")
+            yield _SyntheticStreamChunk("", model=self._model, chunk_id=stream_id, finish_reason="stop")
             return
         last = len(chunks) - 1
         for i, piece in enumerate(chunks):
             yield _SyntheticStreamChunk(
                 piece,
-                model="moralstack-governed",
+                model=self._model,
                 chunk_id=stream_id,
                 finish_reason="stop" if i == last else None,
             )
@@ -342,6 +347,23 @@ class GovernedCompletions:
             generation_overrides=GenerationOverrides.from_mapping(kwargs),
         )
 
+        # Opt-in generation="upstream_then_verify": when a client `model` is
+        # supplied, the wrapped client produces only the speculative draft
+        # (see moralstack/orchestration/upstream_draft.py). Internal mode
+        # never constructs `UpstreamDraftGenerator`.
+        requested_model_kw = kwargs.get("model")
+        if (
+            _resolve_generation_mode(self._governed._config) == "upstream_then_verify"
+            and isinstance(requested_model_kw, str)
+            and requested_model_kw.strip()
+        ):
+            from moralstack.orchestration.upstream_draft import UpstreamDraftGenerator
+
+            request.upstream_draft_generator = UpstreamDraftGenerator(
+                client=self._governed._client,
+                model=requested_model_kw.strip(),
+            )
+
         session = self._governed._session
         conv_id = session.conversation_id
         turn_idx = session.next_turn_index()
@@ -380,6 +402,19 @@ class GovernedCompletions:
         requested_model = str(kwargs.get("model") or "")
         generation_model, rewrite_model = self._resolve_audit_models()
 
+        # `delivery_model` is derived from draft provenance (opt-in
+        # generation="upstream_then_verify"), computed OUTSIDE
+        # `finalize_delivery` (which stays a pure function of content +
+        # final_action). Internal mode: `metadata.draft_origin` defaults
+        # "internal" -> delivery_model == generation_model, byte-identical.
+        _delivery_meta = result.response.metadata
+        delivery_model = generation_model
+        _upstream_verbatim = str(getattr(_delivery_meta, "draft_origin", "internal") or "internal") == "upstream" and bool(
+            getattr(_delivery_meta, "internal_draft_reused", False)
+        )
+        if _upstream_verbatim:
+            delivery_model = str(getattr(_delivery_meta, "draft_model", "") or "") or generation_model
+
         self._finalize_audit(
             request_id=request.request_id,
             result=result,
@@ -398,19 +433,23 @@ class GovernedCompletions:
                 result,
                 delivery,
                 requested_model=requested_model,
-                generation_model=generation_model,
+                generation_model=delivery_model,
                 rewrite_model=rewrite_model,
             )
 
         # NORMAL_COMPLETE / SAFE_COMPLETE (and blank-content fail-closed
         # downgrades produced by finalize_delivery).
         if is_stream:
-            return GovernedSyntheticStream(delivery.text, result)
+            return GovernedSyntheticStream(
+                delivery.text,
+                result,
+                model=delivery_model if _upstream_verbatim else None,
+            )
         return GovernedResponse.from_governed_text(
             result,
             delivery,
             requested_model=requested_model,
-            generation_model=generation_model,
+            generation_model=delivery_model,
             rewrite_model=rewrite_model,
         )
 
@@ -652,6 +691,13 @@ def govern(
     argument passed to ``chat.completions.create(...)`` is a requested alias only
     and does not select the governed answer model. Non-chat attributes still
     pass through to the wrapped client.
+
+    Opt-in exception: with ``GovernanceConfig.generation`` /
+    ``MORALSTACK_GENERATION_MODE`` set to ``"upstream_then_verify"``, the
+    requested ``model=`` DOES select the model that generates the
+    *speculative draft* (still never the delivered answer directly, which is
+    validated/revised by the same governed pipeline before delivery) -- see
+    ``moralstack/orchestration/upstream_draft.py``.
 
     Args:
         client: OpenAI client (or duck-typed compatible with .chat.completions.create()).

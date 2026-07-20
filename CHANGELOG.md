@@ -38,6 +38,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Opt-in `generation="upstream_then_verify"` mode (P0 invariant #7 amended).** When the
+  mode is enabled *and* the caller supplies a `model`, the wrapped/upstream client produces
+  the **speculative draft** — and nothing else — which then enters the existing pipeline
+  through the `_speculative_generate` → `SpeculativeOverlapHandle` seam and receives exactly
+  the same route-specific treatment an internal speculative draft receives today: risk-only
+  on the benign fast-path, DCCL-only on a compliance `MATCH`, full critique on the
+  deliberative route, and **discarded on REFUSE / hard-signal**. This is *parity with the
+  internal draft*, **not** full-pipeline validation on every path — see
+  `.claude/rules/governed-delivery.md` for the precise wording. The upstream client is never
+  called to produce a delivered answer directly, and an empty or failing upstream draft falls
+  back to **internal governed regeneration** (never a refusal, never a passthrough). Enabled
+  via `GovernanceConfig.generation` or `MORALSTACK_GENERATION_MODE`; unknown values fail
+  closed to `internal`. Default `internal` is byte-identical on every persisted/wire sink.
+  Draft provenance (`draft_origin`/`draft_model`) is carried end-to-end — a distinct
+  `module="upstream_speculative"` `llm_call` label, `SPECULATIVE_STARTED`, the
+  `X-Moralstack-Draft-Origin`/`-Draft-Model` headers (emitted only when upstream),
+  `requests.meta_json`, the SSE/non-stream `model` field, the SDK `GovernanceMetadata`
+  (two additive defaulted fields), and the UI / markdown-export / "Models used" readers.
+  The caller's model reaches **only** the draft call; every governance module keeps its
+  configured model. Known limitation: the proxy does not validate `body["model"]` against an
+  allowlist — deliberately deferred, tracked as an open security follow-up.
 - **Simulator-metrics-measured marker on decision traces (audit honesty).** `DecisionTrace`
   gained `sim_metrics_measured`, recording whether a FINAL trace's `sim_*` metrics are a
   real measurement or defaults. The metrics could not self-report it:

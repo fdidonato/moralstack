@@ -635,7 +635,7 @@
             <span class="meta-label">Speculative overlap</span>
             <span class="meta-value">
                 {% if sp.get('speculative_started') %}
-                <span class="badge badge-parallel" title="Policy draft ran in parallel with risk">started</span>
+                <span class="badge badge-parallel" title="Speculative draft (policy or, in upstream_then_verify mode, the client model) ran in parallel with risk">started</span>
                 {% endif %}
                 <span class="mono">outcome: {{ sp.get('speculative_outcome') or '—' }}</span>
                 {% if sp.get('join_required') %}
@@ -1266,6 +1266,9 @@
         </span>
         <span class="flow-legend-item">
             <span class="flow-legend-dot" style="background:var(--accent)"></span>policy
+        </span>
+        <span class="flow-legend-item">
+            <span class="flow-legend-dot" style="background:#0ea5e9"></span>upstream_speculative (draft, client model)
         </span>
         <span class="flow-legend-item">
             <span class="flow-legend-dot" style="background:var(--yellow)"></span>critic

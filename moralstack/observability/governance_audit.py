@@ -77,6 +77,12 @@ def build_request_meta_from_result(result: Any) -> dict[str, Any]:
                     meta["decision_explanation"] = str(explanation)
             meta["domain_overlay"] = getattr(metadata, "domain_overlay", None)
             meta["governance_posture"] = getattr(metadata, "governance_posture", None) or getattr(metadata, "posture", None)
+            # Opt-in generation="upstream_then_verify": project draft
+            # provenance into the durable audit record ONLY when upstream —
+            # internal mode never adds these keys (byte-identical meta_json).
+            if str(getattr(metadata, "draft_origin", "internal") or "internal") == "upstream":
+                meta["draft_origin"] = "upstream"
+                meta["draft_model"] = getattr(metadata, "draft_model", "") or ""
         # Conversation linkage
         meta["conversation_id"] = getattr(result, "conversation_id", None)
         meta["turn_index"] = getattr(result, "turn_index", None)

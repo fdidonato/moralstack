@@ -23,6 +23,7 @@ from moralstack.orchestration.types import (
     ConvergenceOutcome,
     Decision,
     DeliberationState,
+    DraftProvenance,
     FinalResponse,
     MetaAnalysis,
     PolicyOverlay,
@@ -75,10 +76,21 @@ class ResponseAssembler:
         outcome: ConvergenceOutcome | None = None,
         decision_explanation: DecisionExplanation | None = None,
         constitution_store: object | None = None,
+        draft_provenance: DraftProvenance | None = None,
     ) -> FinalResponse:
         """
         Assembla la risposta finale. Renderer deterministico: il tipo di risposta
         (DIRECT / WITH_CAVEAT / FULL_REFUSAL) è determinato SOLO da decision.final_action.
+
+        ``draft_provenance``: centralized draft-provenance attribution (Codex
+        round-3), covering both FAST_PATH and deliberative-reuse delivery
+        (SAFE_COMPLETE / NORMAL_COMPLETE, where ``content = state.draft_response``).
+        Non-None only when an upstream generator produced the joined speculative
+        draft; ``metadata.draft_origin``/``draft_model``/``internal_draft_reused``
+        are set ONLY when the draft is still byte-identical to the joined draft
+        (``state._draft_verbatim_reuse``) — never for a post-draft rewrite or a
+        REFUSE (which never delivers ``state.draft_response``). Default None =
+        internal mode: this method behaves byte-identically to today.
         """
         predicted_action: str | None = None
         constitution_loaded_ok: bool | None = None
@@ -152,6 +164,7 @@ class ResponseAssembler:
             # Content = draft only. No prepend of critic rationale (meta-layer leakage).
             # Policy overlay in metadata; no hardcoded caveat text (language-agnostic).
             content = state.draft_response
+            self._apply_draft_provenance(metadata, state, draft_provenance)
             metadata.predicted_action = RiskPolicyAction.ALLOW_WITH_CAVEAT.value
             metadata.final_action = "SAFE_COMPLETE"
             metadata.path = decision.path
@@ -177,6 +190,7 @@ class ResponseAssembler:
                 policy_overlay=policy_overlay,
                 meta_analysis=meta_analysis,
             )
+        self._apply_draft_provenance(metadata, state, draft_provenance)
         metadata.predicted_action = RiskPolicyAction.ALLOW.value
         metadata.final_action = "NORMAL_COMPLETE"
         metadata.path = decision.path
@@ -185,6 +199,25 @@ class ResponseAssembler:
             response_type=ResponseType.DIRECT,
             metadata=metadata,
         )
+
+    @staticmethod
+    def _apply_draft_provenance(
+        metadata: ResponseMetadata,
+        state: DeliberationState,
+        draft_provenance: DraftProvenance | None,
+    ) -> None:
+        """Set draft-origin metadata when the delivered content is the reused,
+        still-unmodified speculative draft produced by an upstream generator.
+
+        No-op (byte-identical to today) unless ``draft_provenance`` is not None
+        AND the draft was never overwritten by a subsequent internal
+        generate/rewrite (``state._draft_verbatim_reuse``) — a revised draft is
+        governance-generated, not upstream, so it must not carry provenance.
+        """
+        if draft_provenance is not None and getattr(state, "_draft_verbatim_reuse", False):
+            metadata.draft_origin = draft_provenance.origin
+            metadata.draft_model = draft_provenance.model
+            metadata.internal_draft_reused = True
 
     def _has_soft_violations(self, state: DeliberationState) -> bool:
         if not state.critiques:

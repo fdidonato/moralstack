@@ -58,6 +58,7 @@ from moralstack.orchestration.types import (
     DecisionType,
     DeliberationDependencies,
     DeliberationState,
+    DraftProvenance,
     FinalResponse,
     GenerationError,
     LoggerProtocol,
@@ -615,6 +616,7 @@ class DeliberationRunner:
         decision: Decision,
         decision_explanation: DecisionExplanation | None = None,
         speculative_draft: str | None = None,
+        draft_provenance: DraftProvenance | None = None,
     ) -> OrchestratorResult:
         """FAST PATH per operational_risk == NONE. Nessun modulo deliberativo."""
         from moralstack.orchestration.diagnostics import orch_debug_log
@@ -710,6 +712,14 @@ class DeliberationRunner:
             # supplied (the `if speculative_draft:` branch above); otherwise a
             # fresh policy generate produced it.
             internal_draft_reused=bool(speculative_draft),
+            # Benign is NOT a reuse-`llm_call` emitter (Codex round-5): its
+            # upstream provenance is carried here (FINAL metadata) plus the
+            # speculative row already persisted `module="upstream_speculative"`.
+            # Additive/gated: `draft_provenance is None` (internal mode, or a
+            # DCCL compliance-regenerated draft) leaves these at the
+            # `ResponseMetadata` defaults — byte-identical to today.
+            draft_origin=(draft_provenance.origin if draft_provenance is not None and speculative_draft else "internal"),
+            draft_model=(draft_provenance.model if draft_provenance is not None and speculative_draft else ""),
         )
         response = FinalResponse(content=content, response_type=ResponseType.DIRECT, metadata=metadata)
         return OrchestratorResult(
@@ -840,6 +850,7 @@ class DeliberationRunner:
         decision_explanation: DecisionExplanation | None = None,
         speculative_draft: str | None = None,
         request_analysis: RequestAnalysisContext | None = None,
+        draft_provenance: DraftProvenance | None = None,
     ) -> OrchestratorResult:
         """Path veloce: genera draft + quick check costituzionale;
         se fallisce passa a deliberative.
@@ -850,6 +861,11 @@ class DeliberationRunner:
         HARD constraints if the filtered shared list has zero HARD principles);
         forwarded unchanged to the quick-check-failed ``run_deliberative_path``
         escalation so the fallback path does not retrieve a second time either.
+
+        ``draft_provenance``: non-None only when ``speculative_draft`` is the
+        speculative draft actually produced by an upstream generator (opt-in
+        `generation="upstream_then_verify"`); default None = internal, keeping
+        every persisted row byte-identical to today.
         """
         from moralstack.orchestration.diagnostics import orch_debug_log
 
@@ -870,11 +886,17 @@ class DeliberationRunner:
             try:
                 if speculative_draft:
                     state.draft_response = speculative_draft
-                    reuse_model = _policy_llm_model_for_action(self.policy, "generate")
+                    state._draft_verbatim_reuse = True
+                    reuse_module = "upstream_speculative" if draft_provenance is not None else "policy"
+                    reuse_model = (
+                        draft_provenance.model
+                        if draft_provenance is not None
+                        else _policy_llm_model_for_action(self.policy, "generate")
+                    )
                     record_llm_call(
                         self.logger,
                         {
-                            "module": "policy",
+                            "module": reuse_module,
                             "action": "generate (speculative-reuse," " fast_path)",
                             "prompt": request.prompt[:200],
                             "response": speculative_draft[:200],
@@ -884,7 +906,7 @@ class DeliberationRunner:
                         {
                             "cycle": 0,
                             "phase": "policy_generate",
-                            "module": "policy",
+                            "module": reuse_module,
                             "action": "generate (speculative-reuse," " fast_path)",
                             "model": reuse_model,
                             "duration_ms": 0.0,
@@ -994,6 +1016,7 @@ class DeliberationRunner:
                     pre_retrieved_principles,
                 )
                 if not quick_result.passed:
+                    _delib_provenance = draft_provenance if speculative_draft else None
                     state_delib, risk_score, outcome = self.run_deliberative_path(
                         request,
                         risk_estimation,
@@ -1001,6 +1024,7 @@ class DeliberationRunner:
                         constitution=constitution,
                         speculative_draft=state.draft_response,
                         request_analysis=request_analysis,
+                        draft_provenance=_delib_provenance,
                     )
                     return self._build_deliberative_result(
                         request,
@@ -1010,6 +1034,7 @@ class DeliberationRunner:
                         risk_estimation,
                         outcome=outcome,
                         constitution=constitution,
+                        draft_provenance=_delib_provenance,
                     )
             except Exception as e:
                 rid = request.request_id or ""
@@ -1033,6 +1058,7 @@ class DeliberationRunner:
             risk_estimation=risk_estimation,
             decision_explanation=decision_explanation,
             constitution_store=self.constitution_store,
+            draft_provenance=draft_provenance if speculative_draft else None,
         )
         if getattr(response.metadata, "final_action", "") == "REFUSE" or response.response_type == ResponseType.FULL_REFUSAL:
             # NOTE: the refusal LLM call (with full system+user prompt) is
@@ -1084,9 +1110,11 @@ class DeliberationRunner:
         risk_estimation: RiskEstimationProtocol,
         outcome: ConvergenceOutcome | None = None,
         constitution: Any | None = None,
+        draft_provenance: DraftProvenance | None = None,
     ) -> OrchestratorResult:
         """Helper: costruisce OrchestratorResult da state (usato da run_fast_path
-        quando quick_check fallisce)."""
+        quando quick_check fallisce). ``draft_provenance``: forwarded to
+        ``assemble`` (fast-path -> deliberative escalation; see run_fast_path)."""
         from moralstack.orchestration.decision_service import decide_action
 
         decision1, explanation1 = decide_action(
@@ -1117,6 +1145,7 @@ class DeliberationRunner:
             risk_estimation=risk_estimation,
             decision_explanation=explanation1,
             constitution_store=self.constitution_store,
+            draft_provenance=draft_provenance,
         )
         if getattr(response.metadata, "final_action", "") == "REFUSE" or response.response_type == ResponseType.FULL_REFUSAL:
             # See FAST_PATH branch above: the refusal LLM call is persisted by
@@ -1358,6 +1387,7 @@ class DeliberationRunner:
         constitution: Any | None = None,
         speculative_draft: str | None = None,
         request_analysis: RequestAnalysisContext | None = None,
+        draft_provenance: DraftProvenance | None = None,
     ) -> tuple[DeliberationState, float, ConvergenceOutcome]:
         """
         Esegue cicli deliberativi. Restituisce (state, risk_score, outcome) per assemblaggio.
@@ -1369,6 +1399,11 @@ class DeliberationRunner:
                 risk estimation.  When provided *and* constrained_generation is
                 False, the draft is used as the cycle-1 starting point,
                 skipping the initial generation call.
+            draft_provenance: Non-None only when `speculative_draft` is the
+                speculative draft actually produced by an upstream generator
+                (opt-in `generation="upstream_then_verify"`). Forwarded to the
+                cycle-1 reuse in `_generate_or_revise`; default None = internal,
+                byte-identical to today.
             request_analysis: Risk-owned retrieval context supplied by the controller
                 (single upstream wave). Authoritative even when
                 ``relevant_principles`` is empty — an empty successful retrieval is
@@ -1399,10 +1434,12 @@ class DeliberationRunner:
         # Pre-set speculative draft for cycle 1 when safe to do so.
         # constrained_generation uses a different system prompt so the
         # speculative draft (generated with the base prompt) is not suitable.
+        _effective_draft_provenance: DraftProvenance | None = None
         if speculative_draft and not constrained_generation:
             state.draft_response = sanitize_policy_output(
                 speculative_draft,
             )
+            _effective_draft_provenance = draft_provenance
         risk_score = risk_estimation.score
         max_cycles = self._effective_max_cycles(risk_estimation)
         # Constrained generation (clearly_harmful): the policy is already instructed to
@@ -1457,6 +1494,7 @@ class DeliberationRunner:
                 max_cycles=max_cycles,
                 constitution=constitution,
                 request_analysis=request_analysis,
+                draft_provenance=_effective_draft_provenance,
             )
             raw = build_raw_outcome_for_log(state.cycle, max_cycles, state.decision)
             log_convergence_event("CONVERGENCE_RAW", request_id=request_id, **raw)
@@ -1526,6 +1564,7 @@ class DeliberationRunner:
         max_cycles: int = 1,
         constitution: Any | None = None,
         request_analysis: RequestAnalysisContext | None = None,
+        draft_provenance: DraftProvenance | None = None,
     ) -> DeliberationState:
         """Singolo ciclo deliberativo: generate/revisione, critique, simulate,
         perspectives, hindsight, decisione."""
@@ -1557,6 +1596,7 @@ class DeliberationRunner:
             request,
             risk_estimation=risk_estimation,
             constrained_generation=constrained_generation,
+            draft_provenance=draft_provenance,
         )
 
         delib_context, computed_max_cycles = self._build_delib_context(
@@ -2594,6 +2634,10 @@ class DeliberationRunner:
             response_text = _policy_text(result)
             protection_result = self._output_protector.validate(response_text)
             state.draft_response = sanitize_policy_output(protection_result.cleaned)
+            # A soft-revision rewrite just overwrote `draft_response`: it is no
+            # longer the verbatim joined draft, regardless of origin (mirrors
+            # the same guard in `_generate_or_revise` at :2834).
+            state._draft_verbatim_reuse = False
             state.soft_revision_applied = True
             state.soft_revision_guidance_used = guidance
             prompt_used = _policy_prompt_used(result, user_prompt_with_lang)
@@ -2638,18 +2682,25 @@ class DeliberationRunner:
         *,
         risk_estimation: RiskEstimationProtocol | None = None,
         constrained_generation: bool = False,
+        draft_provenance: DraftProvenance | None = None,
     ) -> DeliberationState:
         if self.policy is None:
             state.draft_response = f"[Mock response to: {request.prompt[:50]}...]"
+            state._draft_verbatim_reuse = False
             return state
         # Speculative draft already present from parallel generation:
         # skip redundant LLM call in cycle 1.
         if state.cycle == 1 and state.draft_response:
-            reuse_model = _policy_llm_model_for_action(self.policy, "generate")
+            reuse_module = "upstream_speculative" if draft_provenance is not None else "policy"
+            reuse_model = (
+                draft_provenance.model
+                if draft_provenance is not None
+                else _policy_llm_model_for_action(self.policy, "generate")
+            )
             record_llm_call(
                 self.logger,
                 {
-                    "module": "policy",
+                    "module": reuse_module,
                     "action": "generate (speculative-reuse)",
                     "prompt": request.prompt,
                     "response": state.draft_response,
@@ -2659,7 +2710,7 @@ class DeliberationRunner:
                 {
                     "cycle": 1,
                     "phase": "policy_generate",
-                    "module": "policy",
+                    "module": reuse_module,
                     "action": "generate (speculative-reuse)",
                     "model": reuse_model,
                     "duration_ms": 0.0,
@@ -2671,6 +2722,11 @@ class DeliberationRunner:
                     "billable_provider_call": False,
                 },
             )
+            # `state.draft_response` is still exactly the joined speculative
+            # draft (no generate/rewrite has run yet) — gates draft-provenance
+            # attribution in ResponseAssembler.assemble. Cleared below whenever
+            # a subsequent generate/rewrite overwrites `draft_response`.
+            state._draft_verbatim_reuse = True
             return state
         det_iso = (risk_estimation.detected_language or "") if risk_estimation is not None else ""
         pre_rewrite_guidance: str | None = None
@@ -2777,6 +2833,9 @@ class DeliberationRunner:
                     },
                 )
             state.draft_response = sanitize_policy_output(protection_result.cleaned)
+            # A fresh internal generate/rewrite just overwrote `draft_response`:
+            # it is no longer the verbatim joined draft, regardless of origin.
+            state._draft_verbatim_reuse = False
             prompt_used = _policy_prompt_used(result, policy_user_prompt)
             system_used = _policy_system_used(
                 result,

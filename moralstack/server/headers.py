@@ -36,6 +36,7 @@ def build_governance_headers(
         posture = str(getattr(result.conversation_governance_state_out, "posture", "") or "")
     cached_from = str(getattr(metadata, "cached_from_decision_id", "") or "")
     internal_draft_reused = bool(getattr(metadata, "internal_draft_reused", False))
+    draft_origin = str(getattr(metadata, "draft_origin", "internal") or "internal")
 
     headers: dict[str, str] = {
         "X-Moralstack-Decision": decision or "UNKNOWN",
@@ -47,6 +48,12 @@ def build_governance_headers(
     }
     if cached_from:
         headers["X-Moralstack-Cached-From"] = cached_from
+    # Opt-in generation="upstream_then_verify": emitted ONLY when the delivered
+    # draft is upstream-origin — internal mode never adds this header (byte-
+    # identical header set to today).
+    if draft_origin == "upstream":
+        headers["X-Moralstack-Draft-Origin"] = "upstream"
+        headers["X-Moralstack-Draft-Model"] = str(getattr(metadata, "draft_model", "") or "")
     cv = getattr(result, "compliance_verdict", None)
     if cv is not None and cv.decision.value != "NO_CONTRACT":
         headers["X-Moralstack-Compliance-Decision"] = cv.decision.value

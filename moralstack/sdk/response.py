@@ -111,6 +111,18 @@ class GovernanceMetadata:
     usage_may_be_incomplete: bool = False
     incomplete_reason: str | None = None
 
+    draft_origin: str = "internal"
+    """
+    Origin of the delivered/reused speculative draft: "internal" (default, the
+    governance model) or "upstream" (opt-in ``generation="upstream_then_verify"``,
+    the client-supplied model produced the draft). Additive field (deliberate
+    public-API addition) — defaults to the implicit current value, so existing
+    consumers reading only prior fields are unaffected.
+    """
+
+    draft_model: str = ""
+    """The upstream draft model string when ``draft_origin == "upstream"``, else ""."""
+
     @classmethod
     def from_result(cls, result: OrchestratorResult) -> GovernanceMetadata:
         """
@@ -155,6 +167,8 @@ class GovernanceMetadata:
             token_usage_estimated_count=int(getattr(meta, "token_usage_estimated_count", 0) or 0),
             usage_may_be_incomplete=bool(getattr(meta, "usage_may_be_incomplete", False)),
             incomplete_reason=getattr(meta, "incomplete_reason", None),
+            draft_origin=str(getattr(meta, "draft_origin", "internal") or "internal"),
+            draft_model=str(getattr(meta, "draft_model", "") or ""),
         )
 
 
@@ -233,6 +247,11 @@ class GovernedResponse:
     OpenAI-compatibility / alias field only. After Plan 1 it does NOT select the
     model that generates the delivered MoralStack answer; use
     ``GovernanceConfig.model`` / ``OPENAI_MODEL`` for governed generation.
+
+    Opt-in exception: when ``GovernanceConfig.generation`` /
+    ``MORALSTACK_GENERATION_MODE`` is ``"upstream_then_verify"``, this model
+    DOES generate the speculative draft (still never the delivered answer
+    directly) -- see ``moralstack/orchestration/upstream_draft.py``.
     """
 
     generation_model: str | None = None

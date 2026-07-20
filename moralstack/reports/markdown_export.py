@@ -348,6 +348,12 @@ def format_models_used_markdown(models_cfg: dict[str, Any], *, primary_model: st
     else:
         risk_rows = f"| **MoralStack risk** | {ms.get('risk', m)} |"
     pr = ms.get("policy_rewrite", ms.get("policy", m))
+    # Upstream-origin speculative draft (opt-in generation="upstream_then_verify"):
+    # a distinct row for the client draft model, surfaced only when the run
+    # actually had an upstream-origin draft. Absent in internal mode.
+    upstream_draft_row = (
+        f"| **MoralStack upstream draft (client model)** | {ms['upstream_draft']} |\n" if ms.get("upstream_draft") else ""
+    )
     return f"""### Models used
 
 | Component | Model |
@@ -361,7 +367,7 @@ def format_models_used_markdown(models_cfg: dict[str, Any], *, primary_model: st
 | **MoralStack simulator** | {ms.get('simulator', m)} |
 | **MoralStack hindsight** | {ms.get('hindsight', m)} |
 | **MoralStack perspectives** | {ms.get('perspectives', m)} |
-"""
+{upstream_draft_row}"""
 
 
 def _resolve_models_config_for_run(run_id: str) -> tuple[dict[str, Any], str]:
@@ -404,6 +410,11 @@ def _resolve_models_config_for_run(run_id: str) -> tuple[dict[str, Any], str]:
         "hindsight": db_models.get("hindsight", primary),
         "perspectives": db_models.get("perspectives", primary),
     }
+    # Upstream-origin speculative draft: only set when the run actually had
+    # one (no fallback to `primary`), so `format_models_used_markdown` omits
+    # the row entirely in internal mode.
+    if db_models.get("upstream_draft"):
+        ms["upstream_draft"] = db_models["upstream_draft"]
     cfg: dict[str, Any] = {"baseline": "—", "judge": "—", "moralstack": ms}
     return cfg, primary
 
@@ -420,7 +431,7 @@ def _overlay_db_models(cfg: dict[str, Any], run_id: str) -> None:
         ms["policy"] = db_models["policy_generate"]
     if "policy_rewrite" in db_models:
         ms["policy_rewrite"] = db_models["policy_rewrite"]
-    for key in ("risk", "critic", "simulator", "hindsight", "perspectives"):
+    for key in ("risk", "critic", "simulator", "hindsight", "perspectives", "upstream_draft"):
         if key in db_models:
             ms[key] = db_models[key]
 
@@ -630,12 +641,19 @@ def _render_delivery_path_section(
     spec_call = next((c for c in calls if (c.get("phase") or "") == "speculative_generate"), None)
     spec_event = _first_event(events, "SPECULATIVE_STARTED")
     if spec_call or spec_event:
+        _spec_is_upstream = (spec_call or {}).get("module") == "upstream_speculative" or (
+            _parse_event_payload(spec_event).get("draft_origin") == "upstream"
+        )
         rows.append(
             (
                 _fmt_ms((spec_call or spec_event or {}).get("started_at")),
                 "Speculative draft generated",
-                "Policy draft started in parallel with risk; this is not a delivery decision.",
-                "policy/speculative_generate",
+                (
+                    "Upstream draft (client model) started in parallel with risk; this is not a delivery decision."
+                    if _spec_is_upstream
+                    else "Policy draft started in parallel with risk; this is not a delivery decision."
+                ),
+                "upstream_speculative/speculative_generate" if _spec_is_upstream else "policy/speculative_generate",
             )
         )
 

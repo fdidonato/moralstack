@@ -114,6 +114,114 @@ class TestUpstreamModelOverride:
         mock_openai.chat.completions.create.assert_not_called()
 
 
+class TestUpstreamThenVerifyMode:
+    """Opt-in `generation="upstream_then_verify"`: the wrapped client produces
+    only the speculative draft (never the delivered answer directly); the
+    proxy's `_handle_chat_completion_sync` attaches `UpstreamDraftGenerator`
+    and derives `delivery_model`/headers/`PROXY_OUTPUT_FINALIZED.model` from
+    the resulting draft provenance.
+
+    Contrast `TestUpstreamModelOverride` above (`internal` mode, default):
+    there the wrapped client is `assert_not_called`. Here, in upstream mode,
+    the wrapped client IS called once -- for the draft only.
+    """
+
+    @staticmethod
+    def _raw_openai_response(content: str) -> Any:
+        """Raw-attribute OpenAI-shaped response (`UpstreamDraftGenerator` reads
+        `.choices[0].message.content` / `.usage` directly, not `model_dump()`)."""
+        return MagicMock(
+            choices=[MagicMock(message=MagicMock(content=content), finish_reason="stop")],
+            usage=MagicMock(prompt_tokens=3, completion_tokens=2, total_tokens=5),
+        )
+
+    def _make_upstream_then_verify_app(self, *, draft_text: str = "CLIENT DRAFT VERBATIM TEXT"):
+        from moralstack.sdk.config import GovernanceConfig
+        from moralstack.server.proxy import create_app
+
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create = MagicMock(return_value=self._raw_openai_response(draft_text))
+
+        def _process(processed, **kwargs):
+            # Simulate what the real controller does: call the wired
+            # upstream draft generator (proving the wrapped client is used
+            # for the draft), then deliver it verbatim with provenance set.
+            gen = getattr(processed, "upstream_draft_generator", None)
+            assert gen is not None, "expected upstream_draft_generator to be wired"
+            draft = gen.generate(prompt=processed.prompt, system="")
+            result = _make_result("NORMAL_COMPLETE", content=draft.text)
+            result.response.metadata.draft_origin = "upstream"
+            result.response.metadata.draft_model = gen.model
+            result.response.metadata.internal_draft_reused = True
+            return result
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.process = MagicMock(side_effect=_process)
+
+        app = create_app(
+            openai_client=mock_openai,
+            orchestrator=mock_orchestrator,
+            config=GovernanceConfig(generation="upstream_then_verify"),
+        )
+        return TestClient(app), mock_openai, mock_orchestrator
+
+    def test_wrapped_client_called_once_for_draft_and_response_echoes_client_model(self):
+        client, mock_openai, _ = self._make_upstream_then_verify_app()
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "client-model-C", "messages": [{"role": "user", "content": "Q"}]},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["choices"][0]["message"]["content"] == "CLIENT DRAFT VERBATIM TEXT"
+        assert payload["model"] == "client-model-C"
+        # Contrast TestUpstreamModelOverride: the wrapped client IS called
+        # once here, for the draft only.
+        mock_openai.chat.completions.create.assert_called_once()
+        assert mock_openai.chat.completions.create.call_args.kwargs.get("model") == "client-model-C"
+
+    def test_draft_origin_header_present_only_in_upstream_mode(self):
+        client, _, _ = self._make_upstream_then_verify_app()
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "client-model-C", "messages": [{"role": "user", "content": "Q"}]},
+        )
+        assert response.headers.get("X-Moralstack-Draft-Origin") == "upstream"
+        assert response.headers.get("X-Moralstack-Draft-Model") == "client-model-C"
+
+    def test_internal_mode_never_emits_draft_origin_header(self, client_factory):
+        # Default `internal` mode (client_factory): no new header at all.
+        client, _, _ = client_factory("NORMAL_COMPLETE")
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+        )
+        assert "X-Moralstack-Draft-Origin" not in response.headers
+        assert "X-Moralstack-Draft-Model" not in response.headers
+
+    def test_no_client_model_never_calls_wrapped_client_even_in_upstream_mode(self):
+        from moralstack.sdk.config import GovernanceConfig
+        from moralstack.server.proxy import create_app
+
+        mock_openai = MagicMock()
+        mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion())
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.process = MagicMock(return_value=_make_result("NORMAL_COMPLETE", content="governed text"))
+        app = create_app(
+            openai_client=mock_openai,
+            orchestrator=mock_orchestrator,
+            config=GovernanceConfig(generation="upstream_then_verify"),
+        )
+        client = TestClient(app)
+        response = client.post(
+            "/v1/chat/completions",
+            json={"messages": [{"role": "user", "content": "Q"}]},
+        )
+        assert response.status_code == 200
+        mock_openai.chat.completions.create.assert_not_called()
+        assert "X-Moralstack-Draft-Origin" not in response.headers
+
+
 def test_final_action_persisted_synchronously(tmp_path, monkeypatch):
     from moralstack.observability import router
     from moralstack.observability import service as service_module

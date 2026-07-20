@@ -65,6 +65,20 @@ Empty governed content fails closed to a governed refusal
 guard fields are retained as audit metadata, but they no longer route delivery to
 an upstream call. The SDK uses the same governed delivery invariant.
 
+**Opt-in `generation="upstream_then_verify"` (default off, `GovernanceConfig.generation`
+/ `MORALSTACK_GENERATION_MODE`, resolved once in `create_app`).** When the body's `model`
+is set, `_handle_chat_completion_sync` attaches an `UpstreamDraftGenerator(client=
+openai_client, model=body["model"])` to `processed.upstream_draft_generator` — the
+wrapped/upstream client then produces only the speculative draft the controller already
+generates in parallel with risk estimation (§3 above); `finalize_delivery` is unchanged
+(still pure). `delivery_model` (the SSE/non-stream `model` field, and
+`PROXY_OUTPUT_FINALIZED.model`) is computed right after `finalize_delivery`, from
+`result.response.metadata.draft_origin`/`draft_model`/`internal_draft_reused`: it equals
+the client draft model only when the delivered text is the verbatim, unrevised upstream
+draft; otherwise it is `upstream_model` (the resolved governance model), exactly as
+before this feature. Internal mode (default) is byte-identical: `body["model"]` is never
+validated against an allowlist (documented, deferred security follow-up).
+
 ### conversation_id generation / propagation (`proxy.py:134-152`, resolver;
 `proxy.py:654-709`, route handler)
 Resolution precedence (principal keying only affects step 3):

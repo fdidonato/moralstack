@@ -47,6 +47,19 @@ class GovernanceConfig:
     base_url: str | None = None
     """OpenAI-compatible base URL. If None, uses OPENAI_BASE_URL from the environment."""
 
+    generation: Literal["internal", "upstream_then_verify"] = "internal"
+    """
+    Speculative-draft generation mode:
+    - 'internal' (default): the governance model (``self.policy``) produces the
+      speculative draft, exactly as today.
+    - 'upstream_then_verify': when a client ``model`` is supplied, the wrapped/
+      upstream client produces the speculative draft instead; the draft still
+      receives the same route-specific governance treatment an internal draft
+      gets today (parity, not a new gate) and is discarded on any hard/refuse
+      path. Requires ``enable_speculative_generation``; otherwise a documented
+      no-op. Override with ``MORALSTACK_GENERATION_MODE``.
+    """
+
     # --- Constitution ---
     constitution_dir: str | None = None
     """Override path for constitution YAML overlays. If None, uses the default path."""

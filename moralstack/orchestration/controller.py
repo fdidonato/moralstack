@@ -95,6 +95,7 @@ from moralstack.orchestration.types import (
     ConvergenceOutcome,
     Decision,
     DeliberationDependencies,
+    DraftProvenance,
     FailSafeException,
     FinalResponse,
     LoggerProtocol,
@@ -979,6 +980,14 @@ class OrchestrationController:
                 "",
                 request.prompt,
             )
+            # Select the speculative-draft generator: the upstream-origin
+            # generator when the caller wired one (opt-in
+            # `generation="upstream_then_verify"` + client model), else the
+            # governance policy (today's sole path — untouched by default).
+            gen = getattr(request, "upstream_draft_generator", None) or self.policy
+            draft_origin = "upstream" if gen is not self.policy else "internal"
+            gen_model = getattr(gen, "model", "")
+            draft_model = str(gen_model) if gen_model else ""
             conversation_context = getattr(request, "conversation_context", None)
             speculative_context_mode = "system_last_user_only"
             messages: list[dict[str, str]] | None = None
@@ -993,13 +1002,13 @@ class OrchestrationController:
                 speculative_context_mode = "full_native"
             start = time.time()
             try:
-                if messages is not None and hasattr(self.policy, "generate_messages"):
-                    result = self.policy.generate_messages(
+                if messages is not None and hasattr(gen, "generate_messages"):
+                    result = gen.generate_messages(
                         messages=messages,
                         overrides=getattr(request, "generation_overrides", None),
                     )
                 else:
-                    result = self.policy.generate(
+                    result = gen.generate(
                         prompt=prompt_text,
                         system=effective_system_for_request(
                             base=self._protected_system_prompt,
@@ -1009,10 +1018,20 @@ class OrchestrationController:
                         overrides=getattr(request, "generation_overrides", None),
                     )
             except TypeError:
-                result = self.policy.generate(prompt_text)
+                result = gen.generate(prompt_text)
             elapsed = (time.time() - start) * 1000
             speculative_token_usage = TokenUsage.from_generation_result(result)
-            response_text = getattr(result, "text", None) or str(result)
+            raw_text = getattr(result, "text", None)
+            if draft_origin == "upstream":
+                # Empty/whitespace upstream draft is "no draft" (never the
+                # `str(result)` repr, never delivered as a passthrough): the
+                # route falls back to internal governed regeneration.
+                if not (raw_text or "").strip():
+                    return None, None
+                response_text = str(raw_text)
+            else:
+                # Internal mode: unchanged expression, byte-identical to today.
+                response_text = raw_text or str(result)
             protection = self._output_protector.validate(response_text)
             prompt_used = getattr(result, "prompt_used", None) or prompt_text
             if messages is not None:
@@ -1024,37 +1043,40 @@ class OrchestrationController:
             message_sections = (
                 conversation_context.observability_message_sections() if conversation_context is not None else {}
             )
-            policy_model = getattr(self.policy, "model", None)
-            policy_model_str = str(policy_model) if policy_model is not None else None
+            parsed_summary: dict[str, Any] = {
+                "context_shape": (
+                    conversation_context.context_shape_metadata(
+                        module="speculative_generate",
+                        context_mode=speculative_context_mode,
+                    )
+                    if conversation_context is not None
+                    else {"module": "speculative_generate", "context_mode": "none"}
+                ),
+                "message_sections": message_sections,
+            }
             persist_kwargs: dict[str, Any] = {
                 "cycle": 0,
                 "phase": "speculative_generate",
-                "module": "policy",
                 "action": "generate (speculative)",
-                "model": policy_model_str,
                 "started_at": int(start * 1000),
                 "duration_ms": elapsed,
                 "prompt": prompt_used,
                 "system_prompt": system_used or "",
                 "raw_response": response_text,
-                "parsed_summary_json": json.dumps(
-                    {
-                        "context_shape": (
-                            conversation_context.context_shape_metadata(
-                                module="speculative_generate",
-                                context_mode=speculative_context_mode,
-                            )
-                            if conversation_context is not None
-                            else {"module": "speculative_generate", "context_mode": "none"}
-                        ),
-                        "message_sections": message_sections,
-                    },
-                    ensure_ascii=False,
-                ),
                 "sequence_in_cycle": 0,
                 "call_kind": "speculative",
                 "token_usage_json": speculative_token_usage.to_json(),
             }
+            if draft_origin == "upstream":
+                persist_kwargs["module"] = "upstream_speculative"
+                persist_kwargs["model"] = draft_model
+                parsed_summary["draft_origin"] = "upstream"
+            else:
+                # Byte-identical to today: no `draft_origin` key, module="policy".
+                policy_model = getattr(self.policy, "model", None)
+                persist_kwargs["module"] = "policy"
+                persist_kwargs["model"] = str(policy_model) if policy_model is not None else None
+            persist_kwargs["parsed_summary_json"] = json.dumps(parsed_summary, ensure_ascii=False)
             if conversation_context is not None:
                 try:
                     self._emit_context_shape(
@@ -1071,6 +1093,22 @@ class OrchestrationController:
                 e,
             )
             return None, None
+
+    def _draft_provenance_for_join(self, request: ProcessedRequest) -> DraftProvenance | None:
+        """``DraftProvenance`` for a route that joins the *speculative* draft.
+
+        Source of truth (Codex round-4): derived at route time from
+        ``request.upstream_draft_generator`` — never recovered from the
+        speculative handle's returned draft text. Returns ``None`` (internal,
+        the default — byte-identical) unless an upstream generator produced
+        the joined draft. Callers must pass ``None`` explicitly for a
+        DCCL compliance-*regenerated* draft (``draft_is_speculative=False``),
+        which is always internal even in upstream mode.
+        """
+        gen = getattr(request, "upstream_draft_generator", None)
+        if gen is None:
+            return None
+        return DraftProvenance(origin="upstream", model=str(getattr(gen, "model", "") or ""))
 
     def _run_speculative_overlap(
         self,
@@ -1102,6 +1140,13 @@ class OrchestrationController:
             request,
         )
         try:
+            _spec_gen = getattr(request, "upstream_draft_generator", None)
+            _spec_started_payload: dict[str, Any] = {
+                "speculative_mode": True,
+                "model": str(getattr(_spec_gen or self.policy, "model", "") or ""),
+            }
+            if _spec_gen is not None:
+                _spec_started_payload["draft_origin"] = "upstream"
             self._events.emit_orchestration_event(
                 stage="orchestration",
                 component="speculative",
@@ -1109,10 +1154,7 @@ class OrchestrationController:
                 decision="started",
                 status="ok",
                 started_at=spec_started_at_ms,
-                payload={
-                    "speculative_mode": True,
-                    "model": str(getattr(self.policy, "model", "") or ""),
-                },
+                payload=_spec_started_payload,
             )
         except Exception:
             _LOG.debug("emit SPECULATIVE_STARTED failed", exc_info=True)
@@ -1461,6 +1503,11 @@ class OrchestrationController:
         decision = self._build_compliance_decision(request, risk_estimation, cv)
         decision_explanation = self._build_compliance_decision_explanation(request, cv)
 
+        # DCCL regenerate (`draft_is_speculative=False`) always generates with
+        # `self.policy` (`_regenerate_for_contract`) — internal even in
+        # upstream mode. Only the *speculative* draft can carry upstream
+        # provenance.
+        draft_provenance = self._draft_provenance_for_join(request) if draft_is_speculative else None
         result = self._runner.run_benign_fast_path(
             request=request,
             risk_estimation=risk_estimation,
@@ -1468,6 +1515,7 @@ class OrchestrationController:
             decision=decision,
             decision_explanation=decision_explanation,
             speculative_draft=speculative_draft,
+            draft_provenance=draft_provenance,
         )
 
         if call_ctx.compliance_verdict is not None:
@@ -1698,6 +1746,7 @@ class OrchestrationController:
         speculative_draft: str | None = None,
         *,
         call_ctx: ProcessCallContext,
+        draft_provenance: DraftProvenance | None = None,
     ) -> OrchestratorResult:
         request_id = request.request_id
         orch_debug_log(
@@ -1714,6 +1763,7 @@ class OrchestrationController:
             decision=decision,
             decision_explanation=explanation,
             speculative_draft=speculative_draft,
+            draft_provenance=draft_provenance if speculative_draft else None,
         )
         fill_trace_from_result(trace, result)
         result.trace = trace
@@ -1859,6 +1909,7 @@ class OrchestrationController:
         *,
         call_ctx: ProcessCallContext,
         request_analysis: RequestAnalysisContext | None = None,
+        draft_provenance: DraftProvenance | None = None,
     ) -> OrchestratorResult:
         """
         `request_analysis` is the context already built (and, on success, emitted)
@@ -1883,6 +1934,7 @@ class OrchestrationController:
             decision_explanation=explanation,
             speculative_draft=speculative_draft,
             request_analysis=request_analysis,
+            draft_provenance=draft_provenance if speculative_draft else None,
         )
         _fsnap = getattr(result, "convergence_snapshot", None)
         if isinstance(_fsnap, dict) and request_id:
@@ -1914,6 +1966,7 @@ class OrchestrationController:
         *,
         call_ctx: ProcessCallContext,
         request_analysis: RequestAnalysisContext | None = None,
+        draft_provenance: DraftProvenance | None = None,
     ) -> OrchestratorResult:
         """
         `request_analysis` is the context already built (and, on success, emitted)
@@ -1928,6 +1981,10 @@ class OrchestrationController:
             "H-delib",
             request_id=request_id,
         )
+        # None unless a speculative draft was actually joined (mirrors the
+        # other routes): `run_deliberative_path` pre-sets `state.draft_response`
+        # from `speculative_draft` only when truthy.
+        draft_provenance = draft_provenance if speculative_draft else None
         constitution = get_constitution_safe(self.constitution_store, request.get_domain())
         state, risk_score, outcome = self._runner.run_deliberative_path(
             request,
@@ -1937,6 +1994,7 @@ class OrchestrationController:
             constitution=constitution,
             speculative_draft=speculative_draft,
             request_analysis=request_analysis,
+            draft_provenance=draft_provenance,
         )
         _snap_raw = getattr(state, "_convergence_evaluation_snapshot", None)
         _convergence_snapshot = dict(_snap_raw) if isinstance(_snap_raw, dict) else None
@@ -2150,6 +2208,7 @@ class OrchestrationController:
             outcome=outcome,
             decision_explanation=expl_for_assembler,
             constitution_store=self.constitution_store,
+            draft_provenance=draft_provenance,
         )
         self._emit_deliberation_aggregate_trace(
             request_id=request_id,
@@ -2741,6 +2800,7 @@ class OrchestrationController:
                     trace,
                     speculative_draft=speculative_draft,
                     call_ctx=call_ctx,
+                    draft_provenance=self._draft_provenance_for_join(request),
                 )
             if route == "safe_complete":
                 if spec_handle is not None:
@@ -2781,6 +2841,7 @@ class OrchestrationController:
                     speculative_draft=speculative_draft_fp,
                     call_ctx=call_ctx,
                     request_analysis=request_analysis,
+                    draft_provenance=self._draft_provenance_for_join(request),
                 )
 
             speculative_draft_delib: str | None = None
@@ -2804,6 +2865,7 @@ class OrchestrationController:
                 speculative_draft=speculative_draft_delib,
                 call_ctx=call_ctx,
                 request_analysis=request_analysis,
+                draft_provenance=self._draft_provenance_for_join(request),
             )
 
         except OrchestratorTimeoutError as e:

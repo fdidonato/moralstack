@@ -205,6 +205,14 @@ class ProcessedRequest:
     # Per-request sampling overrides from the client (proxy body / SDK kwargs).
     # Honored only by delivered-answer generators, never by REFUSE wording.
     generation_overrides: GenerationOverrides | None = None
+    # Opt-in `generation="upstream_then_verify"` carrier: a
+    # `moralstack.orchestration.upstream_draft.UpstreamDraftGenerator` (or
+    # compatible object exposing `.model`/`.generate`/`.generate_messages`)
+    # wired by the SDK/proxy when a client model is supplied. `None` (default)
+    # means the speculative draft is produced by the governance model
+    # (`self.policy`), exactly as today. Not persisted/serialized: in-process
+    # carrier only (`ProcessedRequest` is never JSON-serialized as a whole).
+    upstream_draft_generator: Any = field(default=None, repr=False, compare=False)
 
     def get_domain(self) -> str | None:
         """Ottiene il dominio overlay dall'user context."""
@@ -230,6 +238,23 @@ class MetaAnalysis:
     critic_rationales: list[str]
     hindsight_score: float
     stop_reason: str
+
+
+@dataclass(frozen=True)
+class DraftProvenance:
+    """Origin of the delivered/reused speculative draft (opt-in upstream mode).
+
+    Produced by the controller at route time from ``(request.upstream_draft_generator,
+    draft_is_speculative)`` — never recovered from the speculative handle's returned
+    draft text. ``origin`` is ``"upstream"`` iff the delivered/reused draft is the
+    speculative draft actually produced by the upstream generator (the DCCL
+    compliance-*regenerate* path is internal even in upstream mode, since it
+    always generates with ``self.policy``). Value object (not a bare tuple) so
+    origin/model cannot be mis-threaded across controller/runner call boundaries.
+    """
+
+    origin: Literal["internal", "upstream"]
+    model: str
 
 
 @dataclass
@@ -282,6 +307,13 @@ class ResponseMetadata:
     # draft (no second policy `generate` for delivery). Surfaced as the
     # X-Moralstack-Internal-Draft-Reused proxy header (server/headers.py).
     internal_draft_reused: bool = False
+    # Draft provenance (opt-in `generation="upstream_then_verify"`, additive).
+    # "internal" (default) when the delivered draft was produced by the
+    # governance model; "upstream" when it is the client-model speculative
+    # draft delivered verbatim (never set for a post-draft rewrite/refusal).
+    # Gated so internal mode never sets these — byte-identical to today.
+    draft_origin: str = "internal"
+    draft_model: str = ""
     # Token accounting (best-effort synchronous summary).
     input_tokens: int = 0
     output_tokens: int = 0
@@ -786,6 +818,12 @@ class DeliberationState:
     _scheduler_skipped_modules: list[str] = field(default_factory=list, repr=False)
     # Last convergence evaluation (observability; set by ConvergenceEvaluator.determine_decision)
     _convergence_evaluation_snapshot: dict[str, Any] | None = field(default=None, repr=False)
+    # True exactly when `draft_response` is still byte-identical to the
+    # speculative draft joined at cycle 1 (never overwritten by a later
+    # internal generate/rewrite). Set by DeliberationRunner. Used only to gate
+    # draft-provenance attribution in ResponseAssembler.assemble (opt-in
+    # `generation="upstream_then_verify"`); unused/inert in internal mode.
+    _draft_verbatim_reuse: bool = field(default=False, repr=False)
 
     @property
     def last_critique(self) -> CriticReportProtocol | None:
@@ -854,6 +892,7 @@ class DeliberationState:
             _convergence_evaluation_snapshot=(
                 dict(self._convergence_evaluation_snapshot) if self._convergence_evaluation_snapshot else None
             ),
+            _draft_verbatim_reuse=self._draft_verbatim_reuse,
         )
 
 

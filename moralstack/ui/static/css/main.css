@@ -1192,6 +1192,7 @@ h3 {
 /* Module accent colours (left border) */
 .flow-node[data-module="risk_estimator"] { border-left-color: var(--red); }
 .flow-node[data-module="policy"]          { border-left-color: var(--accent); }
+.flow-node[data-module="upstream_speculative"] { border-left-color: #0ea5e9; }
 .flow-node[data-module="critic"]          { border-left-color: var(--yellow); }
 .flow-node[data-module="simulator"]       { border-left-color: var(--green); }
 .flow-node[data-module="perspectives"]    { border-left-color: #a78bfa; }
@@ -1334,6 +1335,7 @@ h3 {
 /* Hover accent on node border-left using the module data attribute */
 .flow-node[data-module="risk_estimator"]:hover  { box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.2); }
 .flow-node[data-module="policy"]:hover           { box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.2); }
+.flow-node[data-module="upstream_speculative"]:hover { box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.25); }
 .flow-node[data-module="critic"]:hover           { box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.2); }
 .flow-node[data-module="simulator"]:hover        { box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.2); }
 .flow-node[data-module="perspectives"]:hover     { box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.2); }
