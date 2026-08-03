@@ -479,6 +479,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Development
 
+- **EU AI Act compliance research parked** (`docs/eu_ai_act_landscape.md`, referenced from
+  `CLAUDE.md`). Captures the post-Digital-Omnibus regulatory state (Annex III high-risk
+  deferred to 2027-12-02, Article 50 transparency binding from 2026-08-02, zero
+  harmonised standards cited in the OJ), the evaluation tooling surveyed as alternatives
+  to COMPL-AI, a proposed six-stage evidence pipeline, and three open decisions. Research
+  only — nothing implemented, no behavior change. The note is explicitly excluded from
+  `docs/CODEBASE_FACTS.md`: externally-verifiable claims stay hypotheses per
+  `.claude/rules/memory-maintenance.md`.
 - **Global `--ignore-missing-imports` dropped from mypy.** Both the CI Type Check step
   and the pre-commit mypy hook now run plain `mypy moralstack`: the blanket flag
   suppressed every missing-stub error (it is what masked the undeclared PyYAML
