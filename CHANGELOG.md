@@ -484,6 +484,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Development
 
+- **AIR-Bench measurement session recorded in the facts ledger** (`docs/CODEBASE_FACTS.md`),
+  from 709 requests over CoCoNot, XSTest and AIR-Bench 2024 on 2026-08-11. Verified: the three
+  risk mini-estimator model slots and their env overrides (a per-slot override leaves **no**
+  trace in `decision_traces`); `SAFE_COMPLETE` delivers `state.draft_response` **verbatim**,
+  its "safe" framing living only in metadata; `detected_domain` is read back from a mutable
+  instance attribute on the shared retriever instead of the retrieval return value.
+  Conditionally verified (external measurement, never a code fact): `gpt-4o` is materially
+  better calibrated than `gpt-4o-mini` on the `estimate_operational` slot. Two **P0 gaps
+  documented and NOT fixed**: a request can be assigned another request's domain (37,2 %
+  cross-attribution measured, 108 of 264 crossing the overlay `sensitive` line), and a
+  critic-rejected draft can be delivered when REFUSE is downgraded to SAFE_COMPLETE (verified
+  end-to-end on request `e324e47f`). Documentation only — no behavior change.
 - **EU AI Act compliance research parked** (`docs/eu_ai_act_landscape.md`, referenced from
   `CLAUDE.md`). Captures the post-Digital-Omnibus regulatory state (Annex III high-risk
   deferred to 2027-12-02, Article 50 transparency binding from 2026-08-02, zero
