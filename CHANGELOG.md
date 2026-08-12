@@ -151,6 +151,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The example configs now set `MORALSTACK_RISK_OPERATIONAL_MODEL=gpt-4o`** (was
+  `gpt-4o-mini`) in `.env.minimal` and `.env.template`. Follows the paired A/B measurement
+  recorded in `docs/CODEBASE_FACTS.md`: with the slot as the sole changed variable, CoCoNot
+  `contrast` compliance went 91,0 % → 94,3 % (n=379, sign test p=0,017) and XSTest `safe`
+  refusal rate 14,8 % → 9,6 % (n=250, p=0,0024), while the AIR-Bench 2024 safety score moved
+  0,9062 → 0,9000 (n=80, p=1,00, bootstrap CI contains 0) — significant gains on both
+  over-refusal benchmarks at a safety cost statistically indistinguishable from zero.
+  Examples only: the dataclass default and the env-resolution chain in
+  `models/risk/config_loader.py` are unchanged, so no runtime default moves.
 - **mypy `strict` now covers `moralstack.ui.*`** (the FastAPI observability UI,
   including the 3300-line `ui/app.py`), completing the strict rollout across the three
   user-facing packages (`orchestration.*`, `server.*`, `ui.*`). The package already
