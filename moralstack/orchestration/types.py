@@ -825,6 +825,12 @@ class DeliberationState:
     # draft-provenance attribution in ResponseAssembler.assemble (opt-in
     # `generation="upstream_then_verify"`); unused/inert in internal mode.
     _draft_verbatim_reuse: bool = field(default=False, repr=False)
+    # Request-scoped reuse-targets audit trail (moved off DeliberationRunner —
+    # a shared-instance list is last-writer-wins across concurrent requests).
+    # Must be listed in fork() below: both parallel strategies fork, and the
+    # critic's append (inside DeliberationRunner._critique) must survive the
+    # explicit merge in DeliberationRunner._run_full_parallel_evaluation.
+    _request_analysis_reuse_targets: list[str] = field(default_factory=list, repr=False)
 
     @property
     def last_critique(self) -> CriticReportProtocol | None:
@@ -894,6 +900,7 @@ class DeliberationState:
                 dict(self._convergence_evaluation_snapshot) if self._convergence_evaluation_snapshot else None
             ),
             _draft_verbatim_reuse=self._draft_verbatim_reuse,
+            _request_analysis_reuse_targets=list(self._request_analysis_reuse_targets),
         )
 
 

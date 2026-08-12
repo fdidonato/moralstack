@@ -243,6 +243,31 @@ These flags reduce wall-clock latency **without changing routing policy** (`deci
 - **Observability**: `SIMULATOR_GATE_DECISION`, `SIMULATOR_EXECUTED`, `SIMULATOR_SKIPPED`; `CYCLE_SUMMARY` includes
   `simulator_ran_this_cycle`, `simulator_gate_reason_codes`, and `simulator_carry_forward`.
 
+### Request-scoped runner state (deliberation clock and reuse targets)
+
+`DeliberationRunner` is built **once per process** (`OrchestrationController.__init__`) and serves
+concurrent requests on real threads (`server/proxy.py`, `run_in_threadpool`). It therefore holds
+**no** per-request value on the instance: every such value travels on the call.
+
+- **The deliberation clock** is the `start_time` **parameter**, threaded from
+  `run_deliberative_path` down to the four modules that gate on it — `_critique`, `_simulate`,
+  `_evaluate_hindsight`, `_evaluate_perspectives` — as a keyword argument defaulting to `None`.
+  Each gate compares `elapsed / timeout_ms` against its own threshold (hardcoded `0.90` before the
+  critique; `skip_optional_modules_threshold` and `soft_timeout_threshold` for the other three),
+  but all four read the **same** clock. **`start_time is None` means "do not skip"**: the gate is
+  not evaluated at all, never `elapsed = now - 0`. Direct callers (tests) may omit it.
+  It is deliberately **not** a `DeliberationState` field: `fork()` enumerates fields explicitly and
+  both parallel strategies fork, so a forked default would silently disable every gate.
+- **`reuse_targets`** (the request-analysis reuse audit trail, persisted as `reuse_targets` /
+  `reuse_count` in the `REQUEST_ANALYSIS_CONTEXT` trace) lives on `DeliberationState`, is copied by
+  `fork()`, and is **explicitly merged back** in `_run_full_parallel_evaluation` — where the critic
+  runs on a fork and only `critiques`/`errors` were merged. The `critic_gated` strategy runs the
+  critique on the main state before forking, so it needs no merge.
+
+Before this became request-scoped, a slow request could make a concurrent one skip its critique
+(the module that detects hard violations) by leaving a stale start time on the shared instance, and
+a request's audit trace could carry another request's reuse targets. See `docs/CODEBASE_FACTS.md`.
+
 ### Borderline REFUSE Upper Bound
 
 MoralStack supports a configurable parameter `borderline_refuse_upper` that defines the inclusive upper bound

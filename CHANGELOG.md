@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **`DeliberationRunner`'s per-request clock and reuse-target audit trail are now
+  request-scoped too (follow-up to the constitution-retrieval fix above).** The runner
+  is built once per process and served requests on real threads
+  (`server/proxy.py`), so its two remaining per-request instance attributes were
+  last-writer-wins: `_current_start_time` (read by the four timeout gates before
+  critique/simulation/hindsight/perspectives) and `_request_analysis_reuse_targets`
+  (the `reuse_targets`/`reuse_count` audit fields in the `REQUEST_ANALYSIS_CONTEXT`
+  trace). A slow request could backdate the shared clock and make a concurrent
+  request's critique — the module that detects hard violations — skip via a stale
+  90%-timeout ratio; this is not a corrupted audit field, it is governance not
+  executed because another request was slow. `start_time` is now threaded as an
+  explicit keyword parameter (default `None`, preserving "absent means do not skip")
+  through `_critique`/`_simulate`/`_evaluate_hindsight`/`_evaluate_perspectives` and
+  every intermediate caller, instead of living on the runner instance.
+  `_request_analysis_reuse_targets` moved onto the per-call `DeliberationState`
+  (including `DeliberationState.fork()`, so both parallel scheduling strategies carry
+  it correctly, and an explicit merge at the full-parallel critic-fork seam). No
+  persisted payload shape changed (`reuse_targets`/`reuse_count` keep their exact
+  keys); no public API changed.
 - **Constitution retrieval is now request-scoped (P0 concurrency fix).**
   `RiskEstimation.detected_domain` — which feeds the runtime overlay, `domain_regulated`,
   the sensitive risk floor and the domain-exclusion refusal route — used to be read back

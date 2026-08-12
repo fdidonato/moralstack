@@ -417,11 +417,7 @@ class DeliberationRunner:
         self.logger = logger
         self.assembler = assembler
         self._convergence_evaluator = ConvergenceEvaluator(config)
-        # None until run_deliberative_path sets the wall-clock start; avoids treating
-        # uninitialized 0.0 as epoch and skipping modules via bogus timeout ratios.
-        self._current_start_time: float | None = None
         self._executor: ThreadPoolExecutor | None = None
-        self._request_analysis_reuse_targets: list[str] = []
 
     def _effective_max_cycles(self, risk_estimation: RiskEstimationProtocol) -> int:
         risk_score = risk_estimation.score if hasattr(risk_estimation, "score") else 0.5
@@ -591,15 +587,22 @@ class DeliberationRunner:
         request_id: str,
         request_analysis: RequestAnalysisContext | None,
         risk_estimation: RiskEstimationProtocol,
+        reuse_targets: list[str] | None = None,
     ) -> None:
-        """Single REQUEST_ANALYSIS_CONTEXT trace at end of deliberation with reuse_targets populated."""
+        """Single REQUEST_ANALYSIS_CONTEXT trace at end of deliberation with reuse_targets populated.
+
+        ``reuse_targets`` is request-scoped (lives on the caller's
+        ``DeliberationState``, never on ``self``) and is passed in explicitly
+        by ``run_deliberative_path``. Defaults to ``None``/empty so existing
+        direct-call sites that predate this parameter keep working.
+        """
         if request_analysis is None:
             return
         try:
             relevant = list(request_analysis.relevant_principles)
             relevant_principles_detail = [{"id": p.id, "title": p.title or "", "level": p.level or "soft"} for p in relevant]
             rd = request_analysis.retrieval_metadata
-            reuse_targets = list(self._request_analysis_reuse_targets)
+            reuse_targets = list(reuse_targets or [])
             rq = DecisionTrace(
                 request_id=request_id,
                 stage=REQUEST_ANALYSIS_CONTEXT,
@@ -1449,7 +1452,6 @@ class DeliberationRunner:
             "H-delib-entry",
             request_id=request_id,
         )
-        self._current_start_time = start_time
         state = DeliberationState(cycle=0)
         # Pre-set speculative draft for cycle 1 when safe to do so.
         # constrained_generation uses a different system prompt so the
@@ -1469,7 +1471,8 @@ class DeliberationRunner:
         if constrained_generation:
             max_cycles = 1
         # Request-scoped retrieval: single get_relevant_principles + constitution for downstream reuse.
-        self._request_analysis_reuse_targets = []
+        # (state._request_analysis_reuse_targets starts empty via its dataclass
+        # default_factory — no explicit reset needed here.)
         # Controller-supplied context is authoritative even when empty (successful
         # zero-principle retrieval is not degraded); fall back to this runner's own
         # retrieval only when the controller did not supply one (no risk estimator /
@@ -1515,6 +1518,7 @@ class DeliberationRunner:
                 constitution=constitution,
                 request_analysis=request_analysis,
                 draft_provenance=_effective_draft_provenance,
+                start_time=start_time,
             )
             raw = build_raw_outcome_for_log(state.cycle, max_cycles, state.decision)
             log_convergence_event("CONVERGENCE_RAW", request_id=request_id, **raw)
@@ -1571,6 +1575,7 @@ class DeliberationRunner:
             request_id=request_id,
             request_analysis=request_analysis,
             risk_estimation=risk_estimation,
+            reuse_targets=state._request_analysis_reuse_targets,
         )
         return state, risk_score, last_outcome
 
@@ -1585,6 +1590,7 @@ class DeliberationRunner:
         constitution: Any | None = None,
         request_analysis: RequestAnalysisContext | None = None,
         draft_provenance: DraftProvenance | None = None,
+        start_time: float | None = None,
     ) -> DeliberationState:
         """Singolo ciclo deliberativo: generate/revisione, critique, simulate,
         perspectives, hindsight, decisione."""
@@ -1644,6 +1650,7 @@ class DeliberationRunner:
                 max_cycles=max_cycles,
                 constitution=constitution,
                 request_analysis=request_analysis,
+                start_time=start_time,
             )
         else:
             state = self._run_critique_simulate_perspectives_sequential(
@@ -1654,6 +1661,7 @@ class DeliberationRunner:
                 max_cycles=max_cycles,
                 constitution=constitution,
                 request_analysis=request_analysis,
+                start_time=start_time,
             )
         # Constitutional override: perspectives cannot approve content
         # that violates HARD constraints
@@ -1667,7 +1675,7 @@ class DeliberationRunner:
             state.decision = DecisionType.REVISE
             return state
 
-        state = self._apply_hindsight_if_needed(state, request, delib_context, max_cycles=max_cycles)
+        state = self._apply_hindsight_if_needed(state, request, delib_context, max_cycles=max_cycles, start_time=start_time)
 
         return self._finalize_cycle(state, max_cycles, risk_estimation=risk_estimation)
 
@@ -1715,6 +1723,7 @@ class DeliberationRunner:
         delib_context: DelibContext | None,
         *,
         max_cycles: int = 1,
+        start_time: float | None = None,
     ) -> DeliberationState:
         """Run hindsight evaluation when enabled, available, and not gated."""
         req_id = request.request_id or ""
@@ -1768,7 +1777,7 @@ class DeliberationRunner:
                         "enable_hindsight_gating": self.config.enable_hindsight_gating,
                     },
                 )
-                state = self._evaluate_hindsight(state, request, delib_context=delib_context)
+                state = self._evaluate_hindsight(state, request, delib_context=delib_context, start_time=start_time)
         else:
             record_llm_call(
                 self.logger,
@@ -2099,6 +2108,7 @@ class DeliberationRunner:
         delib_context: DelibContext | None,
         gate: SimulatorGateDecision,
         emit_gate_decision: bool = True,
+        start_time: float | None = None,
     ) -> DeliberationState:
         """Execute simulator or record explicit skip; updates observability fields on state."""
         state._simulator_gate_reason_codes = list(gate.reason_codes)
@@ -2108,7 +2118,7 @@ class DeliberationRunner:
             return state
         if gate.should_run:
             t0 = time.time()
-            state = self._simulate(state, request, delib_context=delib_context)
+            state = self._simulate(state, request, delib_context=delib_context, start_time=start_time)
             elapsed = (time.time() - t0) * 1000
             state._simulator_ran_this_cycle = True
             state._simulator_carry_forward = False
@@ -2151,6 +2161,7 @@ class DeliberationRunner:
         max_cycles: int = 2,
         constitution: Any | None = None,
         request_analysis: RequestAnalysisContext | None = None,
+        start_time: float | None = None,
     ) -> DeliberationState:
         state = self._critique(
             state,
@@ -2158,6 +2169,7 @@ class DeliberationRunner:
             delib_context=delib_context,
             constitution=constitution,
             request_analysis=request_analysis,
+            start_time=start_time,
         )
         if self.config.enable_simulation and self.simulator is not None:
             gate = self._evaluate_simulator_gate(
@@ -2172,6 +2184,7 @@ class DeliberationRunner:
                 request,
                 delib_context=delib_context,
                 gate=gate,
+                start_time=start_time,
             )
         elif self.config.enable_simulation:
             record_llm_call(
@@ -2198,7 +2211,7 @@ class DeliberationRunner:
                 None,
             )
         if self.config.enable_perspectives and self.perspectives is not None:
-            state = self._evaluate_perspectives(state, request, delib_context=delib_context)
+            state = self._evaluate_perspectives(state, request, delib_context=delib_context, start_time=start_time)
         elif self.config.enable_perspectives:
             record_llm_call(
                 self.logger,
@@ -2339,6 +2352,7 @@ class DeliberationRunner:
         max_cycles: int = 2,
         constitution: Any | None = None,
         request_analysis: RequestAnalysisContext | None = None,
+        start_time: float | None = None,
     ) -> DeliberationState:
         # Pre-import prompt modules to avoid deadlock when threads import concurrently
         import moralstack.prompts.critic_prompt  # noqa: F401
@@ -2373,6 +2387,7 @@ class DeliberationRunner:
                 max_cycles=max_cycles,
                 constitution=constitution,
                 request_analysis=request_analysis,
+                start_time=start_time,
             )
 
         return self._run_critic_gated_parallel(
@@ -2383,6 +2398,7 @@ class DeliberationRunner:
             max_cycles=max_cycles,
             constitution=constitution,
             request_analysis=request_analysis,
+            start_time=start_time,
         )
 
     def _run_critic_gated_parallel(
@@ -2395,6 +2411,7 @@ class DeliberationRunner:
         max_cycles: int = 2,
         constitution: Any | None = None,
         request_analysis: RequestAnalysisContext | None = None,
+        start_time: float | None = None,
     ) -> DeliberationState:
         """Original two-stage approach: critic runs first as a gate, then
         simulator + perspectives run in parallel only if no hard violation."""
@@ -2404,6 +2421,7 @@ class DeliberationRunner:
             delib_context=delib_context,
             constitution=constitution,
             request_analysis=request_analysis,
+            start_time=start_time,
         )
         if state.has_critical_violations or getattr(state.last_critique, "violated_hard", False):
             state._critic_short_circuit = True
@@ -2461,6 +2479,7 @@ class DeliberationRunner:
                 r,
                 delib_context=delib_context,
                 gate=gate,
+                start_time=start_time,
             )
 
         def do_perspectives(
@@ -2473,6 +2492,7 @@ class DeliberationRunner:
                 s,
                 r,
                 delib_context=delib_context,
+                start_time=start_time,
             )
 
         ctx2 = contextvars.copy_context()
@@ -2500,6 +2520,7 @@ class DeliberationRunner:
         max_cycles: int = 2,
         constitution: Any | None = None,
         request_analysis: RequestAnalysisContext | None = None,
+        start_time: float | None = None,
     ) -> DeliberationState:
         """Full parallel: critic, simulator, and perspectives all run
         concurrently. On hard violation the sim/persp results are discarded,
@@ -2531,6 +2552,7 @@ class DeliberationRunner:
                 delib_context=delib_context,
                 constitution=constitution,
                 request_analysis=request_analysis,
+                start_time=start_time,
             )
 
         def do_simulate(
@@ -2545,6 +2567,7 @@ class DeliberationRunner:
                 delib_context=delib_context,
                 gate=gate_sim,
                 emit_gate_decision=False,
+                start_time=start_time,
             )
 
         def do_perspectives(
@@ -2557,6 +2580,7 @@ class DeliberationRunner:
                 s,
                 r,
                 delib_context=delib_context,
+                start_time=start_time,
             )
 
         ctx_c = contextvars.copy_context()
@@ -2573,6 +2597,11 @@ class DeliberationRunner:
 
         # Always merge critic results
         state.critiques = sc.critiques
+        # The critic ran on the `sc` fork (state_critic): its reuse-targets
+        # append (inside _critique) lands there, not on `state` — merge it
+        # back explicitly (fork() alone only copies it at fork time, before
+        # the critic runs).
+        state._request_analysis_reuse_targets = list(sc._request_analysis_reuse_targets)
         state.errors = list(state.errors) + list(sc.errors[n_errors_before:])
 
         # Propagate critic signals into delib_context (matches sequential path)
@@ -2900,12 +2929,13 @@ class DeliberationRunner:
         delib_context: DelibContext | None = None,
         constitution: Any | None = None,
         request_analysis: RequestAnalysisContext | None = None,
+        start_time: float | None = None,
     ) -> DeliberationState:
         if self.critic is None or (self.constitution_store is None and constitution is None):
             return state
         try:
-            if self._current_start_time is not None:
-                elapsed = (time.time() - self._current_start_time) * 1000
+            if start_time is not None:
+                elapsed = (time.time() - start_time) * 1000
                 elapsed_ratio = elapsed / self.config.timeout_ms
                 if elapsed_ratio > 0.90:
                     raise OrchestratorTimeoutError(
@@ -2956,8 +2986,8 @@ class DeliberationRunner:
                     developer_contract=request.developer_contract,
                     conversation_history=request.conversation_history,
                 )
-                if "critic" not in self._request_analysis_reuse_targets:
-                    self._request_analysis_reuse_targets.append("critic")
+                if "critic" not in state._request_analysis_reuse_targets:
+                    state._request_analysis_reuse_targets.append("critic")
                 try:
                     persist_orchestration_event(
                         cycle=state.cycle,
@@ -3089,12 +3119,13 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
+        start_time: float | None = None,
     ) -> DeliberationState:
         if self.simulator is None:
             return state
         try:
-            if self._current_start_time is not None:
-                elapsed = (time.time() - self._current_start_time) * 1000
+            if start_time is not None:
+                elapsed = (time.time() - start_time) * 1000
                 elapsed_ratio = elapsed / self.config.timeout_ms
                 if elapsed_ratio > self.config.skip_optional_modules_threshold:
                     raise OrchestratorTimeoutError(
@@ -3210,12 +3241,13 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
+        start_time: float | None = None,
     ) -> DeliberationState:
         if self.hindsight is None:
             return state
         try:
-            if self._current_start_time is not None:
-                elapsed = (time.time() - self._current_start_time) * 1000
+            if start_time is not None:
+                elapsed = (time.time() - start_time) * 1000
                 elapsed_ratio = elapsed / self.config.timeout_ms
                 if elapsed_ratio > self.config.skip_optional_modules_threshold:
                     raise OrchestratorTimeoutError(
@@ -3327,12 +3359,13 @@ class DeliberationRunner:
         request: ProcessedRequest,
         *,
         delib_context: DelibContext | None = None,
+        start_time: float | None = None,
     ) -> DeliberationState:
         if self.perspectives is None:
             return state
         try:
-            if self._current_start_time is not None:
-                elapsed = (time.time() - self._current_start_time) * 1000
+            if start_time is not None:
+                elapsed = (time.time() - start_time) * 1000
                 elapsed_ratio = elapsed / self.config.timeout_ms
                 if elapsed_ratio > self.config.skip_optional_modules_threshold:
                     raise OrchestratorTimeoutError(

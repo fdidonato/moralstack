@@ -161,7 +161,20 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   never widened beyond its own configured top_k. `run_fast_path` forwards the
   shared principles to `critic.quick_check(..., pre_retrieved_principles)`
   (filtered to HARD there) and to the quick-check-failed `run_deliberative_path`
-  fallback call, so FAST_PATH never re-retrieves either.
+  fallback call, so FAST_PATH never re-retrieves either. **Request-scoped
+  (retrieval-request-scoped-state §8b, commit 2, P0 fix):** `DeliberationRunner`
+  no longer carries per-request state on `self`. The wall-clock start (read by
+  the four timeout gates before critique/simulation/hindsight/perspectives) is
+  threaded as a `start_time: float | None = None` keyword parameter from
+  `run_deliberative_path` through every intermediate caller down to
+  `_critique`/`_simulate`/`_evaluate_hindsight`/`_evaluate_perspectives` (default
+  `None` = "do not skip", also what keeps direct leaf-method call sites working
+  unmodified). The `reuse_targets` audit list (persisted into
+  `REQUEST_ANALYSIS_CONTEXT`'s `reuse_targets`/`reuse_count`) moved onto
+  `DeliberationState._request_analysis_reuse_targets` — it is listed in
+  `DeliberationState.fork()` and explicitly merged back at the
+  `_run_full_parallel_evaluation` critic-fork seam, since both parallel
+  strategies fork the state and the full-parallel one forks the critic too.
 - `convergence.py`, `convergence_evaluator.py` — convergence engine.
 - `conversation_state.py` — `ConversationGovernanceState`, `TurnDecisionSummary`.
 - `conversational_fast_path.py` — `ConversationalFastPathRunner` (cache-driven skip).
