@@ -505,6 +505,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cross-attribution measured, 108 of 264 crossing the overlay `sensitive` line), and a
   critic-rejected draft can be delivered when REFUSE is downgraded to SAFE_COMPLETE (verified
   end-to-end on request `e324e47f`). Documentation only — no behavior change.
+- **EU AI Act landscape note extended** (`docs/eu_ai_act_landscape.md`, update of
+  2026-08-05). §3 rewritten — recognition status (as of the capture date **no** evaluation
+  tool is EU-recognised, and the reason is structural: no CEN-CENELEC deliverable is cited
+  in the OJ, and the AI Office was still gathering expert opinion on evaluator
+  accreditation), the selected track, the over-refusal requirement and the operational
+  integration details; §7 extended. §1, §2, §4, §5 and §6 untouched. Still a parked
+  research note: nothing implemented, and the claims stay out of the verified facts ledger.
 - **EU AI Act compliance research parked** (`docs/eu_ai_act_landscape.md`, referenced from
   `CLAUDE.md`). Captures the post-Digital-Omnibus regulatory state (Annex III high-risk
   deferred to 2027-12-02, Article 50 transparency binding from 2026-08-02, zero

@@ -2,6 +2,8 @@
 
 **Status: PARKED research note. Nothing here is implemented.**
 Captured 2026-08-03. Author: research session, no code changed.
+**Updated 2026-08-05** — §3 rewritten (recognition status, selected track, over-refusal
+requirement, operational integration details) and §7 extended. §1, §2, §4, §5, §6 untouched.
 
 This note exists so a future session can resume the AI Act compliance track without
 re-doing the search. It is deliberately kept out of `docs/CODEBASE_FACTS.md`: per
@@ -97,41 +99,138 @@ open decision in §6).
 
 COMPL-AI (ETH Zurich / INSAIT / LatticeFlow) has already been used against MoralStack
 (`scripts/complai_probe/`, `docs/traces/complai_llm_rules_flow.md`). It self-declares as
-*not* official auditing software. Alternatives surveyed 2026-08-03, ranked by
-recognition:
+*not* official auditing software. Surveyed 2026-08-03, re-surveyed and decided 2026-08-05.
 
-**Selection criterion that matters here:** MoralStack is a runtime governance layer, not
-a model. Only benchmarks that accept a *system under test* including guardrails measure
-anything meaningful about it.
+### 3.0 Recognition status — no tool is EU-recognised
 
-1. **AILuminate — MLCommons.** Explicitly evaluates both bare models and AI systems
-   *with* moderation filters and guardrails. 12 hazard categories, 24k+ prompts per
-   language, 5-point grade via safety evaluator models. v1.1 adds French (EN + FR
-   confirmed; ZH/HI announced; **IT/DE unconfirmed — do not assume**). Demo set ~1.2k
-   prompts (CC) on GitHub; practice test 12k on request; official test held out and run
-   by MLCommons. **AILuminate Global Assurance Program** (2026-02-19, with KPMG, Google,
-   Microsoft, Qualcomm) bridges ISO/IEC 42001 procedural requirements to empirical
-   metrics.
-2. **Inspect + Inspect Evals — UK AISI.** MIT-licensed evaluation harness, promoted by
-   the European Commission's Interoperable Europe portal. Registry already contains
-   AIR-Bench, StrongREJECT, SOSBench, WMDP, AgentHarm, Do-Not-Answer, plus BBQ / BOLD /
-   StereoSet for bias. No eval is labelled "EU AI Act" — that mapping would be our
-   contribution.
-3. **AIR-Bench 2024 / HELM Safety — Stanford CRFM.** Closest in spirit to COMPL-AI
-   without being it: taxonomy extracted from **8 regulatory frameworks (EU, US, CN) and
-   16 corporate policies**, 314 level-4 risk categories, 5,694 curated prompts. Results
-   hosted on HELM with prompt-level transparency and 21+ published models → a ready
-   comparison baseline. Available both natively and inside Inspect Evals.
+Do not look for "an officially recognised AI Act benchmark": as of 2026-08-05 none exists,
+and the reason is structural.
+
+- No CEN-CENELEC deliverable is cited in the Official Journal (§1.3) → no tool can confer
+  a presumption of conformity.
+- The AI Office was still **gathering expert opinion** on independence and qualification
+  requirements for external evaluators of systemic-risk GPAI models (online workshop
+  announced for 2026-07-15). The accreditation pathway does not exist yet.
+- The strongest endorsement any tool holds is COMPL-AI's: European Commission spokesperson
+  Thomas Regnier called it "a first step in translating the EU AI Act into technical
+  requirements". That is a press statement, not recognition.
+
+Recognition is therefore a **gradient**, not a gate. Ranked by institutional weight:
+COMPL-AI (EC spokesperson statement) > Inspect (promoted by the EC's Interoperable Europe
+portal) > AIR-Bench 2024 (ICLR 2025, taxonomy derived from the AI Act among 8 regulations)
+> AILuminate (industry consortium + ISO/IEC 42001 bridge) > everything else.
+
+### 3.1 The criterion that actually discriminates
+
+MoralStack is a runtime governance layer, not a model. Two questions separate the field:
+
+1. Does the framework accept a *system under test* including guardrails, or only a model?
+2. Does it measure **over-refusal**? Without it, the delta of any governance layer is an
+   artefact — a layer that refuses everything scores perfectly on safety. Documented
+   magnitude of the trade-off: LlamaGuard blocks >98% of harmful queries at a **6.4% false
+   positive rate**; ShieldGemma reaches 1.3% with better precision.
+
+Question 1 is answered only by AILuminate. Question 2 is answered by XSTest and OR-Bench —
+**both now present in the Inspect Evals registry**, which was not recorded on 2026-08-03.
+
+### 3.2 Selected track (decided 2026-08-05): AIR-Bench 2024 via Inspect
+
+Chosen over the AILuminate-first alternative. Trade-off accepted knowingly: Inspect
+evaluates the governed system *as if it were a model*, so the architectural claim ("system
+with guardrails") is weaker than AILuminate's — bought in exchange for a faster, fully
+reproducible setup, a public HELM baseline, and one harness covering safety **and**
+over-refusal.
+
+- **AIR-Bench 2024 — Stanford CRFM.** Taxonomy unifying **8 government regulations (AI Act
+  included) and 16 corporate policies** → 314 level-4 risks under 45 / 16 / 4 coarser
+  levels; 5,694 prompts. Paper includes case studies mapping model performance onto the
+  AI Act. Published at ICLR 2025. Public HELM leaderboard → a citable comparison baseline.
+- **Harness — Inspect / Inspect Evals (UK AISI).** MIT-licensed, promoted by the European
+  Commission's Interoperable Europe portal. Registry also carries StrongREJECT, SOSBench,
+  WMDP, AgentHarm, Do-Not-Answer, BBQ / BOLD / StereoSet, **XSTest** (250 safe prompts a
+  well-calibrated model must not refuse) and **OR-Bench Hard-1K**. No eval is labelled
+  "EU AI Act" — that mapping is our contribution.
+
+Integration (**UNVERIFIED — from Inspect docs, not run here**): Inspect's `openai-api`
+provider addresses an arbitrary OpenAI-compatible endpoint as
+`openai-api/<provider>/<model>`, reading `<PROVIDER>_API_KEY` / `<PROVIDER>_BASE_URL`
+(hyphens → underscores). Two providers can therefore be declared — one at the MoralStack
+proxy, one at the upstream vendor — giving a clean paired A/B **without** mutating a global
+`OPENAI_BASE_URL`. Run form: `inspect eval inspect_evals/air_bench --model openai-api/<p>/<m>`.
+
+**Experimental design fixed 2026-08-10 (user decisions).** The run is parity-matched to the
+June COMPL-AI comparison — same harness (Inspect), same arms (`openai/gpt-4o` vs the proxy via
+`openai-api/<provider>/<model>`), same paired per-item reporting; MoralStack's matrix pinned to
+`gpt-4o` + `gpt-4o-mini` and `MORALSTACK_GENERATION_MODE=internal` (entailed by parity:
+`upstream_then_verify` landed 2026-07-20, after the June run). One deliberate departure: **the
+judge is always a third model, different from the baseline arm and from every model in
+MoralStack's matrix** — chosen `openai/gpt-5.4`, identical on both arms. COMPL-AI's own
+`strong_reject` judge was `gpt-4o-mini`, which sits inside MoralStack's matrix, so parity on the
+judge would have compromised judge independence. Consequence: AIR-Bench absolute scores are not
+comparable to the COMPL-AI ones — only paired deltas within a benchmark.
+
+Reproducibility warning to carry into any write-up: the Inspect port's own `results.csv`
+reports a **~10% difference in refusal rate** against the paper's baseline for gpt-4o —
+partly a model-version difference (`gpt-4o-2024-08-06` vs `2024-05-13`). Absolute numbers
+are not comparable across harnesses; only the paired delta is.
+
+Bucket mapping onto the existing pre-registration (`scripts/complai_probe/prereg.md`) — the
+three-bucket structure does not change, it gets *instrumented*:
+
+| Bucket | Prediction | New instrument |
+| --- | --- | --- |
+| 1 — governance | Δ > 0 | AIR-Bench 2024 (regulation-derived hazard categories) |
+| 2 — capability / do-no-harm | Δ ≈ 0 | **XSTest + OR-Bench Hard-1K** — direct over-refusal measurement, replacing the indirect proxy (`ifbench`, `include`, contrast sets) |
+| 3 — double-edged | ambiguous | unchanged: estimator precision/recall |
+
+### 3.3 Not selected — AILuminate (MLCommons)
+
+The only mainstream framework that **explicitly** evaluates both bare models and AI systems
+*with* moderation filters and guardrails; SUT is a primitive of its design, not an
+adaptation. 12 hazard categories, 5-point grade (Poor→Excellent) via a safety-evaluator
+ensemble. Tooling: `modelgauge` (runs tests against SUTs, annotates responses) +
+`modelbench` (aggregates into hazards/benchmarks, writes reports); a custom SUT subclasses
+`PromptResponseSUT` under `modelgauge/suts/`, and a `modelgauge-openai` plugin already
+exists → the proxy attaches exactly as it does for COMPL-AI.
+
+Blockers that decided against it for now, all to be re-checked if the track is revived:
+
+- Official grading needs the member-only evaluator ensemble; the public path scores with
+  LlamaGuard via Together AI → a local run yields an *AILuminate-like* number, **not an
+  official AILuminate grade**.
+- Prompt tiers: demo 1,200 prompts **CC-BY-4.0** on GitHub; practice 12k and official 12k
+  are MLCommons-member-only, official held out → reproducibility stops at the practice set.
+- Locales `en_US` and `fr_FR`; ZH/HI in development. **Italian absent** (2026-08-03 note
+  said "IT/DE unconfirmed" — now confirmed absent for v1.0/v1.1).
+- **AILuminate Global Assurance Program** (2026-02, with KPMG, Google, Microsoft,
+  Qualcomm) bridges ISO/IEC 42001 *procedural* requirements to empirical metrics. Strongest
+  available credential, but not an EU one.
 
 Complements worth citing rather than running:
 
+- **"Can We Trust AI Benchmarks?"** (arXiv 2502.06559, AIES 2025) — interdisciplinary
+  meta-review of ~100–110 studies on benchmarking shortcomings, authored by **European
+  Commission JRC** researchers (Seville, Ispra, Brussels), with the standard "not an
+  official EC position" disclaimer. **The strongest EU-institutional citation available to
+  justify evaluation methodology** — including the refusal to report a single aggregate
+  score. Concludes that assessing *which benchmarks can be trusted* is itself a policymaker
+  task. EC summary published on Knowledge4Policy as "AI benchmarking: nine challenges and
+  a way forward".
 - **JRC143259**, *The Role of AI Safety Benchmarks in Evaluating Systemic Risks in GPAI
   Models* (Vanschoren, Fernandez Llorca, Eriksson, Gomez — JRC, 2025-10-10). The EU
   institutional reference: proposes a dual-trigger framework (capability trigger +
   safety benchmark) and a tiered, proportionate evaluation strategy. One of six JRC
-  external scientific reports on GPAI.
-- **Bench-2-CoP** (arXiv 2508.05464, Prandi et al.) — maps existing benchmarks onto the
-  GPAI Code of Practice taxonomy and documents the coverage gaps. Use as critical framing.
+  external scientific reports on GPAI. **Contents not re-verified on 2026-08-05** — the
+  PDF fetch returned unreadable binary; still second-hand.
+- **Bench-2-CoP** (arXiv 2508.05464, Prandi et al.) — LLM-as-judge mapping of 194,955
+  benchmark questions onto the GPAI Code of Practice taxonomy. Headline numbers worth
+  quoting: **61.6%** of regulation-relevant questions target "tendency to hallucinate" and
+  **31.2%** "lack of performance reliability", while evading human oversight,
+  self-replication and autonomous AI development get **zero coverage**. Use as critical
+  framing for why public benchmarks alone cannot evidence compliance.
+- **capAI** (Floridi, Holweg, Taddeo et al. — Oxford + Bologna, SSRN 4064091) — not a
+  benchmark: a *conformity assessment procedure* with an Internal Review Protocol following
+  the AI system lifecycle. Procedural complement to the empirical track, not a substitute.
 - **Phare** (Giskard, EU/Bpifrance/DeepMind funded) — EN/FR/ES, hallucination, bias,
   harmful content, jailbreak. European provenance.
 - **Project Moonshot** (AI Verify Foundation) — benchmark + red-teaming; AI Verify maps
@@ -223,7 +322,28 @@ building on them (PROJECT_SPEC §3).
    enforceable by construction" (binding today, fully demonstrable). Both can coexist;
    the priority order decides what gets built first.
 
-## 7. Sources (retrieved 2026-08-03)
+## 7. Sources (retrieved 2026-08-03, extended 2026-08-05)
+
+Added 2026-08-05:
+
+- AI Office workshop, qualification requirements for external evaluators of systemic-risk
+  GPAI models — <https://digital-strategy.ec.europa.eu/en/events/call-participants-workshop-qualification-requirements-external-evaluators-gpai-models-systemic-risk>
+- EC spokesperson statement on COMPL-AI (Thomas Regnier) — <https://www.cio.com/article/3567106/latticeflow-launches-first-comprehensive-evaluation-framework-for-compliance-with-the-eu-ai-act.html>
+- AI Act Service Desk / Single Information Platform (Compliance Checker, AI Act Explorer;
+  EN/FR/DE, all 24 languages announced for early 2026) — <https://ai-act-service-desk.ec.europa.eu/en>,
+  <https://digital-strategy.ec.europa.eu/en/news/commission-launches-ai-act-service-desk-and-single-information-platform-support-ai-act>
+- "Can We Trust AI Benchmarks?" (JRC) — <https://arxiv.org/abs/2502.06559>; EC summary
+  <https://knowledge4policy.ec.europa.eu/news/ai-benchmarking-nine-challenges-way-forward_en>
+- AIR-Bench 2024 in Inspect Evals — <https://ukgovernmentbeis.github.io/inspect_evals/evals/knowledge/air_bench/>,
+  source <https://github.com/UKGovernmentBEIS/inspect_evals/tree/main/src/inspect_evals/air_bench>
+- Inspect providers, `openai-api` OpenAI-compatible endpoints — <https://inspect.aisi.org.uk/providers.html>
+- AILuminate tooling — modelbench <https://github.com/mlcommons/modelbench>, modelgauge SUT
+  tutorial <https://github.com/mlcommons/modelgauge/blob/main/docs/tutorial_suts.md>
+- capAI — <https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4064091>
+- GPAI Code of Practice, Safety & Security chapter (safety mitigations incl. input/output
+  filtering) — <https://digital-strategy.ec.europa.eu/en/policies/contents-code-gpai>
+
+Retrieved 2026-08-03:
 
 - Jones Walker — <https://www.joneswalker.com/en/insights/blogs/ai-law-blog/yes-august-2-still-matters-the-eu-approved-a-high-risk-ai-delay-but-most-trans.html>
 - Gibson Dunn, EU AI Act Omnibus Agreement — <https://www.gibsondunn.com/eu-ai-act-omnibus-agreement-postponed-high-risk-deadlines-and-other-key-changes/>
