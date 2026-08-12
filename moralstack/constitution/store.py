@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from moralstack.constitution.helpers import _STOPWORDS, resolve_conflict, tokenize
 from moralstack.constitution.loader import ConstitutionLoadError, load_yaml_file
 from moralstack.constitution.openai_config import OpenAIClientConfig
+from moralstack.constitution.retrieval_result import PrincipleRetrievalResult
 from moralstack.constitution.retriever import (
     ConstitutionRetriever,
     ConstitutionRetrieverConfig,
@@ -86,8 +87,8 @@ def detect_domain(
     DEPRECATED for runtime domain selection.
 
     Runtime code MUST use ConstitutionRetriever / DomainPrefilter through
-    `ConstitutionStore.get_relevant_principles()` and read the resulting
-    `prefiltered_domains` from `ConstitutionStore.get_debug_info()` instead.
+    `ConstitutionStore.retrieve()` and read the resulting `prefiltered_domains`
+    from its return value instead.
 
     This function uses a legacy standalone LLM classifier whose prompt does not
     enforce the same domain-exclusion contract as the DomainPrefilter (e.g. it
@@ -894,6 +895,39 @@ class ConstitutionStore:
             retrieval_phase=retrieval_phase,
         )
 
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 10,
+        domain: str | None = None,
+        *,
+        retrieval_phase: str = "risk_routing",
+    ) -> PrincipleRetrievalResult:
+        """
+        Retrieval con agenti paralleli per dominio, canale decisionale tipizzato.
+
+        Delegates to ConstitutionRetriever.retrieve(). Returns the principles, the
+        raw ``prefiltered_domains`` (decision channel — the caller owns the `core`
+        exclusion, §5.5) and ``debug_info`` (best-effort telemetry, same shape as
+        the retired per-retrieval debug accessor this replaces). Writes no instance state.
+
+        Args:
+            query: Testo della richiesta/prompt (qualsiasi lingua).
+            top_k: Numero massimo di principi da ritornare.
+            domain: Dominio opzionale (forza valutazione di questo dominio).
+            retrieval_phase: Observability qualifier for domain prefilter persistence
+                (``risk_routing`` vs ``deliberation_retrieval``).
+
+        Returns:
+            PrincipleRetrievalResult frozen (principles, prefiltered_domains, debug_info).
+        """
+        return self._retriever.retrieve(
+            query,
+            top_k=top_k,
+            domain=domain,
+            retrieval_phase=retrieval_phase,
+        )
+
     def detect_relevant_domains(self, query: str) -> list[str]:
         """
         Return a list of constitution domains relevant to the query, ordered by relevance.
@@ -917,15 +951,6 @@ class ConstitutionStore:
     def get_excluded_domains(self) -> list[str]:
         """List of domain names with excluded=true. [NO LLM] For CLI startup display."""
         return [d for d in self.get_available_domains() if getattr(self.load_overlay(d), "excluded", False)]
-
-    def get_debug_info(self) -> dict[str, Any]:
-        """
-        Restituisce informazioni di debug sull'ultima esecuzione.
-
-        Returns:
-            Dict con informazioni su agenti, risultati, etc.
-        """
-        return self._retriever.get_debug_info()
 
     def resolve_conflict(self, principles: list[Principle]) -> list[Principle]:
         """

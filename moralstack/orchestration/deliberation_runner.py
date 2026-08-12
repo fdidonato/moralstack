@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Literal, Union, cast
 
+from moralstack.constitution.retrieval_result import warn_missing_retrieve_once
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.delib_context import DelibContext
 from moralstack.models.risk.categories import OperationalRisk, RiskCategory, RiskPolicyAction
@@ -472,21 +473,39 @@ class DeliberationRunner:
             t0 = time.time()
             started_ms = int(t0 * 1000)
             enriched_query = _build_enriched_retrieval_query(request)
-            relevant = self.constitution_store.get_relevant_principles(
-                query=enriched_query,
-                top_k=top_k,
-                domain=request.get_domain(),
-                retrieval_phase="deliberation_retrieval",
-            )
+            retrieve_fn = getattr(self.constitution_store, "retrieve", None)
+            if callable(retrieve_fn):
+                result = retrieve_fn(
+                    query=enriched_query,
+                    top_k=top_k,
+                    domain=request.get_domain(),
+                    retrieval_phase="deliberation_retrieval",
+                )
+                relevant = list(result.principles)
+                retrieval_debug: dict[str, Any] = dict(result.debug_info)
+                # ConstitutionRetriever.retrieve() is the single source of truth
+                # for this marker; setdefault is a defence for third-party
+                # stores/test doubles that implement retrieve() without
+                # stamping it themselves (plan §6 point 5).
+                retrieval_debug.setdefault("domain_channel", "retrieve")
+            else:
+                # Fail-open guard (Codex diff review, blocking 1): a legacy
+                # store without retrieve() must still get the ENRICHED query —
+                # not the raw prompt critique_with_relevant_principles falls
+                # back to (critic_module.py:773) — and must still yield a
+                # RequestAnalysisContext, so use_precomputed (:2907) stays True
+                # and the critic keeps the precomputed path.
+                warn_missing_retrieve_once(self.constitution_store)
+                relevant = list(
+                    self.constitution_store.get_relevant_principles(
+                        query=enriched_query,
+                        top_k=top_k,
+                        domain=request.get_domain(),
+                    )
+                )
+                retrieval_debug = {"domain_channel": "fallback_no_retrieve"}
             t1 = time.time()
             constitution = get_constitution_safe(self.constitution_store, request.get_domain())
-            retrieval_debug: dict[str, Any] = {}
-            try:
-                gd = getattr(self.constitution_store, "get_debug_info", None)
-                if callable(gd):
-                    retrieval_debug = gd() or {}
-            except Exception:
-                retrieval_debug = {}
             pc = retrieval_debug.get("prefilter_cache_status")
             pc_str: str | None
             if isinstance(pc, str):
@@ -597,6 +616,7 @@ class DeliberationRunner:
                 "prefilter_cache_reason": rd.get("prefilter_cache_invalidation_reason"),
                 "prefilter_keywords_changed": rd.get("prefilter_keywords_changed"),
                 "prefilter_keywords_fingerprint_prefix": rd.get("prefilter_keywords_fingerprint_prefix") or "",
+                "domain_channel": rd.get("domain_channel"),
                 "parallel_retrieval": True,
                 "request_scoped": True,
                 "retrieval_duration_ms": request_analysis.retrieval_duration_ms,

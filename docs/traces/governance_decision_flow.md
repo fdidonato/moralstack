@@ -83,12 +83,23 @@ prompt iff no meaningful developer-contract text AND no conversation history,
 else the enriched contract+history+prompt query) and the unified
 `retrieval_top_k = max(risk_top_k, critic_top_k)`, passing both into
 `estimate(..., retrieval_query=, retrieval_top_k=)`. Inside the risk thread,
-`_get_principles_context` makes the ONE `get_relevant_principles` call for the
+`_get_principles_context` makes the ONE `store.retrieve(...)` call for the
 whole request (`domain=None`, unchanged from before) and returns the full
 retrieved principle list, the domain-prefilter debug snapshot, and
 retrieval-status flags, all carried on `RiskEstimation`
 (`relevant_principles`, `retrieval_metadata`, `retrieval_count`,
-`retrieval_succeeded`, ...). Back in the controller,
+`retrieval_succeeded`, ...). **Domain provenance (retrieval-request-scoped-state,
+P0 fix):** `detected_domain` travels on `retrieve()`'s typed
+`PrincipleRetrievalResult.prefiltered_domains` return value — never through the
+removed `get_debug_info()` shared-instance-attribute channel, which a concurrent
+request on the same process-wide constitution store could overwrite between
+another request's write and read (measured 37.2% cross-attribution on 709
+production requests before the fix; see `docs/CODEBASE_FACTS.md`). A
+`constitution_store` without `retrieve()` degrades loudly to
+`detected_domain=None` (rate-limited WARNING, `retrieval_metadata["domain_channel"]
+= "fallback_no_retrieve"`) instead of silently inheriting a foreign domain; the
+normal path stamps `domain_channel = "retrieve"`. The marker reaches the audit
+trail via the `REQUEST_ANALYSIS_CONTEXT` `stage_payload` (§ below). Back in the controller,
 `_build_request_analysis_from_risk` lifts this into a `RequestAnalysisContext`
 — authoritative even when `relevant_principles == ()` — gated on
 `retrieval_succeeded` (never on emptiness), and emits the single
@@ -96,7 +107,7 @@ retrieval-status flags, all carried on `RiskEstimation`
 each build this context and pass it into `run_fast_path`/`run_deliberative_path`,
 so the deliberation critic, the FAST_PATH `quick_check` (filtered to HARD), and
 the quick-check-failed deliberative fallback all reuse the same retrieval —
-exactly one `get_relevant_principles` call per request across routes. Only when
+exactly one `store.retrieve(...)` call per request across routes. Only when
 the risk-owned retrieval did not succeed (no risk estimator / no store /
 retrieval raised) does the runner fall back to its own retrieval
 (`_try_build_request_analysis_context`, `retrieval_phase="deliberation_retrieval"`)

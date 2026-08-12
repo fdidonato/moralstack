@@ -325,13 +325,19 @@ class MoralStackCLI:
                 constitution = self.constitution_store.get_constitution(domain=detected_domain)
                 self._display_constitution_debug_info(detected_domain, constitution)
 
-                # 3. Recupero Principi Rilevanti
-                relevant_principles = self.constitution_store.get_relevant_principles(query=prompt, top_k=10, domain=None)
-
-                # 4. Debug dettagliato degli agenti
-                debug_info = self.constitution_store.get_debug_info()
-                if debug_info:
-                    self._display_agent_debug_info(debug_info, relevant_principles, constitution)
+                # 3. Recupero Principi Rilevanti + debug agenti (canale unico, request-scoped)
+                retrieve = getattr(self.constitution_store, "retrieve", None)
+                if callable(retrieve):
+                    result = retrieve(query=prompt, top_k=10, domain=None)
+                    relevant_principles = list(result.principles)
+                    debug_info = result.debug_info
+                    if debug_info:
+                        self._display_agent_debug_info(debug_info, relevant_principles, constitution)
+                else:
+                    # Legacy/mock store without retrieve(): principles only, no debug display.
+                    relevant_principles = self.constitution_store.get_relevant_principles(
+                        query=prompt, top_k=10, domain=None
+                    )
 
             except Exception as e:
                 print_colored(f"⚠️  Error retrieving relevant principles: {e}", "yellow")

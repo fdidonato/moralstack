@@ -211,9 +211,32 @@ constitution = constitution_store.get_constitution(domain=detected_domain)
 
 `DomainPrefilter`, `DomainAgent`, and `EnhancedDomainAgent` reuse a single OpenAI HTTP client per component instance
 when the API key is unchanged; chat completion parameters (`model`, `messages`, `response_format`, etc.) remain per call.
-`ConstitutionRetriever.get_debug_info()` includes aggregate `retrieval_openai_client_pooling` counts for diagnostics.
+`PrincipleRetrievalResult.debug_info` (see below) includes aggregate `retrieval_openai_client_pooling` counts for
+diagnostics.
 
-Public API (`get_relevant_principles`, `detect_relevant_domains`, `get_debug_info`) remains unchanged.
+Public API: `get_relevant_principles`, `retrieve`, `detect_relevant_domains`. **`get_debug_info()` was removed**
+(retrieval-request-scoped-state, not deprecated): it read `ConstitutionRetriever._last_debug_info`, a mutable
+instance attribute on a store built once per process and shared by concurrent request threads, so a request could
+read another request's `detected_domain`/`prefiltered_domains` (see the P0 fix entry in `CHANGELOG.md` and
+`docs/CODEBASE_FACTS.md`). External integrators must use `retrieve(...).debug_info` instead.
+
+### `retrieve(...)` — the request-scoped retrieval channel
+
+`ConstitutionStore.retrieve(query, top_k=10, domain=None, *, retrieval_phase="risk_routing") ->
+PrincipleRetrievalResult` (delegating to `ConstitutionRetriever.retrieve`, `moralstack/constitution/retrieval_result.py`)
+returns everything one retrieval call produced, on the return value only — no instance state is written:
+
+- `principles: tuple[Principle, ...]` — same content `get_relevant_principles` returns, as a tuple.
+- `prefiltered_domains: tuple[str, ...]` — the decision channel (the raw prefilter output, DOES include `"core"`;
+  the caller owns the `core` exclusion — `estimator.py`'s `runtime_domain` derivation, `controller.py`'s
+  `_normalize_runtime_domain`).
+- `debug_info: dict[str, Any]` — best-effort telemetry, same key shape as the removed `get_debug_info()` dict, plus
+  the additive `domain_channel` key (`"retrieve"` on the normal path; a caller without `retrieve()` gets
+  `runtime_domain=None` and `domain_channel="fallback_no_retrieve"` instead of a stale/foreign domain — loud, with a
+  rate-limited WARNING).
+
+`get_relevant_principles(...)` is now a pure, stateless projection of `retrieve(...)` — same exact signature and
+`list[Principle]` return type as before.
 
 **`retrieval_phase` observability qualifier** (unify-constitution-retrieval-
 single-pass). `get_relevant_principles(query, top_k=10, domain=None, *,
@@ -248,8 +271,8 @@ only when the effective keyword map changes (canonical fingerprint over sorted d
 keywords). Identical maps with different key or keyword order reuse the cache across requests. When persistence
 context (`run_id` / `request_id`) is active, cache hit / miss / invalidation are recorded as `orchestration_events`
 (`DOMAIN_PREFILTER_CACHE_HIT`, `DOMAIN_PREFILTER_CACHE_MISS`, `DOMAIN_PREFILTER_CACHE_INVALIDATED`). The latest
-retrieval exposes `prefilter_cache_status` and related fields via `ConstitutionStore.get_debug_info()` and the
-`REQUEST_ANALYSIS_CONTEXT` decision trace payload.
+retrieval exposes `prefilter_cache_status` and related fields via `ConstitutionStore.retrieve(...).debug_info` and
+the `REQUEST_ANALYSIS_CONTEXT` decision trace payload.
 
 **Domain-agent cache:** `EnhancedDomainAgent` and legacy `DomainAgent` cache on the exact OpenAI-relevant request
 material: rendered system/user messages plus model, temperature, `json_object`, and completion-token parameter.

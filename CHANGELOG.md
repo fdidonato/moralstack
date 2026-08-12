@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Constitution retrieval is now request-scoped (P0 concurrency fix).**
+  `RiskEstimation.detected_domain` — which feeds the runtime overlay, `domain_regulated`,
+  the sensitive risk floor and the domain-exclusion refusal route — used to be read back
+  from `ConstitutionRetriever._last_debug_info`, a mutable instance attribute on a
+  constitution store built once per process and hit by real concurrent threads
+  (`server/proxy.py`, `run_in_threadpool`). Measured on 709 production requests: 264
+  (37.2%) carried a `detected_domain` that was not their own prefilter's, and 108 of
+  those crossed the overlay `sensitive: true` line. A second, deterministic channel
+  (not a race) let a caller's forced `domain` argument leak into the shared
+  `DomainPrefilter` cache and poison every later request sharing the same cache key.
+  Both channels are closed: `ConstitutionRetriever.retrieve()` / `ConstitutionStore.retrieve()`
+  now return a frozen `PrincipleRetrievalResult` (principles, `prefiltered_domains`,
+  `debug_info`) on every call, writing no instance state; the prefilter cache is never
+  handed out or mutated by reference. `get_relevant_principles()` keeps its exact
+  signature/return type as a stateless projection of `retrieve()`. A store that does not
+  yet implement `retrieve()` degrades loudly — a rate-limited WARNING plus a persisted
+  `domain_channel` marker (`"retrieve"` on the normal path, `"fallback_no_retrieve"` on
+  the fallback) in the `REQUEST_ANALYSIS_CONTEXT` trace — rather than silently inheriting
+  another request's domain. **Migration note:** `ConstitutionStore.get_debug_info()` and
+  `ConstitutionRetriever.get_debug_info()` are removed (not deprecated); external
+  integrators reading per-retrieval debug info must switch to `retrieve(...).debug_info`.
+  `DeliberationRunner`'s own per-request clock/reuse-target fields are a separate,
+  follow-up commit (out of scope here).
 - **Runtime DB backup artifacts are now git-ignored.** Root snapshots such as
   `moralstack.db.premigration.<ts>.bak` carry persisted prompts, responses and governance
   audit rows. The existing rules covered `/moralstack.db` and `moralstack.db-*` but not the

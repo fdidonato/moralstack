@@ -99,6 +99,20 @@ wave (default), `"deliberation_retrieval"` for any fallback wave
 (`constitution/retriever.py:_persist_constitution_llm_call`, threaded through
 both `EnhancedDomainAgent` and legacy `DomainAgent`).
 
+**`retrieval_metadata` / `domain_channel` provenance (retrieval-request-scoped-state,
+P0 fix).** `RiskEstimation.retrieval_metadata` and the `REQUEST_ANALYSIS_CONTEXT`
+`stage_payload` (persisted in `decision_traces`) both derive from
+`ConstitutionRetriever.retrieve()`'s per-call `PrincipleRetrievalResult.debug_info` —
+never from a shared instance attribute read back after the fact. Both payloads carry
+an additive `domain_channel` key: `"retrieve"` on the normal path, or
+`"fallback_no_retrieve"` when the configured `constitution_store` does not implement
+`retrieve()` (a rate-limited WARNING is also logged once per process in that case).
+Without the `domain_channel` line in the `REQUEST_ANALYSIS_CONTEXT` `stage_payload`
+builder, the marker would only exist in-memory and never reach this table — every
+persisted payload here is built key-by-key from an allowlist, `retrieval_metadata`
+is never serialized wholesale. `reports/runtime_decisions.py` reads both payloads
+entirely through `.get(...)`, so the additive key is safe for older rows that lack it.
+
 ### Token usage (proxy `usage` field and DB)
 
 - **Synchronous path**: `ObservabilityService.emit()` accumulates billable

@@ -249,7 +249,20 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 ### Constitution — `moralstack/constitution/`
 - `store.py` — `ConstitutionStore` (optional LLM-based principle matching).
   `get_relevant_principles(query, top_k=10, domain=None, *,
-  retrieval_phase="risk_routing")` delegates to `ConstitutionRetriever`.
+  retrieval_phase="risk_routing")` delegates to `ConstitutionRetriever`; both are
+  pure, stateless projections of `retrieve(...)`.
+- `retrieval_result.py` — **NEW** (retrieval-request-scoped-state, P0 fix). Leaf
+  module: `PrincipleRetrievalResult` (frozen dataclass: `principles`,
+  `prefiltered_domains`, `debug_info`), the typed return value of
+  `ConstitutionStore.retrieve(...)` / `ConstitutionRetriever.retrieve(...)`.
+  Every per-request retrieval value now travels on this return value; neither
+  class writes request-scoped state onto `self`. Replaces the removed
+  `get_debug_info()` on both classes, which read
+  `ConstitutionRetriever._last_debug_info` — a mutable instance attribute on a
+  store built once per process and shared by concurrent request threads (see
+  `docs/CODEBASE_FACTS.md`, `CHANGELOG.md`). `ConstitutionStoreProtocol`
+  (`orchestration/types.py`) declares `retrieve` as an optional method (readers
+  duck-type via `getattr(store, "retrieve", None)`).
 - `loader.py`, `schema.py`, `retriever.py`, `prompt_formatter.py`, `helpers.py`.
   `retriever.py` domain-agent caches hash rendered OpenAI messages plus
   generation params, not only principle ids/counts. `retrieval_phase`

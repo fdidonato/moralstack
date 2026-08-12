@@ -56,6 +56,16 @@ class _CountingStore:
     def get_debug_info(self) -> dict[str, Any]:
         return {"prefiltered_domains": ["core"]}
 
+    def retrieve(
+        self, query: str, top_k: int = 10, domain: str | None = None, *, retrieval_phase: str = "risk_routing"
+    ) -> Any:
+        from moralstack.constitution.retrieval_result import PrincipleRetrievalResult
+
+        self.calls.append({"query": query, "top_k": top_k, "domain": domain, "retrieval_phase": retrieval_phase})
+        return PrincipleRetrievalResult(
+            principles=tuple(self._principles), prefiltered_domains=("core",), debug_info={"prefiltered_domains": ["core"]}
+        )
+
     def get_constitution(self, domain: str | None = None) -> Any:
         return SimpleNamespace(principles=list(self._principles), active_overlay=None, constitution_corrupted=False)
 

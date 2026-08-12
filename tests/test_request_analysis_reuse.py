@@ -132,6 +132,12 @@ def test_single_store_retrieval_for_deliberation_critic_path(monkeypatch):
         def get_debug_info(self) -> dict[str, Any]:
             return {"prefilter_cache_status": "miss"}
 
+        def retrieve(self, query: str, top_k: int = 10, domain: Any = None, **_kw: Any) -> Any:
+            from moralstack.constitution.retrieval_result import PrincipleRetrievalResult
+
+            calls.append("get_relevant_principles")
+            return PrincipleRetrievalResult(principles=(_P("p1"),), debug_info={"prefilter_cache_status": "miss"})
+
     store = _Store()
     critic = MagicMock()
     critic.config = MagicMock()

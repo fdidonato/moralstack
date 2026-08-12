@@ -199,18 +199,29 @@ Persistence of LLM calls is best-effort and must not affect risk decisions. The 
 ### Constitution retrieval (single upstream wave)
 
 `_get_principles_context(prompt, *, retrieval_query=None, retrieval_top_k=None)`
-is the **one** `constitution_store.get_relevant_principles(query, top_k,
-domain=None)` call for the whole request (unify-constitution-retrieval-single-
-pass): the controller supplies `retrieval_query` (raw prompt vs its enriched
-contract+history query) and `retrieval_top_k` (`max(risk_top_k, critic_top_k)`);
-both default to standalone behavior (raw prompt, `self._top_k`) when absent, so
-direct callers/tests are unaffected. It returns a `_PrinciplesContextResult`:
-the formatted intent-mini string (sliced to `self._top_k`, guidelines removed —
-they now live in `INTENT_CONTEXT_SYSTEM_PROMPT`, see above), the FULL retrieved
-principle tuple, the domain-prefilter debug snapshot (`runtime_domain`
-derivation unchanged — `core`-excluded, single source of truth), and
+is the **one** `constitution_store.retrieve(query, top_k, domain=None)` call
+for the whole request (unify-constitution-retrieval-single-pass; the return
+channel switched from `get_relevant_principles` + `get_debug_info()` to
+`retrieve()` in retrieval-request-scoped-state — see `CHANGELOG.md` and
+`docs/CODEBASE_FACTS.md`): the controller supplies `retrieval_query` (raw
+prompt vs its enriched contract+history query) and `retrieval_top_k`
+(`max(risk_top_k, critic_top_k)`); both default to standalone behavior (raw
+prompt, `self._top_k`) when absent, so direct callers/tests are unaffected. It
+returns a `_PrinciplesContextResult`: the formatted intent-mini string (sliced
+to `self._top_k`, guidelines removed — they now live in
+`INTENT_CONTEXT_SYSTEM_PROMPT`, see above), the FULL retrieved principle
+tuple, the domain-prefilter debug snapshot built from
+`PrincipleRetrievalResult.debug_info` (`runtime_domain` derivation unchanged —
+`core`-excluded, `prefiltered_domains` is the single source of truth, now a
+typed return field rather than a shared instance attribute), and
 retrieval-status flags (`retrieval_attempted`/`retrieval_succeeded`/
-`retrieval_error`). `_to_risk_estimation` carries all of this onto
+`retrieval_error`). A `constitution_store` without `retrieve()` degrades
+loudly: `runtime_domain=None`, `debug_snapshot["domain_channel"] =
+"fallback_no_retrieve"`, and a rate-limited (once per process) WARNING —
+never a stale/foreign domain inherited from another request. The normal path
+stamps `debug_snapshot["domain_channel"] = "retrieve"`; the marker reaches the
+persisted audit trail via the `REQUEST_ANALYSIS_CONTEXT` `stage_payload`
+(`deliberation_runner.py`). `_to_risk_estimation` carries all of this onto
 `RiskEstimation` (`relevant_principles`, `retrieval_metadata`,
 `retrieval_count`, `retrieval_duration_ms`, `retrieval_started_at_ms`,
 `retrieval_top_k`, plus the three status flags) — in-memory `Principle` objects

@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Any, Literal, Protocol
 
 from moralstack.compliance.types import ComplianceVerdict
+from moralstack.constitution.retrieval_result import PrincipleRetrievalResult
 from moralstack.core.types import (
     CriticProtocol,
     HindsightProtocol,
@@ -912,6 +913,19 @@ class ConstitutionStoreProtocol(Protocol):
         retrieval_phase: str = "risk_routing",
     ) -> Sequence[Any]:
         """Returns relevant principles for the query."""
+        ...
+
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 10,
+        domain: str | None = None,
+        *,
+        retrieval_phase: str = "risk_routing",
+    ) -> PrincipleRetrievalResult:
+        """Returns a typed retrieval result: principles, prefiltered_domains
+        (decision channel) and debug_info (telemetry). Optional: readers duck-type
+        via ``getattr(store, "retrieve", None)`` for stores that predate it."""
         ...
 
     def detect_relevant_domains(self, prompt: str) -> list[str]:

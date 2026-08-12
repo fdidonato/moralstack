@@ -11,6 +11,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from moralstack.constitution.retrieval_result import warn_missing_retrieve_once
 from moralstack.core.types import PolicyLLMProtocol
 from moralstack.observability.context import get_current_cycle as _get_cycle
 from moralstack.observability.context import get_current_request_id as _get_request_id
@@ -507,6 +508,12 @@ class LLMBasedRiskEstimator:
         `runtime_domain` is derived from the DomainPrefilter's prefiltered_domains
         (single source of truth) — never from a separate LLM call. `core` is treated
         as a retrieval-only pseudo-domain and is never returned as runtime_domain.
+        It travels on ``store.retrieve()``'s typed return value — never through the
+        retired shared-instance-attribute debug channel, which a concurrent
+        request could overwrite between another request's write and read (P0,
+        see docs/CODEBASE_FACTS.md). A store without ``retrieve()`` degrades
+        loudly (WARNING once per process, ``domain_channel="fallback_no_retrieve"``)
+        to ``runtime_domain=None`` — never a stale, foreign domain.
 
         `retrieval_succeeded` (not the emptiness of the returned principles) is the
         authoritative status flag downstream consumers use to decide reuse-vs-fallback;
@@ -521,19 +528,42 @@ class LLMBasedRiskEstimator:
         started_at_ms = int(time.time() * 1000)
         t0 = time.time()
         try:
-            relevant_principles = self.constitution_store.get_relevant_principles(query=query, top_k=top_k, domain=None)
+            retrieve_fn = getattr(self.constitution_store, "retrieve", None)
+            if callable(retrieve_fn):
+                result = retrieve_fn(query=query, top_k=top_k, domain=None)
+                relevant_principles = list(result.principles)
+            else:
+                warn_missing_retrieve_once(self.constitution_store)
+                result = None
+                relevant_principles = self.constitution_store.get_relevant_principles(query=query, top_k=top_k, domain=None)
             duration_ms = (time.time() - t0) * 1000
 
             runtime_domain: str | None = None
             debug_snapshot: dict[str, Any] = {}
             try:
-                get_debug_info = getattr(self.constitution_store, "get_debug_info", None)
-                debug_snapshot = get_debug_info() if callable(get_debug_info) else {}
-                prefiltered_domains = list(debug_snapshot.get("prefiltered_domains") or [])
-                specific_domains = [
-                    d.strip() for d in prefiltered_domains if isinstance(d, str) and d.strip() and d.strip() != "core"
-                ]
-                runtime_domain = specific_domains[0] if specific_domains else None
+                if result is not None:
+                    debug_snapshot = dict(result.debug_info)
+                    # ConstitutionRetriever.retrieve() is the single source of
+                    # truth for this marker (plan §6 point 5, corrected after
+                    # the Codex diff review); setdefault is a defence for
+                    # third-party stores/test doubles that implement retrieve()
+                    # without stamping it themselves.
+                    debug_snapshot.setdefault("domain_channel", "retrieve")
+                    prefiltered_domains = list(result.prefiltered_domains)
+                    specific_domains = [
+                        d.strip() for d in prefiltered_domains if isinstance(d, str) and d.strip() and d.strip() != "core"
+                    ]
+                    runtime_domain = specific_domains[0] if specific_domains else None
+                else:
+                    # Fail-safe (plan §6, blocking 3): never fall back to the
+                    # retired shared-instance-attribute debug channel —
+                    # inheriting another request's domain is exactly the
+                    # failure mode being removed. The WARNING already fired
+                    # above; this marker is what makes the degradation loud on
+                    # the audit trail (persisted at deliberation_runner.py's
+                    # REQUEST_ANALYSIS_CONTEXT payload).
+                    runtime_domain = None
+                    debug_snapshot = {"domain_channel": "fallback_no_retrieve"}
             except Exception:
                 runtime_domain = None
                 debug_snapshot = {}

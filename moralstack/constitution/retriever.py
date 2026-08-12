@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from moralstack.constitution.helpers import resolve_conflict, tokenize
 from moralstack.constitution.openai_config import OpenAIClientConfig
 from moralstack.constitution.prompt_formatter import format_principles_for_prompt
+from moralstack.constitution.retrieval_result import PrincipleRetrievalResult
 from moralstack.constitution.schema import Overlay, Principle
 from moralstack.observability.emit_helpers import persist_llm_call, persist_orchestration_event
 from moralstack.observability.token_usage import TokenUsage
@@ -269,6 +270,19 @@ class AgentResult:
 # =============================================================================
 
 
+@dataclass(frozen=True)
+class _PrefilterOutcome:
+    """Local, non-shared result of one ``_filter_domains_scoped`` call.
+
+    ``domains`` is always a fresh list (never the cache entry by reference) so a
+    caller mutating it (e.g. appending a forced domain) can never poison
+    ``DomainPrefilter._cache``.
+    """
+
+    domains: list[str]
+    cache_lookup_hit: bool | None
+
+
 class DomainPrefilter:
     """
     Pre-filter relevant domains before running agents.
@@ -304,8 +318,6 @@ class DomainPrefilter:
         self._descriptions_fingerprint = _fingerprint_domain_descriptions(raw_desc)
         self._cache: dict[str, list[str]] = {}
         self._cost_tracker = cost_tracker
-        self._last_keywords_changed: bool = False
-        self._last_cache_lookup_hit: bool | None = None
         # Instance-scoped OpenAI HTTP client: stateless; per-call args stay on chat.completions.create.
         self._openai_http_client: Any | None = None
         self._openai_http_client_key: str | None = None
@@ -332,14 +344,12 @@ class DomainPrefilter:
 
         fp_new = _fingerprint_domain_keywords(keywords)
         if fp_new == self._keywords_fingerprint:
-            self._last_keywords_changed = False
             return False
 
         fp_before = self._keywords_fingerprint
         self._keywords_fingerprint = fp_new
         self._domain_keywords = _snapshot_domain_keywords(keywords)
         self._cache.clear()
-        self._last_keywords_changed = True
 
         kcount = sum(len(v or []) for v in (keywords or {}).values())
         _emit_domain_prefilter_orchestration_event(
@@ -400,7 +410,6 @@ class DomainPrefilter:
         if not self._cache:
             return
         self._cache.clear()
-        self._last_keywords_changed = reason != "no_op"
         fp = self._keywords_fingerprint
         _emit_domain_prefilter_orchestration_event(
             DOMAIN_PREFILTER_CACHE_INVALIDATED,
@@ -421,7 +430,24 @@ class DomainPrefilter:
         *,
         retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING,
     ) -> list[str]:
-        """Identify domains most relevant to the query."""
+        """Identify domains most relevant to the query. Always returns a fresh list."""
+        return self._filter_domains_scoped(query, available_domains, retrieval_phase=retrieval_phase).domains
+
+    def _filter_domains_scoped(
+        self,
+        query: str,
+        available_domains: list[str],
+        *,
+        retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING,
+    ) -> _PrefilterOutcome:
+        """Identify domains most relevant to the query.
+
+        Returns a local ``_PrefilterOutcome`` (never a reference into ``self._cache``)
+        so a caller can freely mutate ``.domains`` without poisoning the cache entry —
+        the previous behavior, where ``filter_domains`` handed out the cached list
+        object itself, let a caller's in-place domain append leak into every later
+        request sharing the same cache key.
+        """
         from moralstack.orchestration.orchestration_event_taxonomy import (
             DOMAIN_PREFILTER_CACHE_HIT,
             DOMAIN_PREFILTER_CACHE_MISS,
@@ -430,7 +456,6 @@ class DomainPrefilter:
 
         stripped_query_len = len(query.strip())
         if stripped_query_len < self.MIN_QUERY_LEN_FOR_CLASSIFICATION:
-            self._last_cache_lookup_hit = None
             _emit_domain_prefilter_orchestration_event(
                 DOMAIN_PREFILTER_QUERY_TOO_SHORT,
                 {
@@ -441,14 +466,13 @@ class DomainPrefilter:
                     "available_domain_count": len(available_domains),
                 },
             )
-            return []
+            return _PrefilterOutcome(domains=[], cache_lookup_hit=None)
 
         cache_key = hashlib.md5(f"{query}_{','.join(sorted(available_domains))}".encode()).hexdigest()
         domains_to_check = [d for d in available_domains if d not in self.ALWAYS_EVALUATE]
         candidate_domain_count = len(domains_to_check)
 
         if cache_key in self._cache:
-            self._last_cache_lookup_hit = True
             cached = self._cache[cache_key]
             _emit_domain_prefilter_orchestration_event(
                 DOMAIN_PREFILTER_CACHE_HIT,
@@ -460,9 +484,8 @@ class DomainPrefilter:
                     "keywords_fingerprint": self._keywords_fingerprint,
                 },
             )
-            return cached
+            return _PrefilterOutcome(domains=list(cached), cache_lookup_hit=True)
 
-        self._last_cache_lookup_hit = False
         _emit_domain_prefilter_orchestration_event(
             DOMAIN_PREFILTER_CACHE_MISS,
             {
@@ -477,7 +500,7 @@ class DomainPrefilter:
 
         if not domains_to_check:
             self._cache[cache_key] = relevant
-            return relevant
+            return _PrefilterOutcome(domains=list(relevant), cache_lookup_hit=False)
 
         # Include YAML descriptions when available so the LLM sees the
         # domain's intended scope (and any explicit negative scoping). Falls
@@ -504,11 +527,14 @@ class DomainPrefilter:
 
             relevant = list(dict.fromkeys(relevant))
             self._cache[cache_key] = relevant
-            return relevant
+            return _PrefilterOutcome(domains=list(relevant), cache_lookup_hit=False)
 
         except Exception as e:
             logger.warning(f"DomainPrefilter failed: {e}, returning core only")
-            return list(self.ALWAYS_EVALUATE & set(available_domains))
+            return _PrefilterOutcome(
+                domains=list(self.ALWAYS_EVALUATE & set(available_domains)),
+                cache_lookup_hit=False,
+            )
 
     def _build_prefilter_system_prompt(self, domain_list: str) -> str:
         """Compose the byte-stable prefilter SYSTEM prompt for the current domain config.
@@ -1147,8 +1173,6 @@ class ConstitutionRetriever:
                 domain_descriptions=data_provider.get_domain_descriptions(),
             )
 
-        self._last_debug_info: dict[str, Any] = {}
-
     def set_cost_tracker(self, tracker: Any | None) -> None:
         """Set TokenCostTracker for cost tracking."""
         self._cost_tracker = tracker
@@ -1165,24 +1189,37 @@ class ConstitutionRetriever:
         if self._domain_prefilter is not None and hasattr(self._domain_prefilter, "clear_cache"):
             self._domain_prefilter.clear_cache(reason="forced_refresh")
 
-    def get_relevant_principles(
+    def retrieve(
         self,
         query: str,
         top_k: int = 10,
         domain: str | None = None,
         *,
         retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING,
-    ) -> list[Principle]:
+    ) -> PrincipleRetrievalResult:
         """
         Retrieve relevant principles via parallel domain agents.
 
-        Returns list of principles ordered by relevance (max top_k).
+        Returns a frozen ``PrincipleRetrievalResult``: ``principles`` ordered by
+        relevance (max top_k), ``prefiltered_domains`` (the decision channel — the
+        raw prefilter output, including ``"core"``; the caller owns the ``core``
+        exclusion) and ``debug_info`` (best-effort telemetry, same shape as the
+        retired per-retrieval debug accessor this replaces). Writes no instance
+        state — every per-request value travels on this return value only.
         """
         query_tokens = tokenize(query)
 
         if not query_tokens:
             core = self._provider.load_core()
-            return sorted(core, key=lambda p: -p.priority)[:top_k]
+            principles = sorted(core, key=lambda p: -p.priority)[:top_k]
+            # Returns before the local `debug` dict below is built — its own
+            # dict, so this exit path is marked too (plan §6 point 5): an
+            # unmarked empty-query result would be indistinguishable from a
+            # legacy store on the audit trail.
+            return PrincipleRetrievalResult(
+                principles=tuple(principles),
+                debug_info={"domain_channel": "retrieve"},
+            )
 
         available_domains = ["core"] + self._provider._get_available_domains()
 
@@ -1193,16 +1230,20 @@ class ConstitutionRetriever:
             prefilter_kw_changed = self._domain_prefilter.set_domain_keywords(self._provider.get_domain_keywords())
             # Keep descriptions in sync with the same lifecycle as keywords.
             self._domain_prefilter.set_domain_descriptions(self._provider.get_domain_descriptions())
-            relevant_domains = self._domain_prefilter.filter_domains(
+            outcome = self._domain_prefilter._filter_domains_scoped(
                 query,
                 available_domains,
                 retrieval_phase=retrieval_phase,
             )
-            prefilter_cache_hit = self._domain_prefilter._last_cache_lookup_hit
+            # Local copy, never the prefilter's cache entry: appending `domain`
+            # below must never mutate what a concurrent request's cache lookup
+            # could return (retriever.py cache-alias channel, T4/T8).
+            relevant_domains = list(outcome.domains)
+            prefilter_cache_hit = outcome.cache_lookup_hit
             if domain and domain not in relevant_domains:
                 relevant_domains.append(domain)
         else:
-            relevant_domains = available_domains
+            relevant_domains = list(available_domains)
 
         prefilter_status = (
             _prefilter_combined_cache_status(prefilter_kw_changed, prefilter_cache_hit)
@@ -1211,7 +1252,11 @@ class ConstitutionRetriever:
         )
         inv_reason = "effective_keywords_changed" if prefilter_kw_changed and self._domain_prefilter is not None else None
 
-        self._last_debug_info = {
+        debug: dict[str, Any] = {
+            # Single source of truth (plan §6 point 5): stamped once here, so the
+            # two no-agents fallback returns and the normal return below all
+            # inherit it from this one dict instead of each needing its own line.
+            "domain_channel": "retrieve",
             "use_enhanced_retrieval": self._config.use_enhanced_retrieval,
             "use_domain_prefilter": self._config.use_domain_prefilter,
             "available_domains": available_domains,
@@ -1237,7 +1282,7 @@ class ConstitutionRetriever:
         if self._config.use_enhanced_retrieval:
             agents = self._create_enhanced_agents(relevant_domains)
 
-            self._last_debug_info.update(
+            debug.update(
                 {
                     "agents_created": len(agents),
                     "agent_domains": [a.domain_name for a in agents],
@@ -1247,8 +1292,13 @@ class ConstitutionRetriever:
 
             if not agents:
                 core = self._provider.load_core()
-                self._last_debug_info["fallback"] = True
-                return sorted(core, key=lambda p: -p.priority)[:top_k]
+                debug["fallback"] = True
+                principles = sorted(core, key=lambda p: -p.priority)[:top_k]
+                return PrincipleRetrievalResult(
+                    principles=tuple(principles),
+                    prefiltered_domains=tuple(relevant_domains),
+                    debug_info=debug,
+                )
 
             agent_results = self._run_enhanced_agents_parallel(agents, query, retrieval_phase=retrieval_phase)
 
@@ -1267,7 +1317,7 @@ class ConstitutionRetriever:
                         "principle_count": len(result.principle_ids),
                     }
 
-            self._last_debug_info.update(
+            debug.update(
                 {
                     "agent_results": {
                         d: {
@@ -1286,7 +1336,7 @@ class ConstitutionRetriever:
         else:
             legacy_agents = self._create_domain_agents()
 
-            self._last_debug_info.update(
+            debug.update(
                 {
                     "agents_created": len(legacy_agents),
                     "agent_domains": [a.domain_name for a in legacy_agents],
@@ -1296,15 +1346,20 @@ class ConstitutionRetriever:
 
             if not legacy_agents:
                 core = self._provider.load_core()
-                self._last_debug_info["fallback"] = True
-                return sorted(core, key=lambda p: -p.priority)[:top_k]
+                debug["fallback"] = True
+                principles = sorted(core, key=lambda p: -p.priority)[:top_k]
+                return PrincipleRetrievalResult(
+                    principles=tuple(principles),
+                    prefiltered_domains=tuple(relevant_domains),
+                    debug_info=debug,
+                )
 
             legacy_results = self._run_agents_parallel(legacy_agents, query, retrieval_phase=retrieval_phase)
 
             for domain_name, principle_ids in legacy_results.items():
                 all_principle_ids.update(principle_ids)
 
-            self._last_debug_info.update(
+            debug.update(
                 {
                     "agent_results": {d: len(ids) for d, ids in legacy_results.items()},
                     "total_principles_found": len(all_principle_ids),
@@ -1338,7 +1393,7 @@ class ConstitutionRetriever:
 
         relevant_principles = resolve_conflict(relevant_principles)
 
-        self._last_debug_info.update(
+        debug.update(
             {
                 "final_principles_count": len(relevant_principles),
                 "principles_by_domain": self._get_principles_by_domain(relevant_principles),
@@ -1346,7 +1401,27 @@ class ConstitutionRetriever:
             }
         )
 
-        return relevant_principles[:top_k]
+        return PrincipleRetrievalResult(
+            principles=tuple(relevant_principles[:top_k]),
+            prefiltered_domains=tuple(relevant_domains),
+            debug_info=debug,
+        )
+
+    def get_relevant_principles(
+        self,
+        query: str,
+        top_k: int = 10,
+        domain: str | None = None,
+        *,
+        retrieval_phase: str = RETRIEVAL_PHASE_RISK_ROUTING,
+    ) -> list[Principle]:
+        """
+        Retrieve relevant principles via parallel domain agents.
+
+        Returns list of principles ordered by relevance (max top_k). Pure
+        projection of ``retrieve()`` — writes no instance state.
+        """
+        return list(self.retrieve(query, top_k=top_k, domain=domain, retrieval_phase=retrieval_phase).principles)
 
     def _get_principles_by_domain(self, principles: list[Principle]) -> dict[str, int]:
         by_domain: dict[str, int] = {}
@@ -1390,10 +1465,6 @@ class ConstitutionRetriever:
             return []
         except Exception:
             return []
-
-    def get_debug_info(self) -> dict[str, Any]:
-        """Return debug info from last retrieval."""
-        return self._last_debug_info.copy()
 
     def _create_domain_agents(self) -> list[DomainAgent]:
         agents = []
