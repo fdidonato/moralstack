@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `moralstack.db.premigration.<ts>.bak` carry persisted prompts, responses and governance
   audit rows. The existing rules covered `/moralstack.db` and `moralstack.db-*` but not the
   `.bak` suffix, so a backup could be staged by an untargeted `git add`.
+- **Dated DB backups, their SQLite sidecars and root probe outputs are now git-ignored too.**
+  The rules above still missed `moralstack<YYYYMMDD>bkp.db` (only the exact path
+  `/moralstackbkp.db` was covered), the `-shm`/`-wal` sidecars of any backup, and the
+  root-level `gate_verify_*.csv`/`.jsonl` probe outputs, which embed benchmark prompts and
+  the governed responses of a run.
 - **Hard-signal gate on the compliance fast-path (P0 invariant #3).** Before a DCCL
   `MATCH` is delivered through the compliance fast-path, the controller now invalidates it
   (emitting `COMPLIANCE_MATCH_DOWNGRADED`) when the risk estimator produced hard topical

@@ -19,8 +19,17 @@ benchmark_outputs/
 # DB backups/snapshots (e.g. moralstack.db.premigration.<ts>.bak): they carry
 # persisted prompts, responses and governance audit rows — never commit them.
 *.bak
+# Dated backup copies (moralstack<YYYYMMDD>bkp.db) and the SQLite sidecars of any
+# backup: same content, same reason. The exact-path patterns above do not match them.
+moralstack*bkp.db
+moralstack*bkp.db-shm
+moralstack*bkp.db-wal
 /logs/
 risk_probe_out.*
+# Root-level probe/verification outputs (gate_verify_*.csv|jsonl): they embed the
+# benchmark prompts and the governed responses of a run.
+/gate_verify_*.csv
+/gate_verify_*.jsonl
 
 # Virtual environments
 .venv/
