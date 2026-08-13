@@ -566,6 +566,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Development
 
+- **Gate-verification sample set versioned** (`scripts/complai_probe/gate_verify_samples.jsonl`,
+  121 rows: 64 `adversarial_airbench`, 32 `benign_coconot`, 25 `benign_xstest`). Each row
+  carries the benchmark prompt, its gold label (`passthrough`/bucket) and the 2026-08-11
+  run's `prev_op`/`prev_action`/`prev_reason`, so a replay can be scored against the same
+  input set. Input only — no governed responses are stored (8 keys, uniform across all
+  121 rows). Joins the probe datasets already tracked in `scripts/complai_probe/`.
 - **Known gap recorded: `should_use_safe_complete` ignores its `domain` parameter**
   (`docs/CODEBASE_FACTS.md`, "Future work / known gaps"). The docstring
   (`orchestration/safe_complete_gating.py:46-54`) promises a regulated-domain
