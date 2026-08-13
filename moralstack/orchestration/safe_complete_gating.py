@@ -86,6 +86,19 @@ def apply_safe_complete_gating(
     if decision.final_action != "SAFE_COMPLETE":
         return decision
 
+    # §1b (hard-signal supremacy, PROJECT_SPEC §5.3): a post-decision gate must
+    # never be able to relax an action that carries an unresolved hard
+    # violation. Restrictive-only: this function's only mutation is the
+    # SC->NORMAL_COMPLETE relabel below, so returning early here can only
+    # preserve the stricter SAFE_COMPLETE, never weaken it. The delivery-point
+    # guard (DeliberationRunner.enforce_no_rejected_draft_delivery) still
+    # regenerates/re-validates the delivered text; this only stops the label
+    # itself from being silently downgraded to NORMAL_COMPLETE, which would
+    # strip both the hard_violations signal from the delivered metadata (see
+    # T5b) and the caveat framing.
+    if decision.hard_violations:
+        return decision
+
     # When safe_complete_policy set SAFE_COMPLETE because risk_category is
     # SENSITIVE or MORALLY_NUANCED, the policy decision is authoritative.
     # The gating must not downgrade it based on domain/signal checks alone —

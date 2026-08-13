@@ -237,6 +237,30 @@ the revision loop from flipping a correct binary answer (observed on
 best-effort `governance.enumerated_output_gate` diagnostic to
 `debug.event.jsonl`, the `debug_events` table, and the UI "Debug Events" panel.
 
+**Hard-violation delivery guard (§5.3, P0).** After the deliberation loop
+finishes, `_route_deliberative` calls `decide_action` again (post-cycle),
+applies the deliberation-override / cycles-exhausted-fallback checks, then
+`apply_safe_complete_gating` — and only then, right before `assemble`, calls
+`self._runner.enforce_no_rejected_draft_delivery(...)`. This is the delivery
+point where a decision that still carries `hard_violations` (any of
+`decision_service._handle_hard_violations`'s three downgrade branches —
+crisis, regulated-informational derogation, or "pre-policy SAFE_COMPLETE must
+not be overridden" — or, defensively, a NORMAL_COMPLETE it should no longer be
+possible to reach given `apply_safe_complete_gating`'s own no-op above) is
+stopped from delivering `state.draft_response` verbatim: that text is the
+draft the critic already rejected on a hard violation, reached either because
+the critic voted REFUSE (the REVISE/rewrite branch is skipped entirely) or
+because it voted REVISE and cycles exhausted before a rewrite happened. The
+guard regenerates under SAFE_COMPLETE governance and re-validates once with a
+direct `critic.critique(...)` call (never the exception-swallowing,
+timeout-guarded `_critique` wrapper used inside the cycle loop above);
+delivers the regenerated text as SAFE_COMPLETE if the critic clears it, or
+fails closed to REFUSE. The same guard runs at the fast-path→deliberative
+escalation site (`DeliberationRunner._build_deliberative_result`, used when
+`run_fast_path`'s `quick_check` fails). No-op (no LLM call) when
+`decision.hard_violations` is empty or `decision.final_action == "REFUSE"` —
+the ~99% no-hard-violation path is unaffected.
+
 ## 10. Final action → governed delivery (Plan 1)
 
 Back in the entry layer, delivery is **governed-only**: the delivered text is

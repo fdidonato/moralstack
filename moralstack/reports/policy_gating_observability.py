@@ -40,6 +40,12 @@ _POLICY_REASON_DISPLAY: dict[str, str] = {
     "safe_complete_required_high_actionability": (
         "Actionability axis HIGH: epistemic escalation — SAFE_COMPLETE required (responsible framing)."
     ),
+    "hard_violation_downgraded_to_safe_complete": (
+        "Hard violation present but bounded conditions preserved SAFE_COMPLETE instead of REFUSE "
+        "(decision_service._handle_hard_violations branch 3). The hard-violation delivery guard "
+        "(DeliberationRunner.enforce_no_rejected_draft_delivery) still regenerates/re-validates the "
+        "delivered text before it ships — this code marks the branch, not the delivered content."
+    ),
 }
 
 

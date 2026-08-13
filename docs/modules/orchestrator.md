@@ -411,6 +411,20 @@ The Orchestrator exposes a deterministic **final action**, independent of the ge
 The decision is made by `decide_action()` based on risk signals (constitution, hindsight, simulation,
 perspectives) and is not overwritten during assembly.
 
+**Hard-violation delivery guard (§5.3, P0).** A decision carrying unresolved
+`hard_violations` (non-empty) and `final_action != "REFUSE"` never delivers
+`state.draft_response` verbatim — that text is the draft the critic just
+rejected on a hard violation. `DeliberationRunner.enforce_no_rejected_draft_delivery`
+runs right before `assemble` at both post-`decide_action` delivery sites
+(`_build_deliberative_result`, `OrchestrationController._route_deliberative`):
+it regenerates under SAFE_COMPLETE governance, re-validates once with a direct
+`critic.critique(...)` call, and delivers the regenerated text as
+`SAFE_COMPLETE` if the critic clears it, or fails closed to `REFUSE`
+otherwise. No-op (no LLM call) when the trigger does not fire, so the ~99% of
+requests without hard violations are unaffected. `apply_safe_complete_gating`
+(below) is a second, independent measure: it no longer relabels a
+`SAFE_COMPLETE` decision carrying `hard_violations` down to `NORMAL_COMPLETE`.
+
 ## Response Types (ResponseType)
 
 | Type              | Description                           |

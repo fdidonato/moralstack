@@ -315,6 +315,17 @@ class ResponseMetadata:
     # Gated so internal mode never sets these — byte-identical to today.
     draft_origin: str = "internal"
     draft_model: str = ""
+    # Fail-closed audit trail for the hard-violation delivery guard
+    # (DeliberationRunner.enforce_no_rejected_draft_delivery). Empty unless a
+    # SAFE_COMPLETE/NORMAL_COMPLETE decision carrying unresolved
+    # hard_violations was flipped to REFUSE because the guard's regeneration
+    # or re-validation could not clear it. original_final_action records the
+    # pre-flip action (e.g. "SAFE_COMPLETE"); hard_violation_flip_reason is
+    # one of "hard_violation_regeneration_failed" /
+    # "hard_violation_still_violating". Additive audit only -- never used to
+    # gate/route anything.
+    original_final_action: str = ""
+    hard_violation_flip_reason: str = ""
     # Token accounting (best-effort synchronous summary).
     input_tokens: int = 0
     output_tokens: int = 0

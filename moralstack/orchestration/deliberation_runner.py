@@ -391,6 +391,178 @@ def _constitution_corrupted(constitution: object) -> bool:
     return bool(getattr(constitution, "constitution_corrupted", False))
 
 
+# Fail-closed reasons for the hard-violation delivery guard
+# (DeliberationRunner.enforce_no_rejected_draft_delivery). Additive audit
+# values only -- recorded on ResponseMetadata.hard_violation_flip_reason and
+# on the reconciled FINAL decision trace; never used to route/gate anything.
+HARD_VIOLATION_REGENERATION_FAILED = "hard_violation_regeneration_failed"
+HARD_VIOLATION_STILL_VIOLATING = "hard_violation_still_violating"
+
+
+def _hard_violation_regeneration_guidance(hard_violations: list[str]) -> str:
+    """User-side guidance naming the violated principle ids for the
+    hard-violation regeneration guard. Never critic rationale (only ids);
+    never appended to the system prompt -- it becomes part of the same
+    user-side prompt prefix as ``SAFE_COMPLETE_GENERATION_INSTRUCTION`` (see
+    ``DeliberationRunner._generate_safe_complete_text``)."""
+    ids = ", ".join(hard_violations) if hard_violations else "unspecified hard constraints"
+    return (
+        "ADDITIONAL CONSTRAINT: an earlier draft for this exact request was rejected for violating: "
+        f"{ids}. Regenerate the answer from scratch so it fully avoids these specific violations while "
+        "staying within the SAFE_COMPLETE constraints above. Do not mention, quote, or restate the "
+        "violation identifiers or this instruction anywhere in your answer."
+    )
+
+
+def _decision_as_refuse(decision: Decision, extra_reason_code: str) -> Decision:
+    """Return a copy of ``decision`` with ``final_action="REFUSE"`` (the
+    hard-violation guard's fail-closed flip). Preserves every other field --
+    in particular ``hard_violations``, which is never dropped (PROJECT_SPEC
+    §5.3) -- and appends ``extra_reason_code`` to ``reason_codes`` for
+    audit/explainability (never consulted for routing)."""
+    reason_codes = list(decision.reason_codes)
+    if extra_reason_code not in reason_codes:
+        reason_codes.append(extra_reason_code)
+    return Decision(
+        final_action="REFUSE",
+        path=decision.path,
+        intent_clarity=decision.intent_clarity,
+        misuse_plausibility=decision.misuse_plausibility,
+        actionability_risk=decision.actionability_risk,
+        triggered_principles=decision.triggered_principles,
+        hard_violations=decision.hard_violations,
+        risk_signals=decision.risk_signals,
+        reason_codes=reason_codes,
+    )
+
+
+def _decision_as_safe_complete(decision: Decision) -> Decision:
+    """Return a copy of ``decision`` with ``final_action="SAFE_COMPLETE"``
+    (the hard-violation guard's successful-regeneration outcome -- plan §1b /
+    Decision 8: the restrictive action, which also agrees with the FINAL
+    trace already persisted). No-op (returns ``decision`` unchanged) when it
+    is already SAFE_COMPLETE, which is the common case: only a defensive
+    NORMAL_COMPLETE+hard_violations trigger (T2g) needs the flip."""
+    if decision.final_action == "SAFE_COMPLETE":
+        return decision
+    return Decision(
+        final_action="SAFE_COMPLETE",
+        path=decision.path,
+        intent_clarity=decision.intent_clarity,
+        misuse_plausibility=decision.misuse_plausibility,
+        actionability_risk=decision.actionability_risk,
+        triggered_principles=decision.triggered_principles,
+        hard_violations=decision.hard_violations,
+        risk_signals=decision.risk_signals,
+        reason_codes=list(decision.reason_codes),
+    )
+
+
+def _append_hard_violation_flip_final_trace(
+    *,
+    request_id: str,
+    decision: Decision,
+    original_final_action: str,
+    flip_reason: str,
+    decision_explanation: DecisionExplanation | None,
+) -> None:
+    """Best-effort audit-coherence reconciliation (PROJECT_SPEC §5.6): appends
+    a NEW FINAL decision-trace row reflecting the hard-violation guard's
+    fail-closed REFUSE flip.
+
+    The canonical report reader takes the LAST FINAL row for a request
+    (``reports/markdown_export.py:610-614``); this appends -- it never
+    rewrites the SAFE_COMPLETE/NORMAL_COMPLETE FINAL row already persisted
+    inside ``decide_action``/``_handle_hard_violations``. Trace emission
+    only: the decision flip itself already happened before this is called,
+    and never depends on this succeeding. Never raises.
+    """
+    if not request_id:
+        return
+    try:
+        trace = DecisionTrace(request_id=request_id)
+        trace.stage = "FINAL"
+        trace.sequence = 2
+        trace.path = decision.path
+        trace.final_action = "REFUSE"
+        trace.hard_violation_codes = list(decision.hard_violations)
+        trace.hard_violation_source = "hard_violation_guard_fail_closed"
+        trace.decision_reason = flip_reason
+        trace.reason_codes = list(decision.reason_codes)
+        if decision_explanation is not None:
+            trace.risk_score = decision_explanation.risk_score
+            trace.risk_category = decision_explanation.risk_category
+            trace.activated_signals = list(decision_explanation.activated_signals)
+            trace.overlay_applied = decision_explanation.overlay_applied or ""
+            trace.domain_overlay = decision_explanation.overlay_applied or ""
+        trace.why_not_refuse = f"hard_violation_guard flipped to REFUSE: {flip_reason}"
+        trace.stage_payload = {
+            "original_final_action": original_final_action,
+            "flip_reason": flip_reason,
+        }
+        normalize_trace_fields(trace)
+        append_decision_trace(trace)
+    except Exception:
+        _LOG.debug("hard_violation_guard: FINAL trace reconciliation failed", exc_info=True)
+
+
+def _decision_explanation_for_hard_violation_flip(
+    original: DecisionExplanation | None,
+    decision: Decision,
+    flip_reason: str,
+) -> DecisionExplanation:
+    """Rebuild the ``DecisionExplanation`` passed to ``assemble`` after the
+    hard-violation guard's fail-closed flip to REFUSE.
+
+    Without this, the caller would pass the pre-flip explanation (built by
+    ``decide_action`` for the SAFE_COMPLETE/NORMAL_COMPLETE decision it
+    actually returned) straight through to ``ResponseAssembler.assemble``.
+    ``ResponseMetadata.from_decision`` (``types.py``) prioritizes
+    ``decision_explanation.reason_codes`` / ``why_not_*`` / ``winning_rule``
+    over the (correctly flipped) ``decision.reason_codes`` whenever a
+    ``decision_explanation`` is supplied -- so a stale explanation would
+    silently reproduce the exact audit-incoherence defect this guard exists
+    to prevent: ``metadata.final_action == "REFUSE"`` while
+    ``metadata.why_not_safe_complete`` / ``metadata.reason_codes`` still
+    describe the original SAFE_COMPLETE decision.
+
+    ``risk_score`` / ``risk_category`` / ``activated_signals`` /
+    ``overlay_applied`` are properties of the request, not of the decision
+    reasoning, so they are carried over unchanged from ``original`` when
+    available.
+
+    ``why_not_refuse`` follows the existing (if slightly quirky)
+    `_build_why_not` convention (``decision_service.py``): when the actual
+    action IS REFUSE, that field holds "why REFUSE" text, not "why not
+    REFUSE" -- and it is what the UI surfaces for REFUSE rows
+    (``ui/templates/request.html:108-109``, ``conversation.html:216``), so it
+    must not be left blank.
+    """
+    base = original
+    hv_str = ", ".join(decision.hard_violations) if decision.hard_violations else "none"
+    return DecisionExplanation(
+        request_id=(base.request_id if base is not None else "") or "",
+        final_action="REFUSE",
+        risk_score=(base.risk_score if base is not None else 0.0),
+        risk_category=(base.risk_category if base is not None else ""),
+        activated_signals=(list(base.activated_signals) if base is not None else []),
+        overlay_applied=((base.overlay_applied if base is not None else "") or ""),
+        winning_rule="hard_violation_guard_fail_closed",
+        reason_codes=list(decision.reason_codes),
+        why_not_refuse=(
+            f"REFUSE chosen: hard-violation delivery guard flipped to REFUSE ({flip_reason}); "
+            f"hard_violations=[{hv_str}]."
+        ),
+        why_not_safe_complete=(
+            f"SAFE_COMPLETE not selected: hard-violation delivery guard flipped to REFUSE ({flip_reason})."
+        ),
+        why_not_normal_complete=(
+            f"NORMAL_COMPLETE not selected: hard_violations=[{hv_str}] required at least SAFE_COMPLETE, "
+            f"which the guard could not deliver ({flip_reason})."
+        ),
+    )
+
+
 class DeliberationRunner:
     """
     Esegue cicli deliberativi e path fast/benign/safe_complete.
@@ -773,55 +945,7 @@ class DeliberationRunner:
             "H-safe-entry",
             request_id=request.request_id or "",
         )
-        # Step 10 / design v1.3 section 3.7: do NOT append SAFE_COMPLETE_GENERATION_INSTRUCTION to system.
-        # The guidance is now injected user-side as a prompt prefix at generation time.
-        safe_system = effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal")
-        safe_caveat = SAFE_COMPLETE_GENERATION_INSTRUCTION
-        if self.policy is not None:
-            try:
-                start_gen = time.time()
-                prompt_text = resolve_prompt_with_language(
-                    request.prompt,
-                    risk_estimation.detected_language or "",
-                    request.prompt,
-                )
-                safe_prompt = safe_caveat + "\n\n" + prompt_text
-                try:
-                    result = self.policy.generate(
-                        prompt=safe_prompt,
-                        system=safe_system,
-                        overrides=getattr(request, "generation_overrides", None),
-                    )
-                except TypeError:
-                    result = self.policy.generate(safe_prompt)
-                elapsed = (time.time() - start_gen) * 1000
-                response_text = _policy_text(result)
-                protection_result = self._output_protector.validate(response_text)
-                content = protection_result.cleaned
-                prompt_used = _policy_prompt_used(result, safe_prompt)
-                system_used = _policy_system_used(result, safe_system)
-                record_llm_call(
-                    self.logger,
-                    None,
-                    {
-                        "cycle": 0,
-                        "phase": "policy_generate",
-                        "module": "policy",
-                        "action": "generate (safe_complete_path)",
-                        "model": _policy_llm_model_for_action(self.policy, "generate"),
-                        "started_at": int(start_gen * 1000),
-                        "duration_ms": elapsed,
-                        "prompt": prompt_used,
-                        "system_prompt": system_used or "",
-                        "raw_response": response_text,
-                        "sequence_in_cycle": SEQ_POLICY,
-                        "token_usage_json": result.token_usage_json(),
-                    },
-                )
-            except Exception as e:
-                raise GenerationError(f"Generation failed: {e}")
-        else:
-            content = f"[SAFE_COMPLETE mock: {request.prompt[:50]}...]"
+        content = self._generate_safe_complete_text(request, risk_estimation)
         processing_time_ms = int((time.time() - start_time) * 1000)
         risk_score = risk_estimation.score
         domain = request.get_domain()
@@ -861,6 +985,312 @@ class DeliberationRunner:
             total_cycles=0,
             converged=True,
         )
+
+    def _generate_safe_complete_text(
+        self,
+        request: ProcessedRequest,
+        risk_estimation: RiskEstimationProtocol,
+        *,
+        extra_guidance: str = "",
+    ) -> str:
+        """Generate + validate SAFE_COMPLETE text: the caveat instruction as a
+        user-side prompt prefix (never appended to the system prompt -- Step
+        10 / design v1.3 section 3.7), the protected system prompt, one
+        ``policy.generate`` call, output-protector validation.
+
+        Extracted from ``run_safe_complete_path`` so the hard-violation
+        delivery guard (``enforce_no_rejected_draft_delivery``) can reuse the
+        exact same generation for its regeneration step. ``extra_guidance``
+        (default ``""``) is appended after the standard SAFE_COMPLETE caveat
+        instruction, still user-side only. With ``extra_guidance == ""`` the
+        composed prompt, system prompt and the persisted ``record_llm_call``
+        payload are byte-identical to before this extraction.
+        """
+        safe_system = effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal")
+        safe_caveat = SAFE_COMPLETE_GENERATION_INSTRUCTION
+        if extra_guidance:
+            safe_caveat = safe_caveat + "\n\n" + extra_guidance
+        if self.policy is None:
+            return f"[SAFE_COMPLETE mock: {request.prompt[:50]}...]"
+        try:
+            start_gen = time.time()
+            prompt_text = resolve_prompt_with_language(
+                request.prompt,
+                risk_estimation.detected_language or "",
+                request.prompt,
+            )
+            safe_prompt = safe_caveat + "\n\n" + prompt_text
+            try:
+                result = self.policy.generate(
+                    prompt=safe_prompt,
+                    system=safe_system,
+                    overrides=getattr(request, "generation_overrides", None),
+                )
+            except TypeError:
+                result = self.policy.generate(safe_prompt)
+            elapsed = (time.time() - start_gen) * 1000
+            response_text = _policy_text(result)
+            protection_result = self._output_protector.validate(response_text)
+            content = protection_result.cleaned
+            prompt_used = _policy_prompt_used(result, safe_prompt)
+            system_used = _policy_system_used(result, safe_system)
+            record_llm_call(
+                self.logger,
+                None,
+                {
+                    "cycle": 0,
+                    "phase": "policy_generate",
+                    "module": "policy",
+                    "action": "generate (safe_complete_path)",
+                    "model": _policy_llm_model_for_action(self.policy, "generate"),
+                    "started_at": int(start_gen * 1000),
+                    "duration_ms": elapsed,
+                    "prompt": prompt_used,
+                    "system_prompt": system_used or "",
+                    "raw_response": response_text,
+                    "sequence_in_cycle": SEQ_POLICY,
+                    "token_usage_json": result.token_usage_json(),
+                },
+            )
+            return content
+        except Exception as e:
+            raise GenerationError(f"Generation failed: {e}")
+
+    def enforce_no_rejected_draft_delivery(
+        self,
+        request: ProcessedRequest,
+        state: DeliberationState,
+        decision: Decision,
+        *,
+        risk_estimation: RiskEstimationProtocol,
+        constitution: Any | None = None,
+        request_analysis: RequestAnalysisContext | None = None,
+        delib_context: DelibContext | None = None,
+        decision_explanation: DecisionExplanation | None = None,
+    ) -> tuple[Decision, str, str]:
+        """§5.3 hard-signal-supremacy guard, called at both post-``decide_action``
+        delivery sites (this runner's ``_build_deliberative_result`` and the
+        controller's ``_route_deliberative``) right before ``assemble``.
+
+        Trigger: ``decision.hard_violations`` non-empty and
+        ``decision.final_action != "REFUSE"`` -- covers every route that can
+        reach the delivery point with a critic-rejected draft still sitting in
+        ``state.draft_response`` (SAFE_COMPLETE via any of the three
+        ``_handle_hard_violations`` branches, and defensively a
+        NORMAL_COMPLETE+hard_violations decision -- the gating relabel that
+        used to produce that combination is closed by
+        ``safe_complete_gating``'s §1b no-op, but this trigger does not
+        depend on that).
+
+        No-op (returns ``decision`` unchanged, no LLM call, ``state``
+        untouched) when the trigger does not fire -- this is what keeps the
+        ~99% of requests without hard violations byte-identical (T4).
+
+        On trigger: regenerates under SAFE_COMPLETE governance (naming the
+        violated principle ids as user-side guidance only -- never critic
+        rationale), then re-validates exactly once with a DIRECT
+        ``self.critic.critique(...)`` call. Deliberately NOT the ``_critique``
+        wrapper: it swallows every exception (:3101-3113-ish, see
+        ``DeliberationRunner._critique``) -- a re-validation that cannot fail
+        is not a validation -- and it enforces a 90%-of-``timeout_ms`` guard
+        (see ``DeliberationRunner._critique``) that would fire routinely this
+        late in a full deliberation and silently turn "regenerate and
+        deliver" into "refuse" for reasons unrelated to the content itself.
+        Delivers the regenerated text as SAFE_COMPLETE if the critic clears
+        it; fails closed to REFUSE otherwise (regeneration empty, regeneration
+        raises, the critic still reports a hard violation, the critic itself
+        raises, or the critic could not actually run -- ``skipped=True``, no
+        relevant principles -- since that is not a real validation either).
+
+        Mutates ``state.draft_response`` in place only on the successful
+        (SAFE_COMPLETE) branch: ``ResponseAssembler``'s REFUSE branch never
+        reads ``state.draft_response`` (the only code path that did is
+        disabled, ``response_assembler.py:262-264``), so there is nothing to
+        clear on fail-closed.
+
+        Never mutates ``state.last_critique`` / ``state.critiques``: the
+        decision this guard receives is already final, and overwriting the
+        critique that produced it would leave the assembled metadata (built
+        from ``state``) describing a critique that never gated anything.
+
+        Returns ``(decision, original_final_action, flip_reason)``.
+        ``original_final_action`` / ``flip_reason`` are ``""`` unless this
+        call flipped the decision to REFUSE, in which case they carry the
+        pre-flip action and one of ``HARD_VIOLATION_REGENERATION_FAILED`` /
+        ``HARD_VIOLATION_STILL_VIOLATING`` for the caller to record as
+        additive audit metadata on ``ResponseMetadata`` -- never used to gate
+        anything. A best-effort reconciled FINAL decision trace is appended
+        internally on the fail-closed branch (never on the no-op or success
+        branch).
+        """
+        if not decision.hard_violations or decision.final_action == "REFUSE":
+            return decision, "", ""
+
+        request_id = request.request_id or ""
+        pre_flip_action = decision.final_action
+        hard_violations = list(decision.hard_violations)
+
+        def _fail_closed(reason: str) -> tuple[Decision, str, str]:
+            flipped = _decision_as_refuse(decision, reason)
+            _append_hard_violation_flip_final_trace(
+                request_id=request_id,
+                decision=flipped,
+                original_final_action=pre_flip_action,
+                flip_reason=reason,
+                decision_explanation=decision_explanation,
+            )
+            return flipped, pre_flip_action, reason
+
+        try:
+            guidance = _hard_violation_regeneration_guidance(hard_violations)
+            regenerated_text = self._generate_safe_complete_text(request, risk_estimation, extra_guidance=guidance)
+        except Exception as e:
+            _LOG.warning(
+                "hard_violation_guard: regeneration failed request_id=%s error_type=%s error=%s",
+                request_id,
+                type(e).__name__,
+                e,
+            )
+            return _fail_closed(HARD_VIOLATION_REGENERATION_FAILED)
+
+        if not regenerated_text or not regenerated_text.strip():
+            _LOG.warning("hard_violation_guard: regeneration produced empty text request_id=%s", request_id)
+            return _fail_closed(HARD_VIOLATION_REGENERATION_FAILED)
+
+        try:
+            critique = self._critique_hard_violation_regeneration(
+                request,
+                regenerated_text,
+                constitution=constitution,
+                request_analysis=request_analysis,
+                delib_context=delib_context,
+            )
+        except Exception as e:
+            # Deliberately NOT a swallow: an exception here fails closed
+            # (PROJECT_SPEC §5.6 -- this call is governance, not telemetry).
+            # It is never treated as "no violation found".
+            _LOG.warning(
+                "hard_violation_guard: re-critique raised request_id=%s error_type=%s error=%s",
+                request_id,
+                type(e).__name__,
+                e,
+            )
+            return _fail_closed(HARD_VIOLATION_STILL_VIOLATING)
+
+        critic_decision = (getattr(critique, "decision", "") or "").strip().upper()
+        still_violating = (
+            bool(getattr(critique, "violated_hard", False))
+            or critic_decision == "REFUSE"
+            # A skipped critique (e.g. zero relevant principles) never ran the
+            # LLM -- it is not a real re-validation, so it cannot clear the
+            # regenerated text either.
+            or bool(getattr(critique, "skipped", False))
+        )
+        if still_violating:
+            return _fail_closed(HARD_VIOLATION_STILL_VIOLATING)
+
+        state.draft_response = regenerated_text
+        return _decision_as_safe_complete(decision), "", ""
+
+    def _critique_hard_violation_regeneration(
+        self,
+        request: ProcessedRequest,
+        regenerated_text: str,
+        *,
+        constitution: Any | None,
+        request_analysis: RequestAnalysisContext | None,
+        delib_context: DelibContext | None,
+    ) -> Any:
+        """Single direct ``self.critic.critique(...)`` call re-validating the
+        hard-violation guard's regenerated text (never the ``_critique``
+        wrapper -- see ``enforce_no_rejected_draft_delivery``).
+
+        Mirrors the strength of the critique that rejected the original
+        draft: the precomputed-principles form (sliced to
+        ``retrieval_top_k_for_request()``) when ``request_analysis`` is
+        available, otherwise the retrieval form -- never a weaker variant.
+        Persists the call with a distinguishable ``action`` so it is visible
+        in ``llm_calls`` (T6) without being mistaken for a normal
+        deliberation-cycle critique. Does not mutate ``state`` -- the caller
+        owns applying (or not) the result.
+        """
+        if self.critic is None:
+            # No graceful skip here (unlike `_critique`): the caller treats
+            # this raise as "cannot re-validate" and fails closed to REFUSE.
+            # In practice unreachable -- the trigger's hard_violations always
+            # came from a real critique -- but explicit and mypy-narrowing.
+            raise RuntimeError("hard_violation_guard: no critic configured; cannot re-validate")
+        const_for_precomputed: Any | None = None
+        use_precomputed = request_analysis is not None
+        if use_precomputed and request_analysis is not None:
+            const_for_precomputed = request_analysis.constitution or constitution
+            if const_for_precomputed is None and self.constitution_store is not None:
+                const_for_precomputed = get_constitution_safe(self.constitution_store, request.get_domain())
+            if const_for_precomputed is None:
+                use_precomputed = False
+
+        start = time.time()
+        if use_precomputed and request_analysis is not None and const_for_precomputed is not None:
+            critic_top_k = self.retrieval_top_k_for_request()
+            sliced_principles = list(request_analysis.relevant_principles)[:critic_top_k]
+            critique = self.critic.critique(
+                request.prompt,
+                regenerated_text,
+                const_for_precomputed,
+                principles=sliced_principles,
+                request_id=request.request_id or "",
+                delib_context=delib_context,
+                developer_contract=request.developer_contract,
+                conversation_history=request.conversation_history,
+            )
+        else:
+            resolved_constitution = constitution
+            if resolved_constitution is None and self.constitution_store is not None:
+                resolved_constitution = get_constitution_safe(self.constitution_store, request.get_domain())
+            critique = self.critic.critique(
+                request.prompt,
+                regenerated_text,
+                resolved_constitution,
+                request_id=request.request_id or "",
+                delib_context=delib_context,
+                developer_contract=request.developer_contract,
+                conversation_history=request.conversation_history,
+            )
+        elapsed = (time.time() - start) * 1000
+        nv = len(getattr(critique, "violations", None) or [])
+        rg = critique.revision_guidance[:100] if getattr(critique, "revision_guidance", "") else "N/A"
+        response_text = f"Violations: {nv}, Guidance: {rg}"
+        critic_model = _module_model(self.critic)
+        prompt_text = f"CRITIQUE\nPrompt: {request.prompt}\nResponse: {regenerated_text}"
+        record_llm_call(
+            self.logger,
+            {
+                "module": "critic",
+                "action": "critique (hard_violation_revalidation)",
+                "prompt": prompt_text,
+                "response": response_text,
+                "duration_ms": elapsed,
+                "model": critic_model,
+            },
+            {
+                "phase": "critic",
+                "module": "critic",
+                "action": "critique (hard_violation_revalidation)",
+                "model": critic_model,
+                "started_at": int(start * 1000),
+                "duration_ms": elapsed,
+                "prompt": getattr(critique, "prompt", None) or prompt_text,
+                "system_prompt": getattr(critique, "system_prompt", ""),
+                "raw_response": getattr(critique, "raw_response", "") or "",
+                "parsed_json": None,
+                "parsed_summary_json": response_text,
+                "attempts": getattr(critique, "parse_attempts", 1),
+                "sequence_in_cycle": SEQ_CRITIC,
+                "token_usage_json": _token_usage_json_from_result(critique),
+                "billable_provider_call": True,
+            },
+        )
+        return critique
 
     def run_fast_path(
         self,
@@ -1058,6 +1488,7 @@ class DeliberationRunner:
                         outcome=outcome,
                         constitution=constitution,
                         draft_provenance=_delib_provenance,
+                        request_analysis=request_analysis,
                     )
             except Exception as e:
                 rid = request.request_id or ""
@@ -1134,10 +1565,15 @@ class DeliberationRunner:
         outcome: ConvergenceOutcome | None = None,
         constitution: Any | None = None,
         draft_provenance: DraftProvenance | None = None,
+        request_analysis: RequestAnalysisContext | None = None,
     ) -> OrchestratorResult:
         """Helper: costruisce OrchestratorResult da state (usato da run_fast_path
         quando quick_check fallisce). ``draft_provenance``: forwarded to
-        ``assemble`` (fast-path -> deliberative escalation; see run_fast_path)."""
+        ``assemble`` (fast-path -> deliberative escalation; see run_fast_path).
+        ``request_analysis``: threaded from ``run_fast_path`` (in scope at its
+        caller, ``:1049`` area) so the hard-violation delivery guard below can
+        mirror the precomputed-principles critique form; this route never had
+        it before this guard."""
         from moralstack.orchestration.decision_service import decide_action
 
         decision1, explanation1 = decide_action(
@@ -1158,6 +1594,22 @@ class DeliberationRunner:
         if constitution is not None and _constitution_corrupted(constitution):
             risk_score = 1.0
         converged = outcome.converged if outcome is not None else (state.decision == DecisionType.CONVERGED)
+        decision1, hv_original_action, hv_flip_reason = self.enforce_no_rejected_draft_delivery(
+            request,
+            state,
+            decision1,
+            risk_estimation=risk_estimation,
+            constitution=constitution,
+            request_analysis=request_analysis,
+            decision_explanation=explanation1,
+        )
+        if hv_flip_reason:
+            # See _decision_explanation_for_hard_violation_flip: explanation1
+            # still describes the pre-flip decision, and assemble()'s
+            # ResponseMetadata.from_decision would otherwise prioritize its
+            # stale reason_codes/why_not_*/winning_rule over decision1's
+            # (correctly flipped) fields.
+            explanation1 = _decision_explanation_for_hard_violation_flip(explanation1, decision1, hv_flip_reason)
         response = self.assembler.assemble(
             request,
             state,
@@ -1170,6 +1622,9 @@ class DeliberationRunner:
             constitution_store=self.constitution_store,
             draft_provenance=draft_provenance,
         )
+        if hv_flip_reason:
+            response.metadata.original_final_action = hv_original_action
+            response.metadata.hard_violation_flip_reason = hv_flip_reason
         if getattr(response.metadata, "final_action", "") == "REFUSE" or response.response_type == ResponseType.FULL_REFUSAL:
             # See FAST_PATH branch above: the refusal LLM call is persisted by
             # ResponseAssembler.assemble itself; here only the RESPONSE-stage

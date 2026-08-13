@@ -143,7 +143,12 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `(Decision, DecisionExplanation)`.
 - `path_router.py` — `get_route(...)` → `(route, borderline_refuse, risk_policy_action)`;
   `is_hard_signal_refuse(...)`.
-- `safe_complete_gating.py` — `apply_safe_complete_gating(...)`.
+- `safe_complete_gating.py` — `apply_safe_complete_gating(...)`. Returns the
+  decision **unchanged** (no-op, before the SC→NORMAL_COMPLETE relabel) when
+  `decision.hard_violations` is non-empty (§1b of the hard-violation-delivery-guard
+  fix, `:86-97`) — a post-decision gate must never relax an action carrying an
+  unresolved hard violation. Restrictive-only; defense-in-depth alongside the
+  delivery-point guard below.
 - `deliberation_runner.py` — `DeliberationRunner` (cycles, convergence,
   `run_fast_path`, `run_benign_fast_path`). `run_deliberative_path`/
   `run_fast_path` accept an optional `request_analysis: RequestAnalysisContext |
@@ -175,6 +180,33 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `DeliberationState.fork()` and explicitly merged back at the
   `_run_full_parallel_evaluation` critic-fork seam, since both parallel
   strategies fork the state and the full-parallel one forks the critic too.
+  **Hard-violation delivery guard** (`enforce_no_rejected_draft_delivery`,
+  P0/§5.3): called from the two post-`decide_action` delivery sites — this
+  file's `_build_deliberative_result` and `OrchestrationController._route_deliberative`
+  — right before `assemble`. Fires when `decision.hard_violations` is non-empty
+  and `decision.final_action != "REFUSE"` (covers SAFE_COMPLETE from any of the
+  three `decision_service._handle_hard_violations` branches, plus defensively a
+  NORMAL_COMPLETE+hard_violations decision). No-op otherwise (no LLM call,
+  byte-identical decision/state — keeps the ~99% no-hard-violation path
+  unchanged). On trigger: regenerates via `_generate_safe_complete_text`
+  (extracted from `run_safe_complete_path`; `extra_guidance` names the violated
+  principle ids as a user-side prompt prefix, never critic rationale, never
+  appended to the system prompt), then re-validates exactly once with a
+  **direct** `self.critic.critique(...)` call via `_critique_hard_violation_regeneration`
+  — deliberately NOT the `_critique` wrapper (it swallows every exception and
+  enforces a 90%-of-`timeout_ms` guard that would fire routinely this late in a
+  full deliberation). Delivers the regenerated text as SAFE_COMPLETE if the
+  critic clears it (no hard violation, no REFUSE verdict, not `skipped`);
+  otherwise fails closed to REFUSE, appends a reconciled FINAL decision trace
+  (`_append_hard_violation_flip_final_trace`, best-effort, never rewrites the
+  original FINAL row), and the caller rebuilds the `DecisionExplanation` passed
+  to `assemble` (`_decision_explanation_for_hard_violation_flip`) so
+  `ResponseMetadata`'s `reason_codes`/`why_not_*`/`winning_rule` describe the
+  REFUSE that is actually delivered, not the pre-flip decision. Fail-closed
+  deliveries record `ResponseMetadata.original_final_action` /
+  `hard_violation_flip_reason` (additive-only fields). `response_assembler.py`
+  is untouched by this fix (hard constraint: it is a deterministic renderer with
+  no critic/output-protector access).
 - `convergence.py`, `convergence_evaluator.py` — convergence engine.
 - `conversation_state.py` — `ConversationGovernanceState`, `TurnDecisionSummary`.
 - `conversational_fast_path.py` — `ConversationalFastPathRunner` (cache-driven skip).

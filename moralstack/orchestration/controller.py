@@ -40,7 +40,11 @@ from moralstack.orchestration.decision_logger import log_decision_explanation
 from moralstack.orchestration.decision_service import decide_action
 from moralstack.orchestration.default_event_emitter import DefaultEventEmitter
 from moralstack.orchestration.deliberation_override import evaluate_deliberation_override
-from moralstack.orchestration.deliberation_runner import DeliberationRunner, _build_enriched_retrieval_query
+from moralstack.orchestration.deliberation_runner import (
+    DeliberationRunner,
+    _build_enriched_retrieval_query,
+    _decision_explanation_for_hard_violation_flip,
+)
 from moralstack.orchestration.diagnostics import (
     DiagnosticsLayer,
     log_deliberation_inconsistency,
@@ -2197,6 +2201,33 @@ class OrchestrationController:
             risk_category=risk_category_str(risk_estimation),
             stop_reason=getattr(outcome, "stop_reason", "") or "",
         )
+        # Hard-signal-supremacy delivery guard (PROJECT_SPEC §5.3): a decision
+        # carrying unresolved hard_violations must never deliver the
+        # critic-rejected state.draft_response verbatim. No-op (no LLM call)
+        # unless decision1.hard_violations is non-empty and decision1.final_action
+        # != "REFUSE" -- see DeliberationRunner.enforce_no_rejected_draft_delivery.
+        decision1, hv_original_action, hv_flip_reason = self._runner.enforce_no_rejected_draft_delivery(
+            request,
+            state,
+            decision1,
+            risk_estimation=risk_estimation,
+            constitution=constitution,
+            request_analysis=request_analysis,
+            decision_explanation=expl_for_assembler,
+        )
+        if hv_flip_reason:
+            # Guard flipped to REFUSE after decide_action already ran: keep
+            # the request-scoped Trace's decision fields in sync with the
+            # decision that is actually delivered (same rationale as the
+            # comment above trace.final_action at the top of this block).
+            trace.decision_path = decision1.path
+            trace.final_action = decision1.final_action
+            # expl_for_assembler still describes the pre-flip decision;
+            # ResponseMetadata.from_decision would otherwise prioritize its
+            # stale reason_codes/why_not_*/winning_rule over decision1's
+            # (correctly flipped) fields -- see
+            # _decision_explanation_for_hard_violation_flip.
+            expl_for_assembler = _decision_explanation_for_hard_violation_flip(expl_for_assembler, decision1, hv_flip_reason)
         response = self.assembler.assemble(
             request,
             state,
@@ -2210,6 +2241,9 @@ class OrchestrationController:
             constitution_store=self.constitution_store,
             draft_provenance=draft_provenance,
         )
+        if hv_flip_reason:
+            response.metadata.original_final_action = hv_original_action
+            response.metadata.hard_violation_flip_reason = hv_flip_reason
         self._emit_deliberation_aggregate_trace(
             request_id=request_id,
             state=state,

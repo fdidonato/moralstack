@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A critic-rejected draft can no longer be delivered verbatim under
+  SAFE_COMPLETE (P0, §5.3 hard-signal supremacy).** Measured on 1625 real FINAL
+  traces: 16 `SAFE_COMPLETE` deliveries carried non-empty hard-violation codes
+  (`CORE.PRIV.1`, `HC.HIPAA.1`, `CORE.MALWARE.1`, ...), 10 of them with no
+  `rewrite` call at all — the delivered text was the exact draft the critic had
+  just rejected on a hard violation, reached via two routes (critic votes
+  REFUSE, or votes REVISE and cycles exhaust) and three
+  `decision_service._handle_hard_violations` downgrade branches (crisis,
+  regulated-informational derogation, pre-policy SAFE_COMPLETE). A new
+  delivery-point guard (`DeliberationRunner.enforce_no_rejected_draft_delivery`,
+  called from both post-`decide_action` sites right before `assemble` —
+  `_build_deliberative_result` and the controller's `_route_deliberative`)
+  fires whenever `decision.hard_violations` is non-empty and
+  `decision.final_action != "REFUSE"`: it regenerates under SAFE_COMPLETE
+  governance (violated principle ids passed as user-side guidance only, never
+  appended to the system prompt, never critic rationale), re-validates exactly
+  once with a **direct** `critic.critique(...)` call (never the timeout-guarded,
+  exception-swallowing `_critique` wrapper), and delivers the regenerated text
+  as SAFE_COMPLETE only if the critic clears it — otherwise it fails closed to a
+  governed REFUSE. A second, independent measure closes the same hole from the
+  gating side: `apply_safe_complete_gating` no longer relabels a SAFE_COMPLETE
+  decision that still carries `hard_violations` down to NORMAL_COMPLETE.
+  `hard_violation_downgraded_to_safe_complete` now has its own `ReasonCode`
+  (previously flattened into `SAFE_COMPLETE_REQUIRED`, indistinguishable from a
+  plain policy SAFE_COMPLETE in the audit trail). A fail-closed flip records the
+  pre-flip action and reason on `ResponseMetadata` (`original_final_action`,
+  `hard_violation_flip_reason`, additive-only) and appends (never rewrites) a
+  reconciled FINAL decision trace, so the already-persisted FINAL trace and the
+  delivered REFUSE tell one consistent story. The ~99% of requests without hard
+  violations are byte-unchanged and make no extra LLM call.
+  `ResponseAssembler`/`ResponseAssembler.__init__` are unchanged.
 - **`DeliberationRunner`'s per-request clock and reuse-target audit trail are now
   request-scoped too (follow-up to the constitution-retrieval fix above).** The runner
   is built once per process and served requests on real threads

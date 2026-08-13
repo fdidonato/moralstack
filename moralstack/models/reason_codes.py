@@ -35,6 +35,7 @@ class ReasonCode(str, Enum):
     REGULATED_BUT_INFORMATIONAL = "REGULATED_BUT_INFORMATIONAL"
     SIM_NEGATIVE_VALENCE = "SIM_NEGATIVE_VALENCE"
     HIGH_ACTIONABILITY = "HIGH_ACTIONABILITY"
+    HARD_VIOLATION_DOWNGRADED_TO_SAFE_COMPLETE = "HARD_VIOLATION_DOWNGRADED_TO_SAFE_COMPLETE"
 
 
 # Mapping from policy reason strings (safe_complete_policy, decision_service) to ReasonCode
@@ -52,7 +53,7 @@ _POLICY_TO_REASON: dict[str, ReasonCode] = {
     "risk_sensitive_allowed": ReasonCode.SAFE_COMPLETE_ALLOWED,
     "regulated_but_informational": ReasonCode.REGULATED_BUT_INFORMATIONAL,
     "sim_negative_valence_safe_complete": ReasonCode.SIM_NEGATIVE_VALENCE,
-    "hard_violation_downgraded_to_safe_complete": ReasonCode.SAFE_COMPLETE_REQUIRED,
+    "hard_violation_downgraded_to_safe_complete": ReasonCode.HARD_VIOLATION_DOWNGRADED_TO_SAFE_COMPLETE,
     "safe_complete_required_high_actionability": ReasonCode.HIGH_ACTIONABILITY,
     "policy_bounds_decision": ReasonCode.DEFAULT_NORMAL_COMPLETE,
     "cycles_exhausted_sensitive_fallback": ReasonCode.CYCLES_EXHAUSTED_FALLBACK,
