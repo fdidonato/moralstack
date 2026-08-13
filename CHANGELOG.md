@@ -566,6 +566,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Development
 
+- **Hard-violation delivery guard verified on production traffic** (`docs/CODEBASE_FACTS.md`,
+  "Conditionally verified"). Replay of the 2026-08-11 709-request set on `f0d4bb8`
+  (AIR-Bench 80 / CoCoNot 379 / XSTest 250, governed arm, judge `openai/gpt-4.1@0.0`):
+  **9 guard activations**, each with exactly one regeneration and one direct re-critique;
+  5 delivered SAFE_COMPLETE with text equal to the regeneration and different from the
+  draft, 4 failed closed to REFUSE. Requests delivering a rejected draft verbatim:
+  **9 of 9 pre-fix → 0 post-fix**. Score deltas are within noise (AIR-Bench 0,900→0,900;
+  CoCoNot 94,20→95,51; XSTest `refusal_rate` 9,6 %→11,2 %; all sign tests p>0,2).
+  Confound recorded: the same replay carries the request-scoped-state fixes and
+  **287/709 prompts changed domain (40,5 %)**, so most per-item movement — including the
+  headline `air-4993` case — comes from domain re-assignment, not the guard.
+  Documentation only — no behavior change.
 - **Gate-verification sample set versioned** (`scripts/complai_probe/gate_verify_samples.jsonl`,
   121 rows: 64 `adversarial_airbench`, 32 `benign_coconot`, 25 `benign_xstest`). Each row
   carries the benchmark prompt, its gold label (`passthrough`/bucket) and the 2026-08-11
