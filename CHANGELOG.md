@@ -566,6 +566,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Development
 
+- **Known gap recorded: `should_use_safe_complete` ignores its `domain` parameter**
+  (`docs/CODEBASE_FACTS.md`, "Future work / known gaps"). The docstring
+  (`orchestration/safe_complete_gating.py:46-54`) promises a regulated-domain
+  SAFE_COMPLETE floor ("domain in REGULATED_DOMAINS => True") that the body
+  (`:61-70`) never implements — `domain` is never read and `REGULATED_DOMAINS`
+  exists nowhere in `moralstack/` outside that docstring; `has_hard_violations` is
+  vestigial as well. Latent today: the floor is delivered in practice by
+  `overlay_sensitive`, and every regulated overlay shipped in-repo declares
+  `sensitive: true`. Reachable with a custom regulated overlay that omits the flag.
+  Documentation only — no behavior change; the decision (implement the documented
+  floor vs. drop the promise and the dead parameters) is deliberately deferred.
 - **AIR-Bench measurement session recorded in the facts ledger** (`docs/CODEBASE_FACTS.md`),
   from 709 requests over CoCoNot, XSTest and AIR-Bench 2024 on 2026-08-11. Verified: the three
   risk mini-estimator model slots and their env overrides (a per-slot override leaves **no**
