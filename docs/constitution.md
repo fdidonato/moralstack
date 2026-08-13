@@ -77,6 +77,62 @@ Each principle in the constitution has the following structure:
 - **Priority**: typically 30-70
 - **Examples**: communicative tone, balanced perspectives, clarity
 
+#### Choosing the level (added 2026-08-13)
+
+A principle is `hard` **iff** its violation is *not repairable by rewriting the
+answer*, **or** the residual harm of delivering anyway is grave or irreversible.
+If the violation is repaired by a rewrite **and** the residual harm is modest,
+the principle is `soft`.
+
+This matters more than it looks: `moralstack/prompts/critic_prompt.py:13-14`
+forbids the critic from setting `violated_hard` for a `[S]` principle, and a
+hard violation that survives the deliberation cycles reaches the delivery-point
+guard, which regenerates once and then **fails closed to REFUSE**. So a `hard`
+level on a principle whose violation is a missing disclaimer converts an
+omission into a refusal.
+
+Two screening tests when writing or reviewing a principle:
+
+1. **Does the rule state a prohibition or a positive duty?** "Never…", "Do not…"
+   are candidates for `hard`. "Ensure…", "Clearly communicate…", "Respect…" are
+   duties whose breach is an omission — usually `soft`. Emergencies are the
+   deliberate exception (`EMER.*`, `MH.CRISIS.1`, `CHILD.*`): the duty is
+   positive but the residual harm is grave, so `hard` is intentional.
+2. **Does one principle carry two obligations?** A rule that both forbids a
+   behavior and requires a disclaimer should be split, with the prohibition kept
+   `hard` and the disclaimer moved to a `soft` sibling. The reference pattern is
+   `LEGAL.NOPRACTICE.1` (hard) alongside `LEGAL.DISCLAIMER.1` (soft); the same
+   split was applied on 2026-08-13 to `MH.NOTTHERAPY.1` / `MH.DISCLAIMER.1` and
+   to `EDU.MINORCONTENT.1` / `EDU.AGEAPPROPRIATE.1`.
+
+#### What the critic actually reads (measured 2026-08-13)
+
+Before spending effort on the wording of a rule, know what survives the trip to
+the model. `format_principles_compact`
+(`constitution/prompt_formatter.py:70-94`), used at both critic call sites
+(`runtime/modules/critic_module.py:401` and `:673`), emits one line per
+principle:
+
+```
+{id} [H|S]: {rule truncated to 180 chars}...
+```
+
+Two consequences, both counter-intuitive:
+
+1. **Only the first 180 characters of `rule` are read.** 31 of the 210
+   principles currently exceed that (15 of them `hard`), so the critic judges
+   them on a fragment. A qualifying clause placed at the end of a long rule is
+   inert — measured: a 654-character rewrite of `VC.OPERATIONAL.1` left the
+   critic seeing the prohibition alone and changed no verdict. **Put the
+   discriminating clause in the first sentence pair**, and keep the long-form
+   explanation after it for human readers.
+2. **`examples_allow` / `examples_deny` never reach any LLM prompt.** The
+   formatter drops them by design. Their only consumer is `_specificity_score`
+   (`constitution/helpers.py:80-81`), which uses their *count* — not their text —
+   to rank principles in `resolve_conflict`. And `schema.py:158-159` keeps only
+   the first two entries, so a third example changes nothing whatsoever. Write
+   examples for the humans maintaining the constitution, not to steer the critic.
+
 ---
 
 ## 3. Core principles

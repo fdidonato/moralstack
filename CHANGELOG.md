@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Four constitution principles re-levelled or split so a missing disclaimer can no
+  longer cause a refusal.** Measured false positives drove this: questions about the
+  Holocaust, about the general process for terminating a contract, and about coping with
+  sorrow through music were all refused because a principle demanding a *framing* was
+  marked `hard`, and a hard violation surviving the deliberation reaches the
+  delivery-point guard, which fails closed to REFUSE.
+  `MH.NOTTHERAPY.1` keeps `hard` but now states only the prohibition (never position
+  the assistant as a replacement for treatment, never discourage professional help);
+  the disclaimer duty moves to the new **`MH.DISCLAIMER.1`** (`soft`, p90).
+  `EDU.AGEAPPROPRIATE.1` drops to `soft` (p85, register calibration); the adult-content
+  prohibition moves to the new **`EDU.MINORCONTENT.1`** (`hard`, p100), explicitly
+  inapplicable when no minor context is present, and explicitly not triggered by
+  difficult subject matter. `LEGAL.NOPRACTICE.1` keeps `hard` and now carries in its own
+  rule the case-specific limit that previously lived only in `LEGAL.DISCLAIMER.1`.
+  `CORE.PRIV.1` and `HC.HIPAA.1` keep `hard` and gain positive `examples_allow` for
+  aggregated/de-identified analysis; `HC.HIPAA.1` also loses the vague opening duty
+  ("Respect health information privacy") that invited analogical extension.
+  Constitution-only change — no code touched. Verified with
+  `examples/airbench/run_regression.py` (new): the four in-scope cases pass (three at
+  3/3, `LEGAL-01` at 2/3) and all four controls hold at 3/3 with zero forbidden markers
+  leaked across 12 replays. Full suite 2536 passed, all 21 overlays validate.
 - **A critic-rejected draft can no longer be delivered verbatim under
   SAFE_COMPLETE (P0, §5.3 hard-signal supremacy).** Measured on 1625 real FINAL
   traces: 16 `SAFE_COMPLETE` deliveries carried non-empty hard-violation codes
@@ -566,6 +587,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Development
 
+- **Documented what the critic actually reads of a principle** (`docs/constitution.md`
+  §2.2, `docs/CODEBASE_FACTS.md`). `format_principles_compact`
+  (`constitution/prompt_formatter.py:70-94`, used at `critic_module.py:401,673`)
+  truncates every rule to **180 characters** and never emits `examples_allow` /
+  `examples_deny` — their only consumer is `_specificity_score`
+  (`constitution/helpers.py:80-81`), which counts them for ranking. **31 of the 210
+  principles have a rule longer than 180 chars, 15 of them `hard`.** A qualifying
+  clause written at the end of a long rule is therefore inert, which two earlier notes
+  in `CODEBASE_FACTS.md` got wrong and are corrected in the same change. No behaviour
+  change — documentation of existing behaviour.
+- **Governance regression suite** (`examples/airbench/`): replays the prompts that
+  governance handled wrongly in the 2026-08-11 and 2026-08-13 runs. Cases are tagged
+  `in-scope` / `control` / `out-of-scope` so a failure says what it means, and the
+  controls assert `withhold` (the dangerous content never reaches the user) instead of
+  `refuse` — a regenerated SAFE_COMPLETE that denies the harmful part is the intended
+  behaviour, and an earlier version of the suite scored exactly that as a failure.
+  `--repeat N` is documented as mandatory before concluding: the pipeline is not
+  deterministic at `temperature=0` and single runs produced opposite verdicts for the
+  same prompt. `--max-tokens` defaults to 1024, above the 256 that Inspect pins for
+  `xstest`/`coconot`; `--compare` runs both to separate the truncation effect.
 - **Hard-violation delivery guard verified on production traffic** (`docs/CODEBASE_FACTS.md`,
   "Conditionally verified"). Replay of the 2026-08-11 709-request set on `f0d4bb8`
   (AIR-Bench 80 / CoCoNot 379 / XSTest 250, governed arm, judge `openai/gpt-4.1@0.0`):
