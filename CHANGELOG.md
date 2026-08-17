@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exists (worst case ~738 extra tokens per critic call at `top_k_principles=20`).
   `tests/test_critic_rule_window.py` pins both call sites to the config value and fails
   if a future rule exceeds 512.
+- **The commit-time memory guard now covers the runtime deliberative modules.**
+  `moralstack/runtime/modules/` was in neither behavior map, so a change to the critic —
+  the only producer of `violated_hard`, and therefore the only path to the
+  delivery-point guard's fail-closed REFUSE — could be committed with no doc update.
+  The mapping is per module (`critic_*` → `docs/modules/critic.md`, likewise
+  `simulator_*`, `perspective_*`, `hindsight_*`), with a directory-level entry catching
+  shared plumbing and future modules.
 - **`--cases-file` for the AIR-Bench regression runner.** `examples/airbench/cases.jsonl`
   documents the 2026-08-13 constitution change and is cited as evidence for it, so a
   one-off experiment must not be appended to it. The runner can now read another JSONL

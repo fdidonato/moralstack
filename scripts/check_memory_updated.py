@@ -41,6 +41,25 @@ BEHAVIOR_DOC_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("docs/traces/openai_compatible_multiturn.md", "docs/traces/observability_db_to_ui.md"),
     ),
     ("moralstack/constitution/", ("docs/modules/constitution_store.md", "docs/constitution.md")),
+    # Moduli deliberativi runtime: ognuno ha il proprio contratto long-form in
+    # docs/modules/. Mappatura per-modulo (il prefisso copre sia <mod>_module.py sia
+    # <mod>_config_loader.py) perche' un cambio al critic deve aggiornare critic.md,
+    # non un doc di modulo qualsiasi. Questi moduli decidono: il critic e' l'unico
+    # produttore di violated_hard, e senza hard violation il delivery-point guard non
+    # scatta mai. L'ultima riga fa da rete per il codice condiviso e per moduli futuri.
+    ("moralstack/runtime/modules/critic_", ("docs/modules/critic.md",)),
+    ("moralstack/runtime/modules/simulator_", ("docs/modules/simulator.md",)),
+    ("moralstack/runtime/modules/perspective_", ("docs/modules/perspectives.md",)),
+    ("moralstack/runtime/modules/hindsight_", ("docs/modules/hindsight.md",)),
+    (
+        "moralstack/runtime/modules/",
+        (
+            "docs/modules/critic.md",
+            "docs/modules/simulator.md",
+            "docs/modules/perspectives.md",
+            "docs/modules/hindsight.md",
+        ),
+    ),
 )
 
 

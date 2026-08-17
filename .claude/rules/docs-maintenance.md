@@ -12,7 +12,11 @@ When you change behavior, update the docs in the **same** change:
 - Changed governance flow, multi-turn handling, observability schema, or the COMPL-AI
   bridge path → update the matching file in `docs/TRACES/`.
 - Module-level behavior also has long-form docs in `docs/modules/*.md`; update the
-  relevant one if you touch that module's contract.
+  relevant one if you touch that module's contract. This is enforced per module for the
+  runtime deliberative modules: `moralstack/runtime/modules/critic_*` →
+  `docs/modules/critic.md`, and likewise `simulator_*`, `perspective_*` (→
+  `perspectives.md`) and `hindsight_*`. The critic is the only producer of
+  `violated_hard`, so its contract is governance behavior, not module trivia.
 
 When the Stop docs-gate blocks, it stages `.claude/.docs-stub.md` with the symbols you
 touched (parsed from `git diff HEAD`) mapped to the docs above. Treat it as a starting

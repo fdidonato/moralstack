@@ -57,6 +57,7 @@ BEHAVIOR_PREFIXES = (
     "moralstack/observability/",
     "moralstack/server/",
     "moralstack/constitution/",
+    "moralstack/runtime/modules/",
 )
 
 # Only a verified-memory ledger satisfies the docs nudge — NOT an arbitrary docs/
