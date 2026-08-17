@@ -248,9 +248,18 @@ def main() -> int:
     )
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument("--json-out", type=Path, help="write raw outcomes here")
+    parser.add_argument(
+        "--cases-file",
+        type=Path,
+        help=(
+            "read cases from this JSONL instead of the shipped cases.jsonl. Use it for a "
+            "one-off experiment (e.g. an A/B on a config knob) so the regression set that "
+            "documents a past change stays untouched."
+        ),
+    )
     args = parser.parse_args()
 
-    cases = load_cases()
+    cases = load_cases(args.cases_file)
     if args.case:
         wanted = {c.upper() for c in args.case}
         cases = [c for c in cases if c.case_id.upper() in wanted]

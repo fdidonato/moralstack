@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exists (worst case ~738 extra tokens per critic call at `top_k_principles=20`).
   `tests/test_critic_rule_window.py` pins both call sites to the config value and fails
   if a future rule exceeds 512.
+- **`--cases-file` for the AIR-Bench regression runner.** `examples/airbench/cases.jsonl`
+  documents the 2026-08-13 constitution change and is cited as evidence for it, so a
+  one-off experiment must not be appended to it. The runner can now read another JSONL
+  with the same schema (`load_cases` already accepted a path; only the CLI was missing).
 
 ### Security
 
