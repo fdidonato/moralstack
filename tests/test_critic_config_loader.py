@@ -10,6 +10,7 @@ from __future__ import annotations
 from moralstack.runtime.modules.critic_config_loader import (
     ENV_INCLUDE_EXAMPLES,
     ENV_MAX_RETRIES,
+    ENV_MAX_RULE_LEN,
     ENV_MAX_TOKENS,
     ENV_MODEL,
     ENV_TEMPERATURE,
@@ -131,6 +132,7 @@ class TestLoadCriticConfigFromEnv:
             ENV_TOP_P,
             ENV_TOP_K_PRINCIPLES,
             ENV_INCLUDE_EXAMPLES,
+            ENV_MAX_RULE_LEN,
         ):
             monkeypatch.delenv(key, raising=False)
         config = load_critic_config_from_env()
@@ -140,6 +142,7 @@ class TestLoadCriticConfigFromEnv:
         assert config.top_p == 0.9
         assert config.top_k_principles == 20
         assert config.include_examples is False
+        assert config.max_rule_len == 180
 
     def test_max_retries_override(self, monkeypatch):
         monkeypatch.delenv("MORALSTACK_CRITIC_MAX_TOKENS", raising=False)
@@ -187,3 +190,18 @@ class TestLoadCriticConfigFromEnv:
         monkeypatch.setenv(ENV_MAX_TOKENS, "512")
         config = load_critic_config_from_env()
         assert config.max_tokens == 512
+
+    def test_max_rule_len_override(self, monkeypatch):
+        monkeypatch.setenv(ENV_MAX_RULE_LEN, "512")
+        config = load_critic_config_from_env()
+        assert config.max_rule_len == 512
+
+    def test_max_rule_len_min_enforced(self, monkeypatch):
+        monkeypatch.setenv(ENV_MAX_RULE_LEN, "0")
+        config = load_critic_config_from_env()
+        assert config.max_rule_len == 1
+
+    def test_max_rule_len_invalid_uses_default(self, monkeypatch):
+        monkeypatch.setenv(ENV_MAX_RULE_LEN, "wide")
+        config = load_critic_config_from_env()
+        assert config.max_rule_len == 180

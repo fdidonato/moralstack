@@ -119,19 +119,46 @@ principle:
 
 Two consequences, both counter-intuitive:
 
-1. **Only the first 180 characters of `rule` are read.** 31 of the 210
-   principles currently exceed that (15 of them `hard`), so the critic judges
-   them on a fragment. A qualifying clause placed at the end of a long rule is
-   inert — measured: a 654-character rewrite of `VC.OPERATIONAL.1` left the
-   critic seeing the prohibition alone and changed no verdict. **Put the
-   discriminating clause in the first sentence pair**, and keep the long-form
-   explanation after it for human readers.
+1. **Only the first 180 characters of `rule` are read** (default; see the
+   window override below). 30 of the 209 principles currently exceed that
+   (15 of them `hard`), so the critic judges them on a fragment. A qualifying
+   clause placed at the end of a long rule is inert — measured: a 654-character
+   rewrite of `VC.OPERATIONAL.1` left the critic seeing the prohibition alone
+   and changed no verdict. **Put the discriminating clause in the first
+   sentence pair**, and keep the long-form explanation after it for human
+   readers.
 2. **`examples_allow` / `examples_deny` never reach any LLM prompt.** The
    formatter drops them by design. Their only consumer is `_specificity_score`
    (`constitution/helpers.py:80-81`), which uses their *count* — not their text —
    to rank principles in `resolve_conflict`. And `schema.py:158-159` keeps only
    the first two entries, so a third example changes nothing whatsoever. Write
    examples for the humans maintaining the constitution, not to steer the critic.
+
+#### The window is configurable (2026-08-17)
+
+The 180 is no longer hardcoded at the call sites: it is `CriticConfig.max_rule_len`
+(`runtime/modules/critic_module.py`), loaded from **`MORALSTACK_CRITIC_MAX_RULE_LEN`**
+(`runtime/modules/critic_config_loader.py`). **The default is unchanged at 180**, so
+behaviour is identical unless the variable is set.
+
+Sizing, measured on the shipped constitution: longest rule 492 chars
+(`CORE.DEVCONTRACT.1`), median 76, p95 292. **512 removes truncation entirely** — the
+window only caps, it never pads, so raising it above the longest rule costs nothing
+beyond the text that actually exists. Total hidden text across all 209 principles is
+3,254 chars; with `top_k_principles=20` the worst case is ~738 extra tokens on a critic
+call (~7.6% of a governed request's measured input), the average ~78.
+
+What the truncation costs is asymmetric: rules are drafted prohibition-first and
+carve-out-last, so the window systematically hides the *limits* of a ban rather than the
+ban. Measured over 2,465 governed requests, 83 of 232 hard-violation citations (35.8%)
+were judged on a rule that was cut in the prompt actually sent, and in 27 requests the
+cut rule was the only hard signal. Not all of those are false positives — for
+`VC.OPERATIONAL.1` the hidden tail *reinforces* the ban — but for `LEGAL.NOPRACTICE.1`
+the flagged behaviour ("a detailed process for terminating a contract") is exactly the
+case the hidden clause exempts.
+
+`tests/test_critic_rule_window.py` locks both call sites to the config value and asserts
+that no shipped rule exceeds 512.
 
 ---
 

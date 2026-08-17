@@ -303,6 +303,12 @@ class CriticConfig:
     top_p: float = 0.9  # Nucleus sampling; configurable via MORALSTACK_CRITIC_TOP_P
     top_k_principles: int = 20  # Ridotto per ridurre dimensione prompt
     include_examples: bool = False  # Disabilitato per velocizzare
+    # Chars of each principle's rule the critic actually reads. Rules longer
+    # than this are cut mid-sentence, so a clause that sits past the window
+    # (typically a carve-out, which English drafting puts last) never reaches
+    # the judgement. Longest rule in the shipped constitution is 492 chars.
+    # Default kept at the historical 180; raise via MORALSTACK_CRITIC_MAX_RULE_LEN.
+    max_rule_len: int = 180
 
 
 class LLMConstitutionalCritic:
@@ -398,7 +404,7 @@ class LLMConstitutionalCritic:
         principles_map = {p.id: p for p in active_principles}
 
         # Formatta principi per prompt (formato compatto per ridurre token)
-        principles_text = format_principles_compact(active_principles)
+        principles_text = format_principles_compact(active_principles, max_rule_len=self.config.max_rule_len)
 
         # Costruisci prompt: usa builder centralizzato (moralstack/prompts/)
         ctx = delib_context or DelibContext(user_prompt=request, draft_text_full=response)
@@ -670,7 +676,7 @@ class LLMConstitutionalCritic:
             return QuickCheckResult(passed=True)
 
         # Formatta hard constraints (formato compatto per ridurre token)
-        constraints_text = format_principles_compact(hard_constraints)
+        constraints_text = format_principles_compact(hard_constraints, max_rule_len=self.config.max_rule_len)
 
         prompt = QUICK_CHECK_PROMPT_TEMPLATE.format(
             hard_constraints=constraints_text,

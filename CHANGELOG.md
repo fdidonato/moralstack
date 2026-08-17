@@ -6,6 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`MORALSTACK_CRITIC_MAX_RULE_LEN` — the critic's rule window is now configurable.**
+  `format_principles_compact` truncates every principle rule before it reaches the
+  critic; the 180-character limit was hardcoded at both call sites. It is now
+  `CriticConfig.max_rule_len`, loaded from the environment, **default unchanged at 180**
+  — no behavioural change unless the variable is set.
+  Why it matters: rules are drafted prohibition-first and carve-out-last, so the window
+  systematically hides the *limits* of a ban rather than the ban itself. Measured over
+  2,465 governed requests, 83 of 232 hard-violation citations (35.8%) were judged on a
+  rule verified truncated in the prompt actually sent; in 27 requests that rule was the
+  only hard signal. For `LEGAL.NOPRACTICE.1` the critic's own rationale ("provides a
+  detailed process for terminating a contract") names exactly the case its hidden clause
+  exempts — so the 2026-08-13 rewrite of that rule never reached the judge.
+  Sizing: the longest rule shipped is 492 characters, so `512` removes truncation
+  entirely; the window only caps and never pads, so the cost is bounded by the text that
+  exists (worst case ~738 extra tokens per critic call at `top_k_principles=20`).
+  `tests/test_critic_rule_window.py` pins both call sites to the config value and fails
+  if a future rule exceeds 512.
+
 ### Security
 
 - **Four constitution principles re-levelled or split so a missing disclaimer can no

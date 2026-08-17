@@ -298,6 +298,20 @@ Structured critic output uses OpenAI's `json_object` response format (`response_
 - **Type**: bool (1/true/yes or 0/false/no)
 - **Meaning**: Whether to include violation examples from principles in the critic prompt.
 
+#### MORALSTACK_CRITIC_MAX_RULE_LEN
+
+- **Default**: `180`
+- **Type**: int (>= 1)
+- **Meaning**: Characters of each principle's `rule` serialized into the critic prompt, at
+  both call sites (full critique and fast-path quick-check). Longer rules are cut
+  mid-sentence and marked with `...`, so a clause past the window never reaches the
+  judgement that sets `violated_hard`.
+- **Sizing**: the longest rule shipped is 492 chars, so `512` disables truncation
+  entirely; the window only caps and never pads, so raising it costs only the text that
+  exists (worst case ~738 extra tokens per critic call at `top_k_principles=20`).
+- **Caution**: changing it changes every critic verdict, so a run taken at a different
+  value is a different experiment — pin it explicitly when comparing measurements.
+
 ---
 
 ## Usage

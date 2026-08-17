@@ -28,6 +28,7 @@ ENV_TEMPERATURE = "MORALSTACK_CRITIC_TEMPERATURE"
 ENV_TOP_P = "MORALSTACK_CRITIC_TOP_P"
 ENV_TOP_K_PRINCIPLES = "MORALSTACK_CRITIC_TOP_K_PRINCIPLES"
 ENV_INCLUDE_EXAMPLES = "MORALSTACK_CRITIC_INCLUDE_EXAMPLES"
+ENV_MAX_RULE_LEN = "MORALSTACK_CRITIC_MAX_RULE_LEN"
 
 
 def load_critic_config_from_env() -> CriticConfig:
@@ -48,6 +49,7 @@ def load_critic_config_from_env() -> CriticConfig:
     top_p = get_env_float(ENV_TOP_P, 0.9, 0.0, 1.0)
     top_k_principles = get_env_int(ENV_TOP_K_PRINCIPLES, 20, 1)
     include_examples = get_env_bool(ENV_INCLUDE_EXAMPLES, False)
+    max_rule_len = get_env_int(ENV_MAX_RULE_LEN, 180, 1)
 
     return CriticConfig(
         max_retries=max_retries,
@@ -56,4 +58,5 @@ def load_critic_config_from_env() -> CriticConfig:
         top_p=top_p,
         top_k_principles=top_k_principles,
         include_examples=include_examples,
+        max_rule_len=max_rule_len,
     )
