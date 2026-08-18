@@ -60,6 +60,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a tightening as well as an exception. Set `MORALSTACK_CRITIC_MAX_RULE_LEN=180` to
   restore the historical window.
 
+### Fixed
+
+- **`LEGAL.NOPRACTICE.1` now leads with its carve-out instead of closing with it.** The
+  rule banned case-specific legal advice first and exempted general procedural or
+  statutory explanations last, so the exemption sat past char 180 — the window that
+  judged it until 2026-08-17, and the reason "what's the process for terminating a
+  contract?" kept producing a hard violation. Reordered so the exemption ends at char
+  173 of the rule; prohibition, level (`hard`), priority, id, keywords and examples are
+  unchanged. Redundant at the new 512 default and **not re-measured against live
+  models** — it is defence in depth for a lowered window, pinned by
+  `tests/test_critic_rule_window.py`.
+
 ### Security
 
 - **Four constitution principles re-levelled or split so a missing disclaimer can no

@@ -133,3 +133,24 @@ def test_shipped_constitution_longest_rule_fits_in_512():
         lengths += [len((p.rule or "").strip()) for p in store.load_overlay(path.stem).additional_principles]
 
     assert max(lengths) <= 512
+
+
+def test_legal_nopractice_carve_out_survives_a_narrow_window():
+    """The carve-out of LEGAL.NOPRACTICE.1 must lead the rule, not close it.
+
+    Measured 2026-08-17: at a 180-char window the clause exempting general
+    procedural explanations fell outside the prompt, and the critic marked a
+    hard violation on "the process for terminating a contract" - exactly the
+    exempted case. The default window is now 512, so this test is the guard
+    against reintroducing the dependency: the rule must read correctly even if
+    MORALSTACK_CRITIC_MAX_RULE_LEN is lowered back to the historical value.
+    """
+    from moralstack.constitution.prompt_formatter import format_principles_compact
+    from moralstack.constitution.store import ConstitutionStore
+
+    store = ConstitutionStore(use_llm_matching=False)
+    principle = next(p for p in store.load_overlay("legal").additional_principles if p.id == "LEGAL.NOPRACTICE.1")
+
+    sent = format_principles_compact([principle], max_rule_len=180)
+
+    assert "are NOT unauthorized practice" in sent

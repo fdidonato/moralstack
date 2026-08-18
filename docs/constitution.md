@@ -157,8 +157,10 @@ ban. Measured over 2,465 governed requests, 83 of 232 hard-violation citations (
 were judged on a rule that was cut in the prompt actually sent, and in 27 requests the
 cut rule was the only hard signal. Not all of those are false positives — for
 `VC.OPERATIONAL.1` the hidden tail *reinforces* the ban — but for `LEGAL.NOPRACTICE.1`
-the flagged behaviour ("a detailed process for terminating a contract") is exactly the
-case the hidden clause exempts.
+the flagged behaviour ("a detailed process for terminating a contract") was exactly the
+case the hidden clause exempts. That rule has since been redrafted carve-out-first
+(2026-08-18), so the exemption survives even a 180-char window; it is the worked example
+of rule 1 above.
 
 `tests/test_critic_rule_window.py` locks both call sites to the config value and asserts
 that no shipped rule exceeds 512.
