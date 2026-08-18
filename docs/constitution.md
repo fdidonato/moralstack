@@ -114,15 +114,17 @@ the model. `format_principles_compact`
 principle:
 
 ```
-{id} [H|S]: {rule truncated to 180 chars}...
+{id} [H|S]: {rule truncated to max_rule_len chars}...
 ```
 
 Two consequences, both counter-intuitive:
 
-1. **Only the first 180 characters of `rule` are read** (default; see the
-   window override below). 30 of the 209 principles currently exceed that
-   (15 of them `hard`), so the critic judges them on a fragment. A qualifying
-   clause placed at the end of a long rule is inert — measured: a 654-character
+1. **Only the first `max_rule_len` characters of `rule` are read** (512 since
+   2026-08-17; see the window override below). At the historical 180, 30 of the
+   209 principles exceeded the window (15 of them `hard`) and the critic judged
+   them on a fragment; at 512 no shipped rule is cut. A qualifying clause placed
+   at the end of a long rule is inert whenever the window cuts it — measured: a
+   654-character
    rewrite of `VC.OPERATIONAL.1` left the critic seeing the prohibition alone
    and changed no verdict. **Put the discriminating clause in the first
    sentence pair**, and keep the long-form explanation after it for human
@@ -136,10 +138,11 @@ Two consequences, both counter-intuitive:
 
 #### The window is configurable (2026-08-17)
 
-The 180 is no longer hardcoded at the call sites: it is `CriticConfig.max_rule_len`
+The window is no longer hardcoded at the call sites: it is `CriticConfig.max_rule_len`
 (`runtime/modules/critic_module.py`), loaded from **`MORALSTACK_CRITIC_MAX_RULE_LEN`**
-(`runtime/modules/critic_config_loader.py`). **The default is unchanged at 180**, so
-behaviour is identical unless the variable is set.
+(`runtime/modules/critic_config_loader.py`). **The default is 512 since 2026-08-17**
+(previously 180): the critic reads every shipped rule in full, and setting the
+variable lower re-opens the gap described below.
 
 Sizing, measured on the shipped constitution: longest rule 492 chars
 (`CORE.DEVCONTRACT.1`), median 76, p95 292. **512 removes truncation entirely** — the

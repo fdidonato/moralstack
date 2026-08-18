@@ -142,7 +142,7 @@ class TestLoadCriticConfigFromEnv:
         assert config.top_p == 0.9
         assert config.top_k_principles == 20
         assert config.include_examples is False
-        assert config.max_rule_len == 180
+        assert config.max_rule_len == 512
 
     def test_max_retries_override(self, monkeypatch):
         monkeypatch.delenv("MORALSTACK_CRITIC_MAX_TOKENS", raising=False)
@@ -204,4 +204,4 @@ class TestLoadCriticConfigFromEnv:
     def test_max_rule_len_invalid_uses_default(self, monkeypatch):
         monkeypatch.setenv(ENV_MAX_RULE_LEN, "wide")
         config = load_critic_config_from_env()
-        assert config.max_rule_len == 180
+        assert config.max_rule_len == 512

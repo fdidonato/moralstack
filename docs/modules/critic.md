@@ -300,7 +300,7 @@ Structured critic output uses OpenAI's `json_object` response format (`response_
 
 #### MORALSTACK_CRITIC_MAX_RULE_LEN
 
-- **Default**: `180`
+- **Default**: `512` (was `180` until 2026-08-17)
 - **Type**: int (>= 1)
 - **Meaning**: Characters of each principle's `rule` serialized into the critic prompt, at
   both call sites (full critique and fast-path quick-check). Longer rules are cut

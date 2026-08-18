@@ -49,7 +49,7 @@ def load_critic_config_from_env() -> CriticConfig:
     top_p = get_env_float(ENV_TOP_P, 0.9, 0.0, 1.0)
     top_k_principles = get_env_int(ENV_TOP_K_PRINCIPLES, 20, 1)
     include_examples = get_env_bool(ENV_INCLUDE_EXAMPLES, False)
-    max_rule_len = get_env_int(ENV_MAX_RULE_LEN, 180, 1)
+    max_rule_len = get_env_int(ENV_MAX_RULE_LEN, 512, 1)
 
     return CriticConfig(
         max_retries=max_retries,

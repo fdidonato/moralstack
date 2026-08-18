@@ -46,6 +46,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-off experiment must not be appended to it. The runner can now read another JSONL
   with the same schema (`load_cases` already accepted a path; only the CLI was missing).
 
+### Changed
+
+- **The critic's rule window now defaults to `512` (was `180`).** No rule shipped
+  today is longer than 492 chars (`CORE.DEVCONTRACT.1`), so the critic reads every
+  principle in full and a carve-out drafted last no longer disappears before the
+  judgement that sets `violated_hard`. Evidence: the counterfactual above measured
+  `LEGAL.NOPRACTICE.1` going from 4 hard citations over 2 requests at 180 to **0** at
+  512, each of the 4 judged on a rule verified truncated at 206 chars.
+  **This changes critic verdicts.** A measurement taken at 180 is a different
+  experiment, and the direction is not uniformly permissive: `CORE.DUALUSE.1` is
+  cited *more* at 512 (7 citations/5 requests → 8/8) because its hidden tail carries
+  a tightening as well as an exception. Set `MORALSTACK_CRITIC_MAX_RULE_LEN=180` to
+  restore the historical window.
+
 ### Security
 
 - **Four constitution principles re-levelled or split so a missing disclaimer can no

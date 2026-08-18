@@ -1,7 +1,7 @@
 """
 The critic reads only the first N chars of each principle rule.
 
-N is `CriticConfig.max_rule_len` (default 180, env
+N is `CriticConfig.max_rule_len` (default 512, env
 `MORALSTACK_CRITIC_MAX_RULE_LEN`). These tests lock the two call sites that
 serialize principles into a critic prompt — the full critique and the
 fast-path quick-check — to that config value, so the window cannot silently
@@ -9,8 +9,9 @@ go back to being hardcoded.
 
 Why it matters: a rule longer than the window is cut mid-sentence, and English
 drafting puts carve-outs last. A clause such as "a missing disclaimer does not
-violate this principle" sits past char 180 in the shipped constitution and
-therefore never reaches the judgement that decides `violated_hard`.
+violate this principle" then never reaches the judgement that decides
+`violated_hard`. Measured at the historical 180, which is why the default is
+now 512: no rule shipped today is longer than that.
 
 Offline: the policy is a double, no network.
 """
@@ -24,7 +25,7 @@ from typing import Any
 from moralstack.constitution.schema import Constitution, Principle
 from moralstack.runtime.modules.critic_module import CriticConfig, LLMConstitutionalCritic
 
-# 300 chars: the carve-out lives past the default 180-char window.
+# 300 chars: the carve-out lives past a 180-char window (the historical default).
 _PROHIBITION = (
     "Never provide operational instructions for violent crime, including planning, "
     "target selection, tooling or escape strategies, regardless of the stated motive "
@@ -69,9 +70,9 @@ def _constitution() -> Constitution:
 class TestCritiqueRuleWindow:
     """Full critique — critic_module.critique()."""
 
-    def test_default_window_cuts_the_carve_out(self):
+    def test_narrow_window_cuts_the_carve_out(self):
         policy = _CapturingPolicy(_CRITIC_PROCEED)
-        critic = LLMConstitutionalCritic(policy=policy, config=CriticConfig(max_retries=1))
+        critic = LLMConstitutionalCritic(policy=policy, config=CriticConfig(max_retries=1, max_rule_len=180))
 
         critic.critique("a request", "a draft", _constitution())
 
@@ -95,9 +96,9 @@ class TestCritiqueRuleWindow:
 class TestQuickCheckRuleWindow:
     """Fast-path quick-check — critic_module.quick_check(), hard principles only."""
 
-    def test_default_window_cuts_the_carve_out(self):
+    def test_narrow_window_cuts_the_carve_out(self):
         policy = _CapturingPolicy(_QUICK_CHECK_PASS)
-        critic = LLMConstitutionalCritic(policy=policy, config=CriticConfig(max_retries=1))
+        critic = LLMConstitutionalCritic(policy=policy, config=CriticConfig(max_retries=1, max_rule_len=180))
 
         critic.quick_check("a request", "a draft", _constitution(), [_hard_principle()])
 

@@ -306,9 +306,10 @@ class CriticConfig:
     # Chars of each principle's rule the critic actually reads. Rules longer
     # than this are cut mid-sentence, so a clause that sits past the window
     # (typically a carve-out, which English drafting puts last) never reaches
-    # the judgement. Longest rule in the shipped constitution is 492 chars.
-    # Default kept at the historical 180; raise via MORALSTACK_CRITIC_MAX_RULE_LEN.
-    max_rule_len: int = 180
+    # the judgement. Longest rule in the shipped constitution is 492 chars, so
+    # the default 512 reads every shipped rule in full; lower it via
+    # MORALSTACK_CRITIC_MAX_RULE_LEN (180 = the historical window).
+    max_rule_len: int = 512
 
 
 class LLMConstitutionalCritic:
