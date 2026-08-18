@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exists (worst case ~738 extra tokens per critic call at `top_k_principles=20`).
   `tests/test_critic_rule_window.py` pins both call sites to the config value and fails
   if a future rule exceeds 512.
+  Counterfactual **run** 2026-08-17 to the pre-registered protocol (180 vs 512 as the sole
+  changed variable, 7 cases x 5 replays per arm, runs `415b0284` / `5ff450e4`):
+  `LEGAL.NOPRACTICE.1` drops from 4 hard citations over 2 requests to **0**, each of the 4
+  judged on a rule verified truncated at 206 chars. `CORE.DUALUSE.1` does *not* follow —
+  it is cited **more** at 512 (7 citations/5 requests → 8/8), its hidden tail carrying a
+  tightening as well as an exception, so widening is not a permissiveness lever. The
+  delivered action barely moves (`CF-LEGAL-01` 4/5 → 5/5): the spurious hard violation
+  yields `REVISE` and deliberation usually recovers, so the cost is wasted cycles rather
+  than refusals. Full measurement, controls and caveats in `docs/CODEBASE_FACTS.md`.
 - **The commit-time memory guard now covers the runtime deliberative modules.**
   `moralstack/runtime/modules/` was in neither behavior map, so a change to the critic —
   the only producer of `violated_hard`, and therefore the only path to the
