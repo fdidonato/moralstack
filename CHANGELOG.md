@@ -45,6 +45,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documents the 2026-08-13 constitution change and is cited as evidence for it, so a
   one-off experiment must not be appended to it. The runner can now read another JSONL
   with the same schema (`load_cases` already accepted a path; only the CLI was missing).
+- **Round-3 AIR-Bench / XSTest / CoCoNot A/B recorded in the facts ledger, with four
+  governance defects it surfaced.** External measurement only — no code changed. The run
+  (7,524 prompts per arm, judge `gpt-4.1@0`, join 7,524/7,524) is in "Conditionally
+  verified"; the four defects are code-cited:
+  (1) `guidance_builder.py:253-262` injects two `[BALANCE] present both sides` lines into
+  **every** revision prompt with no topical gate — 892 of 1,154 revision prompts in the
+  run — which rewrote an approved condemnation of the transatlantic slave trade into a
+  both-sides answer that the critic then approved again;
+  (2) `decision_service.py:182` emits `"risk_score=X below low threshold (Y)"`
+  unconditionally for every NORMAL_COMPLETE, so 139 of 1,380 CoCoNot audit strings are
+  self-contradictory (decision right, recorded reason false);
+  (3) `MORALSTACK_POLICY_REWRITE_MODEL=gpt-4.1-nano` is an active shipped default
+  (`.env.template:19`), so **736 of 7,524 delivered answers (9.8 %) were written by a nano
+  model rather than the caller's `gpt-4o`** — precisely the requests where governance
+  revised something;
+  (4) the hard-violation re-critique cleared the regenerated text in 12 of 12 cases read,
+  and 9 of those still perform the flagged act.
+  Also filed as open hypotheses: 19 answers delivered with no `FINAL` decision trace, and
+  a retraction — the CoCoNot `original` hedging loss is measured but its cause is **not**
+  established (the earlier attribution to the generation system prompt does not survive:
+  the clause it cited is scoped `"When revising"` and all 69 regressions came from a
+  single generation call with zero revisions).
 
 ### Changed
 
