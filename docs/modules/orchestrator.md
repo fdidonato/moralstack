@@ -72,6 +72,22 @@ routing or override Safety Override / hard-signal refusal.
 - **Internal policy (`DeliberationRunner`)**: `SAFE_COMPLETE_GENERATION_INSTRUCTION` and `CONSTRAINED_GENERATION_INSTRUCTION` from `moralstack/orchestration/_policy_helpers.py` are **prefixed onto the user-facing prompt** passed to `policy.generate` / `policy.rewrite`. The system string passed to the policy LLM is still composed with `effective_system_for_request(..., mode="normal")` (contract overlay only, no governance suffix from those constants).
 - **Python SDK (`moralstack/sdk/wrapper.py`)**: Plan 1 governed delivery — the SDK delivers the governed pipeline text for every `final_action` and never calls the wrapped client to generate the answer. The SAFE_COMPLETE governance guidance is composed inside the governed pipeline (via the policy prompt above), not appended to a wrapped-client call. (`_build_safe_complete_user_turn` is retained as a pure helper but is no longer applied to delivery.)
 
+**`POLICY_SYSTEM_PROMPT` branch 4 — text change, 2026-08-19.** The constant also
+lives in `_policy_helpers.py`, but its contract is documented in
+[`policy.md`](./policy.md#system-prompt); read that for the full rationale. In
+short: branch 4 (`DEPTH WHEN NO STRICT FORMAT`) was restated from aspirational
+virtues to executable instructions after the round-3 CoCoNot analysis showed
+**56 of 65 stable failures occurring at `risk=benign` / `NORMAL_COMPLETE` with no
+principle triggered and no deliberation cycle** — i.e. entirely inside
+generation, with no orchestration decision involved. Nothing in this module's
+routing, convergence, guidance aggregation or decision logic changed, and
+branches 1-3 of the prompt (SAFETY, SECURITY BOUNDARIES, OUTPUT CONSTRAINTS) are
+byte-identical. One consequence worth knowing here: the revision clause that
+follows branch 4 (*"When revising … do not make the answer … more caveated"*)
+still yields only to rules 1-2, so on the `rewrite` / `soft_revision` path it
+overrides branch 4's new hedging requirements. That interaction was left
+unchanged deliberately — see the "not fixed" note in `policy.md`.
+
 **Refusal context** (`moralstack/orchestration/refusal_context.py`):
 
 - `build_refusal_context(...)` produces a frozen `RefusalContext` for refusal LLM calls. Optional keyword arguments `developer_contract` and `conversation_history` populate bounded snippets `developer_contract_summary` and `conversation_history_snippet`.
