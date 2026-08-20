@@ -36,6 +36,7 @@ class ReasonCode(str, Enum):
     SIM_NEGATIVE_VALENCE = "SIM_NEGATIVE_VALENCE"
     HIGH_ACTIONABILITY = "HIGH_ACTIONABILITY"
     HARD_VIOLATION_DOWNGRADED_TO_SAFE_COMPLETE = "HARD_VIOLATION_DOWNGRADED_TO_SAFE_COMPLETE"
+    LEDGER_FAST_PATH_REUSE = "LEDGER_FAST_PATH_REUSE"
 
 
 # Mapping from policy reason strings (safe_complete_policy, decision_service) to ReasonCode
@@ -57,6 +58,7 @@ _POLICY_TO_REASON: dict[str, ReasonCode] = {
     "safe_complete_required_high_actionability": ReasonCode.HIGH_ACTIONABILITY,
     "policy_bounds_decision": ReasonCode.DEFAULT_NORMAL_COMPLETE,
     "cycles_exhausted_sensitive_fallback": ReasonCode.CYCLES_EXHAUSTED_FALLBACK,
+    "cached_decision_reused": ReasonCode.LEDGER_FAST_PATH_REUSE,
 }
 
 

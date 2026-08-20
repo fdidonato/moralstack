@@ -122,6 +122,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A ledger-replayed decision is now marked in the audit trail.** When the
+  `SemanticDecisionLedger` fast path reuses a cached decision, the persisted record used
+  to carry the reasoning of a decision that never ran: on the 2026-08-20 COMPL-AI replay,
+  **11 of 135 refusals recorded `decision_reason=DEFAULT_NORMAL_COMPLETE`** — a refusal
+  whose stated reason said "complete normally" — and all 11 came from the ledger.
+  The fix has two halves, and the first alone changes nothing observable:
+  (1) `ConversationalFastPathRunner.apply_cached_decision` appends the policy string
+  `cached_decision_reused`, mapped to the new `ReasonCode.LEDGER_FAST_PATH_REUSE`, after
+  the cached codes, which keep their order; (2) the controller replaces the now-stale
+  `DecisionExplanation` via `decision_explanation_for_ledger_reuse` immediately after the
+  patch — `explanation` is built by `decide_action` *before* the ledger is consulted, and
+  `ResponseMetadata.from_decision` prioritizes `decision_explanation.reason_codes` over
+  `decision.reason_codes`, so half (1) alone never reached the database. This is the same
+  failure mode `_decision_explanation_for_hard_violation_flip` already prevents at another
+  call site. Verified against a running proxy: the persisted `decision_reason` went from
+  `DEFAULT_NORMAL_COMPLETE` to `DEFAULT_NORMAL_COMPLETE, LEDGER_FAST_PATH_REUSE`; half (1)
+  alone was measured and left the record unchanged. No routing change — the marker appears
+  in none of the sets that gate decisions. Locked by
+  `tests/test_conversational_fast_path.py::TestReuseMarkerReachesAuditRecord` (drives the
+  same helper the controller calls) and `::TestControllerRebuildsTheExplanation` (asserts
+  the call site survives); both fail with the fix removed.
+
 - **`LEGAL.NOPRACTICE.1` now leads with its carve-out instead of closing with it.** The
   rule banned case-specific legal advice first and exempted general procedural or
   statutory explanations last, so the exemption sat past char 180 — the window that

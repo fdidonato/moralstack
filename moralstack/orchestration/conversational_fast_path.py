@@ -20,6 +20,8 @@ import logging
 from dataclasses import replace
 from typing import Literal, cast
 
+from moralstack.models.decision_explanation import DecisionExplanation
+from moralstack.models.reason_codes import policy_reason_codes_to_reason_codes
 from moralstack.orchestration.ledger import LedgerResult
 from moralstack.orchestration.types import Decision, FinalActionStr
 
@@ -27,6 +29,11 @@ _LOG = logging.getLogger(__name__)
 
 
 FastPathRoute = Literal["benign", "safe_complete", "refuse"]
+
+# Policy reason string appended to every reused decision. Mapped to
+# ReasonCode.LEDGER_FAST_PATH_REUSE and identical to the reason_codes value the
+# controller already emits on LEDGER_FAST_PATH_APPLIED.
+LEDGER_REUSE_REASON_CODE = "cached_decision_reused"
 
 
 _FINAL_ACTION_TO_ROUTE: dict[str, FastPathRoute] = {
@@ -67,7 +74,9 @@ class ConversationalFastPathRunner:
         session-state, not decision-state, and reflect the fresh risk estimation).
         Action-level fields from the cache (final_action, triggered_principles,
         reason_codes) replace the current values; path, hard_violations, and risk
-        signals stay on the current decision.
+        signals stay on the current decision. The cached reason_codes are extended
+        with LEDGER_REUSE_REASON_CODE so the audit trail records that the decision
+        was replayed rather than deliberated.
 
         Args:
             ledger_result: a LedgerResult with is_hit=True and a non-None cached_decision.
@@ -93,11 +102,17 @@ class ConversationalFastPathRunner:
                 f"Expected one of: NORMAL_COMPLETE, SAFE_COMPLETE, REFUSE."
             )
 
+        # The reuse marker is appended (never prepended) so the cached codes keep
+        # their original order and meaning. Without it the audit trail cannot tell
+        # a freshly deliberated decision from a replayed one: a cached REFUSE whose
+        # entry carried no reason codes was rendered as DEFAULT_NORMAL_COMPLETE,
+        # i.e. a refusal whose recorded reason said "complete normally".
+        patched_reason_codes = [*cached.reason_codes, LEDGER_REUSE_REASON_CODE]
         patched_decision = replace(
             current_decision,
             final_action=cast(FinalActionStr, cached.final_action),
             triggered_principles=list(cached.triggered_principles),
-            reason_codes=list(cached.reason_codes),
+            reason_codes=patched_reason_codes,
         )
         _LOG.debug(
             "ConversationalFastPathRunner applied cached decision: action=%s, route=%s, from_turn=%s, similarity=%.3f",
@@ -149,3 +164,63 @@ class ConversationalFastPathRunner:
         if current_route in ("benign", "safe_complete", "refuse", "fast_path"):
             return True
         return False
+
+
+def decision_explanation_for_ledger_reuse(
+    original: DecisionExplanation | None,
+    decision: Decision,
+    ledger_result: LedgerResult,
+) -> DecisionExplanation:
+    """Rebuild the ``DecisionExplanation`` after the ledger fast-path patched the decision.
+
+    The controller builds ``explanation`` from ``decide_action`` and consults the ledger
+    afterwards, so without this the *pre-patch* explanation reaches
+    ``ResponseAssembler.assemble``. ``ResponseMetadata.from_decision``
+    (``types.py:363-368``) prioritizes ``decision_explanation.reason_codes`` over
+    ``decision.reason_codes`` whenever an explanation is supplied, so the marker appended
+    by ``apply_cached_decision`` never reached the persisted record: a replayed REFUSE was
+    stored as ``decision_reason=DEFAULT_NORMAL_COMPLETE``.
+
+    Same failure mode, and same remedy, as
+    ``_decision_explanation_for_hard_violation_flip`` in ``deliberation_runner.py``.
+
+    ``risk_score`` / ``risk_category`` / ``activated_signals`` / ``overlay_applied``
+    describe the request rather than the decision reasoning and are carried over
+    unchanged.
+    """
+    base = original
+    action = decision.final_action
+    from_turn = ledger_result.from_turn
+    similarity = ledger_result.similarity
+    # The stored entry may come from another conversation: the ledger key is
+    # (contract_hash, posture, domain) with no conversation field, so `from_turn`
+    # is worded as the turn of the *stored* decision, not of this conversation.
+    provenance = f"reused from a stored decision at turn {from_turn} (similarity {similarity:.3f})"
+    return DecisionExplanation(
+        request_id=(base.request_id if base is not None else "") or "",
+        final_action=action,
+        risk_score=(base.risk_score if base is not None else 0.0),
+        risk_category=(base.risk_category if base is not None else ""),
+        activated_signals=(list(base.activated_signals) if base is not None else []),
+        overlay_applied=((base.overlay_applied if base is not None else "") or ""),
+        winning_rule="ledger_fast_path",
+        # Mapped, not raw: `_build_decision_explanation` runs every other explanation
+        # through this same mapping, and an unmapped list would persist the lowercase
+        # policy strings next to uppercase codes in the very same field.
+        reason_codes=policy_reason_codes_to_reason_codes(list(decision.reason_codes)),
+        why_not_refuse=(
+            f"REFUSE chosen: governance decision {provenance}; deliberation was skipped."
+            if action == "REFUSE"
+            else f"REFUSE not selected: the {provenance} was {action}."
+        ),
+        why_not_safe_complete=(
+            f"SAFE_COMPLETE chosen: governance decision {provenance}; deliberation was skipped."
+            if action == "SAFE_COMPLETE"
+            else f"SAFE_COMPLETE not selected: the {provenance} was {action}."
+        ),
+        why_not_normal_complete=(
+            f"NORMAL_COMPLETE chosen: governance decision {provenance}; deliberation was skipped."
+            if action == "NORMAL_COMPLETE"
+            else f"NORMAL_COMPLETE not selected: the {provenance} was {action}."
+        ),
+    )

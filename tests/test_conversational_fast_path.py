@@ -6,7 +6,12 @@ from __future__ import annotations
 
 import pytest
 
-from moralstack.orchestration.conversational_fast_path import ConversationalFastPathRunner
+from moralstack.models.reason_codes import ReasonCode, policy_reason_codes_to_reason_codes
+from moralstack.orchestration.conversational_fast_path import (
+    LEDGER_REUSE_REASON_CODE,
+    ConversationalFastPathRunner,
+    decision_explanation_for_ledger_reuse,
+)
 from moralstack.orchestration.ledger import CachedDecision, LedgerResult
 from moralstack.orchestration.types import Decision
 
@@ -51,6 +56,25 @@ def _make_miss(reason: str = "no_candidates") -> LedgerResult:
     return LedgerResult(is_hit=False, cached_decision=None, similarity=0.0, from_turn=None, reason=reason)
 
 
+def _stale_explanation():
+    """The explanation decide_action produced BEFORE the ledger was consulted."""
+    from moralstack.models.decision_explanation import DecisionExplanation
+
+    return DecisionExplanation(
+        request_id="req-reuse",
+        final_action="NORMAL_COMPLETE",
+        risk_score=0.35,
+        risk_category="benign",
+        activated_signals=["sig"],
+        overlay_applied="",
+        winning_rule="fast_path",
+        reason_codes=["RISK_BENIGN", "NORMAL_COMPLETE_REQUIRED"],
+        why_not_refuse="stale",
+        why_not_safe_complete="stale",
+        why_not_normal_complete="stale",
+    )
+
+
 class TestApplyCachedDecision:
     def test_normal_complete_maps_to_benign(self):
         runner = ConversationalFastPathRunner()
@@ -77,11 +101,25 @@ class TestApplyCachedDecision:
         assert route == "refuse"
 
     def test_patched_decision_uses_cached_reason_codes(self):
+        # The cached codes keep their order and are followed by the reuse marker,
+        # so the audit trail can tell a replayed decision from a deliberated one.
         runner = ConversationalFastPathRunner()
         cached = _make_cached(reason_codes=("rc_a", "rc_b"))
         hit = _make_hit(cached)
         patched, _ = runner.apply_cached_decision(ledger_result=hit, current_decision=_make_decision())
-        assert patched.reason_codes == ["rc_a", "rc_b"]
+        assert patched.reason_codes == ["rc_a", "rc_b", LEDGER_REUSE_REASON_CODE]
+
+    def test_reuse_marker_present_when_cache_has_no_reason_codes(self):
+        # Regression: a cached REFUSE with no reason codes used to be rendered as
+        # DEFAULT_NORMAL_COMPLETE -- a refusal whose recorded reason said the
+        # opposite of what was delivered.
+        runner = ConversationalFastPathRunner()
+        cached = _make_cached(final_action="REFUSE", reason_codes=())
+        hit = _make_hit(cached)
+        patched, route = runner.apply_cached_decision(ledger_result=hit, current_decision=_make_decision())
+        assert route == "refuse"
+        assert patched.reason_codes == [LEDGER_REUSE_REASON_CODE]
+        assert policy_reason_codes_to_reason_codes(patched.reason_codes) == [ReasonCode.LEDGER_FAST_PATH_REUSE.value]
 
     def test_patched_decision_uses_cached_triggered_principles(self):
         runner = ConversationalFastPathRunner()
@@ -224,3 +262,139 @@ class TestRouteMapping:
         from moralstack.orchestration.conversational_fast_path import _FINAL_ACTION_TO_ROUTE
 
         assert set(_FINAL_ACTION_TO_ROUTE.keys()) == {"NORMAL_COMPLETE", "SAFE_COMPLETE", "REFUSE"}
+
+
+class TestReuseMarkerReachesAuditRecord:
+    """The reuse marker must survive the whole audit chain, not just the runner.
+
+    The defect this locks was observed in ``proxy_request_events.metadata_json``:
+    11 of 135 replayed refusals recorded ``decision_reason=DEFAULT_NORMAL_COMPLETE``.
+    Asserting on the runner alone would not have caught it, so the test drives the
+    production chain runner -> _build_decision_explanation -> ResponseMetadata
+    -> build_request_meta_from_result and asserts on the persisted field.
+    """
+
+    @staticmethod
+    def _meta_for(cached_reason_codes: tuple[str, ...]) -> dict:
+        from moralstack.observability.governance_audit import build_request_meta_from_result
+        from moralstack.orchestration.types import (
+            FinalResponse,
+            OrchestratorResult,
+            ResponseMetadata,
+            ResponseType,
+        )
+
+        runner = ConversationalFastPathRunner()
+        cached = _make_cached(final_action="REFUSE", reason_codes=cached_reason_codes)
+        hit = _make_hit(cached)
+        patched, _route = runner.apply_cached_decision(ledger_result=hit, current_decision=_make_decision())
+        # Must be the SAME helper the controller calls after the patch. An earlier
+        # version of this test called _build_decision_explanation instead and passed
+        # while the real pipeline still persisted DEFAULT_NORMAL_COMPLETE, because the
+        # controller never rebuilds the explanation that way -- it carries the one
+        # decide_action produced before the ledger was consulted.
+        explanation = decision_explanation_for_ledger_reuse(_stale_explanation(), patched, hit)
+        metadata = ResponseMetadata.from_decision(
+            decision=patched,
+            request_id="req-reuse",
+            risk_score=0.35,
+            processing_time_ms=1,
+            risk_category="benign",
+            decision_explanation=explanation,
+        )
+        result = OrchestratorResult(
+            response=FinalResponse(content="", response_type=ResponseType.FULL_REFUSAL, metadata=metadata),
+            request_id="req-reuse",
+            path_taken="fast",
+            path="FAST_PATH",
+            total_cycles=0,
+            converged=False,
+        )
+        return build_request_meta_from_result(result)
+
+    def test_empty_cached_codes_no_longer_render_as_default_normal_complete(self):
+        meta = self._meta_for(())
+        assert meta["final_action"] == "REFUSE"
+        assert meta["decision_reason"] == ReasonCode.LEDGER_FAST_PATH_REUSE.value
+        assert ReasonCode.DEFAULT_NORMAL_COMPLETE.value not in meta["reason_codes"]
+
+    def test_cached_codes_are_preserved_alongside_the_marker(self):
+        meta = self._meta_for(("risk_clearly_harmful",))
+        assert meta["reason_codes"] == [
+            ReasonCode.RISK_CLEARLY_HARMFUL.value,
+            ReasonCode.LEDGER_FAST_PATH_REUSE.value,
+        ]
+
+
+class TestReuseMarkerIsIdempotent:
+    """Reusing an already-reused decision must not stack markers.
+
+    ``_maybe_store_in_ledger`` rebuilds the CachedDecision from
+    ``ResponseMetadata.reason_codes``, i.e. from the *mapped* codes. A decision can
+    therefore be replayed, stored, and replayed again; the marker must converge
+    instead of growing one entry per generation.
+    """
+
+    def test_second_generation_does_not_stack_the_marker(self):
+        runner = ConversationalFastPathRunner()
+        # 1st reuse: cache carries no reason codes at all.
+        gen1, _ = runner.apply_cached_decision(
+            ledger_result=_make_hit(_make_cached(final_action="REFUSE", reason_codes=())),
+            current_decision=_make_decision(),
+        )
+        mapped1 = policy_reason_codes_to_reason_codes(gen1.reason_codes)
+        assert mapped1 == [ReasonCode.LEDGER_FAST_PATH_REUSE.value]
+
+        # 2nd reuse: the ledger now holds what the audit record stored (mapped codes).
+        gen2, _ = runner.apply_cached_decision(
+            ledger_result=_make_hit(_make_cached(final_action="REFUSE", reason_codes=tuple(mapped1))),
+            current_decision=_make_decision(),
+        )
+        mapped2 = policy_reason_codes_to_reason_codes(gen2.reason_codes)
+        assert mapped2 == mapped1, f"marker stacked across generations: {mapped2}"
+
+        # 3rd reuse: still a fixed point.
+        gen3, _ = runner.apply_cached_decision(
+            ledger_result=_make_hit(_make_cached(final_action="REFUSE", reason_codes=tuple(mapped2))),
+            current_decision=_make_decision(),
+        )
+        assert policy_reason_codes_to_reason_codes(gen3.reason_codes) == mapped1
+
+    def test_substantive_codes_survive_repeated_reuse(self):
+        runner = ConversationalFastPathRunner()
+        mapped = ("RISK_CLEARLY_HARMFUL",)
+        for _ in range(3):
+            patched, _r = runner.apply_cached_decision(
+                ledger_result=_make_hit(_make_cached(final_action="REFUSE", reason_codes=mapped)),
+                current_decision=_make_decision(),
+            )
+            mapped = tuple(policy_reason_codes_to_reason_codes(patched.reason_codes))
+        assert mapped == (ReasonCode.RISK_CLEARLY_HARMFUL.value, ReasonCode.LEDGER_FAST_PATH_REUSE.value)
+
+
+class TestControllerRebuildsTheExplanation:
+    """The controller must rebuild the explanation right after applying a cached decision.
+
+    A unit test on the helper cannot catch its removal from the call site, and that call
+    site is exactly where the defect lived: `explanation` is built by decide_action and
+    the ledger patches `decision` afterwards, so dropping this line silently restores
+    the stale-explanation behaviour while every other test still passes. Driving the full
+    controller here would need the whole pipeline mocked, so the call site is asserted on
+    the source instead.
+    """
+
+    def test_apply_cached_decision_is_followed_by_the_explanation_rebuild(self):
+        import inspect
+
+        from moralstack.orchestration import controller as controller_mod
+
+        src = inspect.getsource(controller_mod)
+        assert "apply_cached_decision(" in src, "call site vanished; update this test"
+        after = src.split("apply_cached_decision(", 1)[1]
+        window = after[:1200]
+        assert "decision_explanation_for_ledger_reuse(" in window, (
+            "the controller applies a cached decision without rebuilding the "
+            "DecisionExplanation: ResponseMetadata.from_decision prioritizes the stale "
+            "explanation's reason_codes, so the replayed decision is persisted with the "
+            "pre-ledger reasoning (this is the DEFAULT_NORMAL_COMPLETE-on-REFUSE defect)"
+        )

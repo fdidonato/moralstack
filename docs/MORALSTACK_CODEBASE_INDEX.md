@@ -444,7 +444,11 @@ Inside `process()` (order verified in source):
    (`controller.py:2143-2144`).
 7. **Ledger lookup** (multi-turn) — when a ledger + conversation_id exist, a
    cache hit may patch the decision/route to skip deliberation
-   (`controller.py:2149-2306`).
+   (`controller.py:2149-2306`). The patched decision carries
+   `cached_decision_reused` as its last reason code, so a replayed decision is
+   distinguishable from a deliberated one in the audit trail. Note that the
+   ledger key is `(contract_hash, posture, domain)` and the storage is
+   process-local: hits are **not** confined to the current conversation.
 8. Dispatch to the matching `_route_*` handler (`controller.py:2345-end`).
 9. `_apply_conversation_metadata_to_result` stamps conversation linkage, builds
    `conversation_governance_state_out`, emits conversation events, and stores the

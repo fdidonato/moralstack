@@ -35,7 +35,10 @@ from moralstack.observability.request_token_accumulator import finalize_and_pers
 from moralstack.observability.token_usage import TokenUsage
 from moralstack.orchestration.conversation_context import evaluate_delivery_context_guard
 from moralstack.orchestration.conversation_state import ConversationGovernanceState, TurnDecisionSummary
-from moralstack.orchestration.conversational_fast_path import ConversationalFastPathRunner
+from moralstack.orchestration.conversational_fast_path import (
+    ConversationalFastPathRunner,
+    decision_explanation_for_ledger_reuse,
+)
 from moralstack.orchestration.decision_logger import log_decision_explanation
 from moralstack.orchestration.decision_service import decide_action
 from moralstack.orchestration.default_event_emitter import DefaultEventEmitter
@@ -2672,6 +2675,13 @@ class OrchestrationController:
                             ledger_result=_cached_lookup,
                             current_decision=decision,
                         )
+                        # `explanation` was built by decide_action, before this patch.
+                        # ResponseMetadata.from_decision prioritizes the explanation's
+                        # reason_codes over decision.reason_codes, so leaving it stale
+                        # persists the pre-ledger reasoning next to the replayed action —
+                        # the same audit incoherence
+                        # _decision_explanation_for_hard_violation_flip exists to prevent.
+                        explanation = decision_explanation_for_ledger_reuse(explanation, decision, _cached_lookup)
                         # Re-evaluate hard_signal_refuse on the patched decision so the
                         # downstream routing block sees a consistent state.
                         hard_signal_refuse = is_hard_signal_refuse(decision, risk_proto, op_risk)

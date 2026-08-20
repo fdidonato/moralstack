@@ -43,6 +43,14 @@ is used, the controller consults the ledger after `decide_action` and initial ro
 `ConversationalFastPathRunner` (`moralstack/orchestration/conversational_fast_path.py`) may patch `Decision` and the
 string route to skip deliberation only when a conservative gate allows (cached `REFUSE`, or current route already
 non-deliberative). Response text is never read from the ledger (DAF-4); only governance metadata is reused.
+The patched `Decision` carries `cached_decision_reused` as its last reason code (`LEDGER_FAST_PATH_REUSE` once
+mapped), so a replayed decision is distinguishable from a deliberated one in `proxy_request_events.metadata_json`.
+
+**Ledger scope.** `LedgerKey` is `(contract_hash, posture, domain)` and `InMemoryLedgerStorage` is process-local, so
+entries are **not** scoped to a conversation: two different `conversation_id`s sharing contract, posture and domain
+can reuse each other's decisions when the prompts clear the similarity threshold. `LedgerResult.from_turn` is the
+`turn_index` of the stored entry and may therefore refer to a *different* conversation — do not read it as a
+back-reference within the current one.
 
 `moralstack/orchestration/system_prompt_resolver.py` exposes `effective_system_for_request(...)`, composing the policy system prompt per request from the protected base, optional non-empty `DeveloperContract.raw_text`, and an optional mode suffix (`normal`, `safe_complete`, `constrained`). When no contract text is present, output matches the legacy single-turn byte strings. The suffix modes remain available for other call sites; **`DeliberationRunner` does not use `safe_complete` or `constrained` resolver modes for policy generation** (see below).
 

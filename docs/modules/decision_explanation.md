@@ -38,7 +38,26 @@ explains why full NORMAL_COMPLETE was not allowed; `why_not_safe_complete` is N/
 
 Structured codes include: `HIGH_RISK_OPERATIONAL`, `SENSITIVE_DOMAIN`, `OVERLAY_HEALTHCARE`, `OVERLAY_LEGAL`,
 `FAST_PATH_LOW_RISK`, `CYCLES_EXHAUSTED_FALLBACK`, `RISK_BELOW_REFUSE_THRESHOLD`, `NO_OPERATIONAL_INTENT`,
-`COMPLIANCE_LAYER_MATCH`, `DEFAULT_NORMAL_COMPLETE`, and others. Policy reason strings are mapped via `policy_reason_codes_to_reason_codes()`.
+`COMPLIANCE_LAYER_MATCH`, `DEFAULT_NORMAL_COMPLETE`, `LEDGER_FAST_PATH_REUSE`, and others. Policy reason strings are
+mapped via `policy_reason_codes_to_reason_codes()`.
+
+`LEDGER_FAST_PATH_REUSE` marks a decision replayed from the `SemanticDecisionLedger` rather than deliberated in this
+run. It takes **two** steps, and either one alone is a no-op end to end:
+
+1. `ConversationalFastPathRunner.apply_cached_decision` appends the policy string `cached_decision_reused` to the
+   cached reason codes, so the marker is always the last entry and the cached codes keep their original order.
+2. The controller replaces the now-stale `DecisionExplanation` with
+   `decision_explanation_for_ledger_reuse(...)` immediately after the patch. This is required because
+   `ResponseMetadata.from_decision` (`types.py:363-368`) **prioritizes `decision_explanation.reason_codes` over
+   `decision.reason_codes`** whenever an explanation is supplied — the explanation the controller holds was built by
+   `decide_action`, before the ledger was consulted. The rebuilt explanation runs the codes through
+   `policy_reason_codes_to_reason_codes` so they are persisted mapped, like every other explanation, and sets
+   `winning_rule="ledger_fast_path"`.
+
+This is the same failure mode `_decision_explanation_for_hard_violation_flip` (`deliberation_runner.py:509`) exists to
+prevent, at a second call site. Without the pair, a cached entry carrying no reason codes fell through to
+`DEFAULT_NORMAL_COMPLETE`, rendering a replayed `REFUSE` as a refusal whose recorded reason said "complete normally" —
+measured on the 2026-08-20 COMPL-AI replay as 11 of 135 refusals.
 
 ## Winning Rules
 
@@ -53,6 +72,7 @@ Structured codes include: `HIGH_RISK_OPERATIONAL`, `SENSITIVE_DOMAIN`, `OVERLAY_
 | `compliance_layer_match`    | DCCL MATCH with validated speculative draft  |
 | `policy_bounds_fallback`    | Fallback to policy bounds                    |
 | `cycles_exhausted_fallback` | CYCLES_EXHAUSTED sensitive fallback          |
+| `ledger_fast_path`          | Decision replayed from the SemanticDecisionLedger |
 
 ## Decision trace (JSONL) semantics
 
