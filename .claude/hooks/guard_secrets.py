@@ -42,7 +42,7 @@ _SECRET_BASENAMES = {
 }
 _SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".keystore", ".jks")
 # Suffixes that mark a non-secret template/example, even on a secret-looking name.
-_TEMPLATE_MARKERS = (".template", ".example", ".sample", ".dist")
+_TEMPLATE_MARKERS = (".template", ".example", ".sample", ".dist", ".minimal")
 
 # --- real-looking credentials in content/commands ------------------------------
 
@@ -130,7 +130,8 @@ def _check_bash(cmd: str) -> list[str]:
     msgs: list[str] = []
     stages = re.search(r"git\s+(?:add|commit)\b", cmd) is not None
     if stages and re.search(r"(?:^|\s)\.env(?:\.\w+)?(?:\s|$)", cmd):
-        if not re.search(r"\.env\.(?:template|example|sample|dist)", cmd):
+        # Tieni le alternative allineate a _TEMPLATE_MARKERS.
+        if not re.search(r"\.env\.(?:template|example|sample|dist|minimal)", cmd):
             msgs.append("staging a `.env` file for commit — never commit secrets.")
     for label in _scan_content(cmd):
         msgs.append(f"command embeds a real-looking credential ({label}) — pass it via an env var, not inline.")
