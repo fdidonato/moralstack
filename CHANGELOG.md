@@ -120,6 +120,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a tightening as well as an exception. Set `MORALSTACK_CRITIC_MAX_RULE_LEN=180` to
   restore the historical window.
 
+### Removed
+
+- **GitHub Actions workflows (`ci.yml`, `publish.yml`).** Removed at the request of
+  GitHub support during the review of the suspended account. `ci.yml` ran lint, mypy,
+  the 3.11/3.12 test matrix and the `-m slow` benchmarks on every push with no branch
+  filter, then uploaded coverage through a third-party action holding `CODECOV_TOKEN`.
+  `publish.yml` published to PyPI on tag through trusted publishing (`id-token: write`).
+  Consequences for contributors: verification is now local (`docs/DEVELOPMENT.md`) and
+  releasing is a manual `python -m build` + `twine upload` (`docs/RELEASING.md`). Two
+  things outlive the removal because they do not live in this repository: the PyPI
+  pending publisher, still bound to the file name `publish.yml` should the workflow ever
+  be restored, and the `CODECOV_TOKEN` secret, which must be removed or rotated from the
+  repository settings. The workflows remain recoverable from git history.
+
 ### Fixed
 
 - **A ledger-replayed decision is now marked in the audit trail.** When the

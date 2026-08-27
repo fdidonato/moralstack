@@ -41,11 +41,20 @@ git commit --no-verify
 
 Active hooks: `trailing-whitespace`, `end-of-file-fixer`, `ruff check --fix`, `black`, `mypy moralstack`.
 
-## CI
+## Verification (run locally)
 
-The workflow in `.github/workflows/ci.yml` runs on Python 3.11 and 3.12 with `pip install -e .[dev,ui]`, then executes:
-`ruff check .`, `black --check .`, `mypy moralstack --ignore-missing-imports`, and `pytest --cov=moralstack
---cov-report=xml --cov-report=term --maxfail=3`.
+There is no CI workflow: `.github/workflows/` was removed and the checks it used to run are the
+contributor's responsibility. Run them locally on Python 3.11 and 3.12 after `pip install -e .[dev,ui]`:
+
+```bash
+ruff check .
+black --check .
+mypy moralstack
+pytest --cov=moralstack --cov-report=term --maxfail=3
+pytest -m slow --maxfail=1      # perf benchmarks, excluded from the default run by addopts
+```
+
+The first three also run as pre-commit hooks, so a normal commit already covers them.
 
 ## Generated Artifacts
 

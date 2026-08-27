@@ -54,6 +54,10 @@ prefix automatically.
    `chore(release): rilascia v0.7.0`, runs `git push`, then `git tag v0.7.0` and
    `git push origin v0.7.0`.
 
+   The driver stops at the tag. Pushing the tag no longer publishes to PyPI — the
+   `publish.yml` workflow was removed; upload manually as described in
+   `docs/RELEASING.md`.
+
 ### Useful flags
 
 - `--no-push` — bump, commit, and create the tag locally; push nothing. Verify,

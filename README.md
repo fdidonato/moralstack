@@ -7,8 +7,6 @@
 **A deliberative governance engine that decides *whether*, *how*, and *under what constraints*
 an LLM should respond — before a single token is generated.**
 
-[![CI](https://github.com/fdidonato/moralstack/actions/workflows/ci.yml/badge.svg)](https://github.com/fdidonato/moralstack/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/fdidonato/moralstack/graph/badge.svg)](https://codecov.io/gh/fdidonato/moralstack)
 [![PyPI](https://img.shields.io/pypi/v/moralstack)](https://pypi.org/project/moralstack/)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-orange)
