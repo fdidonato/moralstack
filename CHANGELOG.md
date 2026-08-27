@@ -118,7 +118,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   experiment, and the direction is not uniformly permissive: `CORE.DUALUSE.1` is
   cited *more* at 512 (7 citations/5 requests → 8/8) because its hidden tail carries
   a tightening as well as an exception. Set `MORALSTACK_CRITIC_MAX_RULE_LEN=180` to
-  restore the historical window.
+  restore the historical window. The `.env.minimal` template now ships the variable
+  explicitly at `512`, so a fresh `.env` copied from it matches the shipped default.
 
 ### Removed
 
