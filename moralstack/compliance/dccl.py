@@ -56,6 +56,32 @@ Output ONLY valid JSON:
 A paraphrase, reformatting, or equivalent rendering counts as a match — it need NOT be verbatim."""
 
 
+def draft_match_response_format() -> dict[str, Any]:
+    """`response_format` enforcing the draft-match contract above.
+
+    Note the limit of strict mode: JSON Schema numeric bounds (`minimum` /
+    `maximum`) are not part of the supported subset, so the 0.0-1.0 range of
+    `draft_match_confidence` is still the caller's responsibility. The schema
+    guarantees shape and types, never value ranges or semantics.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "draft_match",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["draft_matches_action", "draft_match_confidence"],
+                "properties": {
+                    "draft_matches_action": {"type": "boolean"},
+                    "draft_match_confidence": {"type": "number"},
+                },
+            },
+        },
+    }
+
+
 def validate_draft_against_action(
     action_excerpt: str,
     draft: str,

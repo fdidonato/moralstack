@@ -16,6 +16,8 @@ Exported:
 
 from __future__ import annotations
 
+from typing import Any
+
 from .registry import SignalRegistry
 
 
@@ -105,6 +107,41 @@ def render_output_schema(registry: SignalRegistry) -> str:
     lines.append("")
     lines.append("Return ONLY valid JSON. No preamble, no markdown fences, no commentary.")
     return "\n".join(lines)
+
+
+def render_output_json_schema(registry: SignalRegistry) -> dict[str, Any]:
+    """Strict Structured Outputs schema for the Harm Signal Scanner.
+
+    Built from the same registry as `render_output_schema`, so the schema the
+    provider enforces and the schema the prompt describes cannot diverge.
+
+    This is what makes two observed failure modes impossible at the source
+    rather than silently degraded: a key the model misspells
+    (`q10_weapons_explosives_txins` for `..._toxins`) and a payload wrapped in
+    an unexpected envelope (`{"data": [...]}`). Both parse as valid JSON, so
+    the tolerant `data.get(key, "no")` in `calibration.py` reads the signal as
+    absent — a hard signal silently degraded to "no" with no error and no retry.
+    """
+    properties: dict[str, Any] = {sig.key: {"type": "string", "enum": ["yes", "no"]} for sig in registry.signals.values()}
+    properties["domain_sensitivity"] = {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH"]}
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(properties),
+        "properties": properties,
+    }
+
+
+def harm_signal_response_format(registry: SignalRegistry) -> dict[str, Any]:
+    """`response_format` that makes the provider enforce the harm-signal schema."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "harm_signals",
+            "strict": True,
+            "schema": render_output_json_schema(registry),
+        },
+    }
 
 
 def get_harm_signal_prompts(registry: SignalRegistry) -> tuple[str, str]:

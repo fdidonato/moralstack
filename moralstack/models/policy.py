@@ -24,6 +24,7 @@ from moralstack.models.base import GenerationConfig, GenerationOverrides, Genera
 from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
 from moralstack.utils.openai_params import (
     completion_tokens_param,
+    supports_json_schema,
     supports_predicted_output,
 )
 from moralstack.utils.provider_errors import (
@@ -215,6 +216,15 @@ class OpenAIPolicy:
         # the OpenAI API; prefer response_format (structural guarantee)
         if use_prediction and response_format is not None:
             use_prediction = False
+        # A strict json_schema is degraded to plain JSON mode on models that do
+        # not support Structured Outputs, so the caller keeps working exactly as
+        # before (schema validated client-side) instead of the call failing.
+        if (
+            isinstance(response_format, dict)
+            and response_format.get("type") == "json_schema"
+            and not supports_json_schema(effective_model or "")
+        ):
+            response_format = {"type": "json_object"}
         last_error: Exception | None = None
         for attempt in range(self._max_retries):
             try:

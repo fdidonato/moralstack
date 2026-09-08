@@ -175,7 +175,7 @@ overrides these variables.**
 - **Type**: int (≥ 1)
 - **Meaning**: Number of parse attempts per perspective JSON response before marking that perspective as failed.
 
-Perspective evaluation uses OpenAI's `json_object` response format (`response_format={"type": "json_object"}` on `GenerationConfig`), which guarantees valid JSON and greatly reduces retries caused by malformed JSON.
+Perspective evaluation uses a **strict Structured Outputs schema** (`perspective_response_format()` in `moralstack/utils/structured_output.py`), so the provider enforces the four fields (`approval_score`, `concerns`, `suggestions`, `rationale`) instead of the client validating the reply after paying for it. It replaces plain `json_object` mode, which guaranteed only that the reply parsed. `PolicyLLM._complete` degrades it to `{"type": "json_object"}` on models outside the `supports_json_schema` allowlist, so client-side validation stays load-bearing on that path (see `docs/modules/openai_params.md`). The module records **zero** parse failures over 4,919 COMPL-AI calls: the schema is preventive here, not a fix.
 
 #### MORALSTACK_PERSPECTIVES_MAX_TOKENS
 

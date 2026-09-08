@@ -131,10 +131,17 @@ def test_parallel_mini_persist_parse_contract(monkeypatch):
         operational_model="gpt-4o-mini",
     )
 
+    # Each mini-estimator now declares its own strict schema instead of sharing
+    # plain JSON mode; collect the names so the assertion below is per-estimator.
+    schema_names: list[str] = []
+
     def fake_gen(*_a, **kwargs):
         cfg = kwargs.get("config")
         assert isinstance(cfg, GenerationConfig)
-        assert getattr(cfg, "response_format", None) == {"type": "json_object"}
+        rf = getattr(cfg, "response_format", None)
+        assert isinstance(rf, dict) and rf.get("type") == "json_schema", rf
+        assert rf["json_schema"]["strict"] is True
+        schema_names.append(rf["json_schema"]["name"])
         return GenerationResult(text=json.dumps(clean), tokens_used=10, finish_reason="stop")
 
     policy.generate = fake_gen
@@ -160,6 +167,9 @@ def test_parallel_mini_persist_parse_contract(monkeypatch):
         if env.payload.get("action") in {"estimate_intent", "estimate_signals", "estimate_operational"}
     ]
     assert len(mini_entries) == 3
+    # One distinct schema per mini-estimator: sharing one would make the provider
+    # enforce the wrong contract on two of the three.
+    assert sorted(schema_names) == ["harm_signals", "risk_intent", "risk_operational"]
     summary = json.loads(mini_entries[0].get("parsed_summary_json") or "{}")
     pc = summary.get("parse_contract") or {}
     assert pc.get("parse_status") == PARSE_STATUS_OK

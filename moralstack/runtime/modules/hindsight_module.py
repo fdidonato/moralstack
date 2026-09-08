@@ -32,6 +32,8 @@ from moralstack.utils.cache import build_context_fingerprint, get_global_cache
 from moralstack.utils.json_utils import JSONParseError
 from moralstack.utils.structured_output import (
     HindsightBatchOutput,
+    hindsight_batch_response_format,
+    hindsight_single_response_format,
     parse_and_validate_hindsight_batch_output,
     parse_and_validate_hindsight_single_output,
 )
@@ -535,12 +537,22 @@ class LLMHindsightEvaluator:
 
             self.config = load_hindsight_config_from_env()
 
+        # Two prompts, two parsers, two schemas: the single-evaluation path and
+        # the batch path must not share one response_format, or the provider
+        # would be made to return the wrong shape for one of them.
         self._generation_config = GenerationConfig(
             max_tokens=self.config.max_tokens,
             temperature=self.config.temperature,
             top_p=self.config.top_p,
             stop_sequences=[],
-            response_format={"type": "json_object"},
+            response_format=hindsight_single_response_format(),
+        )
+        self._generation_config_batch = GenerationConfig(
+            max_tokens=self.config.max_tokens,
+            temperature=self.config.temperature,
+            top_p=self.config.top_p,
+            stop_sequences=[],
+            response_format=hindsight_batch_response_format(),
         )
 
         # Pesi per HindsightScores
@@ -752,20 +764,20 @@ class LLMHindsightEvaluator:
                             conversation_history=conversation_history,
                             retry_prompt="" if attempt == 0 else RETRY_BATCH_PROMPT,
                         ),
-                        config=self._generation_config,
+                        config=self._generation_config_batch,
                     )
                 elif attempt == 0:
                     result = self.policy.generate(
                         prompt=legacy_prompt,
                         system=HINDSIGHT_BATCH_SYSTEM_PROMPT,
-                        config=self._generation_config,
+                        config=self._generation_config_batch,
                     )
                 else:
                     retry_prompt = f"{legacy_prompt}\n\n{RETRY_BATCH_PROMPT}"
                     result = self.policy.generate(
                         prompt=retry_prompt,
                         system=HINDSIGHT_BATCH_SYSTEM_PROMPT,
-                        config=self._generation_config,
+                        config=self._generation_config_batch,
                     )
 
                 raw_response = result.text

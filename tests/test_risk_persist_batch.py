@@ -331,3 +331,44 @@ def test_write_window_isolates_bad_risk_envelope(tmp_path, monkeypatch):
     assert count == 2
     assert result.written == 2
     assert result.failed == 1
+
+
+def test_risk_estimator_failed_retries_are_persisted(monkeypatch):
+    """A paid-for attempt whose output cannot be parsed must leave a row.
+
+    The mini-estimator retry loop used to only emit a `logger.warning`, so a
+    failed attempt was invisible in `llm_calls` — the module that decides
+    routing and the hard signals (P0) was the one with no audit trail for its
+    own failures. It now emits the same `call_outcome="retry_failed"` row as
+    critic / simulator / hindsight / perspectives.
+    """
+    import moralstack.observability.emit_helpers as emit_helpers
+    from moralstack.orchestration.types import RiskEstimationError
+
+    _set_context()
+    calls: list[dict] = []
+    monkeypatch.setattr(emit_helpers, "async_persist_llm_call", lambda **kw: calls.append(kw))
+
+    result = MagicMock()
+    result.text = "not json at all"
+    result.token_usage_json = MagicMock(return_value='{"prompt_tokens":11,"completion_tokens":3,"total_tokens":14}')
+
+    policy = MagicMock()
+    policy.model = "gpt-main"
+    policy.tracker = None
+    policy.generate = MagicMock(return_value=result)
+    policy.generate_messages = MagicMock(return_value=result)
+
+    estimator = LLMBasedRiskEstimator(policy=policy, config=RiskEstimatorConfig(max_retries=3))
+    with pytest.raises(RiskEstimationError):
+        estimator._parallel_mini_analysis("una domanda qualsiasi")
+
+    retries = [c for c in calls if c.get("call_outcome") == "retry_failed"]
+    assert retries, "a failed parse attempt must be persisted, not only logged"
+    assert {c["module"] for c in retries} == {"risk_estimator"}
+    assert {c["phase"] for c in retries} == {"risk_retry"}
+    # every attempt of every mini-estimator, each carrying its billed token usage
+    assert sorted({c["attempts"] for c in retries}) == [1, 2, 3]
+    assert all(c["billable_provider_call"] is True for c in retries)
+    assert all(json.loads(c["token_usage_json"])["total_tokens"] == 14 for c in retries)
+    assert all(c["action"] == f"retry_failed_attempt_{c['attempts']}" for c in retries)

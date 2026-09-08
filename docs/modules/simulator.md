@@ -53,8 +53,33 @@ batch-only contract and vice versa:
   (`simulator_module.py`) is dynamic-only: `PERSPECTIVE:{seed}` + REQUEST + RESPONSE.
 
 Both system prompts are byte-stable across requests for their own path (verified by
-`tests/test_static_prefix_stability.py`); `response_format` stays `json_object` and
-retries are unchanged.
+`tests/test_static_prefix_stability.py`) and retries are unchanged.
+
+## Structured Outputs (schema enforced by the provider)
+
+`response_format` is a **strict `json_schema`** (`simulator_response_format()` in
+`moralstack/utils/structured_output.py`), so the provider itself enforces the enums
+instead of the client rejecting a reply it has already paid for. The schema is
+derived from the same `Literal` aliases as `SimulatorOutput`, so the two cannot
+drift (`tests/test_structured_outputs_simulator.py`).
+
+Why it was needed: in plain JSON mode the provider guarantees only that the reply
+parses. Measured on the COMPL-AI T=0/T=1 campaigns, **2,231 simulator calls (~32% of
+all of them) returned complete, valid JSON that the client rejected**, and **239
+invocations exhausted all three retries and produced no consequence at all**. Nearly
+every rejection was one confusion: a `harm_type` value placed in `scenario_type`
+(`misinformation` alone accounts for 1,896 occurrences; also `security_breach`,
+`psychological_harm`, `reputational_harm`, `privacy_breach`). Because the enums
+overlap semantically, the model picks a harm label for the scenario slot — and since
+the retry re-sends the same prompt at low temperature, all three attempts reproduce
+the same rejected value, so the retry is futile by construction.
+
+`PolicyLLM._complete` degrades a `json_schema` request to `{"type": "json_object"}`
+when the effective model does not support Structured Outputs
+(`supports_json_schema`, an allowlist — see `docs/modules/openai_params.md`), so an
+unrecognised deployment behind `OPENAI_BASE_URL` keeps the previous behaviour rather
+than failing. Client-side validation (`parse_and_validate_simulator_output`) is
+therefore still required and unchanged: it is the only guard on the degraded path.
 
 ---
 

@@ -32,6 +32,7 @@ from moralstack.prompts.retry import RETRY_PERSPECTIVES
 from moralstack.runtime.modules.message_context import build_module_messages
 from moralstack.utils.cache import build_context_fingerprint, get_global_cache
 from moralstack.utils.json_utils import JSONParseError, extract_json
+from moralstack.utils.structured_output import perspective_response_format
 
 # =============================================================================
 # Data Models
@@ -458,7 +459,7 @@ class LLMPerspectiveEnsemble:
             temperature=self.config.temperature,
             top_p=self.config.top_p,
             stop_sequences=[],
-            response_format={"type": "json_object"},
+            response_format=perspective_response_format(),
         )
 
     def evaluate(

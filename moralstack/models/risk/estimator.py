@@ -53,9 +53,11 @@ from .prompts import (
     INTENT_CONTEXT_SYSTEM_PROMPT,
     OPERATIONAL_RISK_PROMPT_TEMPLATE,
     OPERATIONAL_RISK_SYSTEM_PROMPT,
+    intent_response_format,
+    operational_response_format,
 )
 from .schema import RiskEstimation, RiskEstimatorConfig
-from .signals.prompt_renderer import get_harm_signal_prompts
+from .signals.prompt_renderer import get_harm_signal_prompts, harm_signal_response_format
 from .signals.registry import registry as signal_registry
 from .utils import _intent_type_from_request_type
 
@@ -474,8 +476,15 @@ class LLMBasedRiskEstimator:
             used_fallback_parse=True,
         )
 
-    def _build_generation_config(self) -> Any:
-        """Build optional GenerationConfig for policy.generate. Returns None if unavailable."""
+    def _build_generation_config(self, response_format: Any = None) -> Any:
+        """Build optional GenerationConfig for policy.generate. Returns None if unavailable.
+
+        `response_format` defaults to plain JSON mode. A mini-estimator whose
+        output shape is fully specified passes a strict `json_schema` instead,
+        so the provider enforces the key names and enums rather than the
+        tolerant `data.get(key, default)` downstream silently reading a
+        misspelled or missing key as an absent signal.
+        """
         try:
             from moralstack.models.policy import GenerationConfig
 
@@ -484,7 +493,7 @@ class LLMBasedRiskEstimator:
                 temperature=self.config.temperature,
                 top_p=self._top_p,
                 # OpenAI Chat Completions: enforce a single JSON object (tolerant recovery still in extract_json).
-                response_format={"type": "json_object"},
+                response_format=response_format or {"type": "json_object"},
             )
         except ImportError as e:
             _RISK_LOG.debug("GenerationConfig unavailable: %s", e)
@@ -867,6 +876,17 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
         _policy = self.policy  # narrowed non-optional for closure capture
 
         gen_config = self._build_generation_config()
+        # Each mini-estimator declares a different output contract, so each gets
+        # its own provider-enforced schema. `gen_config` stays the plain-JSON
+        # fallback for any call that is not one of the three.
+        gen_config_signals = self._build_generation_config(response_format=harm_signal_response_format(signal_registry))
+        gen_config_intent = self._build_generation_config(response_format=intent_response_format())
+        gen_config_operational = self._build_generation_config(response_format=operational_response_format())
+        gen_config_by_mini = {
+            "estimate_signals": gen_config_signals,
+            "estimate_intent": gen_config_intent,
+            "estimate_operational": gen_config_operational,
+        }
         principles_ctx = self._get_principles_context(
             prompt, retrieval_query=retrieval_query, retrieval_top_k=retrieval_top_k
         )
@@ -933,9 +953,42 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
             resolved_model_str = str(resolved_for_obs) if resolved_for_obs is not None else None
 
             raw_response = ""
+
+            def _persist_retry_failed(attempt_no: int, result: Any, error: Exception) -> None:
+                """Record a paid-for attempt whose output could not be parsed.
+
+                Same shape as the critic/simulator/hindsight/perspectives retry
+                rows (`call_outcome="retry_failed"`), so a failed attempt is
+                visible in `llm_calls` instead of only in the process log.
+                Best-effort: never raises.
+                """
+                tu = result.token_usage_json() if hasattr(result, "token_usage_json") else None
+                if tu is None:
+                    return  # no provider response: nothing was billed, nothing to record
+                try:
+                    from moralstack.observability.emit_helpers import async_persist_llm_call
+
+                    async_persist_llm_call(
+                        phase="risk_retry",
+                        module="risk_estimator",
+                        action=f"retry_failed_attempt_{attempt_no}",
+                        model=resolved_model_str or "",
+                        prompt=f"Retry reason: {str(error)[:200]}",
+                        raw_response=raw_response or "",
+                        duration_ms=0.0,
+                        attempts=attempt_no,
+                        call_outcome="retry_failed",
+                        billable_provider_call=True,
+                        token_usage_json=tu,
+                    )
+                except Exception:
+                    _RISK_LOG.debug("persist risk retry-failed llm call failed", exc_info=True)
+
             for attempt in range(self.config.max_retries):
+                result: Any = None
                 try:
                     start_gen = time.time()
+                    call_config = gen_config_by_mini.get(mini_name, gen_config)
                     if (developer_contract_text or conversation_history) and _supports_native_messages(effective_policy):
                         result = effective_policy.generate_messages(
                             messages=_risk_context_messages(
@@ -944,13 +997,13 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
                                 developer_contract_text=developer_contract_text,
                                 conversation_history=conversation_history,
                             ),
-                            config=gen_config,
+                            config=call_config,
                         )
                     else:
                         result = effective_policy.generate(
                             prompt=full_prompt,
                             system=system_prompt,
-                            config=gen_config,
+                            config=call_config,
                         )
                     elapsed_ms = (time.time() - start_gen) * 1000
                     raw_response = result.text if hasattr(result, "text") else str(result)
@@ -980,6 +1033,7 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
                         self.config.max_retries,
                         str(e),
                     )
+                    _persist_retry_failed(attempt + 1, result, e)
                 except Exception as e:
                     _RISK_LOG.warning(
                         "mini_estimator[%s] attempt %s/%s failed: %s",
@@ -988,6 +1042,7 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
                         self.config.max_retries,
                         str(e),
                     )
+                    _persist_retry_failed(attempt + 1, result, e)
             raise RiskEstimationError(f"Mini estimator [{mini_name}] failed after {self.config.max_retries} attempts")
 
         with ThreadPoolExecutor(max_workers=3) as executor:

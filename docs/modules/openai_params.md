@@ -146,6 +146,55 @@ deprecated and not compatible with o-series models.
 
 ---
 
+## Structured Outputs Support
+
+### `MODELS_SUPPORTING_JSON_SCHEMA` / `MODELS_WITHOUT_JSON_SCHEMA`
+
+Models that accept a strict `response_format={"type": "json_schema", ..., "strict": true}`,
+where the provider enforces the schema instead of the client validating the reply
+after paying for it: the `gpt-4o`, `gpt-4.1`, `gpt-5` families and the o-series.
+`MODELS_WITHOUT_JSON_SCHEMA` carves out `gpt-4o-2024-05-13`, a snapshot that predates
+Structured Outputs but matches the `gpt-4o` prefix.
+
+### `supports_json_schema(model: str | None) -> bool`
+
+Deliberately an **allowlist**: an unrecognised model (a custom deployment behind
+`OPENAI_BASE_URL`) returns `False` and keeps plain JSON mode, so the predicate can
+never turn a working call into a failing one.
+
+`PolicyLLM._complete` applies it centrally — a `json_schema` request is degraded to
+`{"type": "json_object"}` on a model that does not support it, mirroring how
+`supports_predicted_output` gates `prediction`. Callers therefore declare the schema
+they want and never have to branch on the model.
+
+**Who declares a schema today** (the critic deliberately does not — see below):
+
+| Module | Schema factory | Contract source |
+|---|---|---|
+| Simulator | `simulator_response_format()` | derived from the `Literal` aliases of `SimulatorOutput` |
+| Risk — harm signals | `harm_signal_response_format(registry)` | derived from the same `SignalRegistry` that renders the prompt |
+| Risk — intent | `intent_response_format()` | mirrors the OUTPUT block in `models/risk/prompts.py` |
+| Risk — operational | `operational_response_format()` | mirrors the OUTPUT block in `models/risk/prompts.py` |
+| Hindsight (single / batch) | `hindsight_single_response_format()` / `hindsight_batch_response_format()` | fields of `HindsightSingleEvaluationOutput` |
+| Perspectives | `perspective_response_format()` | the JSON block in `prompts/perspectives_prompt.py` |
+| Safety override | `safety_override_response_format()` | enum from `SAFETY_OVERRIDE_CATEGORIES` |
+| DCCL draft match | `draft_match_response_format()` | `DCCL_DRAFT_MATCH_SYSTEM_PROMPT` |
+
+**The critic is intentionally excluded.** It records zero parse failures over 5,000
+campaign calls, so there is no measured defect to fix, and it is the P0 module whose
+verdict decides `final_action` — a change there is validated on its own, never bundled
+with seven others.
+
+**What a strict schema does and does not guarantee.** It fixes shape, key names and
+enums. It does **not** enforce value ranges: the supported JSON Schema subset has no
+`minimum`/`maximum`, so 0.0-1.0 bounds on scores stay the caller's job, and
+client-side validation stays load-bearing anyway because a model outside the allowlist
+silently falls back to plain JSON mode. `tests/test_structured_outputs_modules.py`
+pins every schema against strict mode's requirements and against the contract its
+prompt declares.
+
+---
+
 ## Integration
 
 All modules that call the OpenAI Chat Completions API use this utility:

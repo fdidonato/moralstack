@@ -58,6 +58,37 @@ SAFETY_OVERRIDE_CATEGORIES: Final[tuple[str, ...]] = (
     ILLEGAL_PHARMA,
 )
 
+
+def safety_override_response_format() -> dict[str, Any]:
+    """`response_format` that makes the provider enforce the classifier's output.
+
+    The enum is derived from SAFETY_OVERRIDE_CATEGORIES, so the categories the
+    provider accepts and the ones `_classify_with_llm` recognises cannot drift.
+    Without it an out-of-enum category is not an error: the classifier logs a
+    warning and returns None, i.e. the safety override silently does not fire.
+    `category` is nullable because "no restricted category" is the normal answer.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "safety_override_classification",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["category", "rationale"],
+                "properties": {
+                    "category": {
+                        "type": ["string", "null"],
+                        "enum": [*SAFETY_OVERRIDE_CATEGORIES, None],
+                    },
+                    "rationale": {"type": "string"},
+                },
+            },
+        },
+    }
+
+
 _LLM_CLASSIFIER_SYSTEM_PROMPT = """You are a safety classifier for the MoralStack DCCL component.
 
 Your task: given a candidate response text (the "action_payload") that a deployer
@@ -135,7 +166,7 @@ def _llm_classify(
             max_tokens=128,
             temperature=0.0,
             top_p=1.0,
-            response_format={"type": "json_object"},
+            response_format=safety_override_response_format(),
         )
 
         truncated = action_payload[:2000]

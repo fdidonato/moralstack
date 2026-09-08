@@ -59,7 +59,9 @@ Hindsight has **three LLM entry points** across two JSON contracts (root-object 
   (POTENTIAL CONSEQUENCES/TURN CONTEXT/RISK CONTEXT).
 
 The two constants are never interchangeable (verified by
-`tests/test_static_prefix_stability.py`); `response_format` stays `json_object`.
+`tests/test_static_prefix_stability.py`).
+
+**Structured Outputs — two schemas, not one.** The module has two paths with different prompts and different parsers: `evaluate_scenario` (a single evaluation) and `_evaluate_batch` (a list). They therefore carry separate `GenerationConfig`s — `hindsight_single_response_format()` and `hindsight_batch_response_format()` — because one shared schema would make the provider return the wrong shape for one of them. Both derive their fields from `HindsightSingleEvaluationOutput`, so schema and validator cannot drift; the batch schema reuses the single-evaluation object as its array item. Degraded to plain `json_object` on models outside the `supports_json_schema` allowlist (see `docs/modules/openai_params.md`).
 
 ---
 

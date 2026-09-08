@@ -78,6 +78,17 @@ In MoralStack terms:
    English keyword pre-filter was removed) and runs on a small model
    (`MORALSTACK_DCCL_SAFETY_OVERRIDE_MODEL`, default `gpt-4o-mini`); its call is
    persisted to `llm_calls` (`module=compliance_layer`, `action=safety_override`).
+   Its reply is schema-enforced (`safety_override_response_format()`), with the enum
+   derived from `SAFETY_OVERRIDE_CATEGORIES` and `category` nullable because "no
+   restricted category" is the normal answer. This matters because an out-of-enum
+   category is **not** an error on this path: `_classify_with_llm` logs a warning and
+   returns `None`, i.e. the override silently does not fire. Across 4,258 COMPL-AI calls
+   the classifier returned `{"category": null}` every time and never went out of enum, so
+   the guard is preventive, not corrective. The DCCL draft-match call
+   (`action=draft_revalidate`) is likewise schema-enforced
+   (`draft_match_response_format()`); note the limit — the supported JSON Schema subset
+   has no `minimum`/`maximum`, so the 0.0-1.0 range of `draft_match_confidence` stays the
+   caller's responsibility.
    Independently, a request-side hard-signal gate
    (`path_router.has_hard_signal_evidence`) invalidates a `MATCH` before delivery
    when the risk estimator produced hard topical evidence, emitting

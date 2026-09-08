@@ -2,6 +2,7 @@
 
 from moralstack.utils.openai_params import (
     completion_tokens_param,
+    supports_json_schema,
     uses_max_completion_tokens,
 )
 
@@ -67,3 +68,36 @@ class TestCompletionTokensParam:
         assert result["max_tokens"] == 512
         result2 = completion_tokens_param("gpt-5.2", 512)
         assert result2["max_completion_tokens"] == 512
+
+
+class TestSupportsJsonSchema:
+    """Tests for supports_json_schema (strict Structured Outputs)."""
+
+    def test_gpt4o_returns_true(self):
+        assert supports_json_schema("gpt-4o") is True
+
+    def test_gpt4o_mini_returns_true(self):
+        assert supports_json_schema("gpt-4o-mini") is True
+
+    def test_gpt41_nano_returns_true(self):
+        assert supports_json_schema("gpt-4.1-nano") is True
+
+    def test_gpt5_family_returns_true(self):
+        assert supports_json_schema("gpt-5.4") is True
+
+    def test_pre_structured_outputs_gpt4o_snapshot_returns_false(self):
+        # This snapshot predates Structured Outputs but matches the gpt-4o prefix.
+        assert supports_json_schema("gpt-4o-2024-05-13") is False
+
+    def test_later_gpt4o_snapshot_returns_true(self):
+        assert supports_json_schema("gpt-4o-2024-08-06") is True
+
+    def test_gpt4_turbo_returns_false(self):
+        assert supports_json_schema("gpt-4-turbo") is False
+
+    def test_unknown_model_returns_false(self):
+        # Allowlist: an unrecognised deployment keeps plain JSON mode.
+        assert supports_json_schema("my-local-llama") is False
+
+    def test_none_returns_false(self):
+        assert supports_json_schema(None) is False

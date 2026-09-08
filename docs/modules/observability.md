@@ -236,7 +236,7 @@ also record its generating `model`: an unset `model` collapses into the `'—'` 
 row of the per-model token panel. All provider-call sites therefore pass the policy/DCCL
 model explicitly — the fast-path/benign/safe-complete `generate (...)` calls, the REFUSE
 (`refuse (fast_path)`/`(deliberative)`), compliance-regenerate, `draft_revalidate`, and the
-critic/simulator/hindsight/perspectives `retry_failed_attempt_*` rows. Synthetic/diagnostic
+critic/simulator/hindsight/perspectives/risk_estimator `retry_failed_attempt_*` rows. Synthetic/diagnostic
 rows that are **not** provider calls (module skip/gate/disable/error/timeout markers,
 output-protection leakage rows) intentionally leave `model` empty and are already
 `billable_provider_call=False`.

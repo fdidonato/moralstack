@@ -1366,7 +1366,11 @@ class OrchestrationController:
     ) -> tuple[bool, str, float]:
         """Re-check draft against the matched rule action; semantic LLM only if substring fails."""
         from moralstack.compliance.config import get_dccl_confidence_threshold, get_dccl_llm_model
-        from moralstack.compliance.dccl import DCCL_DRAFT_MATCH_SYSTEM_PROMPT, validate_draft_against_action
+        from moralstack.compliance.dccl import (
+            DCCL_DRAFT_MATCH_SYSTEM_PROMPT,
+            draft_match_response_format,
+            validate_draft_against_action,
+        )
         from moralstack.models.base import GenerationConfig
         from moralstack.orchestration.persistence_helpers import record_llm_call
         from moralstack.utils.json_utils import extract_json
@@ -1389,7 +1393,7 @@ class OrchestrationController:
             max_tokens=128,
             temperature=0.0,
             top_p=1.0,
-            response_format={"type": "json_object"},
+            response_format=draft_match_response_format(),
         )
         start = time.perf_counter()
         wall = int(time.time() * 1000)

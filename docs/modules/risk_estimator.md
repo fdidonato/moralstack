@@ -368,6 +368,36 @@ configuration is the single source of configuration — no CLI or code path over
 
 ### LLM and retry behaviour
 
+**Failed attempts are persisted.** Each mini-estimator retry that could not be parsed
+emits an `llm_calls` row with `call_outcome="retry_failed"`, `module="risk_estimator"`,
+`phase="risk_retry"` — the same shape as critic/simulator/hindsight/perspectives. Until
+2026-09-08 the loop only emitted a `logger.warning`, so a paid-for failed attempt left no
+trace in the DB: the module that decides routing and the hard signals was the one with no
+audit trail for its own failures. Measured impact was small (7 retries in 50,346 campaign
+calls) but unobservable by construction, which is the point.
+
+**Output schemas are enforced by the provider.** Each of the three mini-estimators
+declares its own strict `json_schema` (`intent_response_format()`,
+`operational_response_format()`, `harm_signal_response_format(registry)`), so key names
+and enums cannot be violated. The harm-signal schema is generated from the same
+`SignalRegistry` that renders the prompt (`render_output_json_schema`), so the enforced
+contract and the described contract cannot drift.
+
+This closes two silent degradations measured across the COMPL-AI campaigns, neither of
+which raised or retried because both produce a **valid** dict that the tolerant
+`data.get(key, default)` in `calibration.py` reads as an absent signal:
+
+- **41 calls returned `{"data": [...]}`** — the request echoed back instead of the
+  signals, so all 17 harm questions degraded to `"no"`. All 41 nevertheless ended in
+  REFUSE (risk 0.85-0.95): intent and operational carried the decision.
+- **5 calls misspelled `q10_weapons_explosives_toxins` as `..._txins`** — one character,
+  and `q10` sits in `priority_harmful`, i.e. a hard signal. All 5 held `'no'`, matching
+  the default, so nothing was lost in those particular cases.
+
+Neither changed an outcome in the data examined; both remain failure modes that produce
+no error and no retry, which is why they are worth removing at the source rather than
+relying on the other two estimators to compensate.
+
 #### MORALSTACK_RISK_MAX_RETRIES
 
 - **Default**: `2`

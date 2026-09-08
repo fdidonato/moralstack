@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Callable, Literal, TypeVar
+from typing import Any, Callable, Literal, TypeVar, get_args
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -247,6 +247,67 @@ class SimulatorOutput(BaseModel):
     consequences: list[SimulatorConsequenceOutput]
 
 
+def _enum_schema(literal: Any) -> dict[str, Any]:
+    """Schema JSON di un Literal di stringhe, per non duplicarne i valori."""
+    return {"type": "string", "enum": list(get_args(literal))}
+
+
+# Schema per gli Structured Outputs stretti di OpenAI: e' il provider a imporre
+# lo schema, invece di validarlo qui dopo aver gia' pagato la chiamata.
+# Deriva dagli stessi alias Literal del modello Pydantic sopra, cosi' i due non
+# possono divergere. La modalita' strict impone `additionalProperties: false` e
+# tutte le proprieta' in `required`: i default del modello Pydantic restano la
+# rete per la modalita' JSON semplice, dove il campo puo' ancora mancare.
+SIMULATOR_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["consequences"],
+    "properties": {
+        "consequences": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "text",
+                    "likelihood",
+                    "scenario_type",
+                    "outcome_valence",
+                    "affected_stakeholders",
+                    "harm_type",
+                    "harm_severity",
+                    "harm_scope",
+                    "reversibility",
+                ],
+                "properties": {
+                    "text": {"type": "string"},
+                    "likelihood": {"type": "number"},
+                    "scenario_type": _enum_schema(_SCENARIO_TYPE),
+                    "outcome_valence": {"type": "number"},
+                    "affected_stakeholders": {"type": "array", "items": {"type": "string"}},
+                    "harm_type": _enum_schema(_HARM_TYPE),
+                    "harm_severity": {"type": "number"},
+                    "harm_scope": _enum_schema(_HARM_SCOPE),
+                    "reversibility": {"type": "number"},
+                },
+            },
+        }
+    },
+}
+
+
+def simulator_response_format() -> dict[str, Any]:
+    """`response_format` che fa imporre SimulatorOutput dal provider."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "simulator_output",
+            "strict": True,
+            "schema": SIMULATOR_JSON_SCHEMA,
+        },
+    }
+
+
 # -----------------------------------------------------------------------------
 # Hindsight (singola valutazione e batch)
 # -----------------------------------------------------------------------------
@@ -275,6 +336,99 @@ class HindsightBatchOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     evaluations: list[HindsightSingleEvaluationOutput]
+
+
+# Strict Structured Outputs schemas for the modules whose reply shape is fully
+# specified by their prompt. Strict mode requires every property in `required`
+# and `additionalProperties: false`; the Pydantic defaults above stay the net
+# for the plain-JSON path, where a field can still be missing.
+#
+# Limit worth remembering: the supported JSON Schema subset has no `minimum` /
+# `maximum`, so numeric ranges (0.0-1.0 scores) remain the caller's job. These
+# schemas guarantee shape, key names and enums — never value ranges or meaning.
+
+
+def hindsight_batch_response_format() -> dict[str, Any]:
+    """`response_format` enforcing HindsightBatchOutput."""
+    evaluation = _HINDSIGHT_EVALUATION_SCHEMA
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "hindsight_batch",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["evaluations"],
+                "properties": {"evaluations": {"type": "array", "items": evaluation}},
+            },
+        },
+    }
+
+
+_HINDSIGHT_EVALUATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "scenario_id",
+        "safety",
+        "helpfulness",
+        "honesty",
+        "harm_probability",
+        "benefit_probability",
+        "confidence",
+        "rationale",
+    ],
+    "properties": {
+        "scenario_id": {"type": "string"},
+        "safety": {"type": "number"},
+        "helpfulness": {"type": "number"},
+        "honesty": {"type": "number"},
+        "harm_probability": {"type": "number"},
+        "benefit_probability": {"type": "number"},
+        "confidence": {"type": "number"},
+        "rationale": {"type": "string"},
+    },
+}
+
+
+def hindsight_single_response_format() -> dict[str, Any]:
+    """`response_format` enforcing a single hindsight evaluation.
+
+    Separate from the batch schema on purpose: the module has two prompts and
+    two parsers, and one shared schema would make the provider return the wrong
+    shape for one of them.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "hindsight_single",
+            "strict": True,
+            "schema": _HINDSIGHT_EVALUATION_SCHEMA,
+        },
+    }
+
+
+def perspective_response_format() -> dict[str, Any]:
+    """`response_format` enforcing the perspective evaluation contract."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "perspective_evaluation",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["approval_score", "concerns", "suggestions", "rationale"],
+                "properties": {
+                    "approval_score": {"type": "number"},
+                    "concerns": {"type": "array", "items": {"type": "string"}},
+                    "suggestions": {"type": "array", "items": {"type": "string"}},
+                    "rationale": {"type": "string"},
+                },
+            },
+        },
+    }
 
 
 def _normalize_unicode_quotes(s: str) -> str:

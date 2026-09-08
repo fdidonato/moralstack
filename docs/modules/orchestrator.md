@@ -144,6 +144,17 @@ rule evaluation when `current_turn` is provided.
 
 ## Module result contracts
 
+**Schema-enforced replies.** Every module except the critic declares a strict
+Structured Outputs schema, so the provider enforces key names and enums instead of the
+client rejecting a reply it has already paid for; `PolicyLLM._complete` degrades it to
+plain JSON mode on models outside the `supports_json_schema` allowlist, which is why
+client-side validation remains load-bearing. The `draft_revalidate` call this module
+issues uses `draft_match_response_format()`. The critic is deliberately excluded: zero
+parse failures over 5,000 COMPL-AI calls, and it is the P0 module whose verdict decides
+`final_action`. Full map and the guarantee's limits (shape and enums yes, value ranges
+no) → `docs/modules/openai_params.md`.
+
+
 The deliberation runner and controller consume results from cognitive modules (critic, simulator, hindsight, perspectives) and from the policy LLM via **Protocol** types defined in `moralstack/orchestration/types.py`. These protocols provide a typed contract (structural subtyping) so that:
 
 - Concrete module return types (e.g. `CriticReport`, `SimulationResult`, `HindsightResult`, `EnsembleResult`) satisfy the protocols without orchestration importing the runtime modules.
@@ -183,7 +194,7 @@ deliberative fallback also reuse the single wave (see
 - **guidance_builder** — Builds aggregated guidance string from critic, perspectives, hindsight, and simulator state (`build_aggregated_guidance(state, *, filter_marginal=True, telemetry=None)`). Applies **signal-strength filtering** by default (`filter_marginal=True`): critic guidance is included only when violations exist or critic decision is `REVISE`/`REFUSE`; perspective suggestions only from dissatisfied perspectives (`approval_score` < 0.75) and only when weighted approval < 0.85; hindsight only when a real hindsight signal exists and `hindsight_score` < 0.7; simulator only when `semantic_expected_harm` ≥ 0.35. Hard violations bypass all filters. When all modules are satisfied, guidance returns empty and the rewrite is skipped (draft from the previous cycle is preserved). Emits `rewrite (SKIPPED_EMPTY_GUIDANCE)` in persisted LLM call rows when the rewrite is skipped; logs `guidance_filter:` lines at INFO. Also emits `AGGREGATED_GUIDANCE_EVALUATED` orchestration events for the request detail UI.
 - **convergence_evaluator** — Evaluates whether the deliberation has converged and which `DecisionType` to apply (`ConvergenceEvaluator(config).determine_decision(state, risk_estimation=None)`). **Cycle 1** may stop early only via a conservative `_evaluate_cycle1_early_convergence` gate (stricter than the legacy cycle>=2 weighted-perspectives path); rejection is explicit and observable. Invariants and structured logging for the loop remain in **convergence.py** (`enforce_convergence_invariants`, `log_convergence_event`). Observability: `CONVERGENCE_EVALUATED`, `EARLY_CONVERGENCE_ACCEPTED`, `EARLY_CONVERGENCE_REJECTED`; `CYCLE_SUMMARY` includes `early_convergence_considered`, `early_convergence_accepted`, `convergence_reason_codes`, `deliberation_decision`.
 - **language_resolver** — Resolves explicit language and builds prompt with language prefix (`resolve_prompt_with_language(prompt, detected_iso, fallback_prompt)`), reusing logic from `safe_refusal_generator` and `_policy_helpers`.
-- **persistence_helpers** — Centralizes optional diagnostics logging and LLM call persistence (`record_llm_call(logger, diagnostics_payload, persist_kwargs)`). Every `llm_calls` row that represents a **real provider call** must carry its generating `model` (the fast-path/benign/safe-complete `generate (...)`, the REFUSE `refuse (fast_path)`/`(deliberative)`, `generate (compliance-regenerate)`, `draft_revalidate` with the DCCL model, and the module `retry_failed_attempt_*` rows all pass it explicitly). An unset `model` collapses into the unattributed `'—'` row of the per-model token panel. Synthetic/diagnostic rows emitted here that are **not** provider calls (module `SKIPPED`/`GATED`/`DISABLED`/`ERROR` markers, `timeout_warning`, `output_protection` leakage, speculative reuse) carry `billable_provider_call=False` and intentionally leave `model` empty.
+- **persistence_helpers** — Centralizes optional diagnostics logging and LLM call persistence (`record_llm_call(logger, diagnostics_payload, persist_kwargs)`). Every `llm_calls` row that represents a **real provider call** must carry its generating `model` (the fast-path/benign/safe-complete `generate (...)`, the REFUSE `refuse (fast_path)`/`(deliberative)`, `generate (compliance-regenerate)`, `draft_revalidate` with the DCCL model, and the module `retry_failed_attempt_*` rows — critic, simulator, hindsight, perspectives and, since 2026-09-08, `risk_estimator` — all pass it explicitly). An unset `model` collapses into the unattributed `'—'` row of the per-model token panel. Synthetic/diagnostic rows emitted here that are **not** provider calls (module `SKIPPED`/`GATED`/`DISABLED`/`ERROR` markers, `timeout_warning`, `output_protection` leakage, speculative reuse) carry `billable_provider_call=False` and intentionally leave `model` empty.
 
 ### Hindsight path diagnostics
 

@@ -30,6 +30,7 @@ from moralstack.utils.json_utils import JSONParseError
 from moralstack.utils.structured_output import (
     SimulatorOutput,
     parse_and_validate_simulator_output,
+    simulator_response_format,
 )
 
 
@@ -294,7 +295,10 @@ class LLMConsequenceSimulator:
             temperature=self.config.temperature,
             top_p=self.config.top_p,
             stop_sequences=[],
-            response_format={"type": "json_object"},
+            # Strict Structured Outputs: the provider enforces the enums, so an
+            # out-of-enum value can no longer cost a discarded call plus retries.
+            # Degraded to plain JSON mode by PolicyLLM on models that lack it.
+            response_format=simulator_response_format(),
         )
 
     def simulate(

@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`supports_json_schema()` — model capability check for strict Structured Outputs.**
+  `PolicyLLM._complete` applies it centrally: a `json_schema` `response_format` is
+  degraded to `{"type": "json_object"}` on a model that does not support it, mirroring
+  how `supports_predicted_output` gates `prediction`, so callers declare the schema
+  they want without branching on the model. Deliberately an allowlist (`gpt-4o`,
+  `gpt-4.1`, `gpt-5` families, o-series, minus the pre-Structured-Outputs
+  `gpt-4o-2024-05-13` snapshot): an unrecognised deployment behind `OPENAI_BASE_URL`
+  keeps plain JSON mode, so the predicate can never turn a working call into a
+  failing one.
+
 - **`MORALSTACK_CRITIC_MAX_RULE_LEN` — the critic's rule window is now configurable.**
   `format_principles_compact` truncates every principle rule before it reaches the
   critic; the 180-character limit was hardcoded at both call sites. It is now
@@ -136,6 +146,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository settings. The workflows remain recoverable from git history.
 
 ### Fixed
+
+- **Every governance module except the critic now has its output schema enforced by the
+  provider, closing two failure modes that produced no error and no retry.** Measured
+  across the COMPL-AI T=0/T=1 campaigns (144k calls), the harm-signal scanner returned
+  `{"data": [...]}` — the request echoed back — on 41 calls, and misspelled
+  `q10_weapons_explosives_toxins` as `..._txins` on 5. Both are **valid JSON**, so the
+  tolerant `data.get(key, "no")` in `calibration.py` read the signals as absent: in the
+  first case all 17 harm questions at once, in the second a signal that sits in
+  `priority_harmful`, i.e. a hard one. Neither raised, neither retried, neither left a
+  marker. Verified outcome-by-outcome: all 41 still ended in REFUSE (risk 0.85-0.95)
+  because intent and operational carried the decision, and all 5 misspelled values were
+  `'no'`, matching the default — so no decision is known to have been changed. The point
+  is that nothing in the system would have told us otherwise. A third case, an invented
+  `harm_type` (16 calls: `security`, `privacy`, `deception`, `manipulation`,
+  `educational_integrity`), is largely absorbed downstream because `calibration.py`
+  reassigns `harm_type` by signal priority — but only when a signal fires.
+  Schemas now cover: risk intent / operational / harm signals, hindsight (single and
+  batch, separately — they have different prompts and parsers), perspectives, safety
+  override, and the DCCL draft match. Each is derived from its contract's own source:
+  the harm-signal schema from the same `SignalRegistry` that renders the prompt, the
+  hindsight schema from the Pydantic model's fields, the safety-override enum from
+  `SAFETY_OVERRIDE_CATEGORIES`. **The critic is deliberately excluded**: zero parse
+  failures over 5,000 campaign calls, and it is the P0 module whose verdict decides
+  `final_action`, so it is not bundled with seven other changes.
+  Guarantee and its limit: shape, key names and enums are enforced; value ranges are
+  not (the supported JSON Schema subset has no `minimum`/`maximum`), and a model outside
+  the `supports_json_schema` allowlist still falls back to plain JSON mode, so
+  client-side validation stays load-bearing.
+  **Verified against a live provider** (2026-09-08, 47 requests replaying the exact
+  prompts that had failed, 507 LLM calls, $2.37): simulator retries 35% -> 0, and zero
+  `data` envelopes, out-of-schema keys or out-of-enum `harm_type`. The 10 requests that
+  used to return the `data` envelope — and therefore no signals at all — now raise real
+  ones, hard signals included; they ended in REFUSE before and after, so no decision
+  changed, but the decision now rests on the evidence that belongs to it. 11 of 47
+  decisions differ against 10.0 expected from the noise measured on those same prompts,
+  i.e. indistinguishable. An apparent regression in `domain_sensitivity` (6/37 against
+  1.8% natural variability) was investigated and **disproven** by a two-condition
+  ablation: 0 downgrades in 40, the one discordant case being an upgrade where the
+  schema matches the logged value better than plain JSON mode. The cause was the replay
+  harness, which sends no developer contract — its fidelity control goes from 62% to 98%
+  once the contract is restored. Not covered: the deliberative path *with* a contract.
+  Tests: `tests/test_structured_outputs_modules.py`.
+
+- **Failed risk-estimator retries are now recorded instead of only logged.** The
+  mini-estimator retry loop emitted a `logger.warning` and nothing else, so a paid-for
+  attempt whose output could not be parsed left no row in `llm_calls` — the module that
+  decides routing and the hard signals was the only one with no audit trail for its own
+  failures, while critic, simulator, hindsight and perspectives all had one. It now
+  emits the same `call_outcome="retry_failed"` row (`phase="risk_retry"`). Measured
+  incidence is low (7 retries in 50,346 campaign calls, ~$0.04) — the value is that the
+  failure becomes visible at all. Tests:
+  `tests/test_risk_persist_batch.py::test_risk_estimator_failed_retries_are_persisted`.
+
+- **The simulator now has its output schema enforced by the provider, so a single
+  enum confusion no longer burns a third of its calls.** It ran with
+  `response_format={"type": "json_object"}`, which guarantees only that the reply
+  parses: the enums were checked client-side afterwards and any violation rejected
+  the whole reply, costing up to three calls. The rejected replies were **not**
+  malformed — on `include` rep 1 of the COMPL-AI T=0 campaign all 198 were complete,
+  valid JSON, indistinguishable in length and tokens from the accepted ones. They
+  differed in one field: the model put a `harm_type` value into `scenario_type`
+  (`misinformation` 1,896 times across the 60 campaign runs, plus `security_breach`,
+  `reputational_harm`, `psychological_harm`, `privacy_breach` — each a valid
+  `harm_type`, none a valid `scenario_type`). Retrying could not help, because the
+  same prompt at low temperature reproduces the same value, so all three attempts
+  failed identically. Measured cost: 2,231 discarded calls, $5.08 per T=1 campaign
+  and $5.18 per T=0 campaign, up to 8.9% of a single run on `include`; and 239
+  invocations (~7%) exhausted every retry and produced no consequence at all, so
+  those requests were governed without the simulator's contribution — the larger
+  half of the damage. `simulator_response_format()` now builds a strict `json_schema`
+  from the same `Literal` aliases as the Pydantic model, so schema and validator
+  cannot drift. Client-side validation is unchanged and still load-bearing on the
+  degraded path. Not yet re-measured against a live provider.
+  Tests: `tests/test_structured_outputs_simulator.py`.
 
 - **The proxy no longer drops whole requests from the SQLite audit trail when the
   observability database is re-pointed after the app is built.** `_ensure_request_row`
