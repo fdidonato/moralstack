@@ -137,6 +137,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The proxy no longer drops whole requests from the SQLite audit trail when the
+  observability database is re-pointed after the app is built.** `_ensure_request_row`
+  pre-inserted the `requests` row without ensuring its parent `runs` row (and, on a fresh
+  file, the schema) existed in the database actually being written. Both are created at
+  `create_app` time, but a benchmark harness has to re-assert
+  `MORALSTACK_OBSERVABILITY_DB_PATH` *after* importing the app — `build_app()` reloads
+  `.env` with `override=True` — so the parent row stayed in the `.env` database. Every
+  pre-insert then failed the FK and was swallowed, and because all child tables FK to
+  `requests(run_id, request_id)`, the request disappeared from SQLite entirely: llm calls,
+  orchestration events and decision traces included. Measured on the COMPL-AI T=0 campaign
+  (`boolq_contrast` rep 1): 5 of 153 requests missing, with their 31 `llm.call`, 85
+  `orchestration.event` and 7 `decision.trace` rows present in JSONL and absent from the DB
+  — the counts reconcile exactly. The rows survived at all only because the controller's
+  `DefaultPersistence` re-creates run and request later in the pipeline; the head of a run
+  raced that safety net. `_ensure_run_row` now ensures schema + run row once per
+  `(db_path, run_id)`, so the pre-insert no longer depends on it. Observability stays
+  best-effort: the whole path is still inside the swallowing `try/except`.
+  Regression: `tests/test_server_proxy.py::test_request_row_survives_observability_db_repointing`.
+  Runs recorded before this fix are unaffected in their answers and scores — only their
+  telemetry is short — and must be analysed from the JSONL.
+
 - **A ledger-replayed decision is now marked in the audit trail.** When the
   `SemanticDecisionLedger` fast path reuses a cached decision, the persisted record used
   to carry the reasoning of a decision that never ran: on the 2026-08-20 COMPL-AI replay,

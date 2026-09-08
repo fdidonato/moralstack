@@ -77,7 +77,21 @@ Schema in `observability/sinks/sqlite_sink.py:48-489`; connection uses WAL +
 
 Most child tables FK to `requests(run_id, request_id)` with
 `ON DELETE CASCADE` — so the `requests` row must exist first (the controller and
-proxy both pre-insert it).
+proxy both pre-insert it). A missing `requests` row is therefore not a partial
+loss: every child insert for that request fails the FK and is swallowed, so the
+request vanishes from SQLite while JSONL still holds it in full.
+
+`requests` itself FKs to `runs(run_id)`, so the parent run row must exist before
+the pre-insert. The proxy creates it when the app is built
+(`_initialize_observability_run`, `server/proxy.py`), but the observability DB
+path can be re-pointed **after** the app exists — `build_app()` calls
+`load_env()` with `override=True`, so a harness isolating one database per run
+has to re-assert `MORALSTACK_OBSERVABILITY_DB_PATH` afterwards. The pre-insert
+therefore re-ensures schema + run row against the path actually being written
+(`_ensure_run_row`, once per `(db_path, run_id)`); without it the proxy writes
+into a database that has no parent row and drops every request that reaches it
+before the controller's `DefaultPersistence.ensure_run_and_upsert_request`
+happens to create one.
 
 Writers: `init_db`, `create_run`, `upsert_request`, `update_request_response`,
 `update_request_domain`, `update_request_meta`, `delete_request`, `delete_run`

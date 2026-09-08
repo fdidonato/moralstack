@@ -808,6 +808,32 @@ def _initialize_observability_run() -> str:
         return ""
 
 
+# Schema + parent `runs` row are ensured once per (db_path, run_id), not per
+# request: neither changes while the proxy serves a run, and `init_db` is an
+# expensive multi-statement script. The path is part of the key because it can
+# change after the app is built (see `_ensure_request_row`).
+_run_row_ensured_for: tuple[str, str] | None = None
+_run_row_lock = threading.Lock()
+
+
+def _ensure_run_row(db_path: str, run_id: str) -> None:
+    """Create the schema and the parent `runs` row once per DB. Never raises."""
+    global _run_row_ensured_for
+    key = (db_path, run_id)
+    if _run_row_ensured_for == key:
+        return
+    with _run_row_lock:
+        if _run_row_ensured_for == key:
+            return
+        from moralstack.observability.sinks.sqlite_sink import create_run, init_db
+
+        if not init_db(db_path):
+            return
+        # INSERT OR IGNORE: a no-op when the run row is already there.
+        if create_run(run_id=run_id, run_type="proxy", meta={"source": "moralstack-server"}):
+            _run_row_ensured_for = key
+
+
 def _ensure_request_row(
     *,
     proxy_run_id: str,
@@ -828,14 +854,27 @@ def _ensure_request_row(
     called inside the persistence layer; the proxy bypasses that path, so we
     upsert the row explicitly here.
 
+    The schema and the parent `runs` row are created when the app is built, but
+    the observability DB path can be re-pointed afterwards: `build_app()` calls
+    `load_env()` with override=True, so a harness that isolates one database per
+    run has to re-assert MORALSTACK_OBSERVABILITY_DB_PATH after the app exists.
+    Both are therefore ensured here against the path actually being written —
+    without them every insert fails the FK (or finds no table) and is swallowed,
+    which silently drops the whole request from the audit trail, children
+    included.
+
     Best-effort: never raises. Skipped silently when observability is not
     configured (proxy_run_id == "").
     """
     if not proxy_run_id or not request_id:
         return
     try:
+        from moralstack.observability.config import get_db_path
         from moralstack.observability.sinks.sqlite_sink import upsert_request
 
+        db_path = get_db_path()
+        if db_path:
+            _ensure_run_row(db_path, proxy_run_id)
         upsert_request(
             run_id=proxy_run_id,
             request_id=request_id,

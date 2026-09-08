@@ -1749,3 +1749,62 @@ class TestCorrelationEnvWiring:
         store = _extract_default_correlation_store(client.app)
         assert store._ttl_seconds == 42.0
         assert store._max_entries == 7
+
+
+def test_request_row_survives_observability_db_repointing(tmp_path, monkeypatch):
+    """The proxy pre-insert must create its own `runs` parent row.
+
+    Benchmark harnesses build the app first and only then point
+    MORALSTACK_OBSERVABILITY_DB_PATH at a per-run database, because
+    `env_loader` re-applies `.env` with override=True during `build_app()`.
+    The `runs` row created at build time then lives in a different file, so
+    every `requests` insert violates the FK and is swallowed, taking the whole
+    request's telemetry down with it (children FK to `requests`).
+    """
+    from moralstack.observability import router
+    from moralstack.observability import service as service_module
+    from moralstack.observability.service import get_obs
+    from moralstack.observability.sinks.sqlite_sink import _get_connection
+
+    try:
+        get_obs().shutdown(timeout=1.0)
+    except Exception:
+        pass
+    service_module._obs_instance = None
+    router._sqlite_sink = None
+    router._jsonl_sink = None
+
+    build_db = str(tmp_path / "build-time.db")
+    (tmp_path / "run").mkdir()  # the harness creates the observability dir
+    run_db = str(tmp_path / "run" / "moralstack.db")
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", build_db)
+    monkeypatch.delenv("MORALSTACK_DB_PATH", raising=False)
+
+    mock_orchestrator = MagicMock()
+    mock_orchestrator.process = MagicMock(return_value=_make_result("NORMAL_COMPLETE", content="governed"))
+    mock_openai = MagicMock()
+    mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion())
+    app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+
+    # The harness re-points the DB after the app is built.
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", run_db)
+
+    with TestClient(app) as client:
+        for i in range(3):
+            response = client.post(
+                "/v1/chat/completions",
+                json={"model": "gpt-4o", "messages": [{"role": "user", "content": f"Q{i}"}]},
+            )
+            assert response.status_code == 200
+
+    conn = _get_connection(run_db)
+    try:
+        requests = conn.execute("SELECT request_id FROM requests").fetchall()
+        runs = conn.execute("SELECT run_id, run_type FROM runs").fetchall()
+    finally:
+        conn.close()
+
+    assert len(runs) == 1, "the proxy run row must exist in the database actually written"
+    assert runs[0]["run_type"] == "proxy"
+    assert len(requests) == 3, "no request row may be dropped by a swallowed FK violation"
