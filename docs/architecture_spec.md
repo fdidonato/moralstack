@@ -279,14 +279,16 @@ To reduce tokens and latency, the deliberative cycle supports:
 
 When the critic triggers a revision on soft violations, the policy `rewrite` at cycle 2+ uses a configurable model
 (`MORALSTACK_POLICY_REWRITE_MODEL`). If unset or empty, the primary `OPENAI_MODEL` is used (backward compatible). A
-lighter default (for example `gpt-4.1-nano` in `.env.template`) reduces rewrite latency because the call runs under
-explicit critic guidance and constrained-generation instructions; speculative first-pass generation remains on the
-primary model for baseline quality. To disable the split, set `MORALSTACK_POLICY_REWRITE_MODEL` to the same value as
-`OPENAI_MODEL`.
+lighter model reduces rewrite latency because the call runs under explicit critic guidance and constrained-generation
+instructions; speculative first-pass generation remains on the primary model for baseline quality. **Since 2026-09-09
+the shipped templates set this to `OPENAI_MODEL` (`gpt-4o`), i.e. no downgrade by default** — the split is opt-in, not
+opt-out, because a template that silently swaps the generator of the delivered answer makes any "same model, with
+governance" comparison wrong for the revised requests (see `docs/CODEBASE_FACTS.md`). To re-enable it, set
+`MORALSTACK_POLICY_REWRITE_MODEL` to a lighter model id.
 
-In benchmark testing, this optimization reduces rewrite step latency and, combined with
-`gpt-4.1-nano` on the simulator, contributed to large reductions versus heavier simulator
-and rewrite defaults (historically on the order of ~82s → ~60s mean deliberative latency
+In benchmark testing **under the former templates** (rewrite and simulator on
+`gpt-4.1-nano`), this optimization reduced rewrite step latency and contributed to large
+reductions versus heavier simulator and rewrite defaults (historically on the order of ~82s → ~60s mean deliberative latency
 in prior runs). **Benchmark run 12** (84 questions) reports overall MoralStack **mean**
 wall-clock **~36s** and **median ~26s**, with **98.8%** compliance unchanged and overall
 judge score **~9.27/10** (vs **7.83/10** baseline).

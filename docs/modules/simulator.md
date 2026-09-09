@@ -333,12 +333,16 @@ configuration is the single source of configuration — no CLI or code path over
   benchmark create a dedicated `OpenAIPolicy` with this model for the simulator; the rest of the stack keeps using
   `OPENAI_MODEL`.
 - **Effect**:
-    - **Set to a model id** (e.g. `gpt-4o-mini`, `gpt-4.1-nano` as in `.env.template` / `.env.minimal`): The simulator uses that model. Lets you use a smaller/cheaper model
+    - **Set to a model id** (e.g. `gpt-4o-mini`, `gpt-4.1-nano`): The simulator uses that model. Lets you use a smaller/cheaper model
       for simulation and a larger one for generation.
     - **Unset or empty**: The simulator uses the same policy (and model) as the rest of the pipeline.
 
-In the recommended configuration (`.env.template`), the simulator uses `gpt-4.1-nano`.
-Benchmark testing shows this reduces simulator-step cost versus heavier defaults; combined
+**Since 2026-09-09 the shipped templates set `MORALSTACK_SIMULATOR_MODEL=gpt-4o`**, matching
+the rest of the stack; they shipped `gpt-4.1-nano` before that. The change aligns the templates
+with the configuration all COMPL-AI campaigns actually ran under (every one of the 6,380
+simulator calls in the T=0/T=1 logs carries `model=gpt-4o`), so a reader copying the template
+reproduces the measured setup. Benchmark testing under the former default showed
+`gpt-4.1-nano` reduces simulator-step cost versus heavier defaults; combined
 with other stack optimizations, **benchmark run 12** reports overall mean wall-clock **~36s**
 (median **~26s**) with **98.8%** compliance maintained and overall judge score **~9.27/10**
 (vs **7.83/10** baseline), indicating minimal quality regression versus heavier simulator

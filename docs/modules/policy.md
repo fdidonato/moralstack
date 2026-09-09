@@ -174,8 +174,9 @@ If unset or empty, `rewrite()` uses the same model as `generate()` (`OPENAI_MODE
 draft on the primary model while allowing a lighter model for deliberative revisions (see `docs/architecture_spec.md`).
 
 The rewrite prompt also includes explicit constraints that prevent lighter models from adding
-new operational content not present in the original draft. This ensures that `gpt-4.1-nano`
-rewrites maintain quality comparable to `gpt-4o` rewrites on the benchmark (zero
+new operational content not present in the original draft. Measured when the templates still
+shipped the downgrade, `gpt-4.1-nano`
+rewrites maintained quality comparable to `gpt-4o` rewrites on the benchmark (zero
 information leakage; overall stack judge score ~9.27/10 on benchmark run 12).
 
 ---
@@ -186,7 +187,7 @@ information leakage; overall stack judge score ~9.27/10 on benchmark run 12).
 |----------|---------|
 | `OPENAI_API_KEY` | Required API key |
 | `OPENAI_MODEL` | Primary model for `generate()` and `refuse()` |
-| `MORALSTACK_POLICY_REWRITE_MODEL` | Optional; model for `rewrite()` (deliberative cycle 2+). Defaults to `OPENAI_MODEL` when unset. `.env.template` sets `gpt-4.1-nano` when you copy that file. |
+| `MORALSTACK_POLICY_REWRITE_MODEL` | Optional; model for `rewrite()` (deliberative cycle 2+). Defaults to `OPENAI_MODEL` when unset. `.env.template` sets `gpt-4o` (same as `OPENAI_MODEL`, i.e. no downgrade) since 2026-09-09; it shipped `gpt-4.1-nano` before that. |
 | `OPENAI_TEMPERATURE` | Sampling temperature for the delivered answer (default `0.7`). |
 | `OPENAI_TOP_P` | Nucleus sampling `top_p` for the delivered answer (default `0.9`). |
 | `OPENAI_MAX_TOKENS` | Max output tokens for the delivered answer — `generate()` / `generate_messages()` / `rewrite()` and the speculative draft (default `4096`, aligned with COMPL-AI requests). |

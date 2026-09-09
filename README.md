@@ -374,7 +374,7 @@ existing env vars (`override=True`); optional empty values are purged after load
 |---|---|---|
 | `OPENAI_API_KEY` | *(required)* | Your OpenAI API key |
 | `OPENAI_MODEL` | `gpt-4o` | Model used by all pipeline modules |
-| `MORALSTACK_POLICY_REWRITE_MODEL` | same as `OPENAI_MODEL` | Model for deliberative `rewrite()` at cycle 2+. `.env.template` sets `gpt-4.1-nano` for lower rewrite latency |
+| `MORALSTACK_POLICY_REWRITE_MODEL` | same as `OPENAI_MODEL` | Model for deliberative `rewrite()` at cycle 2+. The templates set it to `gpt-4o` (no downgrade); set a lighter model id for lower rewrite latency |
 | `OPENAI_TIMEOUT_MS` | `60000` | Per-call timeout in milliseconds |
 | `OPENAI_MAX_RETRIES` | `3` | Retry count on transient errors |
 | `OPENAI_TEMPERATURE` | `0.1` | Temperature for all modules |
@@ -394,7 +394,7 @@ existing env vars (`override=True`); optional empty values are purged after load
 | Component | Default model | Override variable |
 |---|---|---|
 | Policy (generation) | `gpt-4o` | `OPENAI_MODEL` |
-| Policy (rewrite) | same as primary, or `gpt-4.1-nano` in `.env.template` | `MORALSTACK_POLICY_REWRITE_MODEL` |
+| Policy (rewrite) | same as primary | `MORALSTACK_POLICY_REWRITE_MODEL` |
 | Risk estimator | follows `OPENAI_MODEL` | `MORALSTACK_RISK_MODEL` |
 | Critic | follows `OPENAI_MODEL` | `MORALSTACK_CRITIC_MODEL` |
 | Simulator | follows `OPENAI_MODEL` | `MORALSTACK_SIMULATOR_MODEL` |
@@ -433,9 +433,10 @@ MoralStack makes deliberate trade-offs:
   decoding, parallel risk estimation, lighter per-module models, structured JSON output
   enforcement, and soft-revision prompt constraints; early-exit and context-mode switching are
   planned.
-- **Multi-model cost** — a single deliberative request makes 7–9 LLM calls. `.env.minimal` ships
-  a cost-conscious profile (`gpt-4.1-nano` for rewrite/simulator, `gpt-4o-mini` for
-  perspectives), all overridable.
+- **Multi-model cost** — a single deliberative request makes 7–9 LLM calls. `.env.minimal` keeps
+  rewrite and simulator on `OPENAI_MODEL` and uses `gpt-4o-mini` only for perspectives; set
+  `MORALSTACK_POLICY_REWRITE_MODEL` / `MORALSTACK_SIMULATOR_MODEL` to a lighter model for a
+  cost-conscious profile.
 - **LLM non-determinism** — despite low temperatures, outputs can vary between runs;
   deterministic in-code guardrails bound the variance, but perfect reproducibility is not
   guaranteed.

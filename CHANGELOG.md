@@ -80,6 +80,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The shipped templates no longer downgrade the rewrite and simulator models.**
+  `.env.template` and `.env.minimal` set `MORALSTACK_POLICY_REWRITE_MODEL` and
+  `MORALSTACK_SIMULATOR_MODEL` to `gpt-4o` (i.e. `OPENAI_MODEL`) instead of
+  `gpt-4.1-nano`. The rewrite one is the load-bearing half: a revised answer is still
+  the answer delivered to the user, so the previous default meant that whenever
+  governance revised something, the text the caller received came from a different,
+  much smaller model than the one they asked for — measured on the round-3 benchmark as
+  **736 of 7,524 delivered answers (9.8%)**, and that 9.8% is not a random sample, it is
+  exactly the population where governance found something to revise. It also made any
+  "same model, with governance" comparison wrong for those requests.
+  The change additionally aligns the templates with the configuration every COMPL-AI
+  campaign actually ran under: all 6,380 `simulator` calls and all 1,716 `policy`
+  `rewrite`/`soft_revision` calls in the T=0 and T=1 logs carry `model=gpt-4o`, so the
+  campaigns were never using the template default for these two slots and a reader
+  copying the template now reproduces the measured setup.
+  **This costs money**: simulator and rewrite calls move from `gpt-4.1-nano` rates to
+  `gpt-4o` rates for anyone copying a template. The downgrade is now opt-in — set either
+  variable to a lighter model id to restore it. Docs corrected in the same change
+  (`README.md`, `docs/architecture_spec.md`, `docs/modules/policy.md`,
+  `docs/modules/simulator.md`, `docs/CODEBASE_FACTS.md`), since eight statements
+  described the old default as the shipped one.
+
 - **The generation system prompt no longer contradicts itself, and branch 4 says
   what to do instead of what to value.** Two text edits, no logic touched.
   `POLICY_SYSTEM_PROMPT` branch 4 (`DEPTH WHEN NO STRICT FORMAT`): *multiple
