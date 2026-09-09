@@ -208,7 +208,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ablation: 0 downgrades in 40, the one discordant case being an upgrade where the
   schema matches the logged value better than plain JSON mode. The cause was the replay
   harness, which sends no developer contract — its fidelity control goes from 62% to 98%
-  once the contract is restored. Not covered: the deliberative path *with* a contract.
+  once the contract is restored.
+  **Follow-up 2026-09-09, covering the deliberative path with a contract** (50 requests,
+  5 per task, replayed through the proxy with the developer contract and history the
+  campaigns actually sent): 48/50 decisions coherent, zero failed retries anywhere, and
+  the simulator's discard rate on those same prompts goes from 17.3% to 0%.
+  One qualification found there and worth stating plainly: on the `estimate_intent`
+  schema the strict `response_format` **does** perturb `request_type` — on a prompt with
+  a clean fidelity control the logged value drops from 29/30 to 18/30 (Fisher exact
+  p=0.0011). It is not a drift away from the campaign values (both conditions agree with
+  the log 12/15), it does not appear on the harm-signal schema (0 changes in 40), key
+  ordering is ruled out as the mechanism, and the one decision it moved went *toward*
+  more caution — but the mechanism is unidentified and the aggregate direction across
+  the enum is not established. See `docs/CODEBASE_FACTS.md`.
   Tests: `tests/test_structured_outputs_modules.py`.
 
 - **Failed risk-estimator retries are now recorded instead of only logged.** The
