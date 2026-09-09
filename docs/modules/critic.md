@@ -441,6 +441,25 @@ For multi-turn requests, the Critic receives the developer contract plus recent 
 The prompt declares `context_mode=role_serialized_truncated; last 3 turns`, and the deliberation runner emits
 `CONTEXT_SHAPE_RECORDED` for the critic so observability can compare available prior turns with the history window used.
 
+**The window is configurable since 2026-09-09** — `MORALSTACK_HISTORY_MAX_CHARS_PER_TURN` (default **200**,
+unchanged) and `MORALSTACK_HISTORY_MAX_TURNS` (default **3**, unchanged). Both are read from
+`moralstack/utils/history_window.py`, shared with `build_context_fingerprint`: the module's view and the
+cache key must move together, or two conversations identical up to the cut and different afterwards collide
+on one cache entry. `tests/test_history_window.py` pins them byte-for-byte and fails if either is hardcoded again.
+
+**The generation path is deliberately not affected.** The policy call that produces the delivered answer
+receives the **full** history — verified on the campaign logs by token accounting: on a request whose history
+was 319 tokens, `policy generate (speculative)` carried +398 tokens of context against the risk estimator's
++235, i.e. full against truncated. So a governed answer is written with the same context an ungoverned call
+would have had; only the *judging* modules see the compressed view.
+
+**What widening it does and does not buy.** A counterfactual during the `CORE.DEVCONTRACT.1` investigation
+showed the wider window does **not** change hard-violation verdicts (6/6 flagged either way). What it changes
+is the *rationale*: at 200 chars the critic accused a draft of containing "multiple views" — exactly what the
+contract required, in the part of the one-shot example the cut had hidden. Cost of removing the truncation
+entirely for critic/simulator/hindsight: ~$0.9 per COMPL-AI campaign (measured over 4,244 requests whose
+history actually exceeded the cut).
+
 ---
 
 ## See Also

@@ -16,6 +16,8 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
+from moralstack.utils.history_window import recent_turns, truncate_turn_content
+
 T = TypeVar("T")
 
 
@@ -329,16 +331,16 @@ def build_context_fingerprint(
             parts.append(f"dc:{contract_hash}")
 
     if conversation_history:
-        try:
-            last_turns = list(conversation_history)[-3:]
-        except TypeError:
-            last_turns = []
+        # Same window as the modules see (moralstack/utils/history_window.py):
+        # hashing less than a module is shown would let two conversations that
+        # differ only past the cut collide on one cache entry.
+        last_turns = recent_turns(conversation_history)
 
         if last_turns:
             turn_strings: list[str] = []
             for turn in last_turns:
                 role = str(getattr(turn, "role", "") or "")
-                content = str(getattr(turn, "content", "") or "")[:200]
+                content = truncate_turn_content(str(getattr(turn, "content", "") or ""))
                 turn_strings.append(f"{role}:{content}")
             turns_blob = "|".join(turn_strings)
             history_hash = hashlib.md5(turns_blob.encode()).hexdigest()[:12]

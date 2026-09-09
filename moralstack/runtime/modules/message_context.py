@@ -6,6 +6,7 @@ from typing import Any
 
 from moralstack.core.types import Turn
 from moralstack.orchestration.contract import DeveloperContract
+from moralstack.utils.history_window import recent_turns, truncate_turn_content
 
 _CONTEXT_REFERENCE_INSTRUCTION = (
     "Consider the preceding developer message(s), if any, as the deployer contract. "
@@ -27,11 +28,11 @@ def build_module_messages(
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     if developer_contract is not None and developer_contract.raw_text:
         messages.append({"role": "developer", "content": developer_contract.raw_text})
-    for turn in list(conversation_history or [])[-3:]:
+    for turn in recent_turns(conversation_history):
         role = getattr(turn, "role", "") or ""
         if role not in {"user", "assistant"}:
             continue
-        messages.append({"role": role, "content": (getattr(turn, "content", "") or "")[:200]})
+        messages.append({"role": role, "content": truncate_turn_content(getattr(turn, "content", ""))})
     content = user_prompt if not retry_prompt else f"{user_prompt}\n\n{retry_prompt}"
     if developer_contract is not None or conversation_history:
         content = _CONTEXT_REFERENCE_INSTRUCTION + content
@@ -49,9 +50,11 @@ def message_sections(
         "developer_messages": (
             [developer_contract.raw_text] if developer_contract is not None and developer_contract.raw_text else []
         ),
+        # Content is stored in full on purpose: this is the audit record, and the
+        # only source from which a faithful replay can rebuild what the module saw.
         "history_messages": [
             {"role": getattr(turn, "role", "") or "unknown", "content": getattr(turn, "content", "") or ""}
-            for turn in list(conversation_history or [])[-3:]
+            for turn in recent_turns(conversation_history)
         ],
         "final_user_message": "",
     }

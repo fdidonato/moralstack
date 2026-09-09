@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`MORALSTACK_HISTORY_MAX_CHARS_PER_TURN` / `MORALSTACK_HISTORY_MAX_TURNS` — the
+  conversation window shown to the judging modules is now configurable, default
+  unchanged (200 chars, 3 turns), so nothing moves unless the variable is set.**
+  The critic, simulator and hindsight judge a draft through a compressed view of the
+  conversation while the policy that *writes* the answer receives the full history —
+  verified on the campaign logs by token accounting (on a request whose history was 319
+  tokens, `policy generate` carried +398 tokens of context against the risk estimator's
+  +235). That asymmetry is deliberate and stays: the governed answer is written with the
+  same context an ungoverned call would have had, and only the judges see less.
+  The window and `build_context_fingerprint` now read the same source
+  (`moralstack/utils/history_window.py`). They were two hardcoded `200`s in files with no
+  knowledge of each other, and that pairing is a correctness constraint rather than a
+  style one: a module shown more content than the fingerprint hashes lets two
+  conversations identical up to the cut and different afterwards collide on one cache
+  entry, serving the second the first one's result. `tests/test_history_window.py` pins
+  them byte-for-byte and was confirmed to fail when either side is hardcoded again.
+  Worth knowing before raising it: a counterfactual during the `CORE.DEVCONTRACT.1`
+  investigation showed a wider window does **not** change hard-violation verdicts (6/6
+  either way). What it changes is the rationale — at 200 chars the critic accused a draft
+  of containing "multiple views", which was exactly what the contract required, in the
+  part of the one-shot example the cut had hidden. Removing the truncation entirely for
+  these three modules costs ~$0.9 per COMPL-AI campaign, measured over the 4,244 requests
+  whose history actually exceeded the cut. The risk estimator, perspectives and the
+  retrieval query keep their own hardcoded windows: widening those changes routing and
+  which principles are retrieved, and was scoped out deliberately.
+
 - **`supports_json_schema()` — model capability check for strict Structured Outputs.**
   `PolicyLLM._complete` applies it centrally: a `json_schema` `response_format` is
   degraded to `{"type": "json_object"}` on a model that does not support it, mirroring

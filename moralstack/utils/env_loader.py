@@ -55,6 +55,9 @@ _OPTIONAL_ENV_VARS = frozenset(
         "MORALSTACK_CRITIC_TOP_K_PRINCIPLES",
         "MORALSTACK_CRITIC_INCLUDE_EXAMPLES",
         "MORALSTACK_CRITIC_MAX_RULE_LEN",
+        # Conversation window shown to the judging modules (shared with the cache fingerprint)
+        "MORALSTACK_HISTORY_MAX_CHARS_PER_TURN",
+        "MORALSTACK_HISTORY_MAX_TURNS",
         # Perspective (optional overrides)
         "MORALSTACK_PERSPECTIVES_MODEL",
         "MORALSTACK_PERSPECTIVES_MAX_RETRIES",
