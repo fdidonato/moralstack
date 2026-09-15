@@ -106,6 +106,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **AI review harness: the external Codex reviewer is replaced by an internal,
+  isolated `adversarial-reviewer` sub-agent** (`.claude/agents/adversarial-reviewer.md`:
+  read-only tools, `model: claude-fable-5-1` pinned in its frontmatter — a model
+  different from, and more capable than, the Sonnet implementer's; `opus` is the
+  documented fallback). The agentic pipeline now runs entirely inside Claude Code:
+  `/ai-review-plan-with-codex` → `/ai-review-plan`, `/ai-review-diff-with-codex` →
+  `/ai-review-diff` (both launch the sub-agent through the `Agent` tool instead of
+  `Skill(codex:rescue)`); the rubrics move to `ai/prompts/{plan,diff}-review-template.md`
+  with only the Codex runtime phrasing removed; review artifacts are named
+  `ai/reviews/{plan,diff}-review-*` and `ai/prompts/generated-{plan,diff}-review-*`
+  (still gitignored); `docs/ai/CODEX_REVIEW_GUIDE.md` → `docs/ai/REVIEW_GUIDE.md`.
+  Every review now starts with a `Reviewer model: <id>` line so the independence
+  claim is auditable, and the commands never pass a `model:` override. Also fixes
+  `.claude/commands/ui-loop.md` and `.claude/settings.ui-loop.json`, which still named
+  the `Task` tool: per the sub-agent docs (code.claude.com/docs/en/sub-agents) it was
+  renamed to `Agent` in 2.1.63, and in the 2.1.272 binary `Task` only survives as a
+  legacy alias applied when tool-name rules are parsed — so it was not broken, but it
+  is not the canonical name, and every `allowed-tools` line and tracked allowlist now
+  says `Agent`. Historical mentions of Codex in code comments, tests and past changelog
+  entries are left as history.
+
 - **The shipped templates no longer downgrade the rewrite and simulator models.**
   `.env.template` and `.env.minimal` set `MORALSTACK_POLICY_REWRITE_MODEL` and
   `MORALSTACK_SIMULATOR_MODEL` to `gpt-4o` (i.e. `OPENAI_MODEL`) instead of

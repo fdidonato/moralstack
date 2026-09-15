@@ -1,8 +1,9 @@
 # Review policy — what blocks, what doesn't, when to proceed
 
-This policy governs how Codex's findings (plan review and diff review) gate the
-workflow. `/ai-review-plan-with-codex` and `/ai-review-diff-with-codex`
-classify every finding into one of four buckets and **never hide a blocker**.
+This policy governs how the `adversarial-reviewer` sub-agent's findings (plan
+review and diff review) gate the workflow. `/ai-review-plan` and
+`/ai-review-diff` classify every finding into one of four buckets and **never
+hide a blocker**.
 
 ## Classification
 
@@ -22,7 +23,7 @@ classify every finding into one of four buckets and **never hide a blocker**.
 - **QUESTION** — needs a human/Claude answer before the item can be classified;
   treat as blocking until answered if it concerns an invariant.
 
-## Codex verdicts → action
+## Reviewer verdicts → action
 
 | Verdict | Plan stage | Diff stage |
 | --- | --- | --- |
@@ -45,4 +46,7 @@ classify every finding into one of four buckets and **never hide a blocker**.
 - No weakening, skipping, or deleting tests to pass review (PROJECT_SPEC §7).
 - No `--no-verify`, no force-push, no auto-commit (PROJECT_SPEC §9; enforced by
   `guard_dangerous_git.py`).
-- Claude integrates and reports faithfully; Codex is the reviewer of record.
+- Claude (the orchestrator) integrates and reports faithfully; the
+  `adversarial-reviewer` sub-agent — isolated context, read-only, a model
+  different from the implementer's — is the reviewer of record. The orchestrator
+  never substitutes its own judgment for a review it could not obtain.

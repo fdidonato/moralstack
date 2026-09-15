@@ -44,7 +44,7 @@ Correlation with plan size: `ai/plans/token-accounting-p0-2b-p11.md` = **247 KB*
 The *content* of Codex's findings is semantic (not gate-able), but the plan's
 **structure** is: a deterministic plan-lint can check that the plan contains the
 sections Codex systematically asks for (invariant mapping §5, per-route observability
-impact, byte-equality impact, test assertion-strength) before spending a Codex round.
+impact, byte-equality impact, test assertion-strength) before spending a review round.
 It reduces the rounds, it does not zero them.
 
 ### B2 — Recurring diff-review fixpass (2 of 4 tasks required a corrective pass)

@@ -8,17 +8,19 @@ Plan under finalization: **$ARGUMENTS**.
 
 Steps:
 1. Launch the **final-integrator** agent. It reads: the plan
-   (`$ARGUMENTS`), the Codex plan review and diff review
-   (`ai/reviews/codex-*-review-*.md`), the handoff and implementation report
+   (`$ARGUMENTS`), the adversarial-reviewer plan review and diff review
+   (`ai/reviews/plan-review-*.md`, `ai/reviews/diff-review-*.md`), the handoff
+   and implementation report
    (`ai/handoffs/*`), and the collected diff
    (`ai/reviews/diff-after-*.md`).
 2. Before declaring READY, ensure verification actually happened: if MoralStack
    code/tests changed, run (or have the user run) the **pre-commit-verifier**
    agent — full `python -m pytest` + `pre-commit run -a` — and cite the real
    outcome. Do not claim green you did not observe (PROJECT_SPEC §10).
-3. Produce the final synthesis: what was planned, what Codex contested, what was
-   corrected, what the implementer produced, what the diff shows, what Codex found
-   in the diff review, the verification result, and the final status:
+3. Produce the final synthesis: what was planned, what the reviewer contested,
+   what was corrected, what the implementer produced, what the diff shows, what
+   the reviewer found in the diff review, the verification result, and the final
+   status:
    - **READY** — criteria met, no BLOCKING items, verification green;
    - **NEEDS_FIXES** — enumerate the remaining fixes;
    - **BLOCKED** — state the blocker and who must decide.

@@ -2,8 +2,9 @@
 name: final-integrator
 description: >-
   Integrates the whole agentic cycle into one auditable synthesis — what was
-  planned, what Codex contested, what was corrected, what the Claude Sonnet
-  implementer produced, what the diff shows, what Codex's final review found —
+  planned, what the adversarial-reviewer contested, what was corrected, what the
+  Claude Sonnet implementer produced, what the diff shows, what the reviewer's
+  final diff review found —
   and assigns a final
   status (READY / NEEDS_FIXES / BLOCKED). Does NOT commit or push.
 tools: Read, Grep, Glob, Bash
@@ -15,10 +16,10 @@ You do not commit, push, or edit application code. You report.
 
 ## Inputs to read
 - Plan: `ai/plans/<task>.md`
-- Codex plan review: `ai/reviews/codex-plan-review-*.md`
+- Plan review (adversarial-reviewer): `ai/reviews/plan-review-*.md`
 - Handoff + implementation report: `ai/handoffs/<task>-*`
 - Collected diff: `ai/reviews/diff-after-*.md`
-- Codex diff review: `ai/reviews/codex-diff-review-*.md`
+- Diff review (adversarial-reviewer): `ai/reviews/diff-review-*.md`
 - The pre-commit-verifier agent's result, if a verification run was done.
 
 ## Method
@@ -35,7 +36,7 @@ You do not commit, push, or edit application code. You report.
 ## What was planned
 One paragraph + link to the plan.
 
-## What Codex contested (plan)
+## What the reviewer contested (plan)
 The blocking/non-blocking items from the plan review.
 
 ## What was corrected
@@ -47,7 +48,7 @@ Summary of the actual change from the implementation report + diff.
 ## What the diff shows
 Files touched, scope adherence, anything out of scope.
 
-## What Codex found (diff review)
+## What the reviewer found (diff review)
 Final review verdict + BLOCKING / NON_BLOCKING / SUGGESTION items.
 
 ## Verification
