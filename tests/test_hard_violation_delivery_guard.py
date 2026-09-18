@@ -35,8 +35,13 @@ from moralstack.models.risk import (
 from moralstack.models.risk.schema import RiskEstimation
 from moralstack.orchestration.controller import OrchestrationController
 from moralstack.orchestration.deliberation_runner import (
+    HARD_VIOLATION_REGENERATION_ACTION,
     HARD_VIOLATION_REGENERATION_FAILED,
+    HARD_VIOLATION_REVALIDATION_ACTION,
     HARD_VIOLATION_STILL_VIOLATING,
+    SEQ_HARD_VIOLATION_REGENERATION,
+    SEQ_HARD_VIOLATION_REVALIDATION,
+    SEQ_POLICY,
     DeliberationRunner,
 )
 from moralstack.orchestration.null_persistence import NullPersistence
@@ -786,7 +791,12 @@ class TestLlmCallsPersisted:
     def test_both_new_calls_appear_in_llm_calls(self, monkeypatch: Any) -> None:
         """T6: the regeneration and the re-critique are both persisted via
         `record_llm_call` (the method the investigation used to measure the
-        defect -- counting `rewrite`/`generate` rows in `llm_calls`)."""
+        defect -- counting `rewrite`/`generate` rows in `llm_calls`), each
+        under its own distinguishable action, in the cycle that raised the
+        violation (never cycle 0) and with the guard's own sequence numbers --
+        so a journey/graph view cannot mistake the regeneration for a
+        pre-deliberation fast-path draft, nor tier the re-critique next to
+        the cycle's own critique."""
         captured: list[dict[str, Any]] = []
 
         def _record(_logger: Any, _diag: Any, persist_kwargs: dict[str, Any] | None) -> None:
@@ -798,12 +808,43 @@ class TestLlmCallsPersisted:
         critic = MagicMock()
         critic.critique.return_value = _Critique(violations=[], violated_hard=False, decision="PROCEED")
         runner = _build_runner(critic=critic)
-        state = DeliberationState(cycle=1, draft_response="REJECTED DRAFT T6")
+        state = DeliberationState(cycle=2, draft_response="REJECTED DRAFT T6")
         decision = _hard_decision()
         request = ProcessedRequest(prompt="p", request_id="req-t6")
 
         runner.enforce_no_rejected_draft_delivery(request, state, decision, risk_estimation=_risk_estimation())
 
-        actions = [c.get("action") for c in captured]
-        assert any("safe_complete_path" in (a or "") for a in actions), actions
-        assert any("hard_violation_revalidation" in (a or "") for a in actions), actions
+        by_action = {c.get("action"): c for c in captured}
+        assert set(by_action) == {HARD_VIOLATION_REGENERATION_ACTION, HARD_VIOLATION_REVALIDATION_ACTION}, captured
+        regen = by_action[HARD_VIOLATION_REGENERATION_ACTION]
+        recrit = by_action[HARD_VIOLATION_REVALIDATION_ACTION]
+        assert regen["module"] == "policy" and regen["phase"] == "policy_generate"
+        assert recrit["module"] == "critic" and recrit["phase"] == "critic"
+        assert regen["cycle"] == 2 and recrit["cycle"] == 2
+        assert regen["sequence_in_cycle"] == SEQ_HARD_VIOLATION_REGENERATION
+        assert recrit["sequence_in_cycle"] == SEQ_HARD_VIOLATION_REVALIDATION
+        assert SEQ_HARD_VIOLATION_REGENERATION > SEQ_POLICY
+
+    def test_fast_path_safe_complete_row_is_byte_unchanged(self, monkeypatch: Any) -> None:
+        """The fast-path SAFE_COMPLETE generation (`run_safe_complete_path`,
+        no guard involved) keeps its historical persisted coordinates --
+        cycle 0, `SEQ_POLICY`, action `generate (safe_complete_path)` -- so
+        only the guard's rows changed shape."""
+        captured: list[dict[str, Any]] = []
+
+        def _record(_logger: Any, _diag: Any, persist_kwargs: dict[str, Any] | None) -> None:
+            if persist_kwargs is not None:
+                captured.append(persist_kwargs)
+
+        monkeypatch.setattr("moralstack.orchestration.deliberation_runner.record_llm_call", _record)
+
+        runner = _build_runner()
+        request = ProcessedRequest(prompt="p", request_id="req-t6-fastpath")
+
+        runner._generate_safe_complete_text(request, _risk_estimation())
+
+        assert len(captured) == 1, captured
+        row = captured[0]
+        assert row["action"] == "generate (safe_complete_path)"
+        assert row["cycle"] == 0
+        assert row["sequence_in_cycle"] == SEQ_POLICY

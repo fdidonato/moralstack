@@ -8,6 +8,16 @@ import pytest
 
 pytest.importorskip("fastapi")
 
+from moralstack.orchestration.deliberation_runner import (
+    HARD_VIOLATION_REGENERATION_ACTION,
+    HARD_VIOLATION_REVALIDATION_ACTION,
+    SEQ_CRITIC,
+    SEQ_HARD_VIOLATION_REGENERATION,
+    SEQ_HARD_VIOLATION_REVALIDATION,
+    SEQ_PERSPECTIVES,
+    SEQ_POLICY,
+    SEQ_SIMULATOR,
+)
 from moralstack.orchestration.orchestration_event_taxonomy import (
     COMPLIANCE_DRAFT_REGENERATED,
     COMPLIANCE_DRAFT_REUSED,
@@ -24,11 +34,15 @@ from moralstack.orchestration.orchestration_event_taxonomy import (
     SIMULATOR_SKIPPED,
 )
 from moralstack.ui.app import (
+    _SEQ_SYNTHETIC_CALIBRATION,
+    _SEQ_SYNTHETIC_PATH_ROUTING,
     _build_final_revalidation_info,
     _build_path_badge_info,
     _build_proxy_output_info,
+    _compute_connector_labels,
     _group_calls_into_tiers_and_enrich,
     _journey_sort_key,
+    _rehome_legacy_hard_violation_guard_calls,
     _synthetic_compliance_downgrade_nodes,
     _synthetic_convergence_node,
     _synthetic_final_revalidation_call_from_events,
@@ -424,3 +438,268 @@ def test_synthetic_module_skipped_nodes():
     mods = {n["module"] for n in nodes}
     assert mods == {"simulator", "critic"}
     assert all("skipped" in n["semantic_badges"] for n in nodes)
+
+
+# ---------------------------------------------------------------------------
+# Hard-violation delivery guard rows: placement, legacy re-homing, labels.
+# The graph claims "exact execution order"; these pin that the guard's
+# regeneration + re-critique render after the cycle that raised the violation
+# (never in "Initial assessment") and that the synthetic calibration / routing
+# governance nodes precede the policy draft they cause.
+# ---------------------------------------------------------------------------
+
+
+def _row(**kw) -> dict:
+    return kw
+
+
+def _delib_cycle_rows(*, regen_seq: int, recrit_seq: int, regen_cycle: int = 1) -> list[dict]:
+    """One deliberation cycle (full_parallel: critic/simulator/perspectives
+    overlap) followed by the guard's two rows, in real wall-clock order."""
+    return [
+        _row(
+            id=1,
+            cycle=1,
+            sequence_in_cycle=SEQ_POLICY,
+            started_at=1000,
+            duration_ms=0,
+            module="policy",
+            phase="policy_generate",
+            action="generate (speculative-reuse)",
+        ),
+        _row(
+            id=2,
+            cycle=1,
+            sequence_in_cycle=SEQ_CRITIC,
+            started_at=1001,
+            duration_ms=2300,
+            module="critic",
+            phase="critic",
+            action="critique",
+        ),
+        _row(
+            id=3,
+            cycle=1,
+            sequence_in_cycle=SEQ_SIMULATOR,
+            started_at=1001,
+            duration_ms=3700,
+            module="simulator",
+            phase="simulator",
+            action="simulate",
+        ),
+        _row(
+            id=4,
+            cycle=1,
+            sequence_in_cycle=SEQ_PERSPECTIVES,
+            started_at=1003,
+            duration_ms=4100,
+            module="perspectives",
+            phase="perspectives",
+            action="evaluate",
+        ),
+        _row(
+            id=5,
+            cycle=regen_cycle,
+            sequence_in_cycle=regen_seq,
+            started_at=5200,
+            duration_ms=1900,
+            module="policy",
+            phase="policy_generate",
+            action="generate (safe_complete_path)",
+        ),
+        _row(
+            id=6,
+            cycle=1,
+            sequence_in_cycle=recrit_seq,
+            started_at=7100,
+            duration_ms=1700,
+            module="critic",
+            phase="critic",
+            action=HARD_VIOLATION_REVALIDATION_ACTION,
+        ),
+    ]
+
+
+def test_guard_rows_tier_after_every_deliberation_module_and_never_share_the_critic_tier():
+    rows = _delib_cycle_rows(regen_seq=SEQ_HARD_VIOLATION_REGENERATION, recrit_seq=SEQ_HARD_VIOLATION_REVALIDATION)
+    rows[4]["action"] = HARD_VIOLATION_REGENERATION_ACTION
+    tiers = _group_calls_into_tiers_and_enrich(rows)
+    flat = [[c["action"] for c in tier] for tier in tiers]
+    assert flat == [
+        ["generate (speculative-reuse)"],
+        ["critique"],
+        ["simulate", "evaluate"],
+        [HARD_VIOLATION_REGENERATION_ACTION],
+        [HARD_VIOLATION_REVALIDATION_ACTION],
+    ]
+    labels = _compute_connector_labels(tiers)
+    assert labels == [
+        "draft",
+        "scheduled in parallel with critic (not gated)",
+        "hard violation → regenerate under SAFE_COMPLETE",
+        "re-critique regenerated draft",
+    ]
+
+
+def test_critic_gated_scheduler_keeps_gate_proceed_label():
+    """simulator/perspectives that started after the critic ended waited for its verdict."""
+    tiers = [
+        [{"module": "critic", "started_at": 1000, "duration_ms": 500}],
+        [
+            {"module": "simulator", "started_at": 1600, "duration_ms": 100},
+            {"module": "perspectives", "started_at": 1600, "duration_ms": 100},
+        ],
+    ]
+    assert _compute_connector_labels(tiers) == ["gate: proceed"]
+    # Legacy rows without timestamps stay on the historical label.
+    tiers_no_ts = [[{"module": "critic"}], [{"module": "simulator"}, {"module": "perspectives"}]]
+    assert _compute_connector_labels(tiers_no_ts) == ["gate: proceed"]
+
+
+def test_rehome_legacy_guard_rows_into_the_violation_cycle():
+    """Rows persisted before the guard got its own coordinates (regeneration as
+    the cycle-0 fast-path draft, re-critique as SEQ_CRITIC) are re-homed so the
+    graph renders them after the deliberation, not before it."""
+    rows = _delib_cycle_rows(regen_seq=SEQ_POLICY, recrit_seq=SEQ_CRITIC, regen_cycle=0)
+    changed = _rehome_legacy_hard_violation_guard_calls(rows)
+    assert {c["id"] for c in changed} == {5, 6}
+    regen, recrit = rows[4], rows[5]
+    assert regen["cycle"] == 1
+    assert regen["sequence_in_cycle"] == SEQ_HARD_VIOLATION_REGENERATION
+    assert regen["action"] == HARD_VIOLATION_REGENERATION_ACTION
+    assert regen["_legacy_guard_rehomed"] is True
+    assert recrit["sequence_in_cycle"] == SEQ_HARD_VIOLATION_REVALIDATION
+    assert recrit["_legacy_guard_rehomed"] is True
+    # After re-homing the legacy request renders exactly like a new one.
+    tiers = _group_calls_into_tiers_and_enrich(rows)
+    assert [[c["action"] for c in tier] for tier in tiers][-2:] == [
+        [HARD_VIOLATION_REGENERATION_ACTION],
+        [HARD_VIOLATION_REVALIDATION_ACTION],
+    ]
+
+
+def test_rehome_handles_fail_closed_regeneration_without_recritique():
+    """Regeneration produced empty text -> guard failed closed, no re-critique
+    row exists; the cycle-0 row is still the guard's (it postdates the cycle)."""
+    rows = _delib_cycle_rows(regen_seq=SEQ_POLICY, recrit_seq=SEQ_CRITIC, regen_cycle=0)[:5]
+    changed = _rehome_legacy_hard_violation_guard_calls(rows)
+    assert [c["id"] for c in changed] == [5]
+    assert rows[4]["cycle"] == 1 and rows[4]["sequence_in_cycle"] == SEQ_HARD_VIOLATION_REGENERATION
+
+
+def test_rehome_leaves_fast_path_safe_complete_and_new_rows_untouched():
+    # Fast path: a cycle-0 SAFE_COMPLETE draft with no deliberation cycle at all.
+    fast_path = [
+        _row(
+            id=1, cycle=0, sequence_in_cycle=-9, started_at=100, module="risk_estimator", phase="r", action="estimate_intent"
+        ),
+        _row(
+            id=2,
+            cycle=0,
+            sequence_in_cycle=SEQ_POLICY,
+            started_at=900,
+            module="policy",
+            phase="policy_generate",
+            action="generate (safe_complete_path)",
+        ),
+    ]
+    assert _rehome_legacy_hard_violation_guard_calls(fast_path) == []
+    assert fast_path[1]["cycle"] == 0 and fast_path[1]["action"] == "generate (safe_complete_path)"
+    # New-shape rows already carry the guard's coordinates.
+    new_rows = _delib_cycle_rows(regen_seq=SEQ_HARD_VIOLATION_REGENERATION, recrit_seq=SEQ_HARD_VIOLATION_REVALIDATION)
+    new_rows[4]["action"] = HARD_VIOLATION_REGENERATION_ACTION
+    assert _rehome_legacy_hard_violation_guard_calls(new_rows) == []
+    assert all("_legacy_guard_rehomed" not in c for c in new_rows)
+
+
+def test_cycle0_synthetic_calibration_and_routing_precede_the_policy_draft():
+    """The synthetic governance nodes carry a sequence so they are tiered where
+    the controller runs them (after the risk minis / before the branch), not
+    appended after the fast-path policy draft they precede."""
+    calls = [
+        _row(
+            id=9,
+            cycle=0,
+            sequence_in_cycle=SEQ_POLICY,
+            started_at=9000,
+            module="policy",
+            phase="policy_generate",
+            action="generate (safe_complete_path)",
+        ),
+        _row(
+            cycle=0,
+            sequence_in_cycle=_SEQ_SYNTHETIC_PATH_ROUTING,
+            started_at=7001,
+            module="orchestrator",
+            phase="path_routing",
+            action="route_resolution",
+            is_synthetic=True,
+        ),
+        _row(
+            id=4,
+            cycle=0,
+            sequence_in_cycle=-5,
+            started_at=7500,
+            module="compliance_layer",
+            phase="evaluate",
+            action="evaluate",
+        ),
+        _row(
+            cycle=0,
+            sequence_in_cycle=_SEQ_SYNTHETIC_CALIBRATION,
+            started_at=7000,
+            module="risk_estimator",
+            phase="calibration",
+            action="calibrate",
+            is_synthetic=True,
+        ),
+        _row(
+            id=3,
+            cycle=0,
+            sequence_in_cycle=-8,
+            started_at=6900,
+            module="risk_estimator",
+            phase="risk_estimation",
+            action="calibration_guard",
+        ),
+        _row(
+            id=2,
+            cycle=0,
+            sequence_in_cycle=-9,
+            started_at=6000,
+            module="risk_estimator",
+            phase="risk_estimation",
+            action="estimate_intent",
+        ),
+        _row(
+            id=7,
+            cycle=0,
+            sequence_in_cycle=0,
+            started_at=5500,
+            module="policy",
+            phase="speculative_generate",
+            action="generate (speculative)",
+        ),
+        _row(
+            id=1,
+            cycle=0,
+            sequence_in_cycle=-10,
+            started_at=5000,
+            module="constitution_retriever",
+            phase="constitution_retrieval",
+            action="domain_prefilter",
+        ),
+    ]
+    tiers = _group_calls_into_tiers_and_enrich(calls)
+    assert [[c["action"] for c in tier] for tier in tiers] == [
+        ["domain_prefilter"],
+        ["estimate_intent", "generate (speculative)"],
+        ["calibration_guard"],
+        ["calibrate"],
+        ["evaluate"],
+        ["route_resolution"],
+        ["generate (safe_complete_path)"],
+    ]
+    # The journey/timeline sort agrees: both governance nodes precede the draft.
+    actions = [c["action"] for c in sorted(calls, key=_journey_sort_key)]
+    assert actions.index("calibrate") < actions.index("route_resolution") < actions.index("generate (safe_complete_path)")

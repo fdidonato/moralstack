@@ -216,6 +216,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The request-page execution graph no longer tells the hard-violation delivery guard's
+  story backwards.** On a request where the critic raised a hard violation (run
+  `0d4a091a`, request `9eef1009`), the guard's SAFE_COMPLETE regeneration was drawn inside
+  "Initial assessment" — before calibration and routing, under a "risk + principles"
+  pipe — and its re-critique was tiered "parallel" with the critique that had caused it;
+  a reviewer read "routing → SAFE_COMPLETE → then a deliberation", the reverse of what
+  ran. The cause was persistence, not rendering: the guard reused the fast-path row shape
+  (cycle 0, `SEQ_POLICY`, `generate (safe_complete_path)`) and `SEQ_CRITIC`, and the
+  graph orders by `(cycle, sequence_in_cycle)`. The guard's two `llm_calls` rows are now
+  written in the cycle that raised the violation with their own sequences
+  (`SEQ_HARD_VIOLATION_REGENERATION=7`, action `generate (hard_violation_regeneration)`;
+  `SEQ_HARD_VIOLATION_REVALIDATION=8`), the fast-path row is byte-unchanged, and the UI
+  re-homes rows persisted before this change (badge `legacy row re-homed to guard`). Three
+  smaller falsehoods in the same graph went with it: the synthetic calibration and
+  path-routing nodes now carry a sequence, so they render before the policy draft they
+  precede instead of after it; the critic→simulator pipe reads `gate: proceed` only when
+  simulator/perspectives actually waited for the critic (`critic_gated`), otherwise
+  `scheduled in parallel with critic (not gated)`; and the routing node's
+  `final_action`/`winning_rule` inputs come from the `DECISION_EXPLANATION` in force at
+  the branch rather than the post-deliberation one (`winning_rule=hard_violations` was
+  being shown as an input to a decision taken before the critic ran). Historical
+  analyses that count `generate (safe_complete_path)` as the guard's regeneration apply
+  only to runs before this change. Pinned by `tests/test_ui_hard_violation_guard_graph.py`,
+  which reproduces the observed graph verbatim against the pre-fix code.
 - **Every governance module except the critic now has its output schema enforced by the
   provider, closing two failure modes that produced no error and no retry.** Measured
   across the COMPL-AI T=0/T=1 campaigns (144k calls), the harm-signal scanner returned

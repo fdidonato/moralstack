@@ -259,7 +259,16 @@ fails closed to REFUSE. The same guard runs at the fast-path→deliberative
 escalation site (`DeliberationRunner._build_deliberative_result`, used when
 `run_fast_path`'s `quick_check` fails). No-op (no LLM call) when
 `decision.hard_violations` is empty or `decision.final_action == "REFUSE"` —
-the ~99% no-hard-violation path is unaffected.
+the ~99% no-hard-violation path is unaffected. In `llm_calls` the guard leaves
+two rows in the cycle that raised the violation (`state.cycle`), sequenced after
+every module of that cycle: `generate (hard_violation_regeneration)`
+(`SEQ_HARD_VIOLATION_REGENERATION=7`) and `critique (hard_violation_revalidation)`
+(`SEQ_HARD_VIOLATION_REVALIDATION=8`). The fast-path SAFE_COMPLETE row stays
+cycle 0 / `SEQ_POLICY` / `generate (safe_complete_path)`, so the two can never be
+confused in a trace: a `generate (safe_complete_path)` row means no deliberation
+ran (rows persisted before 2026-09-18 are the exception — the guard's
+regeneration was then written with the fast-path coordinates; the UI re-homes
+them, see `docs/TRACES/observability_db_to_ui.md`).
 
 ## 10. Final action → governed delivery (Plan 1)
 

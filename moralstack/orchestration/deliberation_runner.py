@@ -235,6 +235,14 @@ SEQ_SIMULATOR = 3
 SEQ_PERSPECTIVES = 4
 SEQ_HINDSIGHT = 5
 SEQ_REFUSAL_OR_FINALIZE = 6
+# Post-decision hard-violation delivery guard (enforce_no_rejected_draft_delivery):
+# it runs after every module of the cycle that raised the violation, so its two
+# llm_calls rows sort after SEQ_REFUSAL_OR_FINALIZE in journey/graph views and are
+# never mistaken for the cycle's own policy draft or critique.
+SEQ_HARD_VIOLATION_REGENERATION = 7
+SEQ_HARD_VIOLATION_REVALIDATION = 8
+HARD_VIOLATION_REGENERATION_ACTION = "generate (hard_violation_regeneration)"
+HARD_VIOLATION_REVALIDATION_ACTION = "critique (hard_violation_revalidation)"
 
 ParallelSchedulerStrategy = Literal["critic_gated", "full_parallel"]
 
@@ -992,6 +1000,9 @@ class DeliberationRunner:
         risk_estimation: RiskEstimationProtocol,
         *,
         extra_guidance: str = "",
+        persist_cycle: int = 0,
+        persist_sequence: int = SEQ_POLICY,
+        persist_action: str = "generate (safe_complete_path)",
     ) -> str:
         """Generate + validate SAFE_COMPLETE text: the caveat instruction as a
         user-side prompt prefix (never appended to the system prompt -- Step
@@ -1002,9 +1013,16 @@ class DeliberationRunner:
         delivery guard (``enforce_no_rejected_draft_delivery``) can reuse the
         exact same generation for its regeneration step. ``extra_guidance``
         (default ``""``) is appended after the standard SAFE_COMPLETE caveat
-        instruction, still user-side only. With ``extra_guidance == ""`` the
-        composed prompt, system prompt and the persisted ``record_llm_call``
-        payload are byte-identical to before this extraction.
+        instruction, still user-side only. With every keyword at its default
+        the composed prompt, system prompt and the persisted ``record_llm_call``
+        payload are byte-identical to before this extraction (the fast path).
+
+        ``persist_cycle`` / ``persist_sequence`` / ``persist_action`` only
+        change the coordinates of the persisted ``llm_calls`` row, never the
+        generation: the guard passes the cycle that raised the violation and
+        ``SEQ_HARD_VIOLATION_REGENERATION`` so the row is not rendered as a
+        cycle-0 fast-path draft that preceded the deliberation it actually
+        followed.
         """
         safe_system = effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal")
         safe_caveat = SAFE_COMPLETE_GENERATION_INSTRUCTION
@@ -1038,17 +1056,17 @@ class DeliberationRunner:
                 self.logger,
                 None,
                 {
-                    "cycle": 0,
+                    "cycle": persist_cycle,
                     "phase": "policy_generate",
                     "module": "policy",
-                    "action": "generate (safe_complete_path)",
+                    "action": persist_action,
                     "model": _policy_llm_model_for_action(self.policy, "generate"),
                     "started_at": int(start_gen * 1000),
                     "duration_ms": elapsed,
                     "prompt": prompt_used,
                     "system_prompt": system_used or "",
                     "raw_response": response_text,
-                    "sequence_in_cycle": SEQ_POLICY,
+                    "sequence_in_cycle": persist_sequence,
                     "token_usage_json": result.token_usage_json(),
                 },
             )
@@ -1141,9 +1159,22 @@ class DeliberationRunner:
             )
             return flipped, pre_flip_action, reason
 
+        # Both guard rows are persisted in the cycle that raised the violation
+        # (never cycle 0: the guard runs after that cycle, not before it) with
+        # their own sequence_in_cycle, so journey/graph views place them after
+        # the cycle's critic/simulator/perspectives instead of rendering the
+        # regeneration as a pre-deliberation fast-path draft.
+        guard_cycle = int(state.cycle or 0)
         try:
             guidance = _hard_violation_regeneration_guidance(hard_violations)
-            regenerated_text = self._generate_safe_complete_text(request, risk_estimation, extra_guidance=guidance)
+            regenerated_text = self._generate_safe_complete_text(
+                request,
+                risk_estimation,
+                extra_guidance=guidance,
+                persist_cycle=guard_cycle,
+                persist_sequence=SEQ_HARD_VIOLATION_REGENERATION,
+                persist_action=HARD_VIOLATION_REGENERATION_ACTION,
+            )
         except Exception as e:
             _LOG.warning(
                 "hard_violation_guard: regeneration failed request_id=%s error_type=%s error=%s",
@@ -1164,6 +1195,7 @@ class DeliberationRunner:
                 constitution=constitution,
                 request_analysis=request_analysis,
                 delib_context=delib_context,
+                persist_cycle=guard_cycle,
             )
         except Exception as e:
             # Deliberately NOT a swallow: an exception here fails closed
@@ -1200,6 +1232,7 @@ class DeliberationRunner:
         constitution: Any | None,
         request_analysis: RequestAnalysisContext | None,
         delib_context: DelibContext | None,
+        persist_cycle: int | None = None,
     ) -> Any:
         """Single direct ``self.critic.critique(...)`` call re-validating the
         hard-violation guard's regenerated text (never the ``_critique``
@@ -1209,10 +1242,13 @@ class DeliberationRunner:
         draft: the precomputed-principles form (sliced to
         ``retrieval_top_k_for_request()``) when ``request_analysis`` is
         available, otherwise the retrieval form -- never a weaker variant.
-        Persists the call with a distinguishable ``action`` so it is visible
-        in ``llm_calls`` (T6) without being mistaken for a normal
-        deliberation-cycle critique. Does not mutate ``state`` -- the caller
-        owns applying (or not) the result.
+        Persists the call with a distinguishable ``action`` and its own
+        ``SEQ_HARD_VIOLATION_REVALIDATION`` sequence (in ``persist_cycle``,
+        the cycle that raised the violation; ``None`` keeps the ambient
+        observability cycle) so it is visible in ``llm_calls`` (T6) without
+        being mistaken for -- or tiered next to -- the cycle's own critique.
+        Does not mutate ``state`` -- the caller owns applying (or not) the
+        result.
         """
         if self.critic is None:
             # No graceful skip here (unlike `_critique`): the caller treats
@@ -1262,33 +1298,36 @@ class DeliberationRunner:
         response_text = f"Violations: {nv}, Guidance: {rg}"
         critic_model = _module_model(self.critic)
         prompt_text = f"CRITIQUE\nPrompt: {request.prompt}\nResponse: {regenerated_text}"
+        persist_kwargs: dict[str, Any] = {
+            "phase": "critic",
+            "module": "critic",
+            "action": HARD_VIOLATION_REVALIDATION_ACTION,
+            "model": critic_model,
+            "started_at": int(start * 1000),
+            "duration_ms": elapsed,
+            "prompt": getattr(critique, "prompt", None) or prompt_text,
+            "system_prompt": getattr(critique, "system_prompt", ""),
+            "raw_response": getattr(critique, "raw_response", "") or "",
+            "parsed_json": None,
+            "parsed_summary_json": response_text,
+            "attempts": getattr(critique, "parse_attempts", 1),
+            "sequence_in_cycle": SEQ_HARD_VIOLATION_REVALIDATION,
+            "token_usage_json": _token_usage_json_from_result(critique),
+            "billable_provider_call": True,
+        }
+        if persist_cycle is not None:
+            persist_kwargs["cycle"] = persist_cycle
         record_llm_call(
             self.logger,
             {
                 "module": "critic",
-                "action": "critique (hard_violation_revalidation)",
+                "action": HARD_VIOLATION_REVALIDATION_ACTION,
                 "prompt": prompt_text,
                 "response": response_text,
                 "duration_ms": elapsed,
                 "model": critic_model,
             },
-            {
-                "phase": "critic",
-                "module": "critic",
-                "action": "critique (hard_violation_revalidation)",
-                "model": critic_model,
-                "started_at": int(start * 1000),
-                "duration_ms": elapsed,
-                "prompt": getattr(critique, "prompt", None) or prompt_text,
-                "system_prompt": getattr(critique, "system_prompt", ""),
-                "raw_response": getattr(critique, "raw_response", "") or "",
-                "parsed_json": None,
-                "parsed_summary_json": response_text,
-                "attempts": getattr(critique, "parse_attempts", 1),
-                "sequence_in_cycle": SEQ_CRITIC,
-                "token_usage_json": _token_usage_json_from_result(critique),
-                "billable_provider_call": True,
-            },
+            persist_kwargs,
         )
         return critique
 

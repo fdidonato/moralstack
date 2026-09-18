@@ -360,12 +360,18 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
 
     inputs: list[dict[str, Any]] = []
     outputs: list[dict[str, Any]] = []
+    action = (call.get("action") or "").lower()
 
     # Inputs logic
     if "risk" in module:
         inputs.append({"label": "prompt", "source": "user"})
     elif "policy" in module:
-        if cycle == 0:
+        if "hard_violation_regeneration" in action:
+            # Delivery-guard regeneration: caused by the critic's hard
+            # violation on the cycle's draft, not by risk + principles alone.
+            inputs.append({"label": "hard_violations", "source": "critic"})
+            inputs.append({"label": "risk", "source": "risk_estimator"})
+        elif cycle == 0:
             inputs.append({"label": "risk", "source": "risk_estimator"})
             inputs.append({"label": "principles", "source": "constitution"})
         else:
@@ -381,7 +387,10 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
         inputs.append({"label": "messages", "source": "request_body"})
         inputs.append({"label": "governance_decision", "source": "moralstack"})
     elif "critic" in module:
-        inputs.append({"label": "draft", "source": "policy"})
+        if "hard_violation_revalidation" in action:
+            inputs.append({"label": "regenerated_draft", "source": "policy (hard_violation_regeneration)"})
+        else:
+            inputs.append({"label": "draft", "source": "policy"})
         inputs.append({"label": "principles", "source": "constitution"})
         inputs.append({"label": "risk_context", "source": "risk_estimator"})
     elif "simulator" in module:
@@ -401,7 +410,6 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
         inputs.append({"label": "domain", "source": "risk_estimator"})
 
     # Outputs logic
-    action = (call.get("action") or "").lower()
     if "risk" in module and action == "calibration_guard":
         # Calibration guard synthetic call — show caps applied
         inputs.clear()
@@ -536,19 +544,38 @@ _SEQ_TO_VISUAL_TIER: dict[int, int] = {
     4: 3,  # perspectives}
     5: 4,  # hindsight
     6: 5,  # refusal/finalize
+    7: 6,  # hard-violation delivery guard: regeneration (SEQ_HARD_VIOLATION_REGENERATION)
+    8: 7,  # hard-violation delivery guard: re-critique (SEQ_HARD_VIOLATION_REVALIDATION)
 }
 
-# Cycle-0 pipeline sequences (constitution -10/-1, risk -9, calibration -8, compliance -5, …).
+# Sequence numbers of the hard-violation delivery guard's two llm_calls rows
+# (deliberation_runner.SEQ_HARD_VIOLATION_REGENERATION / _REVALIDATION) and the
+# legacy coordinates those rows were persisted with before they got their own.
+_SEQ_HARD_VIOLATION_REGENERATION = 7
+_SEQ_HARD_VIOLATION_REVALIDATION = 8
+_HARD_VIOLATION_REGENERATION_ACTION = "generate (hard_violation_regeneration)"
+_HARD_VIOLATION_REVALIDATION_ACTION = "critique (hard_violation_revalidation)"
+_LEGACY_GUARD_REGENERATION_ACTION = "generate (safe_complete_path)"
+
+# Cycle-0 pipeline sequences (constitution -10/-1, risk -9, calibration -8/-7,
+# compliance -5, …). Values are relative ranks only; the synthetic calibration
+# (-7) and path-routing (-2) governance nodes sit where the controller runs them:
+# after the risk minis / calibration guard and after every pre-branch step
+# respectively, never after the policy draft they precede.
 _CYCLE0_SEQ_TO_VISUAL_TIER: dict[int, int] = {
     -10: 0,  # domain prefilter (risk routing)
     -9: 1,  # risk mini-estimators (parallel)
-    -8: 2,  # calibration guard
-    -5: 3,  # DCCL evaluate
-    -1: 4,  # domain prefilter (deliberation retrieval)
-    -4: 5,  # draft revalidation (Case 2)
+    -8: 2,  # calibration guard (persisted row)
+    -7: 3,  # calibration synthesis (synthetic node)
+    -5: 4,  # DCCL evaluate
+    -1: 5,  # domain prefilter (deliberation retrieval)
+    -4: 6,  # draft revalidation (Case 2)
+    -2: 7,  # path routing (synthetic node)
     0: 1,  # speculative policy (parallel with risk)
-    1: 6,  # compliance-regenerate policy
+    1: 8,  # fast-path SAFE_COMPLETE / compliance-regenerate policy
 }
+_SEQ_SYNTHETIC_CALIBRATION = -7
+_SEQ_SYNTHETIC_PATH_ROUTING = -2
 
 # Canonical per-module sequence used to place synthetic "deferred"/"skipped" markers
 # in the same visual tier the module would have occupied (mirrors _SEQ_TO_VISUAL_TIER).
@@ -673,6 +700,15 @@ def _group_calls_into_tiers_and_enrich(calls: list[dict[str, Any]]) -> list[list
     return processed
 
 
+def _tier_started_after(src: list[dict[str, Any]], dst: list[dict[str, Any]]) -> bool:
+    """True when every call of ``dst`` started after the last call of ``src``
+    ended (i.e. ``dst`` waited for ``src``); missing timestamps count as
+    sequential, which keeps legacy rows on the historical label."""
+    src_end = max(((c.get("started_at") or 0) + (c.get("duration_ms") or 0)) for c in src)
+    dst_start = min((c.get("started_at") or 0) for c in dst)
+    return dst_start >= src_end
+
+
 def _compute_connector_labels(tiers: list[list[dict[str, Any]]]) -> list[str | None]:
     """Return a human-readable label for the pipe AFTER each tier.
 
@@ -683,6 +719,15 @@ def _compute_connector_labels(tiers: list[list[dict[str, Any]]]) -> list[str | N
         src_modules = {(c.get("module") or "").lower() for c in tiers[i]}
         dst_modules = {(c.get("module") or "").lower() for c in tiers[i + 1]}
         dst_actions = {(c.get("action") or "").lower() for c in tiers[i + 1]}
+        # Hard-violation delivery guard tiers: their cause is the critic's hard
+        # violation on the cycle's draft, not the usual draft / risk hand-off,
+        # so they get an exclusive label instead of "draft" / "risk + principles".
+        if any("hard_violation_regeneration" in a for a in dst_actions):
+            labels.append("hard violation → regenerate under SAFE_COMPLETE")
+            continue
+        if any("hard_violation_revalidation" in a for a in dst_actions):
+            labels.append("re-critique regenerated draft")
+            continue
         parts: list[str] = []
         if "policy" in src_modules:
             if dst_modules & {"critic", "simulator", "perspectives", "hindsight"}:
@@ -696,11 +741,67 @@ def _compute_connector_labels(tiers: list[list[dict[str, Any]]]) -> list[str | N
                 parts.append("risk context")
         if "critic" in src_modules:
             if dst_modules & {"simulator", "perspectives"}:
-                parts.append("gate: proceed")
+                # "gate: proceed" is only true for the critic_gated scheduler; under
+                # full_parallel the simulator/perspectives overlap the critic and
+                # never waited for its verdict.
+                parts.append(
+                    "gate: proceed"
+                    if _tier_started_after(tiers[i], tiers[i + 1])
+                    else "scheduled in parallel with critic (not gated)"
+                )
         if any("compliance" in m for m in dst_modules):
             parts.append("DCCL")
         labels.append(" · ".join(parts) if parts else None)
     return labels
+
+
+def _rehome_legacy_hard_violation_guard_calls(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Legacy data fix: give the hard-violation delivery guard's two rows the
+    coordinates they are persisted with today (see
+    ``deliberation_runner.SEQ_HARD_VIOLATION_REGENERATION`` / ``_REVALIDATION``).
+
+    Before the guard rows got their own coordinates, the regeneration was
+    persisted exactly like the fast-path SAFE_COMPLETE draft (cycle 0,
+    ``SEQ_POLICY``, ``generate (safe_complete_path)``) and the re-critique like an
+    ordinary critique (``SEQ_CRITIC`` in the violation's cycle), so the graph
+    rendered the regeneration in "Initial assessment" before the deliberation
+    that caused it, and tiered the re-critique "parallel" with the critique it
+    followed.
+
+    Identification is structural, not timestamp-only: a fast-path SAFE_COMPLETE
+    generation never coexists with a deliberation cycle in one request (the fast
+    path returns before any cycle runs and there is no deliberative→fast-path
+    route), so a cycle-0 ``generate (safe_complete_path)`` row that started after
+    the first cycle>=1 call is the guard's regeneration -- including the
+    fail-closed case where no re-critique row follows it. Rows already carrying
+    the guard's sequence numbers are left untouched. Returns the rows it changed.
+    """
+    delib_rows = [c for c in calls if int(c.get("cycle") or 0) >= 1 and c.get("started_at") is not None]
+    changed: list[dict[str, Any]] = []
+    first_delib_start = min(int(c.get("started_at") or 0) for c in delib_rows) if delib_rows else None
+    for call in calls:
+        action = (call.get("action") or "").strip().lower()
+        seq_raw = call.get("sequence_in_cycle")
+        seq = int(seq_raw) if seq_raw is not None else None
+        if action == _HARD_VIOLATION_REVALIDATION_ACTION and seq != _SEQ_HARD_VIOLATION_REVALIDATION:
+            call["sequence_in_cycle"] = _SEQ_HARD_VIOLATION_REVALIDATION
+            call["_legacy_guard_rehomed"] = True
+            changed.append(call)
+            continue
+        if (
+            action == _LEGACY_GUARD_REGENERATION_ACTION
+            and int(call.get("cycle") or 0) == 0
+            and first_delib_start is not None
+            and int(call.get("started_at") or 0) > first_delib_start
+        ):
+            started = int(call.get("started_at") or 0)
+            prior = [int(c.get("cycle") or 0) for c in delib_rows if int(c.get("started_at") or 0) <= started]
+            call["cycle"] = max(prior) if prior else max(int(c.get("cycle") or 0) for c in delib_rows)
+            call["sequence_in_cycle"] = _SEQ_HARD_VIOLATION_REGENERATION
+            call["action"] = _HARD_VIOLATION_REGENERATION_ACTION
+            call["_legacy_guard_rehomed"] = True
+            changed.append(call)
+    return changed
 
 
 _CONSTITUTION_RETRIEVAL_PHASE_LABELS: dict[str, str] = {
@@ -1888,6 +1989,7 @@ def _build_synthetic_calibration_node(
         "phase": "calibration",
         "action": "calibrate",
         "cycle": 0,
+        "sequence_in_cycle": _SEQ_SYNTHETIC_CALIBRATION,
         "started_at": last_risk_end,
         "duration_ms": 0,
         "is_synthetic": True,
@@ -1969,6 +2071,7 @@ def _build_synthetic_path_routing_node(
         "phase": "path_routing",
         "action": "route_resolution",
         "cycle": 0,
+        "sequence_in_cycle": _SEQ_SYNTHETIC_PATH_ROUTING,
         "started_at": started_at,
         "duration_ms": 0,
         "is_synthetic": True,
@@ -3690,10 +3793,14 @@ button:hover{opacity:0.9}
         # Enrich calls with I/O annotations and semantic badges (call_kind / cache_status)
         _tag_constitution_phases(llm_calls)
         _hydrate_speculative_reuse_calls(llm_calls)
+        rehomed_guard_calls = _rehome_legacy_hard_violation_guard_calls(llm_calls)
         for call in llm_calls:
             call["io_annotations"] = _build_module_io_annotations(call)
             enriched = enrich_llm_call_for_ui(call)
             call["semantic_badges"] = enriched.get("semantic_badges") or []
+        for call in rehomed_guard_calls:
+            # Keep the re-homing visible: the persisted row carried legacy coordinates.
+            call["semantic_badges"] = [*call["semantic_badges"], "legacy row re-homed to guard"]
 
         all_flow_calls = list(llm_calls)
         if synthetic_constitution is not None:

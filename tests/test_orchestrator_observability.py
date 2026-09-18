@@ -91,3 +91,61 @@ def test_empty_debug_events_uses_final_trace_fallback():
     assert obs["has_routing_data"]
     assert any("Why not REFUSE" in b for b in obs["narrative_bullets"])
     assert obs["trace_bounds"]["policy_min_action"] == "SAFE_COMPLETE"
+
+
+def test_routing_io_annotations_use_the_decision_explanation_in_force_at_the_branch():
+    """The deliberative path logs a second DECISION_EXPLANATION after the cycles
+    (e.g. winning_rule=hard_violations, produced by the critic). The routing
+    node's inputs describe what the path_router branched on, so they must come
+    from the explanation logged before the branch, not the post-deliberation one;
+    the last explanation stays available as ``decision_explanation``."""
+    events = [
+        {
+            "created_at": 1,
+            "payload_json": _payload(
+                "DECISION_EXPLANATION",
+                {"final_action": "SAFE_COMPLETE", "winning_rule": "policy_bounds_fallback", "risk_score": 0.35},
+            ),
+        },
+        {
+            "created_at": 2,
+            "payload_json": _payload(
+                "branch risk_policy vs deliberative",
+                {
+                    "risk_policy_action": "DELIBERATE",
+                    "risk_score": 0.35,
+                    "threshold_low": 0.3,
+                    "decision.path": "DELIBERATIVE_PATH",
+                },
+            ),
+        },
+        {"created_at": 3, "payload_json": _payload("taking _deliberative_path", {"path_taken": "deliberative"})},
+        {
+            "created_at": 4,
+            "payload_json": _payload(
+                "DECISION_EXPLANATION",
+                {"final_action": "SAFE_COMPLETE", "winning_rule": "hard_violations", "risk_score": 0.35},
+            ),
+        },
+    ]
+    obs = build_orchestrator_observability(events, [])
+    assert obs["decision_explanation"]["winning_rule"] == "hard_violations"
+    assert obs["decision_explanation_at_branch"]["winning_rule"] == "policy_bounds_fallback"
+    io = orchestrator_observability_to_io_annotations(obs)
+    by_label = {i["label"]: i["source"] for i in io["inputs"]}
+    assert by_label["winning_rule"] == "policy_bounds_fallback"
+    assert by_label["final_action (policy)"] == "SAFE_COMPLETE"
+
+
+def test_routing_io_annotations_fall_back_to_last_explanation_without_branch_event():
+    events = [
+        {
+            "created_at": 1,
+            "payload_json": _payload("DECISION_EXPLANATION", {"final_action": "REFUSE", "winning_rule": "hard_refuse"}),
+        },
+        {"created_at": 2, "payload_json": _payload("early return REFUSE", {"decision.path": "REFUSE_PATH"})},
+    ]
+    obs = build_orchestrator_observability(events, [])
+    assert obs["decision_explanation_at_branch"] is None
+    io = orchestrator_observability_to_io_annotations(obs)
+    assert {i["label"]: i["source"] for i in io["inputs"]}["winning_rule"] == "hard_refuse"

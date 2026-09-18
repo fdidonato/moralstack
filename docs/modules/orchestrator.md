@@ -456,7 +456,12 @@ it regenerates under SAFE_COMPLETE governance, re-validates once with a direct
 `critic.critique(...)` call, and delivers the regenerated text as
 `SAFE_COMPLETE` if the critic clears it, or fails closed to `REFUSE`
 otherwise. No-op (no LLM call) when the trigger does not fire, so the ~99% of
-requests without hard violations are unaffected. `apply_safe_complete_gating`
+requests without hard violations are unaffected. Its two `llm_calls` rows are
+persisted in the cycle that raised the violation with dedicated sequences
+(`generate (hard_violation_regeneration)` = `SEQ_HARD_VIOLATION_REGENERATION`,
+`critique (hard_violation_revalidation)` = `SEQ_HARD_VIOLATION_REVALIDATION`),
+distinct from the fast-path `generate (safe_complete_path)` row (cycle 0,
+`SEQ_POLICY`). `apply_safe_complete_gating`
 (below) is a second, independent measure: it no longer relabels a
 `SAFE_COMPLETE` decision carrying `hard_violations` down to `NORMAL_COMPLETE`.
 
