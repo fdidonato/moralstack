@@ -111,7 +111,11 @@ def build_orchestrator_observability(
     Build a structured summary for UI and markdown from persisted debug events.
 
     Returns keys:
-      - decision_explanation: payload dict or None (from DECISION_EXPLANATION)
+      - decision_explanation: payload dict or None (the LAST DECISION_EXPLANATION:
+        the post-deliberation one when the deliberative path re-decides)
+      - decision_explanation_at_branch: the DECISION_EXPLANATION in force when the
+        path_router branch was taken (the last one logged before
+        "branch risk_policy vs deliberative"), or None without a branch event
       - events_chronological: filtered events with message, hypothesis_id, data
       - narrative_bullets: short English lines (why routing behaved as observed)
       - routing_signals: extracted fields (path_taken, branch, overlay_floor, etc.)
@@ -120,6 +124,7 @@ def build_orchestrator_observability(
     """
     out: dict[str, Any] = {
         "decision_explanation": None,
+        "decision_explanation_at_branch": None,
         "events_chronological": [],
         "narrative_bullets": [],
         "routing_signals": {},
@@ -152,6 +157,12 @@ def build_orchestrator_observability(
             out["decision_explanation"] = merged
             interesting.append({"message": message, "hypothesis_id": hid, "data": merged})
             continue
+
+        if "branch risk_policy vs deliberative" in message and out["decision_explanation_at_branch"] is None:
+            # The deliberative path logs a second DECISION_EXPLANATION after the
+            # cycles (e.g. winning_rule=hard_violations); the routing step only
+            # ever saw the one in force when it branched.
+            out["decision_explanation_at_branch"] = out["decision_explanation"]
 
         if any(
             x in message
@@ -231,10 +242,15 @@ def build_orchestrator_observability(
 
 
 def orchestrator_observability_to_io_annotations(obs: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    """Build flow-graph style I/O rows from observability dict (labels are English, values are structural)."""
+    """Build flow-graph style I/O rows from observability dict (labels are English, values are structural).
+
+    The inputs describe what the path_router branched on, so they come from the
+    DECISION_EXPLANATION in force at the branch (``decision_explanation_at_branch``)
+    and fall back to the last one only when no branch event was recorded.
+    """
     inputs: list[dict[str, Any]] = []
     outputs: list[dict[str, Any]] = []
-    de = obs.get("decision_explanation")
+    de = obs.get("decision_explanation_at_branch") or obs.get("decision_explanation")
     if isinstance(de, dict):
         fa = de.get("final_action")
         wr = de.get("winning_rule")

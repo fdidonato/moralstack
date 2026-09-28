@@ -68,6 +68,19 @@ def project(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.fixture
+def repo_root() -> Path:
+    """The real repository root (same computation as ``_HOOKS_DIR`` above). Tests
+    that check the real on-disk repo use this — never the throwaway ``project``
+    fixture, which is a fake ``tmp_path`` and would pass vacuously."""
+    return Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture
+def settings_json(repo_root: Path) -> dict:
+    return json.loads((repo_root / ".claude" / "settings.json").read_text(encoding="utf-8"))
+
+
 def write_session_edits(project: Path, session_id: str, paths: list[str]) -> None:
     (project / ".claude" / ".session-edits.json").write_text(
         json.dumps({"session_id": session_id, "paths": paths}), encoding="utf-8"
@@ -86,12 +99,26 @@ class FakeProc:
         self.stdout = stdout
 
 
-def stub_subprocess(monkeypatch, module, *, returncode: int = 0, stdout: str = "", recorder: list | None = None):
-    """Replace ``module.subprocess.run`` with a recording stub."""
+def stub_subprocess(
+    monkeypatch,
+    module,
+    *,
+    returncode: int = 0,
+    stdout: str = "",
+    recorder: list | None = None,
+    calls: list | None = None,
+):
+    """Replace ``module.subprocess.run`` with a recording stub.
+
+    ``recorder`` (existing behavior) appends args only. ``calls`` (additive),
+    when given, appends ``(args, kwargs)`` for every intercepted call — needed by
+    tests that must inspect e.g. the ``timeout`` kwarg."""
 
     def _fake_run(args, **kwargs):
         if recorder is not None:
             recorder.append(args)
+        if calls is not None:
+            calls.append((args, kwargs))
         return FakeProc(returncode=returncode, stdout=stdout)
 
     monkeypatch.setattr(module.subprocess, "run", _fake_run)

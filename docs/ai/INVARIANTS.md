@@ -15,6 +15,8 @@ file is a pointer**, not a second copy that could drift.
 
 Every agent and review template in this workflow references these. The rule when
 a change appears to require breaking one: **stop and surface it to the user**
-rather than working around it (PROJECT_SPEC §5). The Codex review templates
-explicitly check a plan/diff against these invariants, and a governance change
-that fails *open* is always treated as BLOCKING.
+rather than working around it (PROJECT_SPEC §5). The review templates
+(`ai/prompts/plan-review-template.md`, `ai/prompts/diff-review-template.md`) and
+the `adversarial-reviewer` agent explicitly check a plan/diff against these
+invariants, and a governance change that fails *open* is always treated as
+BLOCKING.

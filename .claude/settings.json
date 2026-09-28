@@ -31,7 +31,9 @@
       "Read(**/id_rsa)",
       "Read(**/credentials.json)",
       "Bash(cat .env)",
-      "Bash(type .env)"
+      "Bash(type .env)",
+      "Bash(cat .env*)",
+      "Bash(type .env*)"
     ]
   },
   "hooks": {
@@ -39,14 +41,14 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_dangerous_git.py\"" },
-          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_secrets.py\"" }
+          { "type": "command", "shell": "bash", "command": "sh -c 'for p in python python3; do r=$(command -v \"$p\" 2>/dev/null) || continue; case \"$r\" in \"\") continue;; */WindowsApps/*) \"$r\" -c \"\" >/dev/null 2>&1 || continue;; esac; exec \"$r\" \"$0\"; done; echo \"[hook] $0: no working python or python3 on PATH (see .claude/hooks/README.md)\" >&2; exit 2' \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_dangerous_git.py\"" },
+          { "type": "command", "shell": "bash", "command": "sh -c 'for p in python python3; do r=$(command -v \"$p\" 2>/dev/null) || continue; case \"$r\" in \"\") continue;; */WindowsApps/*) \"$r\" -c \"\" >/dev/null 2>&1 || continue;; esac; exec \"$r\" \"$0\"; done; echo \"[hook] $0: no working python or python3 on PATH (see .claude/hooks/README.md)\" >&2; exit 2' \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_secrets.py\"" }
         ]
       },
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_secrets.py\"" }
+          { "type": "command", "shell": "bash", "command": "sh -c 'for p in python python3; do r=$(command -v \"$p\" 2>/dev/null) || continue; case \"$r\" in \"\") continue;; */WindowsApps/*) \"$r\" -c \"\" >/dev/null 2>&1 || continue;; esac; exec \"$r\" \"$0\"; done; echo \"[hook] $0: no working python or python3 on PATH (see .claude/hooks/README.md)\" >&2; exit 2' \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_secrets.py\"" }
         ]
       }
     ],
@@ -54,49 +56,49 @@
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/format_on_edit.py\"", "timeout": 60 }
+          { "type": "command", "shell": "bash", "command": "sh -c 'for p in python python3; do r=$(command -v \"$p\" 2>/dev/null) || continue; case \"$r\" in \"\") continue;; */WindowsApps/*) \"$r\" -c \"\" >/dev/null 2>&1 || continue;; esac; exec \"$r\" \"$0\"; done; echo \"[hook] $0: no working python or python3 on PATH (see .claude/hooks/README.md)\" >&2; exit 1' \"$CLAUDE_PROJECT_DIR/.claude/hooks/format_on_edit.py\"", "timeout": 60 }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop_gate.py\"", "timeout": 180 }
+          { "type": "command", "shell": "bash", "command": "sh -c 'for p in python python3; do r=$(command -v \"$p\" 2>/dev/null) || continue; case \"$r\" in \"\") continue;; */WindowsApps/*) \"$r\" -c \"\" >/dev/null 2>&1 || continue;; esac; exec \"$r\" \"$0\"; done; echo \"[hook] $0: no working python or python3 on PATH (see .claude/hooks/README.md)\" >&2; exit 1' \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop_gate.py\"", "timeout": 300 }
         ]
       }
     ],
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_start.py\"" }
+          { "type": "command", "shell": "bash", "command": "sh -c 'for p in python python3; do r=$(command -v \"$p\" 2>/dev/null) || continue; case \"$r\" in \"\") continue;; */WindowsApps/*) \"$r\" -c \"\" >/dev/null 2>&1 || continue;; esac; exec \"$r\" \"$0\"; done; echo \"[hook] $0: no working python or python3 on PATH (see .claude/hooks/README.md)\" >&2; exit 1' \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_start.py\"" }
         ]
       }
     ],
     "PreCompact": [
       {
         "hooks": [
-          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/precompact_snapshot.py\"", "async": true, "timeout": 30 }
+          { "type": "command", "shell": "bash", "command": "sh -c 'for p in python python3; do r=$(command -v \"$p\" 2>/dev/null) || continue; case \"$r\" in \"\") continue;; */WindowsApps/*) \"$r\" -c \"\" >/dev/null 2>&1 || continue;; esac; exec \"$r\" \"$0\"; done; echo \"[hook] $0: no working python or python3 on PATH (see .claude/hooks/README.md)\" >&2; exit 1' \"$CLAUDE_PROJECT_DIR/.claude/hooks/precompact_snapshot.py\"", "async": true, "timeout": 30 }
         ]
       }
     ],
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_end.py\"" }
+          { "type": "command", "shell": "bash", "command": "sh -c 'for p in python python3; do r=$(command -v \"$p\" 2>/dev/null) || continue; case \"$r\" in \"\") continue;; */WindowsApps/*) \"$r\" -c \"\" >/dev/null 2>&1 || continue;; esac; exec \"$r\" \"$0\"; done; echo \"[hook] $0: no working python or python3 on PATH (see .claude/hooks/README.md)\" >&2; exit 1' \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_end.py\"" }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/user_prompt_submit.py\"", "timeout": 10 }
+          { "type": "command", "shell": "bash", "command": "sh -c 'for p in python python3; do r=$(command -v \"$p\" 2>/dev/null) || continue; case \"$r\" in \"\") continue;; */WindowsApps/*) \"$r\" -c \"\" >/dev/null 2>&1 || continue;; esac; exec \"$r\" \"$0\"; done; echo \"[hook] $0: no working python or python3 on PATH (see .claude/hooks/README.md)\" >&2; exit 1' \"$CLAUDE_PROJECT_DIR/.claude/hooks/user_prompt_submit.py\"", "timeout": 10 }
         ]
       }
     ],
     "InstructionsLoaded": [
       {
         "hooks": [
-          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/log_instructions.py\"" }
+          { "type": "command", "shell": "bash", "command": "sh -c 'for p in python python3; do r=$(command -v \"$p\" 2>/dev/null) || continue; case \"$r\" in \"\") continue;; */WindowsApps/*) \"$r\" -c \"\" >/dev/null 2>&1 || continue;; esac; exec \"$r\" \"$0\"; done; echo \"[hook] $0: no working python or python3 on PATH (see .claude/hooks/README.md)\" >&2; exit 1' \"$CLAUDE_PROJECT_DIR/.claude/hooks/log_instructions.py\"" }
         ]
       }
     ]

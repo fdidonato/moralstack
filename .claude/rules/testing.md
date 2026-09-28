@@ -11,8 +11,9 @@ paths:
   `test_persistence_load.py::test_throughput_new_not_slower_than_legacy`) are **excluded
   from the default run** via `addopts = "-ra -m 'not slow'"` in `pyproject.toml`. The
   default `python -m pytest` therefore does not run them; opt in with `python -m pytest
-  -m slow` (or `-m ""` to run everything). CI runs them in a dedicated "Perf benchmarks
-  (slow)" step.
+  -m slow` (or `-m ""` to run everything). There is no CI in this repository (workflows
+  removed 2026-08-27): run them by hand with `python -m pytest -m slow` when a
+  persistence/perf change warrants it.
 - Behavior-locking tests exist for: byte-equality
   (`test_system_prompt_byte_equality.py`), governance invariants
   (`tests/governance_invariants/`), decision policy (`test_decide_action.py`,

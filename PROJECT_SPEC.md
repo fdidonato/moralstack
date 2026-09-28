@@ -30,7 +30,7 @@ Treat every change as safety-relevant until proven otherwise.
   line that causes it. Do not patch a symptom in a different layer than the
   cause.
 - Trace the data path end to end before editing. The relevant traces are in
-  `docs/TRACES/`. If your change touches governance routing, multi-turn, or
+  `docs/traces/`. If your change touches governance routing, multi-turn, or
   observability, re-read the matching trace document.
 - Identify every caller and every persisted side effect (DB rows, JSONL
   envelopes, emitted events) before changing a function signature or a payload
@@ -110,7 +110,7 @@ when you open the relevant files — the headline below is only the reminder.
 
 When you change behavior, update the docs in the **same** change:
 `docs/MORALSTACK_CODEBASE_INDEX.md` (module/flow/invariant), `docs/CODEBASE_FACTS.md`
-(verified/disproven facts), `docs/TRACES/` (governance, multi-turn, observability,
+(verified/disproven facts), `docs/traces/` (governance, multi-turn, observability,
 COMPL-AI), `docs/modules/*.md` (module contract). Full mapping →
 `.claude/rules/docs-maintenance.md` (loads when you open `docs/**`). A `Stop` hook
 gates this: editing behavior code without touching the matching docs blocks the turn.
@@ -162,9 +162,9 @@ Keep it terse. Do not claim success you did not observe.
 
 - `docs/MORALSTACK_CODEBASE_INDEX.md` — architecture & file map.
 - `docs/CODEBASE_FACTS.md` — verified facts ledger + hypotheses.
-- `docs/TRACES/governance_decision_flow.md` — end-to-end decision flow.
-- `docs/TRACES/openai_compatible_multiturn.md` — OpenAI-compatible bridge & multi-turn.
-- `docs/TRACES/observability_db_to_ui.md` — logging → DB/JSONL → UI.
-- `docs/TRACES/complai_llm_rules_flow.md` — COMPL-AI / llm_rules benchmark path & risks.
+- `docs/traces/governance_decision_flow.md` — end-to-end decision flow.
+- `docs/traces/openai_compatible_multiturn.md` — OpenAI-compatible bridge & multi-turn.
+- `docs/traces/observability_db_to_ui.md` — logging → DB/JSONL → UI.
+- `docs/traces/complai_llm_rules_flow.md` — COMPL-AI / llm_rules benchmark path & risks.
 - Existing long-form docs: `docs/architecture_spec.md`, `docs/decision_policy.md`,
   `docs/constitution.md`, `docs/multiturn_design.md`, `docs/modules/*.md`.

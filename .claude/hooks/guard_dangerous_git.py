@@ -8,7 +8,9 @@ code 2 (stderr is shown to Claude) when a forbidden pattern is found, and
 exits 0 (allow) otherwise. Fails open on malformed input so a hook bug can
 never wedge the session.
 
-Fallback interpreter: ``py`` if ``python`` is unavailable on PATH.
+Launched by the shell wrapper registered in ``.claude/settings.json`` (``python``
+first, then ``python3``; exits 2 — blocking — if neither is on PATH). See
+``.claude/hooks/README.md``.
 """
 
 from __future__ import annotations

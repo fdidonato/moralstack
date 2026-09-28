@@ -1,7 +1,7 @@
 ---
 description: Run bounded MoralStack UI improvement iterations until the loop reaches a terminal state.
 argument-hint: "[iterations to run in this invocation, default 1]"
-allowed-tools: Bash, Read, Grep, Glob, Edit, Write, Task
+allowed-tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 ---
 
 Run MoralStack UI improvement iterations.

@@ -5,7 +5,7 @@
 .DESCRIPTION
   Read-only inspection. Inspects pyproject.toml, setup.cfg, tox.ini, noxfile.py,
   Makefile, requirements*.txt and lock files, then prints the verification
-  commands the implementer (a Claude Sonnet sub-agent) or reviewer (Codex CLI)
+  commands the implementer (a Claude Sonnet sub-agent) or reviewer (the adversarial-reviewer sub-agent)
   should run.
 
   Does NOT install anything and does NOT run the tools. It only reports what is

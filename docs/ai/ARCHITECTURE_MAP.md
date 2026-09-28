@@ -9,7 +9,7 @@ Authoritative sources (read these, in order):
    The starting index for any subsystem.
 2. **`docs/CODEBASE_FACTS.md`** — verified facts ledger + a "Hypotheses /
    Unverified assumptions" section.
-3. **`docs/TRACES/`** — end-to-end traces:
+3. **`docs/traces/`** — end-to-end traces:
    - `governance_decision_flow.md`
    - `openai_compatible_multiturn.md`
    - `observability_db_to_ui.md`

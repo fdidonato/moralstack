@@ -1,1 +1,2 @@
-# Codex plan/diff reviews and collected diffs land here, produced by the run_codex_* scripts.
+# Plan/diff reviews written verbatim by /ai-review-plan and /ai-review-diff (adversarial-reviewer
+# sub-agent) and the diffs collected by /ai-implement land here; local-only, never committed.

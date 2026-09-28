@@ -20,7 +20,8 @@ implementer runs as a fresh **Claude Sonnet** sub-agent (`claude-implementer`,
 
 ## How it runs (via `/ai-implement <plan>`)
 
-1. The orchestrator reads the plan and the matching Codex plan review; it stops
+1. The orchestrator reads the plan and the matching plan review
+   (`ai/reviews/plan-review-*.md`, by the `adversarial-reviewer` sub-agent); it stops
    if the review is `BLOCK` or has unresolved BLOCKING items.
 2. It writes the handoff to `ai/handoffs/<slug>-handoff.md` from
    `ai/prompts/claude-implementation-template.md`.
@@ -56,7 +57,8 @@ changed and flags any deviation.
   destructive git are blocked at the tool boundary — not only forbidden in the
   handoff text.
 - It still must not commit/push; the orchestrator verifies HEAD did not move and
-  that only allowed files changed. The collected diff is reviewed by Codex and
-  the orchestrator before any commit.
+  that only allowed files changed. The collected diff is reviewed by the
+  `adversarial-reviewer` sub-agent (`/ai-review-diff`) and the orchestrator
+  before any commit.
 - If the implementer hits an ambiguity or a blocking architectural problem, it
   STOPs and reports the blocker instead of working around it.

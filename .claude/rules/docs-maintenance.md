@@ -10,7 +10,7 @@ When you change behavior, update the docs in the **same** change:
 - New verified fact, or a fact you proved wrong → update `docs/CODEBASE_FACTS.md` (and
   move items out of the hypotheses section as you verify them).
 - Changed governance flow, multi-turn handling, observability schema, or the COMPL-AI
-  bridge path → update the matching file in `docs/TRACES/`.
+  bridge path → update the matching file in `docs/traces/`.
 - Module-level behavior also has long-form docs in `docs/modules/*.md`; update the
   relevant one if you touch that module's contract. This is enforced per module for the
   runtime deliberative modules: `moralstack/runtime/modules/critic_*` →

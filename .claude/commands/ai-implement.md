@@ -6,9 +6,9 @@ allowed-tools: Read, Edit, Write, Grep, Glob, Bash, Agent
 
 Approved plan: **$ARGUMENTS**.
 
-Preconditions: the plan has been reviewed by Codex and has **no unresolved
-BLOCKING items** (`/ai-review-plan-with-codex` already run). If not, stop and run
-the review first.
+Preconditions: the plan has been reviewed by the `adversarial-reviewer`
+sub-agent and has **no unresolved BLOCKING items** (`/ai-review-plan` already
+run). If not, stop and run the review first.
 
 You are the **orchestrator** here — you prepare the handoff and verify the
 result, but you do **not** write the feature code yourself. A separate Claude
@@ -16,8 +16,8 @@ result, but you do **not** write the feature code yourself. A separate Claude
 isolated context so the plan→implement split stays honest (PROJECT_SPEC).
 
 Steps:
-1. Read the plan (`$ARGUMENTS`) and the matching Codex plan review
-   (`ai/reviews/codex-plan-review-*.md`). If the review verdict is `BLOCK` or has
+1. Read the plan (`$ARGUMENTS`) and the matching plan review
+   (`ai/reviews/plan-review-*.md`). If the review verdict is `BLOCK` or has
    unresolved BLOCKING items, stop and send it back to planning.
 2. Write a complete handoff to `ai/handoffs/<slug>-handoff.md` (slug =
    `$ARGUMENTS` basename without extension), building on
@@ -40,7 +40,7 @@ Steps:
 6. Report: files changed, deviations from plan, tests run + real results (from
    the sub-agent report), the handoff path, and the diff path.
 
-Next step to tell the user: `/ai-review-diff-with-codex $ARGUMENTS`.
+Next step to tell the user: `/ai-review-diff $ARGUMENTS`.
 
 You do **not** implement the feature code here — the `claude-implementer`
 sub-agent does. Do not commit.

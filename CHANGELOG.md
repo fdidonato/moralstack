@@ -106,6 +106,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **AI review harness: the external Codex reviewer is replaced by an internal,
+  isolated `adversarial-reviewer` sub-agent** (`.claude/agents/adversarial-reviewer.md`:
+  read-only tools, `model: claude-fable-5-1` pinned in its frontmatter — a model
+  different from, and more capable than, the Sonnet implementer's; `opus` is the
+  documented fallback). The agentic pipeline now runs entirely inside Claude Code:
+  `/ai-review-plan-with-codex` → `/ai-review-plan`, `/ai-review-diff-with-codex` →
+  `/ai-review-diff` (both launch the sub-agent through the `Agent` tool instead of
+  `Skill(codex:rescue)`); the rubrics move to `ai/prompts/{plan,diff}-review-template.md`
+  with only the Codex runtime phrasing removed; review artifacts are named
+  `ai/reviews/{plan,diff}-review-*` and `ai/prompts/generated-{plan,diff}-review-*`
+  (still gitignored); `docs/ai/CODEX_REVIEW_GUIDE.md` → `docs/ai/REVIEW_GUIDE.md`.
+  Every review now starts with a `Reviewer model: <id>` line so the independence
+  claim is auditable, and the commands never pass a `model:` override. Also fixes
+  `.claude/commands/ui-loop.md` and `.claude/settings.ui-loop.json`, which still named
+  the `Task` tool: per the sub-agent docs (code.claude.com/docs/en/sub-agents) it was
+  renamed to `Agent` in 2.1.63, and in the 2.1.272 binary `Task` only survives as a
+  legacy alias applied when tool-name rules are parsed — so it was not broken, but it
+  is not the canonical name, and every `allowed-tools` line and tracked allowlist now
+  says `Agent`. Historical mentions of Codex in code comments, tests and past changelog
+  entries are left as history.
+
 - **The shipped templates no longer downgrade the rewrite and simulator models.**
   `.env.template` and `.env.minimal` set `MORALSTACK_POLICY_REWRITE_MODEL` and
   `MORALSTACK_SIMULATOR_MODEL` to `gpt-4o` (i.e. `OPENAI_MODEL`) instead of
@@ -195,6 +216,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AI harness (lot 1).** Fixed five defects in `.claude/` hooks/guards: doc-path
+  references now consistently use the on-disk `docs/traces/` casing (several
+  files used an upper-case variant, invisible on case-insensitive filesystems);
+  the Stop gate now runs `pre-commit` only (no pytest) under a 150 s budget
+  inside a 300 s registration timeout; all 10 hook registrations use a portable
+  `python`→`python3` interpreter wrapper with `"shell": "bash"` so a missing
+  interpreter fails loud instead of silently disabling a guard; `guard_secrets`
+  now blocks any Bash command that names a secret-bearing file outside a narrow
+  `ls`/`stat`/`test`/`echo`/`printf` exemption (deny list widened accordingly);
+  and three false documentation statements (a non-existent hard-reset block, a
+  non-existent CI step, a non-existent `py` fallback) were corrected.
+- **Stale Codex reviewer references.** The codebase index entry point and the
+  `scripts/ai` diff/quality helpers still named Codex as the reviewer; they now
+  name the `adversarial-reviewer` sub-agent that replaced it.
+- **The request-page execution graph no longer tells the hard-violation delivery guard's
+  story backwards.** On a request where the critic raised a hard violation (run
+  `0d4a091a`, request `9eef1009`), the guard's SAFE_COMPLETE regeneration was drawn inside
+  "Initial assessment" — before calibration and routing, under a "risk + principles"
+  pipe — and its re-critique was tiered "parallel" with the critique that had caused it;
+  a reviewer read "routing → SAFE_COMPLETE → then a deliberation", the reverse of what
+  ran. The cause was persistence, not rendering: the guard reused the fast-path row shape
+  (cycle 0, `SEQ_POLICY`, `generate (safe_complete_path)`) and `SEQ_CRITIC`, and the
+  graph orders by `(cycle, sequence_in_cycle)`. The guard's two `llm_calls` rows are now
+  written in the cycle that raised the violation with their own sequences
+  (`SEQ_HARD_VIOLATION_REGENERATION=7`, action `generate (hard_violation_regeneration)`;
+  `SEQ_HARD_VIOLATION_REVALIDATION=8`), the fast-path row is byte-unchanged, and the UI
+  re-homes rows persisted before this change (badge `legacy row re-homed to guard`). Three
+  smaller falsehoods in the same graph went with it: the synthetic calibration and
+  path-routing nodes now carry a sequence, so they render before the policy draft they
+  precede instead of after it; the critic→simulator pipe reads `gate: proceed` only when
+  simulator/perspectives actually waited for the critic (`critic_gated`), otherwise
+  `scheduled in parallel with critic (not gated)`; and the routing node's
+  `final_action`/`winning_rule` inputs come from the `DECISION_EXPLANATION` in force at
+  the branch rather than the post-deliberation one (`winning_rule=hard_violations` was
+  being shown as an input to a decision taken before the critic ran). Historical
+  analyses that count `generate (safe_complete_path)` as the guard's regeneration apply
+  only to runs before this change. Pinned by `tests/test_ui_hard_violation_guard_graph.py`,
+  which reproduces the observed graph verbatim against the pre-fix code.
 - **Every governance module except the critic now has its output schema enforced by the
   provider, closing two failure modes that produced no error and no retry.** Measured
   across the COMPL-AI T=0/T=1 campaigns (144k calls), the harm-signal scanner returned

@@ -230,7 +230,7 @@ that must **never** be serialized into the persisted `llm_calls` payload
 emptiness of `relevant_principles`) is what the controller/deliberation layer
 use to decide reuse-vs-fallback: an empty-but-successful retrieval is
 authoritative and must not trigger a second `get_relevant_principles` call. See
-`docs/TRACES/governance_decision_flow.md` §3 for the full request-level flow
+`docs/traces/governance_decision_flow.md` §3 for the full request-level flow
 (controller query policy → risk retrieval → `RequestAnalysisContext` → reuse by
 deliberation/critic/fast-path).
 

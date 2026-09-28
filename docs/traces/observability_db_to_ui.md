@@ -248,7 +248,16 @@ Per-request accessors: `get_request`, `get_llm_calls_for_request`,
 
 `llm_calls` are ordered by `(cycle, sequence_in_cycle, started_at, phase)`
 (`read_store.py:276-282`) so the UI can rebuild execution order without relying
-on wall-clock alone.
+on wall-clock alone. The execution graph's tiers follow the same key
+(`ui/app.py:_group_calls_into_tiers_and_enrich`): a node without
+`sequence_in_cycle` sinks to the bottom of its cycle, which is why the synthetic
+calibration / path-routing nodes carry `-7` / `-2` and the hard-violation
+delivery guard's rows carry `7` / `8` (`deliberation_runner.py:242-243`). Guard
+rows persisted before 2026-09-18 (regeneration as cycle 0 / `SEQ_POLICY` /
+`generate (safe_complete_path)`, re-critique as `SEQ_CRITIC`) are re-homed in
+memory by `_rehome_legacy_hard_violation_guard_calls` on the request page only —
+the markdown export (`reports/model.py`) still sorts cycle 0 by wall-clock and
+shows those legacy rows where they were persisted.
 
 ## 6. What the UI displays (`moralstack/ui/app.py`)
 
@@ -259,7 +268,13 @@ reconstructs:
   route `request_detail`): the deliberation timeline / "metro map" — calls
   grouped into visual tiers (`_group_calls_into_tiers_and_enrich`), risk
   mini-estimator breakdown, a synthetic calibration node
-  (`_build_synthetic_calibration_node`), a synthetic path-routing node, the
+  (`_build_synthetic_calibration_node`), a synthetic path-routing node (whose
+  `final_action`/`winning_rule` inputs are the DECISION_EXPLANATION in force at
+  the branch — `decision_explanation_at_branch` — never the post-deliberation
+  one), pipe labels that name the real hand-off (`_compute_connector_labels`:
+  `gate: proceed` only when simulator/perspectives waited for the critic, the
+  guard's `hard violation → regenerate under SAFE_COMPLETE` / `re-critique
+  regenerated draft`), the
   final-decision card (`_build_final_decision_card` — now also returns
   `activated_signals`, `hard_violation_codes`; the OUTPUT anchor renders both,
   in addition to the pre-existing `Semantic Harm` truthiness gate — see

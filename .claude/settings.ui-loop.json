@@ -6,7 +6,7 @@
       "Read",
       "Grep",
       "Glob",
-      "Task",
+      "Agent",
       "Edit(moralstack/ui/**)",
       "Write(moralstack/ui/**)",
       "Edit(tests/test_ui_*.py)",

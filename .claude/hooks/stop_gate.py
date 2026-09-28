@@ -5,13 +5,11 @@ Fires when Claude tries to finish a turn. Acts only if code/tests were edited
 this session (per ``.claude/.session-edits.json`` written by
 ``format_on_edit.py``). Three jobs:
 
-1. **Verify (non-blocking).** Runs ``pre-commit run --files <edited code>`` and,
-   when code/tests changed, **auto-runs pytest scoped to the impacted test
-   files** (those edited directly plus ``tests/**/test_<module>*.py`` matching
-   the edited modules) so each turn self-verifies fast. The full suite (~3.5 min)
-   stays the ``pre-commit-verifier`` agent's job; set ``MSTACK_STOP_RUN_PYTEST=1``
-   to force it here instead (raise the hook ``timeout`` in settings.json — pytest
-   is slow). Outcome is reported to Claude via ``additionalContext``.
+1. **Verify (non-blocking).** Runs ``pre-commit run --files <edited code>`` with a
+   ``PRECOMMIT_TIMEOUT_SECONDS`` (150 s) budget, under the 300 s Stop ``timeout``
+   in ``settings.json``. It runs **no tests**: pytest is the
+   ``pre-commit-verifier`` agent's job and the report states this explicitly
+   every time. Outcome is reported to Claude via ``additionalContext``.
 
    The verify is **skipped** (to avoid redundant work) when either
    ``stop_hook_active`` is True (we are inside a nudge chain) or the edit-set
@@ -19,7 +17,7 @@ this session (per ``.claude/.session-edits.json`` written by
    (``.claude/.last-verified.json``).
 2. **Docs gate (blocking).** If governance *behavior* files were edited without
    touching a verified-memory ledger (``docs/CODEBASE_FACTS.md``,
-   ``docs/MORALSTACK_CODEBASE_INDEX.md``, ``docs/TRACES/``, ``docs/modules/``),
+   ``docs/MORALSTACK_CODEBASE_INDEX.md``, ``docs/traces/``, ``docs/modules/``),
    emits ``{"decision": "block"}`` so Claude updates docs before finishing. A test
    does NOT satisfy it, and an arbitrary ``docs/`` file does not either — the hard
    guarantee lives in the commit-time memory-guard
@@ -48,6 +46,7 @@ MARKER_NAME = ".session-edits.json"
 VERIFIED_NAME = ".last-verified.json"
 NUDGE_NAME = ".nudge-count.json"
 STUB_NAME = ".docs-stub.md"
+PRECOMMIT_TIMEOUT_SECONDS = 150  # must stay well under the Stop "timeout" in settings.json (300)
 
 BEHAVIOR_PREFIXES = (
     "moralstack/runtime/decision/",
@@ -67,18 +66,18 @@ BEHAVIOR_PREFIXES = (
 MEMORY_DOC_PREFIXES = (
     "docs/CODEBASE_FACTS.md",
     "docs/MORALSTACK_CODEBASE_INDEX.md",
-    "docs/TRACES/",
+    "docs/traces/",
     "docs/modules/",
 )
 
 # Map an edited behavior path to the docs most likely to need an update. Kept
 # intentionally coarse — the stub is a starting point, not an authority.
 _DOCS_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("moralstack/orchestration/", ("docs/modules/orchestrator.md", "docs/TRACES/governance_decision_flow.md")),
-    ("moralstack/observability/", ("docs/modules/observability.md", "docs/TRACES/observability_db_to_ui.md")),
-    ("moralstack/server/", ("docs/TRACES/openai_compatible_multiturn.md", "docs/TRACES/observability_db_to_ui.md")),
+    ("moralstack/orchestration/", ("docs/modules/orchestrator.md", "docs/traces/governance_decision_flow.md")),
+    ("moralstack/observability/", ("docs/modules/observability.md", "docs/traces/observability_db_to_ui.md")),
+    ("moralstack/server/", ("docs/traces/openai_compatible_multiturn.md", "docs/traces/observability_db_to_ui.md")),
     ("moralstack/constitution/", ("docs/modules/constitution_store.md", "docs/constitution.md")),
-    ("moralstack/compliance/", ("docs/TRACES/complai_llm_rules_flow.md",)),
+    ("moralstack/compliance/", ("docs/traces/complai_llm_rules_flow.md",)),
     ("moralstack/prompts/", ("docs/decision_policy.md",)),
     ("moralstack/runtime/decision/", ("docs/decision_policy.md",)),
 )
@@ -119,27 +118,6 @@ def _edited_paths(project: Path, session_id: str) -> list[str]:
         return []
     paths = state.get("paths")
     return [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []
-
-
-def _related_tests(project: Path, code: list[str]) -> list[str]:
-    """Test files impacted by the edited code: edited tests themselves, plus
-    ``tests/**/test_<module-stem>*.py`` for each edited ``moralstack`` module."""
-    tests: set[str] = set()
-    tests_dir = project / "tests"
-    for rel in code:
-        if rel.startswith("tests/") and rel.endswith(".py"):
-            if (project / rel).exists():
-                tests.add(rel)
-            continue
-        stem = Path(rel).stem
-        if not stem or stem == "__init__":
-            continue
-        for match in tests_dir.glob(f"**/test_{stem}*.py"):
-            try:
-                tests.add(str(match.relative_to(project)).replace("\\", "/"))
-            except ValueError:
-                continue
-    return sorted(tests)
 
 
 def _fingerprint(project: Path, code: list[str]) -> str:
@@ -299,41 +277,19 @@ def _emit_context(context: str) -> None:
 
 
 def _verify(project: Path, code: list[str]) -> tuple[str, bool]:
-    """Run the non-blocking verify. Returns (report_text, passed)."""
+    """Run the non-blocking verify (pre-commit only). Returns (report_text, passed).
+
+    Deliberately runs NO tests: pytest belongs to the pre-commit-verifier agent, and
+    the report says so every time so a turn never looks self-verified.
+    """
     py = _venv_python(project)
-    report = ["[Stop gate] verify (non-blocking):"]
-    outcomes: list[str] = []
-
-    precommit = _run([py, "-m", "pre_commit", "run", "--files", *code], project, 100)
-    outcomes.append(precommit)
-    report.append("  pre-commit (changed files): " + precommit)
-
-    if os.environ.get("MSTACK_STOP_RUN_PYTEST", "").lower() in ("1", "true", "yes"):
-        result = _run([py, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider"], project, 300)
-        outcomes.append(result)
-        report.append("  pytest (full suite): " + result)
-    else:
-        related = _related_tests(project, code)
-        if related:
-            result = _run(
-                [py, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider", *related],
-                project,
-                150,
-            )
-            outcomes.append(result)
-            report.append(f"  pytest (scoped, {len(related)} file/s): " + result)
-            report.append(
-                "  full suite not run here — run the pre-commit-verifier agent "
-                "(or MSTACK_STOP_RUN_PYTEST=1) before declaring done."
-            )
-        else:
-            report.append(
-                "  pytest: no test file matched the edited modules; full suite "
-                "skipped (run the pre-commit-verifier agent before declaring done)."
-            )
-
-    passed = all(o == "passed" for o in outcomes)
-    return "\n".join(report), passed
+    precommit = _run([py, "-m", "pre_commit", "run", "--files", *code], project, PRECOMMIT_TIMEOUT_SECONDS)
+    report = [
+        "[Stop gate] verify (non-blocking):",
+        "  pre-commit (changed files): " + precommit,
+        "  tests: NONE RUN — no tests were run in this turn; run the pre-commit-verifier agent before declaring done.",
+    ]
+    return "\n".join(report), precommit == "passed"
 
 
 def main() -> int:
@@ -389,7 +345,7 @@ def main() -> int:
                 + "\n  - ".join(behavior)
                 + "\nBefore finishing, update the relevant of: "
                 "docs/MORALSTACK_CODEBASE_INDEX.md, docs/CODEBASE_FACTS.md, "
-                "docs/TRACES/, docs/modules/*.md — or touch the behavior-locking "
+                "docs/traces/, docs/modules/*.md — or touch the behavior-locking "
                 "tests if that is the right place. See .claude/rules/docs-maintenance.md."
             )
             if stub:

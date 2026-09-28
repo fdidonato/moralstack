@@ -5,8 +5,8 @@
 > The code is authoritative — verify a symbol still exists before relying on it.
 > Confidence and evidence for individual claims live in `docs/CODEBASE_FACTS.md`.
 >
-> For the AI agentic workflow (Claude orchestrates · Codex reviews · a Claude
-> Sonnet sub-agent implements) that consumes this index at planning time, see
+> For the AI agentic workflow (Claude orchestrates · the adversarial-reviewer
+> sub-agent reviews · a Claude Sonnet sub-agent implements) that consumes this index at planning time, see
 > `docs/ai/` — start from `docs/ai/AGENTIC_WORKFLOW.md`.
 
 ---
@@ -206,7 +206,16 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   deliveries record `ResponseMetadata.original_final_action` /
   `hard_violation_flip_reason` (additive-only fields). `response_assembler.py`
   is untouched by this fix (hard constraint: it is a deterministic renderer with
-  no critic/output-protector access).
+  no critic/output-protector access). **Persisted rows:** the guard's two
+  `llm_calls` rows are written in the cycle that raised the violation
+  (`state.cycle`, never 0) with their own sequences — `generate
+  (hard_violation_regeneration)` at `SEQ_HARD_VIOLATION_REGENERATION=7` and
+  `critique (hard_violation_revalidation)` at `SEQ_HARD_VIOLATION_REVALIDATION=8`
+  (passed as `_generate_safe_complete_text(persist_cycle=, persist_sequence=,
+  persist_action=)`; the fast-path `run_safe_complete_path` row keeps cycle 0 /
+  `SEQ_POLICY` / `generate (safe_complete_path)` byte-for-byte). Rows persisted
+  before 2026-09-18 carried the fast-path coordinates and are re-homed by the UI
+  (see `ui/app.py` below).
 - `convergence.py`, `convergence_evaluator.py` — convergence engine.
 - `conversation_state.py` — `ConversationGovernanceState`, `TurnDecisionSummary`.
 - `conversational_fast_path.py` — `ConversationalFastPathRunner` (cache-driven skip).
@@ -816,6 +825,31 @@ distinguishes the P0 hard-signal block (`kind=compliance_blocked_p0`) from ordin
 downgrades. `compliance_layer` and `final_revalidation` now have a legend colour in
 `main.css` + `request.html`. Tests: `tests/test_ui_tier_order.py`.
 
+**Execution order of governance nodes (2026-09-18).** The graph's tiers come from
+`(sequence_in_cycle, id, started_at)` (`_group_calls_into_tiers_and_enrich`), so a
+node without a sequence sinks to the bottom of its cycle. The synthetic calibration
+and path-routing nodes therefore carry `_SEQ_SYNTHETIC_CALIBRATION=-7` /
+`_SEQ_SYNTHETIC_PATH_ROUTING=-2`, mapped in `_CYCLE0_SEQ_TO_VISUAL_TIER` after the
+risk minis / calibration guard and before the policy draft they precede. The
+hard-violation delivery guard's rows (`SEQ_HARD_VIOLATION_REGENERATION=7`,
+`_REVALIDATION=8`, see `deliberation_runner.py`) tier after simulator/perspectives
+in `_SEQ_TO_VISUAL_TIER`; `_rehome_legacy_hard_violation_guard_calls` re-homes rows
+persisted before that change (structural rule: a cycle-0 `generate
+(safe_complete_path)` that started after the first cycle>=1 call is the guard's
+regeneration — no deliberative→fast-path route exists — and the re-critique is
+identified by its action) and badges them `legacy row re-homed to guard`.
+`_compute_connector_labels` gives the guard tiers exclusive labels (`hard violation
+→ regenerate under SAFE_COMPLETE`, `re-critique regenerated draft`) and labels the
+critic→simulator/perspectives pipe `gate: proceed` only when the pair started after
+the critic ended (`_tier_started_after`), otherwise `scheduled in parallel with
+critic (not gated)` (the `full_parallel` scheduler). The routing node's
+`final_action`/`winning_rule` inputs come from
+`build_orchestrator_observability(...)["decision_explanation_at_branch"]` — the
+DECISION_EXPLANATION in force at `branch risk_policy vs deliberative` — not from the
+post-deliberation one. Tests: `tests/test_ui_hard_violation_guard_graph.py` (page
+level, legacy + current row shapes), `tests/test_ui_tier_order.py`,
+`tests/test_orchestrator_observability.py`.
+
 The request-detail page also surfaces per-call token cost inline: a `token_badge`
 Jinja macro (`templates/request.html`) reads the numeric `llm_calls` columns on
 each flow-graph node and journey step; `_module_summaries()` adds a per-module
@@ -927,8 +961,9 @@ See `docs/traces/complai_llm_rules_flow.md`.
 - E2E payloads in `tests/e2e_payloads/`; regression in `tests/e2e_run_regression.py`.
 - AI harness: `tests/harness/` — offline unit tests for the `.claude/hooks/*`
   scripts (stop-gate verify dedup + docs-gate/nudge cap, PreCompact snapshot,
-  SessionEnd diary, UserPromptSubmit, fail-open on malformed input). Not
-  governance code; do not confuse with the 84-question benchmark.
+  SessionEnd diary, UserPromptSubmit, fail-open on malformed input, guard
+  blocking rules (secret paths, dangerous git), `settings.json` registration
+  pins). Not governance code; do not confuse with the 84-question benchmark.
 
 ---
 

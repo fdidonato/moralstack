@@ -1,6 +1,7 @@
 ---
 description: Analyze the codebase and produce a reviewed-ready technical plan under ai/plans/
 argument-hint: <feature | bug | refactor description>
+allowed-tools: Read, Grep, Glob, Bash, Write, Agent
 ---
 
 You are the **orchestrator**. The user request is: **$ARGUMENTS**
@@ -23,7 +24,7 @@ Steps:
 5. Print the plan path and a 5-line summary. Note any PROJECT_SPEC §5 invariant
    the plan touches.
 
-Next step to tell the user: review the plan with Codex via
-`/ai-review-plan-with-codex ai/plans/<slug>.md`.
+Next step to tell the user: review the plan with the independent
+`adversarial-reviewer` sub-agent via `/ai-review-plan ai/plans/<slug>.md`.
 
 Do not run the implementation. Do not commit.
