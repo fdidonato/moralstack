@@ -5,7 +5,7 @@
 .DESCRIPTION
   Captures `git diff` (tracked changes), optionally staged, plus a list of
   untracked files and `git status`. Writes a single markdown artifact that the
-  Codex diff-review step consumes. Read-only with respect to git: NEVER commits,
+  adversarial-reviewer diff-review step consumes. Read-only with respect to git: NEVER commits,
   stages, pushes, or deletes anything.
 
 .PARAMETER Base

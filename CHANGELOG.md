@@ -227,6 +227,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ls`/`stat`/`test`/`echo`/`printf` exemption (deny list widened accordingly);
   and three false documentation statements (a non-existent hard-reset block, a
   non-existent CI step, a non-existent `py` fallback) were corrected.
+- **Stale Codex reviewer references.** The codebase index entry point and the
+  `scripts/ai` diff/quality helpers still named Codex as the reviewer; they now
+  name the `adversarial-reviewer` sub-agent that replaced it.
 - **The request-page execution graph no longer tells the hard-violation delivery guard's
   story backwards.** On a request where the critic raised a hard violation (run
   `0d4a091a`, request `9eef1009`), the guard's SAFE_COMPLETE regeneration was drawn inside
