@@ -12,6 +12,8 @@ HOOKS = [
     "user_prompt_submit",
     "format_on_edit",
     "log_instructions",
+    "guard_secrets",
+    "guard_dangerous_git",
 ]
 
 

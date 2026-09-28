@@ -216,6 +216,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AI harness (lot 1).** Fixed five defects in `.claude/` hooks/guards: doc-path
+  references now consistently use the on-disk `docs/traces/` casing (several
+  files used an upper-case variant, invisible on case-insensitive filesystems);
+  the Stop gate now runs `pre-commit` only (no pytest) under a 150 s budget
+  inside a 300 s registration timeout; all 10 hook registrations use a portable
+  `python`→`python3` interpreter wrapper with `"shell": "bash"` so a missing
+  interpreter fails loud instead of silently disabling a guard; `guard_secrets`
+  now blocks any Bash command that names a secret-bearing file outside a narrow
+  `ls`/`stat`/`test`/`echo`/`printf` exemption (deny list widened accordingly);
+  and three false documentation statements (a non-existent hard-reset block, a
+  non-existent CI step, a non-existent `py` fallback) were corrected.
 - **The request-page execution graph no longer tells the hard-violation delivery guard's
   story backwards.** On a request where the critic raised a hard violation (run
   `0d4a091a`, request `9eef1009`), the guard's SAFE_COMPLETE regeneration was drawn inside

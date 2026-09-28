@@ -89,8 +89,9 @@ prefix automatically.
   branch and create/push the tag manually, or `git reset --soft HEAD~1` to redo.
 - **Commit message is Italian** (`chore(release): rilascia vX.Y.Z`) to match the
   repo's commit conventions.
-- The repo's `guard_dangerous_git.py` pre-commit hook blocks `--no-verify`,
-  force-push, and `reset --hard`; the driver uses none of these.
+- The repo's `guard_dangerous_git.py` PreToolUse hook blocks no-verify and
+  force-push; the driver uses neither (a hard `git reset` is not blocked by the
+  hook — do not use it here either).
 
 ## Verification done for this skill
 

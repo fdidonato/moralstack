@@ -31,6 +31,15 @@ The project uses Python 3.11+. Run pre-commit hooks before pushing:
 pre-commit run --all-files
 ```
 
+## Claude Code harness
+
+The `.claude/hooks/*` scripts run outside any virtualenv, launched through `sh`
+by Claude Code. They need `python` or `python3` (stdlib only) on the PATH the
+shell sees, and, on Windows, Git Bash (the hooks are registered with
+`"shell": "bash"`). Claude Code **≥ 2.1.270** is required for the `shell` field
+itself. See `.claude/hooks/README.md` for the interpreter-resolution wrapper and
+its platform limits.
+
 ## Questions
 
 Open an issue or start a discussion on GitHub.

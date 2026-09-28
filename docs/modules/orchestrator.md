@@ -185,7 +185,7 @@ never widened beyond its bound even when the unified retrieval top_k
 context to `critic.quick_check(..., pre_retrieved_principles=...)` and to the
 quick-check-failed `run_deliberative_path` escalation, so FAST_PATH and its
 deliberative fallback also reuse the single wave (see
-`docs/modules/critic.md` and `docs/TRACES/governance_decision_flow.md` §3).
+`docs/modules/critic.md` and `docs/traces/governance_decision_flow.md` §3).
 
 ### Supporting modules (orchestration)
 

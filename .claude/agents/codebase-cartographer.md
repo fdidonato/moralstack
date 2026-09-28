@@ -19,7 +19,7 @@ edit files, never suggest a design. Your output is a map other agents plan from.
   but treat them as a snapshot — confirm every file/function still exists and
   behaves as documented by reading the actual code. The code wins.
 - Trace the data path end to end before describing it. For governance routing,
-  multi-turn, or observability, read the matching doc in `docs/TRACES/`.
+  multi-turn, or observability, read the matching doc in `docs/traces/`.
 - Every claim must cite `path:line` you actually read this session. Separate
   **facts** (verified) from **hypotheses** (unverified) — never blur them.
 - Do not generalize from a file name, docstring, or comment.

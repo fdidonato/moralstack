@@ -961,8 +961,9 @@ See `docs/traces/complai_llm_rules_flow.md`.
 - E2E payloads in `tests/e2e_payloads/`; regression in `tests/e2e_run_regression.py`.
 - AI harness: `tests/harness/` — offline unit tests for the `.claude/hooks/*`
   scripts (stop-gate verify dedup + docs-gate/nudge cap, PreCompact snapshot,
-  SessionEnd diary, UserPromptSubmit, fail-open on malformed input). Not
-  governance code; do not confuse with the 84-question benchmark.
+  SessionEnd diary, UserPromptSubmit, fail-open on malformed input, guard
+  blocking rules (secret paths, dangerous git), `settings.json` registration
+  pins). Not governance code; do not confuse with the 84-question benchmark.
 
 ---
 

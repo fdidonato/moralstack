@@ -268,7 +268,7 @@ cycle 0 / `SEQ_POLICY` / `generate (safe_complete_path)`, so the two can never b
 confused in a trace: a `generate (safe_complete_path)` row means no deliberation
 ran (rows persisted before 2026-09-18 are the exception — the guard's
 regeneration was then written with the fast-path coordinates; the UI re-homes
-them, see `docs/TRACES/observability_db_to_ui.md`).
+them, see `docs/traces/observability_db_to_ui.md`).
 
 ## 10. Final action → governed delivery (Plan 1)
 
