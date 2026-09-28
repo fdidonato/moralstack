@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Known gap documented: `init_db` startup race.** `docs/CODEBASE_FACTS.md` ("Future
+  work / known gaps") now records that `init_db` has no concurrency guard and that
+  `e0dd37b` added a second caller in the request path, so on a fresh DB one caller can
+  hit `database is locked` and the schema is briefly absent (startup noise, measured
+  harmless on the 2026-09-10 run). Not fixed yet; the fix direction is a lock inside
+  `init_db`, keyed by path.
 - **`MORALSTACK_HISTORY_MAX_CHARS_PER_TURN` / `MORALSTACK_HISTORY_MAX_TURNS` — the
   conversation window shown to the judging modules is now configurable, default
   unchanged (200 chars, 3 turns), so nothing moves unless the variable is set.**

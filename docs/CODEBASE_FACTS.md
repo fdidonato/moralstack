@@ -170,6 +170,53 @@ These items involve external systems, deployment configuration, or runtime behav
 
 ## Future work / known gaps
 
+### `init_db` has no concurrency guard, and `e0dd37b` added a second caller (observed live 2026-09-10, NOT fixed)
+
+**Observed.** Launching the governed COMPL-AI campaign at T=1.5 (`logs_temp_1.5/strong_reject/moralstack-logs-1`)
+printed at startup:
+
+```
+observability: init_db failed: database is locked
+observability: upsert_request failed: no such table: requests
+observability[sqlite]: write_window transaction failed: no such table: session_store_events
+observability[sqlite]: write_window isolated failed event_type=session_store.get: no such table: session_store_events   (x6)
+```
+
+**Impact, measured rather than assumed: none on that run.** The schema was created moments later by the other
+caller and all 13 tables exist; at the time of the check the DB held 41 `requests` rows against 36 finalized
+JSONL lines — the DB *ahead*, the 5 extra being requests still in flight. So this is startup noise, not the
+head-of-run row loss fixed in `e0dd37b`. A handful of `session_store.get` events emitted inside the window were
+swallowed by the best-effort `try/except`.
+
+**Mechanism, code-verified.** Two independent callers run `init_db` on the same fresh file with no shared
+coordination:
+
+- `moralstack/server/proxy.py:_ensure_run_row` — guarded by a process-local `threading.Lock`
+  (`_run_row_lock`), **added by `e0dd37b` on 2026-09-08**;
+- `moralstack/orchestration/default_persistence.py:_ensure_db_initialized` — guarded only by the instance flag
+  `self._db_initialized`, no lock, and it does not take `_run_row_lock`.
+
+A thread inside `controller.process()` therefore calls `init_db` while the proxy pre-insert thread is already
+inside it. Both open a connection through `_get_connection`, which issues `PRAGMA journal_mode=WAL`; on a
+newly created file that needs a brief exclusive lock, and the loser gets SQLITE_BUSY. `init_db` swallows it,
+returns `False`, and the schema is briefly absent for every other writer.
+
+**This is a partial regression from `e0dd37b`**: before that commit there was one `init_db` caller in the
+request path, now there are two. The trade is still net positive — the commit removed a real loss of `requests`
+rows (21 requests absent from SQLite while present in JSONL) and introduced startup noise that self-heals —
+but the noise should go.
+
+**Fix direction (not applied — the campaign was running and changing code mid-campaign would run two tasks on
+two versions).** The coordination belongs in `init_db` itself, not in each caller: a module-level lock in
+`sqlite_sink`, keyed by resolved path, so every present and future caller is serialised. Fixing it in the two
+call sites instead would leave the third caller free to reintroduce it. Note the sibling defect already on
+file: `_ensure_db_initialized` caches a *path-agnostic* flag, so it also never re-initialises when the path
+changes — the same function is worth fixing once for both.
+
+**Repro:** start the proxy with `bench-proxy.py` against a non-existent DB path and send >=2 concurrent
+requests; the race is on the first request only.
+
+
 | Gap | Current state | Needed development |
 |---|---|---|
 | **`load_env()` reloads `.env` with `override=True`, so shell environment variables cannot configure a run** | `moralstack/utils/env_loader.py:169`, docstring at `:152-153` (*"Non-empty .env values always override pre-existing environment variables"*). Documented behavior, not a defect — but it silently defeats the usual `$env:VAR=... ; uvicorn ...` pattern, because `.env` ships `MORALSTACK_OBSERVABILITY_DB_PATH=moralstack.db` and `MORALSTACK_LEDGER_ENABLED=true`. Verified both ways on 2026-08-20: with shell vars the isolated DB is never created and the ledger stays on (23 fast-path hits in a run launched with `MORALSTACK_LEDGER_ENABLED=false`); editing `.env` works | Any runbook that configures a run must edit `.env` and restore it afterwards, or the run silently uses the default config. Cost of the confusion so far: the 2026-08-20 COMPL-AI replay wrote 468 requests into the shared `moralstack.db`, and a first rerun had to be discarded |
