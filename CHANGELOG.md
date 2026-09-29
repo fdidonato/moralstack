@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `domain_channel` reset, path-agnostic persistence init), recorded that absorbed
   provider errors leave no trace in the DB, and corrected stale rows (critic rule
   window 512, 16-key mini-estimator payload).
+- **Measured: concurrent requests queue on the deliberation runner's single 3-worker
+  pool.** One `ThreadPoolExecutor(max_workers=3)` per runner serves the critic /
+  simulator / perspectives fan-out of every concurrent proxy request. On the August
+  runs at peak concurrency 5-6, 37 of 569 parallel groups waited more than 1 s for a
+  worker (up to 2.7 s), while at peak concurrency 2 none did. Recorded in
+  `docs/CODEBASE_FACTS.md` (Conditionally verified); no fix evaluated.
 - **`MORALSTACK_HISTORY_MAX_CHARS_PER_TURN` / `MORALSTACK_HISTORY_MAX_TURNS` — the
   conversation window shown to the judging modules is now configurable, default
   unchanged (200 chars, 3 turns), so nothing moves unless the variable is set.**
