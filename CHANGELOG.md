@@ -249,6 +249,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   history notes and all-caps emphasis were also removed from the release skill,
   the `adversarial-reviewer` and the `claude-implementer` definitions; no rule was
   dropped.
+- **References to a `docs/CODEBASE_FACTS.md` section that does not exist.** PROJECT_SPEC
+  §4/§9, the memory and docs rules, the `memory-curator` agent, the SessionEnd diary line
+  and three `docs/ai` pages sent unverified claims to a "Hypotheses / Unverified
+  assumptions" (or "Hypotheses / Future work") section. The ledger has no such section:
+  unverified claims are `**Hypothesis — …**` rows under "Future work / known gaps",
+  which is what they now name.
 - **The request-page execution graph no longer tells the hard-violation delivery guard's
   story backwards.** On a request where the critic raised a hard violation (run
   `0d4a091a`, request `9eef1009`), the guard's SAFE_COMPLETE regeneration was drawn inside

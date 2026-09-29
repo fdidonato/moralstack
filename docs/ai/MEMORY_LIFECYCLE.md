@@ -38,9 +38,9 @@ verification gate between the tiers (PROJECT_SPEC §4):
   code-verifiable                        not verifiable now
       │                                  / external-only / contradicted
       ▼                                       ▼
-  promote → CODEBASE_FACTS                 keep in Hypotheses
-  Verified facts (+ INDEX if a            (or drop if code
-  module/flow changed)                     contradicts it, §9)
+  promote → CODEBASE_FACTS                 keep in "Future work /
+  Verified facts (+ INDEX if a             known gaps" (or drop if
+  module/flow changed)                     code contradicts it, §9)
       │
       ▼
   prune the promoted/stale staging lines

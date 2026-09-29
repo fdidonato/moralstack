@@ -7,7 +7,7 @@ hook/rule** vs **guidance only**.
 
 Real sources used: `git log`/`git tag`; `ai/plans/*`, `ai/reviews/*`, `ai/handoffs/*`
 (+ `*-implementation-report.md`); `.claude/.session-edits.json`;
-`.claude/hooks/*`; `docs/refactoring_diary.md`; the "Hypotheses/Future work" section of
+`.claude/hooks/*`; `docs/refactoring_diary.md`; the "Future work / known gaps" section of
 `docs/CODEBASE_FACTS.md`; `docs/ai/AGENTIC_WORKFLOW.md`, `docs/ai/REVIEW_POLICY.md`.
 
 Method note: `.claude/.instructions-loaded.log` and `.claude/.session-edits.json` are

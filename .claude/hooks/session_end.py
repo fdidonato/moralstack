@@ -9,7 +9,7 @@ of the session (files touched, verify outcome, termination reason) to
 Discipline (PROJECT_SPEC §4, facts-vs-hypotheses): the digest is explicitly
 UNVERIFIED and is written ONLY to the local staging file — never into the
 verified facts table of ``docs/CODEBASE_FACTS.md``. A human promotes relevant
-items into ``docs/CODEBASE_FACTS.md`` (hypotheses section) or
+items into ``docs/CODEBASE_FACTS.md`` ("Future work / known gaps") or
 ``docs/refactoring_diary.md`` after review.
 
 Best-effort: any error exits 0.
@@ -70,7 +70,7 @@ def main() -> int:
         f"## {stamp} — session {session_id} (end: {reason})",
         "",
         "> UNVERIFIED auto-diary — review before promoting into "
-        "docs/CODEBASE_FACTS.md (hypotheses) or docs/refactoring_diary.md.",
+        "docs/CODEBASE_FACTS.md (Future work / known gaps) or docs/refactoring_diary.md.",
         "",
         f"- Files edited: {len(edited)}",
     ]

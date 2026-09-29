@@ -31,7 +31,7 @@ persistence-side expression of PROJECT_SPEC **§4** (facts vs hypotheses).
 | Ledger | Gate to enter |
 | --- | --- |
 | `docs/CODEBASE_FACTS.md` → **Verified facts** table | Re-read the cited code **now**; cite `path:line`. Only code-verifiable claims. |
-| `docs/CODEBASE_FACTS.md` → **Hypotheses / Future work** | Anything plausible-but-unverified, or verifiable only against external systems. |
+| `docs/CODEBASE_FACTS.md` → **Future work / known gaps** (`**Hypothesis — …**` rows) | Anything plausible-but-unverified, or verifiable only against external systems. |
 
 Promotion rules (mirror PROJECT_SPEC §4 and §8):
 

@@ -7,8 +7,8 @@ Authoritative sources (read these, in order):
 
 1. **`docs/MORALSTACK_CODEBASE_INDEX.md`** — module & file map, flows, invariants.
    The starting index for any subsystem.
-2. **`docs/CODEBASE_FACTS.md`** — verified facts ledger + a "Hypotheses /
-   Unverified assumptions" section.
+2. **`docs/CODEBASE_FACTS.md`** — verified facts ledger; unverified claims are
+   `**Hypothesis — …**` rows in its "Future work / known gaps" section.
 3. **`docs/traces/`** — end-to-end traces:
    - `governance_decision_flow.md`
    - `openai_compatible_multiturn.md`

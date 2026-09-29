@@ -50,8 +50,8 @@ Treat every change as safety-relevant until proven otherwise.
 - State **facts** only when you have read the supporting code. Everything else
   is a **hypothesis** and must be labelled as such.
 - `docs/CODEBASE_FACTS.md` is the verified ledger. Anything not yet verified
-  belongs in its "Hypotheses / Unverified assumptions" section, never in the
-  facts table.
+  belongs in its "Future work / known gaps" section as a `**Hypothesis — …**`
+  row, never in the facts table.
 - If you discover that a documented fact is wrong, fix the document in the same
   change and note it (see §9).
 
@@ -132,9 +132,9 @@ end of a cycle. See `docs/ai/MEMORY_LIFECYCLE.md` for the narrative.
 
 - If you made a wrong edit, **revert or correct it explicitly** and say so.
   Do not silently layer a second fix on top.
-- If you find a defect outside your task scope, note it (and add it to the
-  hypotheses section of `docs/CODEBASE_FACTS.md` if unverified) rather than
-  fixing it without being asked.
+- If you find a defect outside your task scope, note it (and, if unverified, add
+  it to `docs/CODEBASE_FACTS.md` → "Future work / known gaps" as a
+  `**Hypothesis — …**` row) rather than fixing it without being asked.
 - If a documented statement contradicts the code, the **code wins**. Correct
   the document and flag the discrepancy in your summary.
 - Never use destructive shortcuts to make an obstacle disappear (no
