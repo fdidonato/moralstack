@@ -236,6 +236,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stale Codex reviewer references.** The codebase index entry point and the
   `scripts/ai` diff/quality helpers still named Codex as the reviewer; they now
   name the `adversarial-reviewer` sub-agent that replaced it.
+- **AI harness instructions that contradicted the repository.** A prompt audit of
+  `.claude/` found agent, rule and skill text asserting things the code no longer
+  does: the `pre-commit-verifier` agent described the pre-`not slow` pytest options,
+  a hook list without `changelog-guard`/`memory-guard` and a dropped mypy flag (also
+  still emitted by `scripts/ai/detect_python_quality_commands.ps1`); two UI-loop
+  agents pointed at non-existent `scripts/verify.py` / `scripts/scenarios.py`; the
+  release skill committed in Italian against the English-commits rule (the driver
+  now commits `chore(release): release vX.Y.Z`); `~120` test-file counts were stale;
+  and PROJECT_SPEC §8 plus the SessionStart reminder presented the Stop hook as the
+  docs gate, while the hard gate is the `memory-guard` pre-commit hook. Dated
+  history notes and all-caps emphasis were also removed from the release skill,
+  the `adversarial-reviewer` and the `claude-implementer` definitions; no rule was
+  dropped.
 - **The request-page execution graph no longer tells the hard-violation delivery guard's
   story backwards.** On a request where the critic raised a hard violation (run
   `0d4a091a`, request `9eef1009`), the guard's SAFE_COMPLETE regeneration was drawn inside

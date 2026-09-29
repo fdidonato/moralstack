@@ -98,8 +98,8 @@ def main() -> int:
         parts.append("Uncommitted review/plan notes in root: " + ", ".join(review[:8]) + ".")
     parts.append(
         "Reminders: smallest-diff (PROJECT_SPEC §6); behavior changes need matching "
-        "docs (§8 — Stop gate blocks otherwise); run the pre-commit-verifier agent "
-        "before declaring done."
+        "docs (§8 — the memory-guard pre-commit hook blocks the commit otherwise); "
+        "run the pre-commit-verifier agent before declaring done."
     )
 
     context = " ".join(parts)

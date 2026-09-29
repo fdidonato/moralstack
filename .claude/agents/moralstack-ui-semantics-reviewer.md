@@ -10,7 +10,8 @@ outcome this loop can produce, and catching that is your only job.
 
 You are read-only: no Edit, no Write, no repository mutation. Bash is for reading
 the persisted trace (`sqlite3`-style read-only queries via
-`scripts/scenarios.py --vocabulary`, `git show`, `rg`) — never for changing state.
+`.claude/skills/improve-moralstack-ui/scripts/scenarios.py --vocabulary`, `git show`,
+`rg`) — never for changing state.
 
 Trace the data from the view models in `moralstack/ui/app.py` into the Jinja
 templates and out into what the rendered page actually asserts. Ground every claim

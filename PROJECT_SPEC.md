@@ -112,8 +112,11 @@ When you change behavior, update the docs in the **same** change:
 `docs/MORALSTACK_CODEBASE_INDEX.md` (module/flow/invariant), `docs/CODEBASE_FACTS.md`
 (verified/disproven facts), `docs/traces/` (governance, multi-turn, observability,
 COMPL-AI), `docs/modules/*.md` (module contract). Full mapping →
-`.claude/rules/docs-maintenance.md` (loads when you open `docs/**`). A `Stop` hook
-gates this: editing behavior code without touching the matching docs blocks the turn.
+`.claude/rules/docs-maintenance.md` (loads when you open `docs/**`). The hard gate is
+the `memory-guard` pre-commit hook (`scripts/check_memory_updated.py`): a staged change
+under a governance-behavior prefix without its matching doc blocks the commit. A `Stop`
+hook adds a best-effort session nudge: editing behavior code without touching the
+matching docs blocks the turn.
 When it blocks it stages a docs-update **stub** at `.claude/.docs-stub.md` (touched
 symbols → likely doc targets) — review and promote it, then delete it. The gate nudges
 at most once per session (`.claude/.nudge-count.json`); see `.claude/hooks/README.md`

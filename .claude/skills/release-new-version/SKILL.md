@@ -51,11 +51,10 @@ prefix automatically.
    ```
 
    This bumps pyproject, updates the CHANGELOG, commits
-   `chore(release): rilascia v0.7.0`, runs `git push`, then `git tag v0.7.0` and
+   `chore(release): release v0.7.0`, runs `git push`, then `git tag v0.7.0` and
    `git push origin v0.7.0`.
 
-   The driver stops at the tag. Pushing the tag no longer publishes to PyPI — the
-   `publish.yml` workflow was removed; upload manually as described in
+   The driver stops at the tag. Publishing to PyPI is a manual step described in
    `docs/RELEASING.md`.
 
 ### Useful flags
@@ -87,23 +86,8 @@ prefix automatically.
   needing a PR), the commit is already made but the tag is not pushed; fix the
   push, then re-run with `--allow-dirty` is **not** needed — instead push the
   branch and create/push the tag manually, or `git reset --soft HEAD~1` to redo.
-- **Commit message is Italian** (`chore(release): rilascia vX.Y.Z`) to match the
-  repo's commit conventions.
+- **Commit message is English** (`chore(release): release vX.Y.Z`), per
+  PROJECT_SPEC §6.
 - The repo's `guard_dangerous_git.py` PreToolUse hook blocks no-verify and
   force-push; the driver uses neither (a hard `git reset` is not blocked by the
   hook — do not use it here either).
-
-## Verification done for this skill
-
-Verified in this container against throwaway git repos with a bare remote (so the
-real `origin` was never touched):
-
-- `--dry-run 0.7.0` on the real repo: showed `0.6.0 -> 0.7.0`, `last tag: v0.6.0`,
-  and the generated section.
-- Full `release.py 0.2.0` against a sandbox repo: pyproject bumped, CHANGELOG
-  section grouped (Added/Fixed/Docs/Other), `chore(release): rilascia v0.2.0`
-  committed, branch pushed, tag `v0.2.0` created and pushed to the bare remote.
-- `## Unreleased` promotion preserved a hand-curated note and the heading became
-  `## X.Y.Z — <date>`.
-- Guards exercised: bad version `1.2` (exit 2), existing tag (exit 1), dirty
-  worktree (exit 1), and `--no-push` (local tag only).

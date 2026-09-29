@@ -38,7 +38,7 @@ moralstack/
   core/                  # shared types/schema
 scripts/                 # benchmark, inspector, install
 examples/                # runnable usage examples
-tests/                   # ~120 test modules + e2e payloads
+tests/                   # test modules + e2e payloads
   harness/               # offline unit tests for the .claude/hooks/* scripts
 docs/                    # architecture, modules, traces, this index
 .claude/                 # AI harness: hooks, path-scoped rules, agents, skills
@@ -940,7 +940,7 @@ See `docs/traces/complai_llm_rules_flow.md`.
 
 ## 16. Test layout
 
-`tests/` (~120 modules). Notable groups:
+Notable groups in `tests/`:
 - Decision/policy: `test_decide_action.py`, `test_decision_policy.py`,
   `test_safe_complete_*.py`, `test_decision_correctness.py`.
 - Governance invariants: `tests/governance_invariants/` (e.g.

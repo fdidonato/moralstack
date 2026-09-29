@@ -227,7 +227,7 @@ def main() -> int:
         print(f"version {old_version} -> {version}")
 
         run_git(["add", "pyproject.toml", "CHANGELOG.md"], root)
-        run_git(["commit", "-m", f"chore(release): rilascia {tag}"], root)
+        run_git(["commit", "-m", f"chore(release): release {tag}"], root)
         print(f"committed release {tag}")
 
         if not args.no_push:

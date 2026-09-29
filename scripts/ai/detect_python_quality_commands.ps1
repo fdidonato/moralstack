@@ -75,7 +75,7 @@ if (Has $pyproject "[tool.black") {
 }
 # --- mypy ---
 if (Has $pyproject "[tool.mypy") {
-    $result.typecheck += "$pyPrefix -m mypy moralstack --ignore-missing-imports"
+    $result.typecheck += "$pyPrefix -m mypy moralstack"
 }
 # --- pyright ---
 if ((Has $pyproject "pyright") -or (Test-Path -LiteralPath (Join-Path $root "pyrightconfig.json"))) {

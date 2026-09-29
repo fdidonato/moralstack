@@ -24,23 +24,25 @@ before touching any code. It carries: context, objective, approved plan, files
 allowed to modify, files NOT to modify, invariants, checklist, required tests,
 acceptance criteria, and risks.
 
-## Rules — non-negotiable
-- Implement ONLY the approved plan. No scope creep, no speculative abstractions.
-- Modify ONLY files listed under **Files allowed to modify**. Do NOT touch files
-  listed as do-not-modify, and do NOT opportunistically refactor adjacent code
+## Rules
+- Implement the approved plan and nothing more: no scope creep, no speculative
+  abstractions.
+- Modify only the files listed under **Files allowed to modify**. Leave the
+  do-not-modify files alone, and don't opportunistically refactor adjacent code
   (PROJECT_SPEC §6).
-- Do NOT change public APIs or persisted payload shapes (DB rows, JSONL
-  envelopes, emitted events) unless the plan explicitly requires it.
-- Do NOT weaken, skip (`skip`/`xfail`), or delete tests to pass (PROJECT_SPEC
+- Keep public APIs and persisted payload shapes (DB rows, JSONL envelopes, emitted
+  events) unchanged unless the plan explicitly requires a change.
+- Never weaken, skip (`skip`/`xfail`), or delete tests to pass (PROJECT_SPEC
   §7). Add/adjust the tests the handoff requires, before or alongside the code.
 - Honor every invariant the handoff cites (PROJECT_SPEC §5 / `.claude/rules/`).
 - Read a file in full (or the complete relevant region) before editing it
   (PROJECT_SPEC §1). Read the call sites and the pinning tests first.
-- Run the verification commands the handoff lists and report their REAL output.
+- Run the verification commands the handoff lists and report their actual output.
   Do not claim green you did not observe (PROJECT_SPEC §10).
-- If the plan is ambiguous or you hit a blocking architectural problem, STOP and
+- If the plan is ambiguous or you hit a blocking architectural problem, stop and
   report the blocker instead of working around it (PROJECT_SPEC §9).
-- Do NOT `git add`, commit, push, or delete files outside your own edits.
+- Don't `git add`, commit, push, or delete files outside your own edits:
+  committing is the user's decision, and the orchestrator flags any HEAD move.
 
 ## Required output (returned to the orchestrator)
 - **Files modified** — each path + one line on what changed.

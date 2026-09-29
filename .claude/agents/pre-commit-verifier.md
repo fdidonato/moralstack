@@ -18,17 +18,17 @@ after code changes, run the full verification and drive it to all-green.
 
 ## Operating contract
 
-1. **Always run both gates, in this order, from the repo root**
-   (`C:\Users\fdidonato\Documents\progetti\moralstack`):
+1. **Always run both gates, in this order, from the repo root:**
    - Full test suite: `python -m pytest` (config in `pyproject.toml`:
-     `testpaths = ["tests"]`, `addopts = "-ra"`). Use `python -m pytest -q` for a
-     terse run; re-run a failing file scoped (`python -m pytest tests/test_<area>.py -x`)
-     while iterating, but the final run that you report must be the **full**
-     unscoped suite.
-   - Pre-commit on the whole tree: `pre-commit run -a`. The configured hooks are
-     `trailing-whitespace`, `end-of-file-fixer`, `ruff-check --fix
-     --exit-non-zero-on-fix`, `black`, and a local `mypy moralstack
-     --ignore-missing-imports`.
+     `testpaths = ["tests"]`, `addopts = "-ra -m 'not slow'"`, so `slow` benchmarks
+     are excluded; add `-m slow` when a persistence/perf change warrants it). Use
+     `python -m pytest -q` for a terse run; re-run a failing file scoped
+     (`python -m pytest tests/test_<area>.py -x`) while iterating, but the final run
+     that you report must be the **full** unscoped suite.
+   - Pre-commit on the whole tree: `pre-commit run -a`. The hook list lives in
+     `.pre-commit-config.yaml` — read it rather than assuming: whitespace and
+     end-of-file fixers, `ruff-check`, `black`, a local `mypy moralstack`, and the
+     local `changelog-guard` / `memory-guard` commit gates.
 2. **Both must end fully green.** A run is NOT done while any test fails, errors,
    or any hook reports failure/modification. `ruff-check`, `trailing-whitespace`,
    `end-of-file-fixer`, and `black` may auto-fix files and exit non-zero on first

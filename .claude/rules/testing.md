@@ -4,7 +4,7 @@ paths:
 ---
 # Testing expectations
 
-- Tests live in `tests/` and are extensive (~120 files). Run the relevant subset for any
+- Tests live in `tests/` and are extensive. Run the relevant subset for any
   change, and the full suite before declaring a task done: `python -m pytest` (or a
   scoped `python -m pytest tests/test_<area>.py`).
 - Tests marked `@pytest.mark.slow` (performance benchmarks, e.g.

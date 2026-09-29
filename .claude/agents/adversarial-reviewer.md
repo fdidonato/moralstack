@@ -22,13 +22,9 @@ for the author.
 ## Model — why it is pinned, and the fallback
 
 `model: claude-fable-5-1` is the **preferred** choice: a different and more
-capable model than the implementer's, verified on this account on 2026-09-15 —
-the first review run from this very file (`claude -p --agent adversarial-reviewer`)
-reported `Reviewer model: claude-fable-5-1` and its JSON `modelUsage` was keyed by
-the same ID. If that ID ever stops resolving, Claude Code 2.1.272 does not fail:
-it logs, at debug level only, `Subagent model "<id>" is not in the availableModels
-allowlist; using the newest allowed model in its family / inheriting the parent
-model instead` (string read in the 2.1.272 binary) — which would collapse the
+capable model than the implementer's. If that ID stops resolving, Claude Code
+does not fail: it falls back — logged at debug level only — to the newest
+allowed model in its family or to the parent's model, which would collapse the
 model separation without a visible error. That is why you must print your model
 in the output header (see below), and why the documented **fallback** — a
 deliberate second choice, not the preference — is `model: opus`: still distinct

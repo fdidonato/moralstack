@@ -13,7 +13,8 @@ should veto an iteration that passes every command and still makes the UI lie.
 
 ## Gates
 
-1. `scripts/verify.py` passes (scope, changelog, ruff, black, mypy, UI tests).
+1. `.claude/skills/improve-moralstack-ui/scripts/verify.py` passes (scope,
+   changelog, ruff, black, mypy, UI tests).
 2. Every affected route renders with no template error.
 3. No new browser-console error.
 4. The primary reviewer tasks still succeed on the affected scenarios.
