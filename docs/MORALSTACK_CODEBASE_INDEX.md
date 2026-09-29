@@ -271,8 +271,11 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `calibration_guard` row remains a separate single enqueue and is emitted with
   `billable_provider_call=False` (it is no real provider call: audit-tracked but
   excluded from token/cost aggregation, so it never surfaces as a spurious "missing"
-  token row). The three real mini rows leave the flag unset (`None` → billable by
-  the `COALESCE(...,1)` default).
+  token row). The three real mini rows leave the flag unset (`None`): the read store
+  counts them as billable through its `COALESCE(...,1)` default, but the in-process
+  per-request accumulator (`observability/service.py`) skips them, so
+  `request_token_usage` and the proxy `usage` field omit them — a known defect, see
+  `docs/CODEBASE_FACTS.md`.
 - **Unified single-wave constitution retrieval** (unify-constitution-retrieval-
   single-pass): `_get_principles_context` is the ONE `get_relevant_principles`
   call per request, owned here (risk thread), reused by deliberation/critic/

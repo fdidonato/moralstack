@@ -266,6 +266,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assumptions" (or "Hypotheses / Future work") section. The ledger has no such section:
   unverified claims are `**Hypothesis — …**` rows under "Future work / known gaps",
   which is what they now name.
+- **Stale statements flagged by the ledger curation.** `docs/CODEBASE_FACTS.md`: test
+  baseline 2150 → 2950 passed (header and two rows), the 512 rule-window default dated
+  to its commit (`9cd8296`, 2026-08-18), refreshed line cites on the reason-code and
+  `core`-domain rows, and a caveat on the `init_db` entry (connections already wait up
+  to 10 s on a lock, so which statement failed is an inference). The codebase index no
+  longer says the mini-estimator rows are simply billable (the per-request accumulator
+  skips them), and `docs/modules/critic.md` dates the default change the same way.
 - **The request-page execution graph no longer tells the hard-violation delivery guard's
   story backwards.** On a request where the critic raised a hard violation (run
   `0d4a091a`, request `9eef1009`), the guard's SAFE_COMPLETE regeneration was drawn inside
