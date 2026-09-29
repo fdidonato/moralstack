@@ -15,7 +15,7 @@ turn. They are plain Python (no third-party imports) and unit-tested in
 | `precompact_snapshot.py` | PreCompact (`async`) | no | Snapshots in-flight context → `.context-snapshot.md` before compaction. |
 | `session_start.py` | SessionStart | no | Situational brief; re-injects `.context-snapshot.md` on resume/compact. |
 | `session_end.py` | SessionEnd | no (can't) | Appends an UNVERIFIED session digest → `session-diary.md` (staging). |
-| `user_prompt_submit.py` | UserPromptSubmit | no | On plan/context keywords, injects snapshot + active plans; silent otherwise. |
+| `user_prompt_submit.py` | UserPromptSubmit | no | On plan/context keywords, injects the snapshot (only if written in the last 24 h) + active plans; silent otherwise. |
 | `log_instructions.py` | InstructionsLoaded | no | Logs which instruction files loaded → `.instructions-loaded.log`. |
 
 ## Local marker files (all under `.claude/`, all gitignored)

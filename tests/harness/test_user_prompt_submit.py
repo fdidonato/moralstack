@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import time
+
 import pytest
 
 
@@ -32,4 +35,39 @@ def test_injects_snapshot_and_plans_on_keyword(ups, run_hook, project):
 
 def test_keyword_but_nothing_available_is_silent(ups, run_hook, project):
     code, out = run_hook(ups, {"prompt": "dov'è il piano?"}, project)
+    assert code == 0 and out is None
+
+
+def _write_snapshot_aged(project, text: str, age_hours: float) -> None:
+    snapshot = project / ".claude" / ".context-snapshot.md"
+    snapshot.write_text(text, encoding="utf-8")
+    mtime = time.time() - age_hours * 3600
+    os.utime(snapshot, (mtime, mtime))
+
+
+def test_snapshot_older_than_24h_is_not_injected(ups, run_hook, project):
+    _write_snapshot_aged(project, "vecchio piano: passo 9", age_hours=25)
+    plans = project / "ai" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "my-plan.md").write_text("# Plan", encoding="utf-8")
+
+    code, out = run_hook(ups, {"prompt": "riprendi il piano di prima"}, project)
+    assert code == 0
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert "passo 9" not in ctx
+    assert "my-plan.md" in ctx
+
+
+def test_snapshot_younger_than_24h_is_injected(ups, run_hook, project):
+    _write_snapshot_aged(project, "piano di ieri: passo 4", age_hours=23)
+
+    code, out = run_hook(ups, {"prompt": "riprendi il piano di prima"}, project)
+    assert code == 0
+    assert "passo 4" in out["hookSpecificOutput"]["additionalContext"]
+
+
+def test_stale_snapshot_alone_is_silent(ups, run_hook, project):
+    _write_snapshot_aged(project, "vecchio piano: passo 9", age_hours=48)
+
+    code, out = run_hook(ups, {"prompt": "riprendi il piano di prima"}, project)
     assert code == 0 and out is None
