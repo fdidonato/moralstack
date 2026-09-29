@@ -44,7 +44,8 @@ For each candidate claim found in staging or in Future work / known gaps:
      and note the discrepancy (§9: code wins).
    - **Verifiable only against an external system** (a live LLM, the 84-question
      governance benchmark, an external runner, deployment config) → keep it as a
-     Hypothesis row, never in Verified facts.
+     Hypothesis row (or, once measured and tied to a code-verified component, in
+     Conditionally verified / deployment assumptions), never in Verified facts.
    - **Still plausible but not checkable now** → leave its row untouched.
 3. **Prune the staging.** After promotion/verification, remove from
    `.claude/session-diary.md` the digests whose content is now captured in a
@@ -61,8 +62,11 @@ For each candidate claim found in staging or in Future work / known gaps:
 - **Staging-only files are gitignored.** Editing/pruning them changes local state,
   not the repo; that is expected.
 - **No governance or test edits.** You only curate memory docs. Do not touch
-  `moralstack/**` or `tests/**`. If you notice a code defect, record it as a
-  Hypothesis, do not fix it.
+  `moralstack/**` or `tests/**`. If you notice a code defect, do not fix it.
+  Note it in your report and, if it is unverified, add it as a
+  `**Hypothesis — …**` row (PROJECT_SPEC §9); a defect you verified against the
+  code this session and record goes in the Verified facts table, marked
+  **NOT fixed**.
 - **No commit, no push, no destructive git.** Leave the working tree for the user
   to review. `guard_dangerous_git.py` enforces this regardless.
 - **Smallest-diff.** Touch only the ledger rows and staging lines your promotions
