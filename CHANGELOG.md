@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hit `database is locked` and the schema is briefly absent (startup noise, measured
   harmless on the 2026-09-10 run). Not fixed yet; the fix direction is a lock inside
   `init_db`, keyed by path.
+- **Known defect documented: per-request token totals omit the risk mini-estimator
+  calls.** Since `5439aaf` (2026-07-18) the three mini-estimator `llm_call` rows carry
+  `billable_provider_call=None`. The in-process accumulator behind `request_token_usage`
+  and the proxy `usage` field skips them (`observability/service.py`), while the read
+  store counts NULL as billable, so the per-request summary under-counts governed
+  requests and disagrees with the UI (measurement in `docs/CODEBASE_FACTS.md`). Not
+  fixed yet. The same curation verified five further hypotheses against the code
+  (canary rotate race, unsynchronized ledger storage and executor init, estimator
+  `domain_channel` reset, path-agnostic persistence init), recorded that absorbed
+  provider errors leave no trace in the DB, and corrected stale rows (critic rule
+  window 512, 16-key mini-estimator payload).
 - **`MORALSTACK_HISTORY_MAX_CHARS_PER_TURN` / `MORALSTACK_HISTORY_MAX_TURNS` — the
   conversation window shown to the judging modules is now configurable, default
   unchanged (200 chars, 3 turns), so nothing moves unless the variable is set.**
