@@ -31,6 +31,16 @@ DOMAIN_PREFILTER_CACHE_HIT = "DOMAIN_PREFILTER_CACHE_HIT"
 DOMAIN_PREFILTER_CACHE_MISS = "DOMAIN_PREFILTER_CACHE_MISS"
 DOMAIN_PREFILTER_CACHE_INVALIDATED = "DOMAIN_PREFILTER_CACHE_INVALIDATED"
 DOMAIN_PREFILTER_QUERY_TOO_SHORT = "DOMAIN_PREFILTER_QUERY_TOO_SHORT"
+DOMAIN_PREFILTER_DOMAINS_REJECTED = "DOMAIN_PREFILTER_DOMAINS_REJECTED"
+"""
+Emitted on a prefilter cache miss when the classifier proposed domains that were not applied
+(or its JSON output was unrecoverable), or routing fell back to core-only without caching (``routing_fallback``),
+including when nothing, or only ``core``, was proposed. Write-only audit: never read for routing.
+Payload: decision ("rejected" | "parse_failed"), reason_codes (subset of unknown_domain,
+low_confidence, over_cap, parse_failed), retrieval_phase, cache_key_digest, parse_status,
+confidence, confidence_type, confidence_threshold, max_domains, routing_fallback,
+proposed, proposed_total, applied_domains, rejected ([{domain, reason}]), rejected_total, truncated.
+"""
 
 # Simulator gating / execution
 SIMULATOR_GATE_DECISION = "SIMULATOR_GATE_DECISION"
@@ -166,6 +176,7 @@ ALL_EVENT_TYPES: frozenset[str] = frozenset(
         DOMAIN_PREFILTER_CACHE_MISS,
         DOMAIN_PREFILTER_CACHE_INVALIDATED,
         DOMAIN_PREFILTER_QUERY_TOO_SHORT,
+        DOMAIN_PREFILTER_DOMAINS_REJECTED,
         SIMULATOR_GATE_DECISION,
         SIMULATOR_EXECUTED,
         SIMULATOR_SKIPPED,

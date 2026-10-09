@@ -339,7 +339,10 @@ Emitted across the flow (DB rows + JSONL envelopes per observability mode):
 - `orchestration_events`: `SPECULATIVE_STARTED`, `COMPLIANCE_LAYER_*`,
   `MODULE_DEFERRED_TO_COMPLIANCE`, `LEDGER_FAST_PATH_*`,
   `CONVERSATION_CONTEXT_ATTACHED`, `CONVERSATION_STATE_UPDATED`,
-  `CONTEXT_SHAPE_RECORDED`, `PROXY_OUTPUT_FINALIZED` (proxy).
+  `CONTEXT_SHAPE_RECORDED`, `PROXY_OUTPUT_FINALIZED` (proxy),
+  `DOMAIN_PREFILTER_DOMAINS_REJECTED` (retrieval; write-only audit of domains the
+  prefilter LLM proposed but routing did not apply, with reasons `unknown_domain` /
+  `low_confidence` / `over_cap` / `parse_failed`; never read for routing).
 - `conversation_states`, `ledger_events`, `session_store_events`,
   `proxy_request_events` for multi-turn.
 - SDK flushes observability synchronously after each call (`wrapper.py:275-283`);

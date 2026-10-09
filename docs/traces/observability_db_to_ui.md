@@ -112,6 +112,10 @@ constitution domain-prefilter and per-domain agents carry
 wave (default), `"deliberation_retrieval"` for any fallback wave
 (`constitution/retriever.py:_persist_constitution_llm_call`, threaded through
 both `EnhancedDomainAgent` and legacy `DomainAgent`).
+`DOMAIN_PREFILTER_DOMAINS_REJECTED` (prefilter cache miss only; `reason_codes` = sorted unique reasons, payload lists
+the rejected domains) renders as a generic Runtime Decisions row with the reasons in the "reason" column
+(`reports/runtime_decisions.py:orchestration_event_to_row`); it is not counted as reuse or invalidation by
+`build_retrieval_reuse_summary`.
 
 **`retrieval_metadata` / `domain_channel` provenance (retrieval-request-scoped-state,
 P0 fix).** `RiskEstimation.retrieval_metadata` and the `REQUEST_ANALYSIS_CONTEXT`

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Domain-prefilter rejected-domain audit.** On a prefilter cache miss, every domain the
+  classifier proposed but routing did not apply is now recorded as one bounded
+  `DOMAIN_PREFILTER_DOMAINS_REJECTED` orchestration event, with reasons `unknown_domain`,
+  `low_confidence`, `over_cap` or `parse_failed` (16 entries x 64 characters max). Write-only:
+  the applied domains, the prefilter cache, the prompts and the `llm_calls` rows are unchanged.
+  API errors and a missing API key are not recorded (documented known gap).
+
 - **Known gap documented: `init_db` startup race.** `docs/CODEBASE_FACTS.md` ("Future
   work / known gaps") now records that `init_db` has no concurrency guard and that
   `e0dd37b` added a second caller in the request path, so on a fresh DB one caller can

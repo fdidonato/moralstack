@@ -14,6 +14,7 @@ import functools
 import hashlib
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -197,7 +198,9 @@ def _domain_agent_cache_key(
     return hashlib.sha256(key_material.encode("utf-8")).hexdigest()
 
 
-def _emit_domain_prefilter_orchestration_event(event_type: str, payload: dict[str, Any]) -> None:
+def _emit_domain_prefilter_orchestration_event(
+    event_type: str, payload: dict[str, Any], *, reason_codes: list[str] | None = None
+) -> None:
     """Best-effort orchestration_events row; no-op when persistence context or DB is unavailable."""
     try:
         persist_orchestration_event(
@@ -207,6 +210,7 @@ def _emit_domain_prefilter_orchestration_event(event_type: str, payload: dict[st
             decision=str(payload.get("decision") or ""),
             status="ok",
             payload=payload,
+            reason_codes=reason_codes,
         )
     except Exception:
         logger.debug("domain prefilter orchestration event emission failed", exc_info=True)
@@ -222,6 +226,170 @@ def _prefilter_combined_cache_status(keywords_changed: bool, cache_hit: bool | N
     if cache_hit:
         return "hit"
     return "miss"
+
+
+# Parse status of the last prefilter LLM call in the current context. Write-only audit side channel: it is
+# set by ``DomainPrefilter._call_openai`` and read only by ``_audit_rejected_domains``; routing never reads it.
+_PREFILTER_PARSE_STATUS: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "moralstack_domain_prefilter_parse_status", default=None
+)
+
+_REJECTION_AUDIT_MAX_ITEMS = 16
+_REJECTION_AUDIT_MAX_LABEL_CHARS = 64
+_REJECT_UNKNOWN_DOMAIN = "unknown_domain"
+_REJECT_LOW_CONFIDENCE = "low_confidence"
+_REJECT_OVER_CAP = "over_cap"
+_REJECT_PARSE_FAILED = "parse_failed"
+
+
+def _record_prefilter_parse_status(p_contract: dict[str, Any] | None) -> None:
+    """Best-effort: store the parse status of the prefilter LLM output (None when unknown)."""
+    try:
+        status = p_contract.get("parse_status") if isinstance(p_contract, dict) else None
+        _PREFILTER_PARSE_STATUS.set(status if isinstance(status, str) else None)
+    except Exception:
+        logger.debug("domain prefilter parse status capture failed", exc_info=True)
+
+
+def _audit_label(value: Any) -> tuple[str, bool]:
+    """Bounded display label for a model-proposed value; the second item is True when it was cut."""
+    label = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return label[:_REJECTION_AUDIT_MAX_LABEL_CHARS], len(label) > _REJECTION_AUDIT_MAX_LABEL_CHARS
+
+
+def _audit_value_key(value: Any) -> str:
+    """Exact, untruncated, type-aware dedup key (never persisted)."""
+    return f"{type(value).__name__}:" + json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _proposal_items(raw_domains: Any) -> list[Any]:
+    """Items the model proposed, mirroring what the routing comprehension iterates (a str is ONE item)."""
+    if isinstance(raw_domains, list):
+        return list(raw_domains)
+    if isinstance(raw_domains, dict):
+        return list(raw_domains.keys())
+    if raw_domains is None or raw_domains == "":
+        return []
+    return [raw_domains]
+
+
+def _audit_confidence(result: Any) -> tuple[float | None, str]:
+    """(finite numeric confidence or None, type name or "missing") for the audit payload."""
+    if not isinstance(result, dict) or "confidence" not in result:
+        return None, "missing"
+    raw = result["confidence"]
+    value: float | None = None
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        try:
+            candidate = float(raw)
+        except OverflowError:
+            candidate = float("nan")
+        value = candidate if math.isfinite(candidate) else None
+    return value, type(raw).__name__
+
+
+def _build_prefilter_rejection_record(
+    result: Any,
+    *,
+    parse_status: str | None,
+    available_domains: list[str],
+    applied_domains: list[str],
+    max_domains: int,
+    threshold: float,
+    routing_fallback: bool,
+) -> dict[str, Any] | None:
+    """
+    Pure audit builder: which proposed values were NOT applied, and why (first gate in routing order wins).
+
+    Never mutates its inputs and does no I/O. Returns None when there is nothing to record.
+    """
+    confidence, confidence_type = _audit_confidence(result)
+    record: dict[str, Any] = {
+        "decision": "rejected",
+        "reason_codes": [],
+        "parse_status": parse_status,
+        "confidence": confidence,
+        "confidence_type": confidence_type,
+        "confidence_threshold": threshold,
+        "max_domains": max_domains,
+        "routing_fallback": bool(routing_fallback),
+        "proposed": [],
+        "proposed_total": 0,
+        "applied_domains": list(applied_domains),
+        "rejected": [],
+        "rejected_total": 0,
+        "truncated": False,
+    }
+
+    def _fill_proposed(proposed: list[Any]) -> bool:
+        labels = [_audit_label(p) for p in proposed[:_REJECTION_AUDIT_MAX_ITEMS]]
+        record["proposed"] = [lbl for lbl, _ in labels]
+        record["proposed_total"] = len(proposed)
+        return len(proposed) > _REJECTION_AUDIT_MAX_ITEMS or any(cut for _, cut in labels)
+
+    def _parse_failed_record(proposed: list[Any]) -> dict[str, Any]:
+        record["decision"] = "parse_failed"
+        record["reason_codes"] = [_REJECT_PARSE_FAILED]
+        record["truncated"] = _fill_proposed(proposed)
+        return record
+
+    if parse_status == "failed":
+        return _parse_failed_record([])
+    if not isinstance(result, dict) or not result:
+        return None
+
+    raw_domains = result.get("domains", [])
+    proposed = _proposal_items(raw_domains)
+    if not proposed:
+        return _parse_failed_record([]) if routing_fallback else None
+
+    # Same expressions, in the same order, as the routing gate and filter comprehension.
+    gate_raised = False
+    try:
+        gate_ok = bool(result.get("confidence", 0) >= threshold)
+    except Exception:
+        gate_ok = False
+        gate_raised = True
+    iter_raised = False
+    if gate_ok:
+        try:
+            [d for d in raw_domains if d in available_domains]
+        except Exception:
+            iter_raised = True
+
+    rejected: list[tuple[str, str]] = []
+    cut_label = False
+    seen: set[str] = set()
+    for item in proposed:
+        key = _audit_value_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        if item in applied_domains:
+            continue
+        if gate_raised:
+            reason = _REJECT_PARSE_FAILED
+        elif not gate_ok:
+            reason = _REJECT_LOW_CONFIDENCE
+        elif iter_raised or isinstance(raw_domains, str):
+            reason = _REJECT_PARSE_FAILED
+        elif item not in available_domains:
+            reason = _REJECT_UNKNOWN_DOMAIN
+        else:
+            reason = _REJECT_OVER_CAP
+        label, cut = _audit_label(item)
+        cut_label = cut_label or cut
+        rejected.append((label, reason))
+
+    if not rejected:
+        # Routing fell back to core-only (uncached) although every proposed value counts as applied (e.g. only "core").
+        return _parse_failed_record(proposed) if routing_fallback else None
+
+    record["reason_codes"] = sorted({reason for _, reason in rejected})
+    record["rejected"] = [{"domain": lbl, "reason": reason} for lbl, reason in rejected[:_REJECTION_AUDIT_MAX_ITEMS]]
+    record["rejected_total"] = len(rejected)
+    record["truncated"] = _fill_proposed(proposed) or len(rejected) > _REJECTION_AUDIT_MAX_ITEMS or cut_label
+    return record
 
 
 # =============================================================================
@@ -517,6 +685,9 @@ class DomainPrefilter:
         system_prompt = self._build_prefilter_system_prompt(domain_list)
         user_prompt = f"USER QUERY:\n{query}"
 
+        _record_prefilter_parse_status(None)
+        # Dead store on purpose: visible to the except branch (routing fallback audit).
+        result: dict[str, Any] = {}
         try:
             result = self._call_openai(user_prompt, system_prompt=system_prompt, retrieval_phase=retrieval_phase)
 
@@ -527,14 +698,68 @@ class DomainPrefilter:
 
             relevant = list(dict.fromkeys(relevant))
             self._cache[cache_key] = relevant
+            self._audit_rejected_domains(
+                result,
+                available_domains=available_domains,
+                applied_domains=relevant,
+                retrieval_phase=retrieval_phase,
+                cache_key=cache_key,
+            )
             return _PrefilterOutcome(domains=list(relevant), cache_lookup_hit=False)
 
         except Exception as e:
             logger.warning(f"DomainPrefilter failed: {e}, returning core only")
+            self._audit_rejected_domains(
+                result,
+                available_domains=available_domains,
+                applied_domains=None,
+                retrieval_phase=retrieval_phase,
+                cache_key=cache_key,
+            )
             return _PrefilterOutcome(
                 domains=list(self.ALWAYS_EVALUATE & set(available_domains)),
                 cache_lookup_hit=False,
             )
+
+    def _audit_rejected_domains(
+        self,
+        result: Any,
+        *,
+        available_domains: list[str],
+        applied_domains: list[str] | None,
+        retrieval_phase: str,
+        cache_key: str,
+    ) -> None:
+        """Best-effort, write-only: emit DOMAIN_PREFILTER_DOMAINS_REJECTED for proposed-but-not-applied domains.
+
+        ``applied_domains=None`` means routing raised and fell back to core-only (not cached).
+        Never raises and never influences the returned domains.
+        """
+        try:
+            from moralstack.orchestration.orchestration_event_taxonomy import DOMAIN_PREFILTER_DOMAINS_REJECTED
+
+            status = _PREFILTER_PARSE_STATUS.get()
+            if applied_domains is not None:
+                applied = list(applied_domains)
+            else:
+                applied = list(self.ALWAYS_EVALUATE & set(available_domains))
+            record = _build_prefilter_rejection_record(
+                result,
+                parse_status=status,
+                available_domains=available_domains,
+                applied_domains=applied,
+                max_domains=self.max_domains,
+                threshold=self.DOMAIN_CONFIDENCE_THRESHOLD,
+                routing_fallback=applied_domains is None,
+            )
+            if record is not None:
+                record["retrieval_phase"] = retrieval_phase
+                record["cache_key_digest"] = cache_key
+                _emit_domain_prefilter_orchestration_event(
+                    DOMAIN_PREFILTER_DOMAINS_REJECTED, record, reason_codes=record["reason_codes"]
+                )
+        except Exception:
+            logger.debug("domain prefilter rejection audit failed", exc_info=True)
 
     def _build_prefilter_system_prompt(self, domain_list: str) -> str:
         """Compose the byte-stable prefilter SYSTEM prompt for the current domain config.
@@ -692,6 +917,7 @@ Return JSON only:
                         "parse_attempts": 1,
                         "retry_count": 0,
                     }
+            _record_prefilter_parse_status(p_contract)
             cycle_val, seq_val = _RETRIEVAL_PHASE_PERSISTENCE.get(
                 retrieval_phase,
                 _RETRIEVAL_PHASE_PERSISTENCE[RETRIEVAL_PHASE_RISK_ROUTING],

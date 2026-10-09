@@ -274,6 +274,32 @@ context (`run_id` / `request_id`) is active, cache hit / miss / invalidation are
 retrieval exposes `prefilter_cache_status` and related fields via `ConstitutionStore.retrieve(...).debug_info` and
 the `REQUEST_ANALYSIS_CONTEXT` decision trace payload.
 
+**Rejected-domain audit:** on a prefilter cache **miss** where the LLM was called, `DomainPrefilter` records every
+domain the classifier proposed but that was not applied, as one bounded `DOMAIN_PREFILTER_DOMAINS_REJECTED`
+orchestration event (`stage="retrieval"`, `component="domain_prefilter"`). It is a write-only audit: the applied
+list, its order, the cache and the `llm_calls` row are byte-identical with or without it, and nothing reads the event
+for routing. Each distinct proposed value gets one `{domain, reason}` entry, with the **first gate in routing order**
+that dropped it: `low_confidence` (confidence below `DOMAIN_CONFIDENCE_THRESHOLD`, the whole proposal is discarded),
+`parse_failed` (JSON unrecoverable, or a malformed shape; `payload.parse_status` tells the two apart). Only
+**non-iterable `domains`** (e.g. `null`, a number) and a **non-comparable `confidence`** make routing fall back to
+core-only without caching, recorded as `parse_failed` with `routing_fallback=true`; **string `domains`** are iterated
+per character by routing, which caches core-only, and are recorded as one `parse_failed` entry for the whole string
+with `routing_fallback=false`,
+`unknown_domain` (not in `available_domains`; case and whitespace variants count as unknown), and `over_cap`
+(known, but positioned after the `max_domains` slice; duplicates and `core` take cap slots, so the domain they push
+out is the one recorded). A `core` proposed by the model is never recorded as rejected when `core` is in
+`available_domains` (both production callers prepend it; direct callers may not). A routing fallback with nothing
+proposed, or with only `core` proposed, emits `decision="parse_failed"` with `routing_fallback=true`.
+Cache hits emit nothing: join a hit to the miss that produced it through `cache_key_digest` (same md5 key as
+CACHE_MISS/HIT). Nothing is emitted for a clean accept, an empty proposal, the short-query bypass, no candidate
+domains, no API key or an API exception (known gap: those paths return `{}` and core-only is cached). The only bound
+is 16 entries x 64 characters per label (`truncated` flags a cut); the sinks do not truncate. The payload carries no
+query text. Model labels are echoed, the full raw output stays in `llm_calls.raw_response`. The parse status travels
+from `_call_openai` to the audit through a module-level `ContextVar` (no instance attributes). Contract: **at most
+one event per miss under normal operation**; the audit call on the success path sits inside the routing `try`, so
+only a `BaseException` escaping the audit's own swallow could produce a second call on the except branch.
+A non-`JSONParseError` exception raised by the parser reaches the `_call_openai` outer handler: no status, no event.
+
 **Domain-agent cache:** `EnhancedDomainAgent` and legacy `DomainAgent` cache on the exact OpenAI-relevant request
 material: rendered system/user messages plus model, temperature, `json_object`, and completion-token parameter.
 The rendered compact principle text includes id, level, and truncated rule. It intentionally does not include

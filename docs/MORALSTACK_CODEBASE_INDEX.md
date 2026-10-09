@@ -584,7 +584,10 @@ static prefix and the user message carries only per-request dynamic data
   message is query-only: `f"USER QUERY:\n{query}"`. `_call_openai(prompt, *,
   system_prompt, retrieval_phase=...)` threads the same builder output into
   both the OpenAI system message and the persisted `system_prompt` (single
-  source); the old hardcoded 11-word `sys_msg` is gone.
+  source); the old hardcoded 11-word `sys_msg` is gone. Proposed-but-not-applied domains are
+  audited (write-only, never routing) as `DOMAIN_PREFILTER_DOMAINS_REJECTED` orchestration
+  events on a cache miss (`_audit_rejected_domains`; reasons `unknown_domain`, `low_confidence`,
+  `over_cap`, `parse_failed`; parse status via a module-level `ContextVar`).
 - **DCCL**: verified already static system + dynamic later messages — no code
   change (A6, verify-only).
 
