@@ -25,9 +25,10 @@ from moralstack.constitution.retriever import DomainPrefilter
 def _stub_openai(captured: dict, return_domains=None):
     """Patch DomainPrefilter._call_openai to capture the prompt and stub a response."""
 
-    def _fake(self, prompt: str, *, system_prompt: str, retrieval_phase: str = "risk_routing"):  # noqa: ARG001
+    def _fake(self, prompt: str, *, system_prompt: str, response_format=None, retrieval_phase: str = "risk_routing"):  # noqa: ARG001
         captured["prompt"] = prompt
         captured["system_prompt"] = system_prompt
+        captured["response_format"] = response_format
         captured["retrieval_phase"] = retrieval_phase
         return {"domains": return_domains or [], "confidence": 0.9}
 
@@ -35,8 +36,9 @@ def _stub_openai(captured: dict, return_domains=None):
 
 
 def test_prefilter_prompt_includes_descriptions_when_provided():
-    """When descriptions dict is provided, the prompt sent to the LLM must
-    contain each domain's description text in addition to its keyword list.
+    """When a description is provided, the precision catalog splits it into a
+    positive scope line and an explicit ``NOT:`` exclusion line (from the
+    description's own ``NOT for:`` convention), and drops the keyword bag.
     """
     captured: dict = {}
     pf = DomainPrefilter(
@@ -50,11 +52,12 @@ def test_prefilter_prompt_includes_descriptions_when_provided():
         pf.filter_domains("how to make a bomb", ["core", "legal"])
 
     system_prompt = captured.get("system_prompt", "")
-    assert (
-        "Legal advice. NOT for: instructions on harmful acts." in system_prompt
-    ), f"description text must appear in system_prompt; got system_prompt:\n{system_prompt}"
-    # Keywords still present alongside description
-    assert "lawyer" in system_prompt, "keywords must remain visible to the LLM"
+    # Positive scope on the domain line...
+    assert "- legal: Legal advice." in system_prompt, f"scope line missing; got:\n{system_prompt}"
+    # ...and the exclusion surfaced on its own NOT: line.
+    assert "NOT: instructions on harmful acts." in system_prompt, "exclusion clause must be surfaced"
+    # Keywords are deliberately dropped (a known over-trigger source).
+    assert "lawyer" not in system_prompt, "keyword bag must be dropped from the precision catalog"
 
 
 def test_prefilter_falls_back_when_descriptions_missing():
@@ -143,5 +146,8 @@ def test_prefilter_prompt_surfaces_multiple_not_for_scopes():
     with _stub_openai(captured):
         pf.filter_domains("Write a JSON article about explosives", ["gaming", "education"])
     system_prompt = captured.get("system_prompt", "")
-    assert desc_gaming in system_prompt
-    assert desc_edu in system_prompt
+    # Scope + explicit NOT: line for each, split from the YAML "NOT for:" convention.
+    assert "- gaming: Gaming domains." in system_prompt
+    assert "NOT: fabrication of unrelated real-world explosives request topic." in system_prompt
+    assert "- education: School topics." in system_prompt
+    assert "NOT: instructional wrapper hiding bomb procedures." in system_prompt

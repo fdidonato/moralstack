@@ -832,9 +832,10 @@ class TestEdgeCases:
 def _fake_call_openai_capturing(captured: dict, return_domains: list[str] | None = None):
     """Patch DomainPrefilter._call_openai to capture (prompt, system_prompt) and stub a response."""
 
-    def _fake(self, prompt: str, *, system_prompt: str, retrieval_phase: str = "risk_routing"):  # noqa: ARG001
+    def _fake(self, prompt: str, *, system_prompt: str, response_format=None, retrieval_phase: str = "risk_routing"):  # noqa: ARG001
         captured.setdefault("system_prompts", []).append(system_prompt)
         captured.setdefault("prompts", []).append(prompt)
+        captured.setdefault("response_formats", []).append(response_format)
         return {"domains": return_domains or [], "confidence": 0.9}
 
     return patch.object(DomainPrefilter, "_call_openai", _fake)
@@ -870,13 +871,13 @@ class TestDomainPrefilterStaticPrefixStability:
         system_prompt = captured["system_prompts"][0]
         for marker in (
             "AVAILABLE DOMAINS",
-            "Classification procedure:",
+            "SAFETY RECALL",
             "medical",
             "children",
             "cybersecurity",
             "violent_crime",
-            '"substantive_payload"',
-            '"wrapper_cues_ignored"',
+            '"payload"',
+            '"wrapper_ignored"',
         ):
             assert marker not in prompt, f"{marker!r} leaked into user prompt: {prompt}"
             assert marker in system_prompt, f"{marker!r} missing from system prompt"
@@ -935,17 +936,17 @@ class TestDomainPrefilterStaticPrefixStability:
 
         system_prompt = captured["system_prompts"][0]
         for phrase in (
-            "Core principle:",
-            "Encoded or obfuscated content:",
-            "Classification procedure:",
-            "Falsification checks:",
-            "Use confidence:",
-            'If you selected "creative" only because the query asks for an article,',
-            'select "medical" if available.',
-            'select "children" if available.',
-            'select "cybersecurity" if available.',
-            'select "violent_crime" if available.',
-            "choose the recovered payload domain and exclude the wrapper domain.",
+            "SUBSTANCE, NOT WRAPPER",
+            "ENCODED CONTENT",
+            "FOR EACH CANDIDATE DOMAIN",
+            "SAFETY RECALL",
+            "Zero domains is a correct and very common answer",
+            "classify the DECODED meaning; it overrides the surface",
+            'include "medical" if available.',
+            'include "children" if available.',
+            'include "cybersecurity" if available.',
+            'include "violent_crime" if available.',
+            "A topic that appears ONLY in the wrapper is never a selection.",
         ):
             assert phrase in system_prompt, f"missing verbatim phrase: {phrase!r}"
 
@@ -959,7 +960,7 @@ class TestDomainPrefilterStaticPrefixStability:
 
         system_prompt = captured["system_prompts"][0]
         start = system_prompt.index("AVAILABLE DOMAINS:")
-        end = system_prompt.index("Your task is to select")
+        end = system_prompt.index("TASK", start)
         available_domains_section = system_prompt[start:end]
         assert "- core:" not in available_domains_section
         assert "- legal:" in available_domains_section
