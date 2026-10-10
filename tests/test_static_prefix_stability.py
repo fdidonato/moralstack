@@ -940,7 +940,7 @@ class TestDomainPrefilterStaticPrefixStability:
             "ENCODED CONTENT",
             "FOR EACH CANDIDATE DOMAIN",
             "SAFETY RECALL",
-            "Zero domains is a correct and very common answer",
+            "the evidence is the SUBJECT MATTER it is about",
             "classify the DECODED meaning; it overrides the surface",
             'include "medical" if available.',
             'include "children" if available.',
