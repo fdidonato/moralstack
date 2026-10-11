@@ -144,57 +144,6 @@ class _Phase0Timer:
         )
 
 
-def persist_llm_call(
-    *,
-    run_id: str | None = None,
-    request_id: str | None = None,
-    cycle: int | None = None,
-    phase: str = "",
-    module: str = "",
-    action: str = "",
-    model: str | None = None,
-    started_at: int | None = None,
-    duration_ms: float | None = None,
-    prompt: str = "",
-    system_prompt: str = "",
-    raw_response: str = "",
-    parsed_json: str | None = None,
-    parsed_summary_json: str | None = None,
-    token_usage_json: str | None = None,
-    attempts: int | None = None,
-    error: str | None = None,
-    sequence_in_cycle: int | None = None,
-    **kwargs: Any,
-) -> bool:
-    try:
-        envelope = _build_local_llm_call_envelope(
-            run_id=run_id,
-            request_id=request_id,
-            cycle=cycle,
-            phase=phase,
-            module=module,
-            action=action,
-            model=model,
-            started_at=started_at,
-            duration_ms=duration_ms,
-            prompt=prompt,
-            system_prompt=system_prompt,
-            raw_response=raw_response,
-            parsed_json=parsed_json,
-            parsed_summary_json=parsed_summary_json,
-            token_usage_json=token_usage_json,
-            attempts=attempts,
-            error=error,
-            sequence_in_cycle=sequence_in_cycle,
-        )
-        if envelope is None:
-            return False
-        _obs_route(envelope)
-        return True
-    except Exception:
-        return False
-
-
 def _build_local_llm_call_envelope(
     *,
     run_id: str | None = None,

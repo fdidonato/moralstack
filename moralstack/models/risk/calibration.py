@@ -106,9 +106,9 @@ class _VerificationQuestions:
     intent_to_harm: bool
     intent_operational: bool
     # Language-agnostic semantic intent fields produced by the intent estimator.
-    # Both default to False when absent from the LLM output (older estimators
-    # or fallback monolithic responses). The calibration_guard does not yet
-    # consume these (see decision_service for downstream wiring).
+    # Both default to False when absent from the LLM output (absent keys and
+    # historical rows). The calibration_guard does not yet consume these
+    # (see decision_service for downstream wiring).
     stated_personal_bias: bool
     seeks_norm_circumvention: bool
     harmful_count: int

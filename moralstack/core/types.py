@@ -98,7 +98,6 @@ class RiskEstimatorProtocol(Protocol):
     """Protocollo per il Risk Estimator."""
 
     def estimate(self, prompt: str) -> Any: ...
-    def quick_estimate(self, prompt: str) -> Any: ...
 
 
 class CriticProtocol(Protocol):

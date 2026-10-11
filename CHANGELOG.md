@@ -261,6 +261,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Dead code in the risk-estimator area (no behaviour change).** Removed the uncalled
+  module-level `persist_llm_call` in `moralstack/models/risk/estimator.py` and the never-called
+  `quick_estimate` from `RiskEstimatorProtocol` (`moralstack/core/types.py`), plus a stale
+  "monolithic" comment in `calibration.py`. Prompts, `llm_calls` payloads, `RiskEstimation` and
+  decisions are unchanged.
+
 - **Constitution keywords (breaking for custom YAML).** Overlay `keywords` and principle
   `keywords` / `keywords_block` / `keywords_style` are gone from the schema and from the 22
   bundled YAML files. Because the schema rejects unknown fields, a custom overlay that

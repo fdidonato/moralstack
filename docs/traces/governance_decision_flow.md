@@ -75,7 +75,7 @@ the estimator (`controller.py:797-823`) and emits `CONTEXT_SHAPE_RECORDED`. The
 risk estimator declares its reduced history mode as `role_serialized_truncated`
 when only the last-3 window is used. The estimator runs three parallel
 mini-estimators (intent / signals q1–q17 / operational) and calibrates them into
-a `RiskEstimation` (`models/risk/estimator.py:541-735`).
+a `RiskEstimation` (`models/risk/estimator.py:800-1161`).
 
 **Single upstream constitution-retrieval wave** (unify-constitution-retrieval-
 single-pass). `_estimate_risk` also computes the retrieval query policy (RAW

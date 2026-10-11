@@ -522,9 +522,9 @@ readers (UI/reports); it is not invoked on the active delivery paths.
 
 ## 5. Risk estimation
 
-`LLMBasedRiskEstimator.estimate(...)` (`models/risk/estimator.py:249`) delegates
-to the parallel mini-estimator path (`estimator.py:549-678`, `ThreadPoolExecutor`
-at `:674-678`), which runs three mini-estimators and merges them:
+`LLMBasedRiskEstimator.estimate(...)` (`models/risk/estimator.py:355`) delegates
+to the parallel mini-estimator path (`estimator.py:800-1161`, `ThreadPoolExecutor`
+at `:997-1001`), which runs three mini-estimators and merges them:
 - `estimate_intent` — detected_language, intent flags, request_type, harm_type.
 - `estimate_signals` — q1–q17 harm/topic signals.
 - `estimate_operational` — operational_risk, raw risk_score, confidence,
