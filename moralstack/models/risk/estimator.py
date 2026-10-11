@@ -9,7 +9,7 @@ import threading
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 from moralstack.constitution.retrieval_result import warn_missing_retrieve_once
 from moralstack.core.types import PolicyLLMProtocol
@@ -35,9 +35,6 @@ from .categories import (
     RiskPolicyAction,
 )
 from .config_loader import (
-    ENV_CATEGORIZE_BENIGN_THRESHOLD,
-    ENV_CATEGORIZE_CLEARLY_HARMFUL_THRESHOLD,
-    ENV_CATEGORIZE_SENSITIVE_THRESHOLD,
     ENV_CRISIS_CLAMP_HIGH,
     ENV_CRISIS_CLAMP_LOW,
     ENV_RULE_PREVIEW_LEN,
@@ -301,15 +298,12 @@ class LLMBasedRiskEstimator:
         self.policy = policy
         self.config = config or load_risk_estimator_config_from_env()
         self.constitution_store = constitution_store
-        # Env-derived params (read once; used in _semantic_analysis and categorize_from_score)
+        # Env-derived params (read once; used by the parallel mini-estimator path)
         self._top_p = get_risk_env_float(ENV_TOP_P, 0.9, 0.0, 1.0)
         self._top_k = get_risk_env_int(ENV_TOP_K, 10, 1)
         self._rule_preview_len = get_risk_env_int(ENV_RULE_PREVIEW_LEN, 200, 1)
         self._crisis_clamp_low = get_risk_env_float(ENV_CRISIS_CLAMP_LOW, 0.35, 0.0, 1.0)
         self._crisis_clamp_high = get_risk_env_float(ENV_CRISIS_CLAMP_HIGH, 0.65, 0.0, 1.0)
-        self._categorize_benign = get_risk_env_float(ENV_CATEGORIZE_BENIGN_THRESHOLD, 0.2, 0.0, 1.0)
-        self._categorize_sensitive = get_risk_env_float(ENV_CATEGORIZE_SENSITIVE_THRESHOLD, 0.5, 0.0, 1.0)
-        self._categorize_clearly_harmful = get_risk_env_float(ENV_CATEGORIZE_CLEARLY_HARMFUL_THRESHOLD, 0.85, 0.0, 1.0)
         # Mini-estimator OpenAIPolicy reuse: keyed by model id on this estimator instance (thread-safe fill).
         self._mini_policy_pool: dict[str, Any] = {}
         self._mini_policy_pool_lock = threading.Lock()
@@ -1184,148 +1178,10 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
             _RISK_LOG.warning("parallel mini-analysis failed, using safe fallback estimate: %s", e)
             return RiskEstimation.from_error(str(e))
 
-    def get_risk_level(self, estimation: RiskEstimation) -> Literal["low", "medium", "high"]:
-        """
-        Converte RiskEstimation in livello discreto.
-
-        Args:
-            estimation: Risultato della stima
-
-        Returns:
-            "low", "medium", o "high"
-        """
-        if estimation.score < self.config.low_threshold:
-            return "low"
-        elif estimation.score < self.config.medium_threshold:
-            return "medium"
-        else:
-            return "high"
-
-    def should_deliberate(self, estimation: RiskEstimation) -> bool:
-        """
-        Determina se è necessaria la deliberazione completa.
-
-        Args:
-            estimation: Risultato della stima
-
-        Returns:
-            True se serve deliberazione, False per fast path
-        """
-        return estimation.score >= self.config.low_threshold
-
-    def categorize_from_score(self, score: float, is_moral_dilemma: bool = False) -> RiskCategory:
-        """
-        Mappa score numerico a categoria di rischio.
-
-        Utile per garantire consistenza tra score e categoria.
-
-        Args:
-            score: Score di rischio [0, 1]
-            is_moral_dilemma: Se True, forza categoria MORALLY_NUANCED per score 0.3-0.5
-
-        Returns:
-            RiskCategory corrispondente
-        """
-        if score < self._categorize_benign:
-            return RiskCategory.BENIGN
-        elif score < self.config.low_threshold:
-            return RiskCategory.BENIGN
-        elif score < self._categorize_sensitive:
-            # Range low_threshold to categorize_sensitive: morally_nuanced or sensitive
-            if is_moral_dilemma:
-                return RiskCategory.MORALLY_NUANCED
-            return RiskCategory.SENSITIVE
-        elif score < self.config.medium_threshold:
-            return RiskCategory.SENSITIVE
-        elif score < self._categorize_clearly_harmful:
-            return RiskCategory.POTENTIALLY_HARMFUL
-        else:
-            return RiskCategory.CLEARLY_HARMFUL
-
-    def estimate_with_context(
-        self,
-        prompt: str,
-        conversation_history: list[dict[str, str]] | None = None,
-        user_context: dict[str, Any] | None = None,
-    ) -> RiskEstimation:
-        """Legacy façade — see estimate() for the canonical entry point."""
-        contract_text: str | None = None
-        if user_context:
-            contract_text = user_context.get("developer_contract")
-        return self.estimate(
-            prompt,
-            developer_contract_text=contract_text,
-            conversation_history=conversation_history,
-        )
-
 
 # =============================================================================
 # Factory Functions
 # =============================================================================
-
-
-def create_risk_estimator(
-    policy: PolicyLLMProtocol | None = None,
-    low_threshold: float = 0.3,
-    medium_threshold: float = 0.7,
-    constitution_store: Any | None = None,
-    config: RiskEstimatorConfig | None = None,
-) -> LLMBasedRiskEstimator:
-    """
-    Factory function per creare un Giudice Semantico (Risk Estimator).
-
-    Crea un classificatore di rischio basato ESCLUSIVAMENTE su analisi
-    semantica. Non utilizza keyword matching.
-
-    Args:
-        policy: Policy LLM per l'analisi semantica.
-                Se None, usa fallback conservativo (richiede sempre deliberazione).
-        low_threshold: Soglia sotto la quale il rischio è considerato basso
-        medium_threshold: Soglia sopra la quale serve deliberazione completa
-        constitution_store: Store dei principi etici (opzionale)
-        config: Config esplicita (opzionale); se None, carica da env.
-
-    Returns:
-        LLMBasedRiskEstimator configurato come giudice semantico
-
-    Note:
-        Senza un policy LLM, il sistema funziona in modo conservativo,
-        richiedendo sempre deliberazione per ogni richiesta non vuota.
-    """
-    if config is None:
-        base = load_risk_estimator_config_from_env()
-        config = RiskEstimatorConfig(
-            low_threshold=low_threshold,
-            medium_threshold=medium_threshold,
-            max_retries=base.max_retries,
-            max_tokens=base.max_tokens,
-            temperature=base.temperature,
-            fallback_risk_score=base.fallback_risk_score,
-            fallback_confidence=base.fallback_confidence,
-            require_deliberation_on_fallback=base.require_deliberation_on_fallback,
-            intent_model=base.intent_model,
-            signals_model=base.signals_model,
-            operational_model=base.operational_model,
-        )
-    else:
-        config = RiskEstimatorConfig(
-            low_threshold=low_threshold,
-            medium_threshold=medium_threshold,
-            max_retries=config.max_retries,
-            max_tokens=config.max_tokens,
-            temperature=config.temperature,
-            fallback_risk_score=config.fallback_risk_score,
-            fallback_confidence=config.fallback_confidence,
-            require_deliberation_on_fallback=config.require_deliberation_on_fallback,
-            intent_model=config.intent_model,
-            signals_model=config.signals_model,
-            operational_model=config.operational_model,
-        )
-    return LLMBasedRiskEstimator(
-        policy=policy,
-        config=config,
-        constitution_store=constitution_store,
-    )
 
 
 def create_conservative_estimator(

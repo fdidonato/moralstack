@@ -261,6 +261,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Single risk-estimator residues (breaking for direct importers).** The retired
+  single-estimator surface is gone; the live path (three mini-estimators plus the
+  calibration guard) is unchanged. Removed names and migrations:
+  `create_risk_estimator(...)` and `calibration.parse_risk_response(text)` (use
+  `LLMBasedRiskEstimator(policy, config=...)` and `calibration.parse_risk_dict(extract_json(text))`);
+  the methods `get_risk_level`, `should_deliberate`, `categorize_from_score` and
+  `estimate_with_context` (call `estimate(...)`; routing thresholds are the orchestrator's);
+  the `RiskEstimatorConfig` fields `low_threshold`, `medium_threshold` and
+  `require_deliberation_on_fallback` (passing them now raises `TypeError`); and the six env
+  vars `MORALSTACK_RISK_LOW_THRESHOLD`, `MORALSTACK_RISK_MEDIUM_THRESHOLD`,
+  `MORALSTACK_RISK_REQUIRE_DELIBERATION_ON_FALLBACK` and
+  `MORALSTACK_RISK_CATEGORIZE_{BENIGN,SENSITIVE,CLEARLY_HARMFUL}_THRESHOLD`, which are now
+  ignored. They never affected routing; use `MORALSTACK_ORCHESTRATOR_RISK_LOW_THRESHOLD` and
+  `MORALSTACK_ORCHESTRATOR_RISK_MEDIUM_THRESHOLD`. The no-LLM conservative mode
+  (`policy=None`, `create_conservative_estimator`, `MORALSTACK_RISK_FALLBACK_*`) is kept.
+  Prompts, `llm_calls` payloads, `RiskEstimation` and decisions are unchanged; persisted
+  `estimation_mode` and `estimate` rows stay readable. `.env.minimal`, `.env.template`,
+  `INSTALL.md` and `docs/modules/risk_estimator.md` no longer advertise the removed variables.
+
 - **Dead code in the risk-estimator area (no behaviour change).** Removed the uncalled
   module-level `persist_llm_call` in `moralstack/models/risk/estimator.py` and the never-called
   `quick_estimate` from `RiskEstimatorProtocol` (`moralstack/core/types.py`), plus a stale

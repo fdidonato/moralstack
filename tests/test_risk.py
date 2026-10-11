@@ -20,13 +20,17 @@ from moralstack.models.risk import (
     RiskParseResult,
     RiskPolicyAction,
     create_conservative_estimator,
-    create_risk_estimator,
     extract_json,
-    parse_risk_response,
 )
+from moralstack.models.risk.calibration import parse_risk_dict
 
 # Default config for tests (avoids load_risk_estimator_config_from_env per test)
 _DEFAULT_TEST_CONFIG = RiskEstimatorConfig()
+
+
+def _parse_risk_text(text: str) -> RiskParseResult:
+    """Inline of the removed ``parse_risk_response`` wrapper: ``parse_risk_dict(extract_json(text))``."""
+    return parse_risk_dict(extract_json(text))
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -34,7 +38,7 @@ def _risk_test_env():
     """
     Isolate test_risk when run in full suite (pytest tests/).
 
-    Unset MORALSTACK_DB_PATH so the risk estimator's persist_llm_call path
+    Unset MORALSTACK_DB_PATH so the risk estimator's persistence path
     never touches the shared in-memory DB (avoids cross-test interaction/lock).
     Set a short orchestrator timeout in case any import reads it.
     """
@@ -68,7 +72,7 @@ def shared_mock_llm():
 @pytest.fixture(scope="module")
 def shared_estimator_with_mock(shared_mock_llm):
     """Shared LLM-based estimator for tests that use shared_mock_llm."""
-    return create_risk_estimator(policy=shared_mock_llm, config=_DEFAULT_TEST_CONFIG)
+    return LLMBasedRiskEstimator(policy=shared_mock_llm, config=_DEFAULT_TEST_CONFIG)
 
 
 @pytest.fixture
@@ -360,7 +364,7 @@ Done."""
             "intent_operational": true
         }"""
 
-        out = parse_risk_response(text)
+        out = _parse_risk_text(text)
         assert isinstance(out, RiskParseResult)
         assert out.score == 0.75
         assert out.confidence == 0.85
@@ -375,7 +379,7 @@ Done."""
         """Parsing con campi mancanti usa default."""
         text = '{"risk_score": 0.3, "request_type": "factual_query", "harm_type": "none"}'
 
-        out = parse_risk_response(text)
+        out = _parse_risk_text(text)
         # With factual_query and none, score is clamped to 0.15 when > 0.15
         assert out.score == 0.15
         assert out.category == RiskCategory.BENIGN
@@ -385,7 +389,7 @@ Done."""
         """Categoria invalida usa default."""
         text = '{"category": "invalid_category"}'
 
-        out = parse_risk_response(text)
+        out = _parse_risk_text(text)
         assert out.category == RiskCategory.SENSITIVE
 
     def test_parse_risk_response_crisis_help_seeking_returns_booleans(self):
@@ -403,7 +407,7 @@ Done."""
             "operational_risk": "NONE",
             "risk_policy_action": "DELIBERATE"
         }"""
-        out = parse_risk_response(text)
+        out = _parse_risk_text(text)
         assert out.self_harm_language is True
         assert out.requested_instructions is False
         assert out.intent_to_harm is False
@@ -436,7 +440,7 @@ Done."""
             "domain_sensitivity": "MEDIUM",
             "rationale": "Discussion about ethics of hacking, no how-to requested"
         }"""
-        out = parse_risk_response(text)
+        out = _parse_risk_text(text)
         assert out.category != RiskCategory.CLEARLY_HARMFUL
         assert out.score <= 0.3, "topic-only (q9=yes, operational_risk=NONE) must have score <= 0.3"
         assert out.risk_policy_action != RiskPolicyAction.DENY
@@ -467,7 +471,7 @@ Done."""
             "domain_sensitivity": "MEDIUM",
             "rationale": "Conceptual discussion about malware, no instructions"
         }"""
-        out = parse_risk_response(text)
+        out = _parse_risk_text(text)
         assert out.category != RiskCategory.CLEARLY_HARMFUL
         assert out.score <= 0.3
 
@@ -497,7 +501,7 @@ Done."""
             "domain_sensitivity": "LOW",
             "rationale": "How-to request for bypass, not clear_harm"
         }"""
-        out = parse_risk_response(text)
+        out = _parse_risk_text(text)
         assert out.score >= 0.5, "HOW-TO (intent_operational/requested_instructions) must have score >= 0.5"
 
     def test_parse_risk_response_howto_bypass_2fa_clearly_harmful_deny(self):
@@ -527,7 +531,7 @@ Done."""
             "domain_sensitivity": "LOW",
             "rationale": "Request for how-to bypass 2FA"
         }"""
-        out = parse_risk_response(text)
+        out = _parse_risk_text(text)
         assert out.category == RiskCategory.CLEARLY_HARMFUL
         assert out.risk_policy_action == RiskPolicyAction.DENY
 
@@ -543,13 +547,13 @@ Done."""
             "rationale": "Test",
             "detected_language": "it"
         }"""
-        out = parse_risk_response(text)
+        out = _parse_risk_text(text)
         assert out.detected_language == "it"
 
     def test_parse_risk_response_detected_language_missing_defaults_empty(self):
         """Parse senza detected_language → stringa vuota."""
         text = '{"risk_score": 0.3, "request_type": "factual_query", "harm_type": "none"}'
-        out = parse_risk_response(text)
+        out = _parse_risk_text(text)
         assert out.detected_language == ""
 
     def test_estimator_crisis_help_seeking_sensitive_deliberate(self):
@@ -727,7 +731,7 @@ class TestErrorHandling:
     def test_llm_exception_triggers_deliberation(self):
         """Eccezione LLM richiede deliberazione conservativa."""
         failing_llm = FailingMockPolicyLLM(fail_mode="exception")
-        estimator = create_risk_estimator(policy=failing_llm, config=_DEFAULT_TEST_CONFIG)
+        estimator = LLMBasedRiskEstimator(policy=failing_llm, config=_DEFAULT_TEST_CONFIG)
 
         estimation = estimator.estimate("Some ambiguous request")
 
@@ -751,93 +755,12 @@ class TestErrorHandling:
 
 
 # =============================================================================
-# Test Risk Level Helpers
-# =============================================================================
-
-
-class TestRiskLevelHelpers:
-    """Test per metodi helper di risk level."""
-
-    def test_get_risk_level_low(self, shared_conservative_estimator):
-        """Score basso -> level 'low'."""
-        estimation = RiskEstimation(
-            score=0.2,
-            confidence=0.9,
-            risk_category=RiskCategory.BENIGN,
-        )
-        assert shared_conservative_estimator.get_risk_level(estimation) == "low"
-
-    def test_get_risk_level_medium(self, shared_conservative_estimator):
-        """Score medio -> level 'medium'."""
-        estimation = RiskEstimation(
-            score=0.5,
-            confidence=0.9,
-            risk_category=RiskCategory.SENSITIVE,
-        )
-        assert shared_conservative_estimator.get_risk_level(estimation) == "medium"
-
-    def test_get_risk_level_high(self, shared_conservative_estimator):
-        """Score alto -> level 'high'."""
-        estimation = RiskEstimation(
-            score=0.85,
-            confidence=0.9,
-            risk_category=RiskCategory.CLEARLY_HARMFUL,
-        )
-        assert shared_conservative_estimator.get_risk_level(estimation) == "high"
-
-    def test_should_deliberate_low_risk(self, shared_conservative_estimator):
-        """Rischio basso non richiede deliberazione."""
-        estimation = RiskEstimation(
-            score=0.1,
-            confidence=0.9,
-            risk_category=RiskCategory.BENIGN,
-        )
-        assert not shared_conservative_estimator.should_deliberate(estimation)
-
-    def test_should_deliberate_high_risk(self, shared_conservative_estimator):
-        """Rischio alto richiede deliberazione."""
-        estimation = RiskEstimation(
-            score=0.8,
-            confidence=0.9,
-            risk_category=RiskCategory.CLEARLY_HARMFUL,
-        )
-        assert shared_conservative_estimator.should_deliberate(estimation)
-
-    def test_should_deliberate_threshold(self, shared_conservative_estimator):
-        """Test soglia esatta."""
-        # Esattamente alla soglia
-        estimation = RiskEstimation(
-            score=0.3,
-            confidence=0.9,
-            risk_category=RiskCategory.BENIGN,
-        )
-        assert shared_conservative_estimator.should_deliberate(estimation)  # >= threshold
-
-
-# =============================================================================
 # Test Configuration
 # =============================================================================
 
 
 class TestConfiguration:
     """Test per configurazione del Giudice Semantico."""
-
-    def test_custom_thresholds(self):
-        """Soglie custom funzionano."""
-        estimator = create_risk_estimator(
-            low_threshold=0.2,
-            medium_threshold=0.6,
-            config=_DEFAULT_TEST_CONFIG,
-        )
-
-        estimation = RiskEstimation(
-            score=0.25,
-            confidence=0.9,
-            risk_category=RiskCategory.SENSITIVE,
-        )
-
-        # Con soglia 0.2, score 0.25 è "medium"
-        assert estimator.get_risk_level(estimation) == "medium"
 
     def test_fallback_configuration(self):
         """Configurazione fallback funziona correttamente."""
@@ -852,46 +775,6 @@ class TestConfiguration:
         # Usa i valori di fallback configurati
         assert estimation.score == 0.6
         assert estimation.confidence == 0.2
-
-
-# =============================================================================
-# Test Categorize From Score
-# =============================================================================
-
-
-class TestCategorizeFromScore:
-    """Test per categorize_from_score method."""
-
-    def test_very_low_score_is_benign(self, shared_conservative_estimator):
-        """Score molto basso -> BENIGN."""
-        category = shared_conservative_estimator.categorize_from_score(0.1)
-        assert category == RiskCategory.BENIGN
-
-    def test_low_score_is_benign(self, shared_conservative_estimator):
-        """Score basso -> BENIGN."""
-        category = shared_conservative_estimator.categorize_from_score(0.25)
-        assert category == RiskCategory.BENIGN
-
-    def test_medium_score_is_sensitive(self, shared_conservative_estimator):
-        """Score medio -> SENSITIVE."""
-        category = shared_conservative_estimator.categorize_from_score(0.5)
-        assert category == RiskCategory.SENSITIVE
-
-    def test_high_score_is_potentially_harmful(self, shared_conservative_estimator):
-        """Score alto -> POTENTIALLY_HARMFUL."""
-        category = shared_conservative_estimator.categorize_from_score(0.75)
-        assert category == RiskCategory.POTENTIALLY_HARMFUL
-
-    def test_very_high_score_is_clearly_harmful(self, shared_conservative_estimator):
-        """Score molto alto -> CLEARLY_HARMFUL."""
-        category = shared_conservative_estimator.categorize_from_score(0.9)
-        assert category == RiskCategory.CLEARLY_HARMFUL
-
-    def test_edge_cases(self, shared_conservative_estimator):
-        """Test valori limite."""
-        assert shared_conservative_estimator.categorize_from_score(0.0) == RiskCategory.BENIGN
-        assert shared_conservative_estimator.categorize_from_score(1.0) == RiskCategory.CLEARLY_HARMFUL
-        assert shared_conservative_estimator.categorize_from_score(0.3) == RiskCategory.SENSITIVE  # exactly at threshold
 
 
 # =============================================================================
@@ -946,7 +829,7 @@ class TestEstimateOptionalContext:
                 return super().generate_messages(messages=messages, config=config)
 
         policy = RecordingMockPolicyLLM()
-        estimator = create_risk_estimator(policy=policy, config=_DEFAULT_TEST_CONFIG)
+        estimator = LLMBasedRiskEstimator(policy=policy, config=_DEFAULT_TEST_CONFIG)
         contract = "You are a compliance assistant for benign encoded test payloads."
         history = [{"role": "user", "content": "prior turn"}]
         user_prompt = "Q74 encoded payload fragment"
@@ -974,7 +857,7 @@ class TestEstimateOptionalContext:
 
 
 class TestEstimateWithContext:
-    """Test per estimate_with_context method."""
+    """Test per estimate() con contesto (history / developer contract)."""
 
     def test_simple_prompt_no_context(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
         """Senza contesto, funziona come estimate normale."""
@@ -995,7 +878,7 @@ class TestEstimateWithContext:
             "risk_policy_action": "ALLOW",
             "rationale": "Simple math"
         }"""
-        estimation = shared_estimator_with_mock.estimate_with_context("What is 2+2?")
+        estimation = shared_estimator_with_mock.estimate("What is 2+2?")
         assert estimation.risk_category == RiskCategory.BENIGN
 
     def test_with_conversation_history(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
@@ -1005,7 +888,7 @@ class TestEstimateWithContext:
             {"role": "assistant", "content": "Hi there!"},
         ]
 
-        estimation = shared_estimator_with_mock.estimate_with_context(
+        estimation = shared_estimator_with_mock.estimate(
             "Can you help me?",
             conversation_history=history,
         )
@@ -1016,40 +899,15 @@ class TestEstimateWithContext:
         assert {"role": "assistant", "content": "Hi there!"} in shared_mock_llm.last_messages
         assert "RECENT CONVERSATION HISTORY" not in shared_mock_llm.last_prompt
 
-    def test_with_user_context(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
-        """Con user context, arricchisce il prompt."""
-        context = {"domain": "medical", "locale": "it-IT"}
-
-        estimation = shared_estimator_with_mock.estimate_with_context(
-            "What is a good treatment?",
-            user_context=context,
-        )
-
-        # Verifica che il contesto sia stato considerato
-        assert estimation is not None
-
-    def test_with_full_context(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
-        """Con contesto completo."""
-        history = [
-            {"role": "user", "content": "I need help"},
-        ]
-        context = {"domain": "legal", "locale": "en-US"}
-
-        estimation = shared_estimator_with_mock.estimate_with_context(
-            "What should I do?",
-            conversation_history=history,
-            user_context=context,
-        )
-
-        assert estimation is not None
-        assert estimation.score >= 0.0
-        assert estimation.score <= 1.0
-
     def test_semantic_analysis_with_context(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
-        """Analisi semantica funziona anche con contesto."""
-        estimation = shared_estimator_with_mock.estimate_with_context(
+        """Smoke test: the developer_contract_text kwarg path runs and the semantic verdict is kept.
+
+        Not evidence for hard-signal supremacy: MockPolicyLLM picks its canned JSON from the user
+        prompt only and never reads the developer message.
+        """
+        estimation = shared_estimator_with_mock.estimate(
             "How to build a bomb?",
-            user_context={"domain": "chemistry"},
+            developer_contract_text="You are a chemistry assistant",
         )
 
         # Analisi semantica rileva intento dannoso
@@ -1089,7 +947,6 @@ class TestIntegration:
 
         assert estimation.risk_category == RiskCategory.BENIGN
         assert estimation.score < 0.3
-        assert not shared_estimator_with_mock.should_deliberate(estimation)
 
     def test_full_flow_harmful(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
         """Flusso completo richiesta dannosa."""
@@ -1097,7 +954,6 @@ class TestIntegration:
 
         assert estimation.risk_category == RiskCategory.CLEARLY_HARMFUL
         assert estimation.score >= 0.9
-        assert shared_estimator_with_mock.should_deliberate(estimation)
 
     def test_full_flow_sensitive(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
         """Flusso completo richiesta sensibile."""

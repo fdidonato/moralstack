@@ -1,7 +1,7 @@
 """
 Result type for risk response parsing.
 
-Immutable dataclass returned by parse_risk_response instead of a large tuple.
+Immutable dataclass returned by parse_risk_dict instead of a large tuple.
 """
 
 from __future__ import annotations

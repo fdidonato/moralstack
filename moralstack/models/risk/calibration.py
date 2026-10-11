@@ -8,8 +8,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from moralstack.utils.json_utils import extract_json
-
 from .action import coerce_risk_policy_action
 from .categories import (
     ActionabilityRisk,
@@ -609,7 +607,7 @@ def parse_risk_dict(data: dict[str, Any]) -> RiskParseResult:
     Parse an already-decoded dict into a structured RiskParseResult.
 
     Accepts a dict produced by extract_json() or by merge_mini_estimator_results().
-    Applies the full calibration pipeline (same logic as parse_risk_response).
+    Applies the full calibration pipeline; the estimator calls it on the merge_mini_estimator_results() output.
 
     Backward compatibility: unknown keys are IGNORED (via .get()).
     Must NOT raise on new/unknown keys; must NOT default to FAIL_SAFE.
@@ -857,19 +855,3 @@ def merge_mini_estimator_results(
     merged = _apply_calibration_guard(merged)
 
     return merged
-
-
-def parse_risk_response(text: str) -> RiskParseResult:
-    """
-    Parse the risk estimator LLM response into a structured result.
-
-    Uses request_type, harm_type, Q1-Q17 and language-agnostic signals
-    (intent_clarity, misuse_plausibility, actionability_risk, intent_operational) for routing.
-
-    Backward compatibility: unknown JSON keys are IGNORED (via .get()).
-    Must NOT raise on new/unknown keys; must NOT default to FAIL_SAFE.
-
-    Returns:
-        RiskParseResult with all parsed and calibrated fields.
-    """
-    return parse_risk_dict(extract_json(text))

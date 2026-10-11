@@ -275,7 +275,10 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   counts them as billable through its `COALESCE(...,1)` default, but the in-process
   per-request accumulator (`observability/service.py`) skips them, so
   `request_token_usage` and the proxy `usage` field omit them — a known defect, see
-  `docs/CODEBASE_FACTS.md`.
+  `docs/CODEBASE_FACTS.md`. `estimate(...)` is the only estimation entry (no factory, no
+  threshold or categorize helpers); `policy=None` uses the conservative no-LLM fallback
+  (`create_conservative_estimator`), and routing thresholds live in the orchestrator
+  config (`MORALSTACK_ORCHESTRATOR_RISK_*`), not in `RiskEstimatorConfig`.
 - **Unified single-wave constitution retrieval** (unify-constitution-retrieval-
   single-pass): `_get_principles_context` is the ONE `get_relevant_principles`
   call per request, owned here (risk thread), reused by deliberation/critic/
@@ -522,9 +525,9 @@ readers (UI/reports); it is not invoked on the active delivery paths.
 
 ## 5. Risk estimation
 
-`LLMBasedRiskEstimator.estimate(...)` (`models/risk/estimator.py:355`) delegates
-to the parallel mini-estimator path (`estimator.py:800-1161`, `ThreadPoolExecutor`
-at `:997-1001`), which runs three mini-estimators and merges them:
+`LLMBasedRiskEstimator.estimate(...)` (`models/risk/estimator.py:349`) delegates
+to the parallel mini-estimator path (`estimator.py:794-1155`, `ThreadPoolExecutor`
+at `:991-995`), which runs three mini-estimators and merges them:
 - `estimate_intent` — detected_language, intent flags, request_type, harm_type.
 - `estimate_signals` — q1–q17 harm/topic signals.
 - `estimate_operational` — operational_risk, raw risk_score, confidence,
@@ -533,15 +536,15 @@ at `:997-1001`), which runs three mini-estimators and merges them:
 `calibration.py` then applies deterministic guardrails to produce the final
 `RiskEstimation` (score, `risk_category`, `operational_risk`, detected_domain,
 semantic_signals). Verified rules (`models/risk/calibration.py`):
-- **Defensive override** (`:284-304`): harmful_count≥1 but all intent flags False
+- **Defensive override** (`:282-302`): harmful_count≥1 but all intent flags False
   and op_risk NONE/LOW ⇒ SENSITIVE, score≤0.30 (blocked for weapons+intent and q17).
-- **Harm escalation** (`:310-319`): harmful_count≥3 / q5 / q17 / priority-harm +
+- **Harm escalation** (`:308-317`): harmful_count≥3 / q5 / q17 / priority-harm +
   operational signal / score≥0.85 / clear_harm ⇒ CLEARLY_HARMFUL, score≥0.85.
-- **Intent-contradiction** (`:536-548`): op_risk HIGH but all intent False ⇒
+- **Intent-contradiction** (`:534-546`): op_risk HIGH but all intent False ⇒
   CLEARLY_HARMFUL→SENSITIVE, score≤0.55, DENY→DELIBERATE.
-- **Non-operational clamp** (`:554-565`): op_risk NONE + all intent False + not q17
+- **Non-operational clamp** (`:552-563`): op_risk NONE + all intent False + not q17
   ⇒ CLEARLY_HARMFUL→SENSITIVE, score≤0.30, DENY→DELIBERATE.
-- **Calibration guard** (`:659-763`): benign request types with no harm intent and
+- **Calibration guard** (`:657-761`): benign request types with no harm intent and
   no requested instructions ⇒ risk_score→0.45, op_risk HIGH→LOW, DENY→DELIBERATE,
   misuse/actionability HIGH→MEDIUM.
 
