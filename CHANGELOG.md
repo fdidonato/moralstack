@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The docs now state that a cut reply is usually repaired by the parser rather than failing:
   a cut inside `payload` routes core-only and a cut inside `selections` silently drops a domain,
   with no rejection event since `finish_reason` is not read. Recorded in `docs/CODEBASE_FACTS.md`.
+- **Corrected: domain-prefilter A/B figures.** The 600-question A/B aggregates (candidate2
+  prompt, gpt-4o) were recovered; excluding 24 obfuscation probes that only the new arm ran,
+  precision goes 0.582 -> 0.681 and over-assignment per question 0.315 -> 0.200, at a small
+  recall cost (0.843 -> 0.821, mostly on red-teaming), not "equal recall" as previously recorded.
+  Still a hypothesis in `docs/CODEBASE_FACTS.md`: external run, aggregates only.
 
 - **Known gap documented: `init_db` startup race.** `docs/CODEBASE_FACTS.md` ("Future
   work / known gaps") now records that `init_db` has no concurrency guard and that

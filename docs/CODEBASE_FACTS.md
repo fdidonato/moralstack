@@ -194,9 +194,20 @@ take this same silent path.
 ### Precision prefilter: A/B quality and output-budget headroom are unverified here (2026-10-11)
 
 **Hypothesis — external measurement, not reproducible from the repo.** The precision prefilter (per-domain
-`selections` gate, scope + `NOT:` catalog without keywords) was reported to raise precision and F1 on a 600-question
-hand-annotated A/B at equal recall, with obfuscation probes at 1.0 and 0 out-of-catalog selections; no run artifact
-is in the repo and no `selections`-shaped `llm_calls` row exists in the local DBs (checked 2026-10-11). Open risks:
+`selections` gate, scope + `NOT:` catalog without keywords) was measured on a 600-question A/B (gpt-4o, threshold
+0.5, max 3 domains; gold = blind hand annotation, `acceptable` domains neither rewarded nor penalised; arms
+`recorded` = the old prefilter's logged replies, `candidate` = the new prompt). The run lives outside the repo (a
+claude.ai web session, `prefilter_lab.py`); only its aggregate outputs were recovered on 2026-10-11 (metrics JSON +
+results markdown, no per-question rows, no `usage`), and no `selections`-shaped `llm_calls` row exists in the local
+DBs. The numbers match the merged candidate2 prompt (`c000f08`), not the first-round figures in `68090b5`'s commit
+message (recall 0.62, over-assign 0.12). **The report's `candidate` total (n=624) includes 24 obfuscation probes
+(base64/rot13/hex, all correct) that the `recorded` arm lacks**, which inflates it. Like-for-like on the same 600
+questions, recomputed from the TP/FP/FN counts: precision 0.582 -> 0.681, recall 0.843 -> 0.821, over-assign per
+question 0.315 -> 0.200, primary domain hit 0.847 -> 0.820, benign no-domain clean 0.577 -> 0.707, out-of-catalog
+0 -> 0. So it is a precision gain at a small recall cost, not "equal recall". The cost is concentrated in red-teaming
+(recall 0.839 -> 0.800, primary 0.840 -> 0.800; RealToxicityPrompts recall 0.835 -> 0.791). Per-domain recall is not
+in the recovered files, so whether candidate2 fixed the first round's medical/cybersecurity recall (0.61/0.40) is
+unverified. Open risks:
 (1) `payload` is generated first and has no length bound, so a long decoded payload could exhaust the 400-token budget
 and truncate `selections` (the parser usually repairs the cut JSON as `fallback_ok`: a cut inside `payload` routes
 core-only with no rejection event, a cut inside `selections` silently drops the cut domain; both cached);
