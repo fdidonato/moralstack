@@ -62,7 +62,6 @@ def make_pf(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr("moralstack.constitution.retriever.persist_llm_call", lambda **kw: None)
         pf = DomainPrefilter(
             openai_config=OpenAIClientConfig(api_key="sk-test", model=model),
-            domain_keywords={d: [d] for d in AVAIL if d != "core"},
             domain_descriptions=descriptions,
             max_domains=max_domains,
         )
@@ -107,16 +106,15 @@ def test_split_scope_notfor(desc: str, scope: str, notfor: str) -> None:
     assert _split_scope_notfor(desc) == (scope, notfor)
 
 
-def test_catalog_renders_scope_and_not_lines_without_keywords(make_pf) -> None:
+def test_catalog_renders_scope_and_not_lines(make_pf) -> None:
     desc = {"legal": "Law topics. NOT for: crimes (use violent_crime). NOT for: politics.", "medical": "Health."}
     pf, client = make_pf(_sels(), descriptions=desc)
     pf.filter_domains(Q, AVAIL)
     system_prompt = client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
     assert "- legal: Law topics.\n  NOT: crimes (use violent_crime). NOT for: politics.\n" in system_prompt
     assert "- medical: Health.\n" in system_prompt
-    # No description -> historical keywords-only line.
-    assert "- finance: finance\n" in system_prompt
-    assert "Keywords:" not in system_prompt
+    # No description -> domain name only.
+    assert "- finance\n" in system_prompt
 
 
 # --------------------------------------------------------------------------------------

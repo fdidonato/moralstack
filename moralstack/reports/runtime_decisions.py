@@ -125,8 +125,8 @@ def _request_context_from_traces(traces: list[dict[str, Any]]) -> dict[str, Any]
             "reuse_count": reuse_count,
             "prefilter_cache_status": last_sp.get("prefilter_cache_status"),
             "prefilter_cache_reason": last_sp.get("prefilter_cache_reason"),
-            "prefilter_keywords_changed": last_sp.get("prefilter_keywords_changed"),
-            "prefilter_keywords_fingerprint_prefix": last_sp.get("prefilter_keywords_fingerprint_prefix"),
+            "prefilter_descriptions_changed": last_sp.get("prefilter_descriptions_changed"),
+            "prefilter_descriptions_fingerprint_prefix": last_sp.get("prefilter_descriptions_fingerprint_prefix"),
             "parallel_retrieval": last_sp.get("parallel_retrieval"),
             "request_scoped": last_sp.get("request_scoped"),
             "retrieval_duration_ms": last_sp.get("retrieval_duration_ms"),
@@ -590,7 +590,7 @@ def build_retrieval_reuse_summary(
         "prefilter_cache_invalidations": prefilter_invalidations,
         "prefilter_cache_status": ctx.get("prefilter_cache_status"),
         "prefilter_cache_reason": ctx.get("prefilter_cache_reason"),
-        "prefilter_keywords_changed": ctx.get("prefilter_keywords_changed"),
+        "prefilter_descriptions_changed": ctx.get("prefilter_descriptions_changed"),
     }
 
 

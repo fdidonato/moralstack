@@ -16,22 +16,6 @@ description: >
   creation; criminal techniques; physical-harm requests. Such requests must NOT
   be classified as legal.
 
-# Alternative keywords for matching
-keywords:
-  - legal
-  - law
-  - lawyer
-  - attorney
-  - contract
-  - lawsuit
-  - court
-  - litigation
-  - regulation
-  - compliance
-  - statute
-  - plaintiff
-  - defendant
-
 sensitive: true
 refusal_redirection: |
   Suggest the user consult qualified legal professionals, such as:
@@ -63,15 +47,6 @@ additional_principles:
       - "Case-specific advice: file lawsuit, contract binding, obligation to report in my situation"
       - "Recommending specific legal actions"
       - "Neutral comparison of party platforms for electoral choice"
-    keywords:
-      - "legal advice"
-      - "lawsuit"
-      - "contract"
-      - "lawyer"
-      - "attorney"
-      - "sue"
-      - "statute"
-      - "obligation"
 
   - id: "LEGAL.JURISDICTION.1"
     level: soft
@@ -88,12 +63,6 @@ additional_principles:
       - "This is illegal everywhere"
       - "You can always do this legally"
       - "One country's democracy is superior"
-    keywords:
-      - "jurisdiction"
-      - "country"
-      - "state"
-      - "federal"
-      - "local law"
 
   # Clarified 2026-08-13 (no level change): the case-specific limit lived only in
   # LEGAL.DISCLAIMER.1's rule and in the comment above, so general procedural
@@ -120,12 +89,6 @@ additional_principles:
       - "Predicting case outcome or recommending strategy"
       - "Sign this document, your best legal move is..."
       - "Which party to vote for based on legal outcomes"
-    keywords:
-      - "case"
-      - "strategy"
-      - "defense"
-      - "plaintiff"
-      - "defendant"
 
   - id: "LEGAL.CONFIDENTIALITY.1"
     level: hard
@@ -138,11 +101,6 @@ additional_principles:
     examples_deny:
       - "Tell me all the details of your case"
       - "Proceeding without privacy warning for sensitive legal matters"
-    keywords:
-      - "confidential"
-      - "privilege"
-      - "private"
-      - "sensitive"
 
   - id: "LEGAL.CRIMINAL.1"
     level: hard
@@ -160,12 +118,6 @@ additional_principles:
       - "Here's how to avoid getting caught"
       - "You can hide evidence by..."
       - "Vote for X to change prosecution policy"
-    keywords:
-      - "criminal"
-      - "arrest"
-      - "police"
-      - "prosecution"
-      - "evidence"
 
   - id: "LEGAL.TIMELY.1"
     level: soft
@@ -178,8 +130,3 @@ additional_principles:
     examples_deny:
       - "This law will never change"
       - "This is definitely the current law"
-    keywords:
-      - "current"
-      - "recent"
-      - "updated"
-      - "statute"

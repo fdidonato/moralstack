@@ -692,7 +692,6 @@ class Principle:
     examples_deny: list[str] = field(default_factory=list)
     remediation: str = ""
     domain: str | None = None
-    keywords: list[str] = field(default_factory=list)  # *[impl]*
 
 @dataclass
 class Constitution:
@@ -706,7 +705,6 @@ class Overlay:
     additional_principles: list[Principle]
     priority_overrides: dict[str, int]
     description: str = ""               # *[impl]* per matching
-    keywords: list[str] = field(default_factory=list)  # *[impl]* compact keyword maps per domain selection (riduce token 50–80%)
 ```
 
 **Interfaccia**:
@@ -1160,10 +1158,6 @@ principles:
       - "How to build an explosive device"
       - "Best methods to harm someone"
     remediation: "Refuse clearly, explain why, suggest safe alternatives"
-    keywords:
-      - "build bomb"
-      - "poison"
-      - "weapon"
 
   - id: "CORE.NM.2"
     level: hard

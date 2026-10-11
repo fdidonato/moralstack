@@ -4,18 +4,6 @@
 # Semantic domain description (used for automatic matching)
 description: "Emergency situations, crisis response, urgent help, life-threatening situations, disaster response, first aid, emergency services, crisis management, urgent assistance, emergency procedures. NOT for: fabricated emergencies, harassment via false crisis reports unrelated to legitimate urgent-help topics."
 
-# Alternative keywords for matching
-keywords:
-  - emergency
-  - crisis
-  - urgent
-  - disaster
-  - first aid
-  - life-threatening
-  - rescue
-  - "911"
-  - help
-
 sensitive: true
 sensitive_risk_floor: 0.45
 
@@ -42,14 +30,6 @@ additional_principles:
     examples_deny:
       - "Continuing conversation when immediate help is needed"
       - "Delaying emergency response"
-    keywords:
-      - "emergency"
-      - "dying"
-      - "heart attack"
-      - "stroke"
-      - "choking"
-      - "bleeding"
-      - "not breathing"
 
   - id: "EMER.CLEAR.1"
     level: soft
@@ -62,11 +42,6 @@ additional_principles:
     examples_deny:
       - "Vague or confusing instructions"
       - "Overwhelming with too much information"
-    keywords:
-      - "what do I do"
-      - "help"
-      - "steps"
-      - "now"
 
   - id: "EMER.CALM.1"
     level: soft
@@ -79,11 +54,6 @@ additional_principles:
     examples_deny:
       - "Panicked language"
       - "Alarmist framing"
-    keywords:
-      - "calm"
-      - "okay"
-      - "help"
-      - "safe"
 
   - id: "EMER.FIRSTAID.1"
     level: soft
@@ -96,12 +66,6 @@ additional_principles:
     examples_deny:
       - "Complex medical procedures beyond first aid"
       - "Advice that could worsen injury"
-    keywords:
-      - "first aid"
-      - "CPR"
-      - "bleeding"
-      - "burn"
-      - "injury"
 
   - id: "EMER.DISASTER.1"
     level: soft
@@ -114,13 +78,6 @@ additional_principles:
     examples_deny:
       - "Advice that contradicts official guidance"
       - "Dangerous recommendations"
-    keywords:
-      - "earthquake"
-      - "fire"
-      - "flood"
-      - "tornado"
-      - "hurricane"
-      - "evacuation"
 
   - id: "EMER.POISON.1"
     level: hard
@@ -133,12 +90,6 @@ additional_principles:
     examples_deny:
       - "Home remedies for poisoning"
       - "Inducing vomiting without professional guidance"
-    keywords:
-      - "poison"
-      - "overdose"
-      - "swallowed"
-      - "toxic"
-      - "chemical"
 
   - id: "EMER.VIOLENCE.1"
     level: hard
@@ -151,12 +102,6 @@ additional_principles:
     examples_deny:
       - "Advice that increases danger"
       - "Confrontational guidance"
-    keywords:
-      - "shooter"
-      - "attack"
-      - "weapon"
-      - "threat"
-      - "danger"
 
   - id: "EMER.MENTAL.1"
     level: hard
@@ -169,11 +114,6 @@ additional_principles:
     examples_deny:
       - "Dismissing suicidal statements"
       - "Continuing normal conversation"
-    keywords:
-      - "suicide"
-      - "kill myself"
-      - "end my life"
-      - "don't want to live"
 
   - id: "EMER.RESOURCES.1"
     level: soft
@@ -185,12 +125,6 @@ additional_principles:
       - "Red Cross disaster assistance..."
     examples_deny:
       - "Failing to provide relevant resources"
-    keywords:
-      - "number"
-      - "call"
-      - "contact"
-      - "help"
-      - "hotline"
 
   - id: "EMER.FOLLOWUP.1"
     level: soft
@@ -202,8 +136,3 @@ additional_principles:
       - "Seek medical attention even if you feel okay"
     examples_deny:
       - "Ignoring need for follow-up care"
-    keywords:
-      - "after"
-      - "next"
-      - "follow up"
-      - "later"

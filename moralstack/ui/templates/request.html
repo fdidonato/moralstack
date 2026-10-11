@@ -509,16 +509,16 @@
             <span class="meta-label">Domain prefilter cache</span>
             <span class="meta-value">
                 <span class="mono">{{ rac.get('prefilter_cache_status') }}</span>
-                {% if rac.get('prefilter_keywords_changed') %}
-                <span class="badge badge-running" title="Effective keyword map changed before this lookup">keywords
+                {% if rac.get('prefilter_descriptions_changed') %}
+                <span class="badge badge-running" title="Effective domain descriptions changed before this lookup">descriptions
                     invalidated</span>
                 {% endif %}
                 {% if rac.get('prefilter_cache_reason') %}
                 <span class="muted">({{ rac.get('prefilter_cache_reason') }})</span>
                 {% endif %}
-                {% if rac.get('prefilter_keywords_fingerprint_prefix') %}
-                <span class="muted mono" title="Keywords fingerprint prefix">fp:{{
-                    rac.get('prefilter_keywords_fingerprint_prefix') }}…</span>
+                {% if rac.get('prefilter_descriptions_fingerprint_prefix') %}
+                <span class="muted mono" title="Descriptions fingerprint prefix">fp:{{
+                    rac.get('prefilter_descriptions_fingerprint_prefix') }}…</span>
                 {% endif %}
             </span>
         </div>

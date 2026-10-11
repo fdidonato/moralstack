@@ -4,19 +4,6 @@
 # Semantic domain description (used for automatic matching)
 description: "Education, teaching, learning, schools, students, academic content, tutoring, educational materials, homework help, educational guidance, curriculum, teachers, classrooms, educational support. NOT for: disguising harmful operational instructions as lesson plans unrelated to lawful teaching."
 
-# Alternative keywords for matching
-keywords:
-  - education
-  - teaching
-  - learning
-  - school
-  - student
-  - teacher
-  - tutoring
-  - homework
-  - curriculum
-  - academic
-
 refusal_redirection: |
   Suggest the user explore official educational resources or academic support, such as:
   - Accredited educational platforms and curricula
@@ -40,13 +27,6 @@ additional_principles:
     examples_deny:
       - "Here's the complete essay for your assignment"
       - "Copy this code for your homework"
-    keywords:
-      - "homework"
-      - "assignment"
-      - "essay"
-      - "exam"
-      - "test"
-      - "grade"
 
   - id: "EDU.UNDERSTANDING.1"
     level: soft
@@ -59,12 +39,6 @@ additional_principles:
     examples_deny:
       - "Just memorize this formula"
       - "The answer is X, next question"
-    keywords:
-      - "understand"
-      - "learn"
-      - "concept"
-      - "explain"
-      - "why"
 
   # Split 2026-08-13: one hard principle used to cover both "no adult content for
   # minors" (a genuine prohibition) and "calibrate complexity" (a framing duty),
@@ -89,13 +63,6 @@ additional_principles:
     examples_deny:
       - "Providing adult content in K-12 context"
       - "Sexual or gratuitously graphic material for a self-declared minor"
-    keywords:
-      - "kids"
-      - "children"
-      - "elementary"
-      - "K-12"
-      - "minor"
-      - "child"
 
   - id: "EDU.AGEAPPROPRIATE.1"
     level: soft
@@ -111,12 +78,6 @@ additional_principles:
     examples_deny:
       - "Overly complex explanations for young learners"
       - "Childish oversimplification for an advanced learner"
-    keywords:
-      - "high school"
-      - "college"
-      - "students"
-      - "grade level"
-      - "curriculum"
 
   - id: "EDU.ENCOURAGEMENT.1"
     level: soft
@@ -129,11 +90,6 @@ additional_principles:
     examples_deny:
       - "This is so easy, why don't you get it?"
       - "You should know this by now"
-    keywords:
-      - "encourage"
-      - "support"
-      - "confidence"
-      - "try"
 
   - id: "EDU.SOURCES.1"
     level: soft
@@ -146,12 +102,6 @@ additional_principles:
     examples_deny:
       - "Just use whatever you find online"
       - "Wikipedia is always reliable"
-    keywords:
-      - "sources"
-      - "research"
-      - "cite"
-      - "reference"
-      - "bibliography"
 
   - id: "EDU.DIVERSITY.1"
     level: soft
@@ -164,11 +114,6 @@ additional_principles:
     examples_deny:
       - "Stereotyped examples"
       - "Culturally insensitive content"
-    keywords:
-      - "diverse"
-      - "inclusive"
-      - "cultural"
-      - "perspective"
 
   - id: "EDU.LIMITS.1"
     level: soft
@@ -181,8 +126,3 @@ additional_principles:
     examples_deny:
       - "Pretending expertise in all subjects"
       - "Making up information"
-    keywords:
-      - "specialized"
-      - "expert"
-      - "advanced"
-      - "uncertain"

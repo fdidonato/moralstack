@@ -8,7 +8,7 @@ Covers:
 - JSON output mode
 - Edge cases (empty file, missing fields, extra fields)
 - Priority override warnings
-- Auto-extracted keywords
+- Removed keyword fields are rejected
 """
 
 from __future__ import annotations
@@ -62,9 +62,6 @@ class TestValidOverlays:
         """A fully-featured overlay with all fields should validate."""
         content = """\
 description: "Testing domain with all fields."
-keywords:
-  - test
-  - validation
 sensitive: true
 sensitive_risk_floor: 0.4
 excluded: false
@@ -85,8 +82,6 @@ additional_principles:
       - "Good example"
     examples_deny:
       - "Bad example"
-    keywords:
-      - "test"
   - id: "TEST.SOFT.1"
     level: soft
     priority: 70
@@ -101,8 +96,6 @@ additional_principles:
         assert result.sensitive is True
         assert result.risk_floor == 0.4
         assert result.excluded is False
-        assert result.keywords_count == 2
-        assert result.keywords_source == "explicit"
         assert len(result.principles) == 2
         assert result.principles[0].id == "TEST.HARD.1"
         assert result.principles[0].level == "hard"
@@ -122,23 +115,22 @@ additional_principles:
         assert result.sensitive is True
         assert result.risk_floor == 0.35
 
-    def test_auto_extracted_keywords(self, tmp_overlays: Path) -> None:
-        """When keywords is empty, they should be auto-extracted from description."""
-        content = "description: 'Healthcare services patient care medical facilities.'\n"
-        path = _write(tmp_overlays, "auto_kw.yaml", content)
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "description: 'Domain.'\nkeywords:\n  - test\n",
+            "description: 'Domain.'\nadditional_principles:\n"
+            "  - id: 'T.1'\n    level: hard\n    priority: 90\n    title: 'T'\n    rule: 'R.'\n"
+            "    keywords_block: [covert]\n",
+        ],
+        ids=["overlay_keywords", "principle_keywords_block"],
+    )
+    def test_removed_keyword_fields_are_rejected(self, tmp_overlays: Path, content: str) -> None:
+        """Keyword fields were removed from the schema: a YAML still carrying them is invalid."""
+        path = _write(tmp_overlays, "legacy_kw.yaml", content)
         result = validate_overlay_file(path)
-        assert result.valid
-        assert result.keywords_source == "auto-extracted"
-        assert result.keywords_count > 0
-
-    def test_no_keywords_no_description(self, tmp_overlays: Path) -> None:
-        """When both keywords and description are empty, keywords_source should be 'none'."""
-        content = "description: ''\n"
-        path = _write(tmp_overlays, "no_kw.yaml", content)
-        result = validate_overlay_file(path)
-        assert result.valid
-        assert result.keywords_source == "none"
-        assert result.keywords_count == 0
+        assert not result.valid
+        assert any("keywords" in e and "Extra inputs are not permitted" in e for e in result.errors)
 
 
 # ---------------------------------------------------------------------------
@@ -312,8 +304,6 @@ class TestSerialization:
     def test_valid_result_to_dict(self, tmp_overlays: Path) -> None:
         content = """\
 description: "Test."
-keywords:
-  - test
 sensitive: true
 additional_principles:
   - id: "T.1"
@@ -328,7 +318,7 @@ additional_principles:
 
         assert d["valid"] is True
         assert d["domain"] == "ser"
-        assert d["keywords_count"] == 1
+        assert "keywords_count" not in d
         assert d["principles_count"] == 1
         assert d["principles_hard"] == 1
         assert d["principles_soft"] == 0

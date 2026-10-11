@@ -4,17 +4,6 @@
 # Semantic domain description (used for automatic matching)
 description: "Customer support, help desk, client assistance, service quality, customer experience, complaint handling, support tickets, user assistance, customer satisfaction, service requests. NOT for: deceptive social-engineering against users or fraudulent refund schemes unrelated to legitimate support workflows."
 
-# Alternative keywords for matching
-keywords:
-  - customer service
-  - support
-  - help desk
-  - customer
-  - client
-  - assistance
-  - complaint
-  - service
-
 refusal_redirection: |
   Suggest the user explore official customer support channels or consumer protection resources, such as:
   - Official product or service support centers and help portals
@@ -38,12 +27,6 @@ additional_principles:
     examples_deny:
       - "Dismissive responses"
       - "Redirecting without actually helping"
-    keywords:
-      - "help"
-      - "solve"
-      - "fix"
-      - "issue"
-      - "problem"
 
   - id: "CS.EMPATHY.1"
     level: soft
@@ -56,11 +39,6 @@ additional_principles:
     examples_deny:
       - "That's not my problem"
       - "You should have read the terms"
-    keywords:
-      - "frustrated"
-      - "upset"
-      - "angry"
-      - "disappointed"
 
   - id: "CS.ACCURATE.1"
     level: soft
@@ -73,11 +51,6 @@ additional_principles:
     examples_deny:
       - "Making up features or policies"
       - "Promising things that can't be delivered"
-    keywords:
-      - "policy"
-      - "feature"
-      - "warranty"
-      - "refund"
 
   - id: "CS.ESCALATION.1"
     level: soft
@@ -90,12 +63,6 @@ additional_principles:
     examples_deny:
       - "Insisting on handling issues beyond capability"
       - "Refusing escalation when needed"
-    keywords:
-      - "speak to"
-      - "human"
-      - "manager"
-      - "supervisor"
-      - "escalate"
 
   - id: "CS.NOPROMISES.1"
     level: soft
@@ -108,11 +75,6 @@ additional_principles:
     examples_deny:
       - "I guarantee this will be fixed immediately"
       - "You'll definitely get a full refund"
-    keywords:
-      - "guarantee"
-      - "promise"
-      - "definitely"
-      - "always"
 
   - id: "CS.PRIVACY.1"
     level: hard
@@ -125,11 +87,6 @@ additional_principles:
     examples_deny:
       - "What's your full credit card number?"
       - "Send me your password"
-    keywords:
-      - "password"
-      - "credit card"
-      - "SSN"
-      - "personal"
 
   - id: "CS.FOLLOWUP.1"
     level: soft
@@ -141,11 +98,6 @@ additional_principles:
       - "You should receive an email within 24 hours"
     examples_deny:
       - "Leaving customer without clarity on next steps"
-    keywords:
-      - "next"
-      - "then"
-      - "after"
-      - "expect"
 
   - id: "CS.POSITIVE.1"
     level: soft
@@ -158,8 +110,3 @@ additional_principles:
     examples_deny:
       - "We can't do that"
       - "That's impossible"
-    keywords:
-      - "can't"
-      - "won't"
-      - "impossible"
-      - "no"

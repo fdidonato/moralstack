@@ -47,15 +47,11 @@ class _FakeProvider:
             additional_principles=[
                 Principle(id=f"{domain.upper()}.1", level="soft", priority=50, title=domain, rule=f"{domain} rule")
             ],
-            keywords=[],
             description="",
         )
 
     def _get_available_domains(self) -> list[str]:
         return ["legal", "medical"]
-
-    def get_domain_keywords(self) -> dict[str, list[str]]:
-        return {"legal": ["law"], "medical": ["symptom"]}
 
     def get_domain_descriptions(self) -> dict[str, str]:
         return {"legal": "legal domain", "medical": "medical domain"}
@@ -80,7 +76,9 @@ def test_retrieve_keeps_own_domains_under_deterministic_interleave() -> None:
     entered = threading.Event()
     release = threading.Event()
 
-    def _fake_prefilter_call(self, prompt, *, system_prompt, response_format=None, retrieval_phase="risk_routing"):  # noqa: ARG001
+    def _fake_prefilter_call(
+        self, prompt, *, system_prompt, response_format=None, retrieval_phase="risk_routing"
+    ):  # noqa: ARG001
         if "LEGAL" in prompt:
             return {"domains": ["legal"], "confidence": 0.9}
         return {"domains": ["medical"], "confidence": 0.9}
@@ -189,7 +187,7 @@ def test_retriever_has_no_request_scoped_attributes() -> None:
     assert not hasattr(retriever, "_last_debug_info")
     assert retriever._domain_prefilter is not None
     assert not hasattr(retriever._domain_prefilter, "_last_cache_lookup_hit")
-    assert not hasattr(retriever._domain_prefilter, "_last_keywords_changed")
+    assert not hasattr(retriever._domain_prefilter, "_last_descriptions_changed")
 
 
 def test_retrieve_stamps_domain_channel_on_every_exit_path() -> None:

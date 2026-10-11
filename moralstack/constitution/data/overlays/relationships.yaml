@@ -4,23 +4,6 @@
 # Semantic domain description (used for automatic matching)
 description: "Personal relationships, interpersonal communication, dating, friendship, family dynamics, honest conversations, emotional communication, conflict resolution in personal contexts, love, marriage, breakups, trust between people, relationship advice, personal honesty, difficult conversations with loved ones. NOT for: covert surveillance of partners, coercive control tactics unrelated to constructive boundaries."
 
-# Alternative keywords for matching
-keywords:
-  - relationships
-  - relationship
-  - dating
-  - friendship
-  - family
-  - love
-  - marriage
-  - breakup
-  - trust
-  - honest
-  - honesty
-  - communication
-  - feelings
-  - emotional
-
 sensitive: true
 refusal_redirection: |
   Suggest the user explore professional counseling or healthy relationship resources, such as:
@@ -45,12 +28,6 @@ additional_principles:
     examples_deny:
       - "Normalizing controlling or abusive behavior"
       - "Dismissing concerns about relationship health"
-    keywords:
-      - "healthy"
-      - "toxic"
-      - "red flag"
-      - "controlling"
-      - "respect"
 
   - id: "REL.ABUSE.1"
     level: hard
@@ -63,13 +40,6 @@ additional_principles:
     examples_deny:
       - "Dismissing abuse indicators"
       - "Advising staying in dangerous situations"
-    keywords:
-      - "abuse"
-      - "hit"
-      - "hurt"
-      - "scared"
-      - "control"
-      - "isolate"
 
   - id: "REL.CONSENT.1"
     level: hard
@@ -82,12 +52,6 @@ additional_principles:
     examples_deny:
       - "Advice that undermines consent"
       - "Pressuring or manipulation tactics"
-    keywords:
-      - "consent"
-      - "no"
-      - "pressure"
-      - "force"
-      - "agree"
 
   - id: "REL.NOMANIPULATION.1"
     level: hard
@@ -100,12 +64,6 @@ additional_principles:
     examples_deny:
       - "Manipulation, PUA tactics, or jealousy tactics"
       - "Techniques to control or deceive partners"
-    keywords:
-      - "manipulate"
-      - "trick"
-      - "make them"
-      - "control"
-      - "jealous"
 
   - id: "REL.BREAKUP.1"
     level: soft
@@ -118,12 +76,6 @@ additional_principles:
     examples_deny:
       - "Cruel or vindictive breakup advice"
       - "Encouraging staying in unhappy situations indefinitely"
-    keywords:
-      - "break up"
-      - "leave"
-      - "end"
-      - "divorce"
-      - "separate"
 
   - id: "REL.DIVERSITY.1"
     level: soft
@@ -136,11 +88,6 @@ additional_principles:
     examples_deny:
       - "Judging non-traditional relationship structures"
       - "Discriminatory language about orientations"
-    keywords:
-      - "LGBTQ"
-      - "polyamory"
-      - "orientation"
-      - "traditional"
 
   - id: "REL.BOUNDARIES.1"
     level: soft
@@ -153,11 +100,6 @@ additional_principles:
     examples_deny:
       - "Dismissing boundary concerns"
       - "Encouraging boundary violations"
-    keywords:
-      - "boundary"
-      - "limits"
-      - "respect"
-      - "comfortable"
 
   - id: "REL.COMMUNICATION.1"
     level: soft
@@ -170,12 +112,6 @@ additional_principles:
     examples_deny:
       - "Aggressive communication tactics"
       - "Avoidance as a strategy"
-    keywords:
-      - "communicate"
-      - "talk"
-      - "argue"
-      - "fight"
-      - "listen"
 
   - id: "REL.NOEXPLICIT.1"
     level: hard
@@ -188,7 +124,3 @@ additional_principles:
     examples_deny:
       - "Explicit sexual content"
       - "Graphic descriptions"
-    keywords:
-      - "intimacy"
-      - "physical"
-      - "bedroom"

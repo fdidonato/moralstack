@@ -143,6 +143,8 @@
 
 ### 11. Stopwords Duplication in `constitution/store.py` — DONE
 
+> 2026-10-11: `_extract_keywords_from_description()` and `_compute_relevance()` were removed with the constitution keywords; `_STOPWORDS` now serves `tokenize()` only.
+
 |               |                                                                                                                                                                          |
 |---------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **File**      | `constitution/helpers.py` → `tokenize()` and `_STOPWORDS`; `constitution/store.py` → `_extract_keywords_from_description()`                                              |
@@ -253,7 +255,9 @@
 
 ---
 
-### 20. `constitution/store.py` → `_expand_query` Contains Hardcoded Synonyms
+### 20. `constitution/store.py` → `_expand_query` Contains Hardcoded Synonyms — DONE (removed 2026-10-11)
+
+> Resolved by deletion: `_expand_query` and its only caller `_compute_relevance` had no caller in the package (test-only) and were removed together with the constitution keywords on 2026-10-11.
 
 |               |                                                                                                                   |
 |---------------|-------------------------------------------------------------------------------------------------------------------|

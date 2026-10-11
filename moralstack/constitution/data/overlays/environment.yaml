@@ -27,28 +27,6 @@ description: >
   writing, investigative reporting, fact-checking for publication, or editorial
   framing (journalism).
 
-keywords:
-  - environment
-  - environmental
-  - climate
-  - climate change
-  - weather patterns
-  - ecology
-  - ecosystem
-  - biodiversity
-  - conservation
-  - pollution
-  - air quality
-  - water quality
-  - contamination
-  - waste
-  - recycling
-  - sustainability
-  - renewable energy
-  - emissions
-  - carbon footprint
-  - natural resources
-
 sensitive: false
 
 refusal_redirection: |
@@ -83,14 +61,6 @@ additional_principles:
     examples_deny:
       - "Inventing emissions, temperature, pollution, biodiversity, or air-quality data."
       - "Presenting uncertain environmental claims as settled facts."
-    keywords:
-      - "environmental accuracy"
-      - "climate"
-      - "pollution"
-      - "ecology"
-      - "biodiversity"
-      - "emissions"
-      - "data"
 
   - id: "ENV.CLIMATE_WEATHER.1"
     level: soft
@@ -103,14 +73,6 @@ additional_principles:
     examples_deny:
       - "Using a single hot day as proof of a long-term climate trend."
       - "Answering a current forecast as if it were stable climate knowledge."
-    keywords:
-      - "climate"
-      - "weather"
-      - "forecast"
-      - "temperature"
-      - "rainfall"
-      - "season"
-      - "long-term"
 
   - id: "ENV.CURRENT_DATA.1"
     level: soft
@@ -123,16 +85,6 @@ additional_principles:
     examples_deny:
       - "Providing made-up current PM2.5, rainfall, temperature, wildfire, flood, or drought figures."
       - "Claiming a recent environmental event occurred without verification."
-    keywords:
-      - "current"
-      - "today"
-      - "recent"
-      - "latest"
-      - "air quality"
-      - "drought"
-      - "wildfire"
-      - "flood"
-      - "monitoring"
 
   - id: "ENV.RISK_COMMUNICATION.1"
     level: soft
@@ -145,14 +97,6 @@ additional_principles:
     examples_deny:
       - "Catastrophic claims without context or evidence."
       - "Dismissing credible environmental risks as irrelevant without support."
-    keywords:
-      - "risk"
-      - "impact"
-      - "uncertainty"
-      - "projection"
-      - "trend"
-      - "scenario"
-      - "exposure"
 
   - id: "ENV.TRADEOFFS.1"
     level: soft
@@ -165,14 +109,6 @@ additional_principles:
     examples_deny:
       - "Claiming a single solution is universally best without context."
       - "Ignoring lifecycle impacts, feasibility, costs, local constraints, or rebound effects."
-    keywords:
-      - "sustainability"
-      - "renewable"
-      - "recycling"
-      - "lifecycle"
-      - "tradeoff"
-      - "emissions"
-      - "conservation"
 
   - id: "ENV.LOCAL_CONTEXT.1"
     level: soft
@@ -185,14 +121,6 @@ additional_principles:
     examples_deny:
       - "Assuming the same recycling rules apply everywhere."
       - "Giving site-specific environmental assessments without local data."
-    keywords:
-      - "local"
-      - "municipality"
-      - "region"
-      - "site"
-      - "area"
-      - "territory"
-      - "disposal"
 
   - id: "ENV.SAFE_DISPOSAL.1"
     level: soft
@@ -205,15 +133,6 @@ additional_principles:
     examples_deny:
       - "Suggesting disposal through drains, soil, rivers, or ordinary trash when hazardous."
       - "Giving unsafe handling advice for contaminated or hazardous materials."
-    keywords:
-      - "hazardous waste"
-      - "disposal"
-      - "chemical"
-      - "solvent"
-      - "battery"
-      - "oil"
-      - "contamination"
-      - "runoff"
 
   - id: "ENV.NO_ENVIRONMENTAL_HARM.1"
     level: hard
@@ -226,14 +145,3 @@ additional_principles:
     examples_deny:
       - "Explaining how to dump chemicals without being detected."
       - "Instructions for releasing pollutants, poisoning wildlife, contaminating water, or bypassing environmental controls."
-    keywords:
-      - "dump"
-      - "illegal dumping"
-      - "pollutant"
-      - "release"
-      - "contaminate"
-      - "wildlife"
-      - "poison"
-      - "bypass"
-      - "evade"
-      - "conceal"

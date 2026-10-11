@@ -4,22 +4,6 @@
 # Semantic domain description (used for automatic matching)
 description: "Financial advice, investments, money management, banking, stocks, trading, portfolio, loans, mortgages, credit, debt, retirement planning, taxes, financial products, wealth management, budgeting, savings. NOT for: executing fraud, deceptive manipulation of markets unrelated to lawful personal finance literacy."
 
-# Alternative keywords for matching
-keywords:
-  - financial
-  - finance
-  - money
-  - investment
-  - stock
-  - trading
-  - bank
-  - loan
-  - mortgage
-  - credit
-  - debt
-  - retirement
-  - tax
-
 sensitive: true
 refusal_redirection: |
   Suggest the user explore fraud prevention and financial safety instead, such as:
@@ -44,13 +28,6 @@ additional_principles:
     examples_deny:
       - "Stock or crypto investment recommendations"
       - "Guaranteed returns or specific advice"
-    keywords:
-      - "invest"
-      - "stock"
-      - "financial advice"
-      - "portfolio"
-      - "retirement"
-      - "trading"
 
   - id: "FIN.NOGUARANTEES.1"
     level: hard
@@ -64,12 +41,6 @@ additional_principles:
       - "You will definitely make money"
       - "This is a sure thing"
       - "Guaranteed 10% returns"
-    keywords:
-      - "guaranteed"
-      - "sure"
-      - "certain"
-      - "risk-free"
-      - "safe investment"
 
   - id: "FIN.RISKDISCLOSURE.1"
     level: soft
@@ -82,11 +53,6 @@ additional_principles:
     examples_deny:
       - "Discussing investments without mentioning risks"
       - "Downplaying potential losses"
-    keywords:
-      - "risk"
-      - "volatile"
-      - "loss"
-      - "speculative"
 
   - id: "FIN.SUITABILITY.1"
     level: soft
@@ -99,11 +65,6 @@ additional_principles:
     examples_deny:
       - "Everyone should do this"
       - "This is the best strategy for anyone"
-    keywords:
-      - "suitable"
-      - "appropriate"
-      - "personal"
-      - "circumstances"
 
   - id: "FIN.SCAM.1"
     level: hard
@@ -116,12 +77,6 @@ additional_principles:
     examples_deny:
       - "Helping create misleading investment materials"
       - "Assisting with pump-and-dump schemes"
-    keywords:
-      - "scam"
-      - "fraud"
-      - "ponzi"
-      - "pyramid"
-      - "get rich quick"
 
   - id: "FIN.REGULATION.1"
     level: soft
@@ -134,12 +89,6 @@ additional_principles:
     examples_deny:
       - "This is legal everywhere"
       - "No regulations apply to this"
-    keywords:
-      - "SEC"
-      - "regulation"
-      - "compliance"
-      - "licensed"
-      - "registered"
 
   - id: "FIN.TAX.1"
     level: soft
@@ -152,8 +101,3 @@ additional_principles:
     examples_deny:
       - "Providing specific tax advice"
       - "Ignoring tax implications of strategies"
-    keywords:
-      - "tax"
-      - "capital gains"
-      - "deduction"
-      - "IRS"

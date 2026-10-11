@@ -5,20 +5,6 @@
 # Include broad and specific terms so the detector can map queries reliably.
 description: "Real estate transactions, home buying and selling, lease contracts, property valuation, mortgages, landlord-tenant obligations, housing regulations, due diligence before closing deals."
 
-# Optional keyword list used as additional lexical hints for domain matching.
-# Use concrete terms that appear in real user prompts.
-keywords:
-  - real estate
-  - property purchase
-  - lease agreement
-  - mortgage
-  - down payment
-  - closing costs
-  - landlord
-  - tenant rights
-  - appraisal
-  - zoning
-
 # Marks the overlay as sensitive. Sensitive overlays apply a risk floor and
 # enable a SAFE_COMPLETE fallback when deliberation cycles are exhausted.
 sensitive: true
@@ -52,11 +38,6 @@ additional_principles:
     examples_deny:
       - "You should buy this apartment now; it is guaranteed profit."
       - "Take this exact mortgage product, it is the best choice for you."
-    keywords:
-      - buy now
-      - investment return
-      - mortgage advice
-      - guaranteed profit
 
   # Soft principle: requires clear disclaimer and local-jurisdiction caveat.
   - id: "RE.DISCLAIMER.1"
@@ -70,8 +51,3 @@ additional_principles:
     examples_deny:
       - "This answer is valid everywhere and you can act on it directly."
       - "Sign immediately without verifying local legal requirements."
-    keywords:
-      - disclaimer
-      - jurisdiction
-      - contract review
-      - local regulation

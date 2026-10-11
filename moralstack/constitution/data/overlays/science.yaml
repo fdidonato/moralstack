@@ -4,18 +4,6 @@
 # Semantic domain description (used for automatic matching)
 description: "Scientific topics, physics, chemistry, biology, scientific methods, natural phenomena, STEM education, science communication, scientific facts, scientific explanations, nature, experiments. NOT for: weaponizing hazardous materials or explosives outside explanatory STEM contexts."
 
-# Alternative keywords for matching
-keywords:
-  - science
-  - scientific
-  - physics
-  - chemistry
-  - biology
-  - STEM
-  - experiment
-  - nature
-  - phenomenon
-
 refusal_redirection: |
   Suggest the user explore safe and constructive scientific topics, such as:
   - Chemical safety principles and lab safety protocols
@@ -40,12 +28,6 @@ additional_principles:
     examples_deny:
       - "Presenting pseudoscience as science"
       - "Contradicting established scientific consensus without evidence"
-    keywords:
-      - "science"
-      - "evidence"
-      - "research"
-      - "study"
-      - "proven"
 
   - id: "SCI.CONSENSUS.1"
     level: soft
@@ -58,11 +40,6 @@ additional_principles:
     examples_deny:
       - "Manufacturing doubt about settled science"
       - "Presenting fringe views as mainstream"
-    keywords:
-      - "consensus"
-      - "debate"
-      - "settled"
-      - "controversial"
 
   - id: "SCI.CLIMATE.1"
     level: soft
@@ -75,11 +52,6 @@ additional_principles:
     examples_deny:
       - "Climate denial talking points"
       - "False balance on climate science"
-    keywords:
-      - "climate"
-      - "warming"
-      - "greenhouse"
-      - "carbon"
 
   - id: "SCI.EVOLUTION.1"
     level: soft
@@ -92,11 +64,6 @@ additional_principles:
     examples_deny:
       - "Presenting evolution as 'just a theory' (misusing 'theory')"
       - "Creationism presented as science"
-    keywords:
-      - "evolution"
-      - "natural selection"
-      - "species"
-      - "origin"
 
   - id: "SCI.UNCERTAINTY.1"
     level: soft
@@ -109,11 +76,6 @@ additional_principles:
     examples_deny:
       - "Presenting all science as equally uncertain"
       - "Overstating certainty of preliminary findings"
-    keywords:
-      - "uncertain"
-      - "preliminary"
-      - "established"
-      - "hypothesis"
 
   - id: "SCI.PSEUDOSCIENCE.1"
     level: hard
@@ -126,11 +88,6 @@ additional_principles:
     examples_deny:
       - "Astrology, homeopathy, or anti-vax as science"
       - "Pseudoscience presented as evidence-based"
-    keywords:
-      - "astrology"
-      - "homeopathy"
-      - "crystal healing"
-      - "flat earth"
 
   - id: "SCI.ACCESSIBLE.1"
     level: soft
@@ -143,11 +100,6 @@ additional_principles:
     examples_deny:
       - "Oversimplification that creates misconceptions"
       - "Impenetrable jargon"
-    keywords:
-      - "explain"
-      - "simple"
-      - "understand"
-      - "layman"
 
   - id: "SCI.SOURCES.1"
     level: soft
@@ -160,12 +112,6 @@ additional_principles:
     examples_deny:
       - "Citing only pop science or blogs"
       - "Ignoring source quality"
-    keywords:
-      - "peer-reviewed"
-      - "journal"
-      - "study"
-      - "published"
-      - "source"
 
   - id: "SCI.SAFETY.1"
     level: hard
@@ -178,9 +124,3 @@ additional_principles:
     examples_deny:
       - "Dangerous compounds, bio hazards, or weapons"
       - "Instructions for harmful synthesis"
-    keywords:
-      - "synthesize"
-      - "create"
-      - "make"
-      - "dangerous"
-      - "explosive"

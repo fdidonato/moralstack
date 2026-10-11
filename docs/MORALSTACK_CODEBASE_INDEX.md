@@ -577,16 +577,16 @@ static prefix and the user message carries only per-request dynamic data
 - **DomainPrefilter** (`constitution/retriever.py`): `DomainPrefilter._build_prefilter_system_prompt(domain_list)`
   composes a per-config-instance (not module-level constant) SYSTEM prompt —
   classifier role, `AVAILABLE DOMAINS` list rendered from the current
-  descriptions (scope + `NOT:` line via `_split_scope_notfor`; keywords only for an
-  empty description), task, wrapper/encoding rules, per-domain evidence +
+  descriptions (scope + `NOT:` line via `_split_scope_notfor`; a domain without a
+  description is listed by name only), task, wrapper/encoding rules, per-domain evidence +
   confidence procedure, safety-recall rules, reply-field description. Reply shape
   `selections[{domain, evidence, confidence}]`, enforced by a strict `json_schema`
   (`_build_prefilter_response_format`, `enum` = request candidates without `core`)
   when `supports_json_schema(model)`, else `json_object`; each selection is gated
   on its own confidence (`_selected_from_selections`), the legacy
   `{domains, confidence}` shape keeps the global gate. Byte-identical across requests while the
-  domain config is unchanged (`set_domain_keywords`/`set_domain_descriptions`
-  clear `self._cache` in lockstep with any prompt-byte change). The USER
+  domain config is unchanged (`set_domain_descriptions` clears `self._cache` in
+  lockstep with any prompt-byte change; overlay keywords were removed 2026-10-11). The USER
   message is query-only: `f"USER QUERY:\n{query}"`. `_call_openai(prompt, *,
   system_prompt, response_format=None, retrieval_phase=...)` threads the same builder output into
   both the OpenAI system message and the persisted `system_prompt` (single
@@ -621,8 +621,8 @@ Verified by `tests/test_static_prefix_stability.py`.
   conditions.
 - The effective `max_parallel_agents` default is **4** (bumped from 2) across
   all runtime sources: `ConstitutionRetrieverConfig.max_parallel_agents`
-  (`retriever.py:1099`), `ConstitutionStoreConfig.max_parallel_agents` /
-  `ConstitutionStore.__init__` kwarg default (`store.py:462`,`:498` — the store
+  (`retriever.py:1466`), `ConstitutionStoreConfig.max_parallel_agents` /
+  `ConstitutionStore.__init__` kwarg default (`store.py:231`,`:267` — the store
   overrides the retriever default on every store-mediated path), `CLIConfig.max_parallel_agents`
   (`cli/models.py:492`), and `resolve_constitution_max_parallel_agents`'s env
   fallback (`pipeline/deliberation_stack.py:64`, env var

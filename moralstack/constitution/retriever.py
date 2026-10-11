@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextvars
-import copy
 import functools
 import hashlib
 import json
@@ -110,40 +109,6 @@ def _persist_constitution_llm_call(
         logger.debug("constitution retrieval llm_call persist skipped", exc_info=True)
 
 
-def _normalize_domain_keywords(keywords: dict[str, list[str]]) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    """
-    Canonical form for comparison: sorted domain keys, sorted de-duplicated keyword strings per domain.
-    Does not alter governance semantics of a keyword map; used only for fingerprinting/equality.
-    """
-    items: list[tuple[str, tuple[str, ...]]] = []
-    for domain in sorted(keywords.keys()):
-        raw = keywords.get(domain) or []
-        seen: set[str] = set()
-        collected: list[str] = []
-        for w in raw:
-            s = str(w)
-            if s not in seen:
-                seen.add(s)
-                collected.append(s)
-        collected.sort()
-        items.append((str(domain), tuple(collected)))
-    return tuple(items)
-
-
-def _fingerprint_domain_keywords(keywords: dict[str, list[str]]) -> str:
-    """Stable SHA-256 hex digest over the normalized keyword map."""
-    norm = _normalize_domain_keywords(keywords)
-    blob = json.dumps(norm, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(blob).hexdigest()
-
-
-def _snapshot_domain_keywords(keywords: dict[str, list[str]]) -> dict[str, list[str]]:
-    """
-    Deep copy of keyword lists so later mutation of provider-owned structures cannot desync fingerprints.
-    """
-    return {str(k): copy.deepcopy(list(v or [])) for k, v in keywords.items()}
-
-
 def _normalize_domain_descriptions(descriptions: dict[str, str]) -> tuple[tuple[str, str], ...]:
     """Canonical form for fingerprinting: sorted by domain key, string values."""
     return tuple((str(k), str(descriptions[k] or "")) for k in sorted(descriptions.keys()))
@@ -171,8 +136,7 @@ def _split_scope_notfor(description: str) -> tuple[str, str]:
     writes inside the descriptions. When absent, the exclusion is empty and the
     scope is the whole description (no loss, no sync broken: the prompt still
     recompiles from the same YAML the deployer edits). Used to render the
-    precision catalog, which surfaces exclusions on their own ``NOT:`` line and
-    drops the keyword bag (a known over-trigger source)."""
+    precision catalog, which surfaces exclusions on their own ``NOT:`` line."""
     parts = _NOT_FOR_RE.split(description, maxsplit=1)
     scope = parts[0].strip().rstrip(".")
     notfor = parts[1].strip() if len(parts) > 1 else ""
@@ -234,12 +198,12 @@ def _emit_domain_prefilter_orchestration_event(
         logger.debug("domain prefilter orchestration event emission failed", exc_info=True)
 
 
-def _prefilter_combined_cache_status(keywords_changed: bool, cache_hit: bool | None) -> str:
+def _prefilter_combined_cache_status(descriptions_changed: bool, cache_hit: bool | None) -> str:
     if cache_hit is None:
         return "unknown"
-    if keywords_changed and cache_hit:
+    if descriptions_changed and cache_hit:
         return "invalidated_then_hit"
-    if keywords_changed and not cache_hit:
+    if descriptions_changed and not cache_hit:
         return "invalidated_then_miss"
     if cache_hit:
         return "hit"
@@ -463,8 +427,6 @@ class ConstitutionDataProvider(Protocol):
 
     def _get_available_domains(self) -> list[str]: ...
 
-    def get_domain_keywords(self) -> dict[str, list[str]]: ...
-
     def get_domain_descriptions(self) -> dict[str, str]: ...
 
 
@@ -537,15 +499,11 @@ class DomainPrefilter:
         self,
         openai_config: OpenAIClientConfig | None = None,
         max_domains: int = 3,
-        domain_keywords: dict[str, list[str]] | None = None,
         cost_tracker: Any | None = None,
         domain_descriptions: dict[str, str] | None = None,
     ) -> None:
         self.openai_config = openai_config or OpenAIClientConfig.default()
         self.max_domains = max_domains
-        raw_kw = domain_keywords or {}
-        self._domain_keywords = _snapshot_domain_keywords(raw_kw)
-        self._keywords_fingerprint = _fingerprint_domain_keywords(raw_kw)
         raw_desc = domain_descriptions or {}
         self._domain_descriptions = _snapshot_domain_descriptions(raw_desc)
         self._descriptions_fingerprint = _fingerprint_domain_descriptions(raw_desc)
@@ -560,43 +518,6 @@ class DomainPrefilter:
     def set_cost_tracker(self, tracker: Any | None) -> None:
         """Set TokenCostTracker for OpenAI call cost tracking."""
         self._cost_tracker = tracker
-
-    def set_domain_keywords(
-        self,
-        keywords: dict[str, list[str]],
-        *,
-        invalidation_reason: str = "effective_keywords_changed",
-    ) -> bool:
-        """
-        Update domain keywords when the effective map changes. Idempotent: same semantic map does not clear cache.
-
-        Returns:
-            True if keywords changed and cache was invalidated; False if state was already equivalent.
-        """
-        from moralstack.orchestration.orchestration_event_taxonomy import DOMAIN_PREFILTER_CACHE_INVALIDATED
-
-        fp_new = _fingerprint_domain_keywords(keywords)
-        if fp_new == self._keywords_fingerprint:
-            return False
-
-        fp_before = self._keywords_fingerprint
-        self._keywords_fingerprint = fp_new
-        self._domain_keywords = _snapshot_domain_keywords(keywords)
-        self._cache.clear()
-
-        kcount = sum(len(v or []) for v in (keywords or {}).values())
-        _emit_domain_prefilter_orchestration_event(
-            DOMAIN_PREFILTER_CACHE_INVALIDATED,
-            {
-                "reason": invalidation_reason,
-                "keywords_fingerprint_before": fp_before,
-                "keywords_fingerprint_after": fp_new,
-                "domain_count": len(keywords or {}),
-                "keyword_count_total": kcount,
-                "decision": "invalidated",
-            },
-        )
-        return True
 
     def set_domain_descriptions(
         self,
@@ -635,7 +556,7 @@ class DomainPrefilter:
 
     def clear_cache(self, *, reason: str = "forced_refresh") -> None:
         """
-        Clear prefilter entries without requiring keyword mutation (e.g. full retriever refresh).
+        Clear prefilter entries without requiring a description change (e.g. full retriever refresh).
         Emits INVALIDATED only when entries were present.
         """
         from moralstack.orchestration.orchestration_event_taxonomy import DOMAIN_PREFILTER_CACHE_INVALIDATED
@@ -643,15 +564,14 @@ class DomainPrefilter:
         if not self._cache:
             return
         self._cache.clear()
-        fp = self._keywords_fingerprint
+        fp = self._descriptions_fingerprint
         _emit_domain_prefilter_orchestration_event(
             DOMAIN_PREFILTER_CACHE_INVALIDATED,
             {
                 "reason": reason,
-                "keywords_fingerprint_before": fp,
-                "keywords_fingerprint_after": fp,
-                "domain_count": len(self._domain_keywords),
-                "keyword_count_total": sum(len(v) for v in self._domain_keywords.values()),
+                "descriptions_fingerprint_before": fp,
+                "descriptions_fingerprint_after": fp,
+                "domain_count": len(self._domain_descriptions),
                 "decision": "invalidated",
             },
         )
@@ -714,7 +634,7 @@ class DomainPrefilter:
                     "cache_key_digest": cache_key,
                     "matched_domains": list(cached),
                     "candidate_domain_count": candidate_domain_count,
-                    "keywords_fingerprint": self._keywords_fingerprint,
+                    "descriptions_fingerprint": self._descriptions_fingerprint,
                 },
             )
             return _PrefilterOutcome(domains=list(cached), cache_lookup_hit=True)
@@ -725,7 +645,7 @@ class DomainPrefilter:
                 "decision": "miss",
                 "cache_key_digest": cache_key,
                 "candidate_domain_count": candidate_domain_count,
-                "keywords_fingerprint": self._keywords_fingerprint,
+                "descriptions_fingerprint": self._descriptions_fingerprint,
             },
         )
 
@@ -737,16 +657,14 @@ class DomainPrefilter:
 
         # Precision catalog: the deployer's YAML description split into a positive
         # scope line and an explicit ``NOT:`` exclusion line (from the description's
-        # own ``NOT for:`` convention), with the keyword bag dropped. Keywords were
-        # a known over-trigger source — the classifier latched onto a keyword that
-        # appeared only in the wrapper. Scope+NOT keeps the deployer's intent while
+        # own ``NOT for:`` convention). Scope+NOT keeps the deployer's intent while
         # shortening the prompt (less attention dilution) and sharpening boundaries.
-        # Per-domain fallback to keywords-only when a description is absent is kept.
+        # A domain without a description is listed by name only (the store always
+        # supplies one, so this applies only to a hand-built prefilter).
         def _domain_line(domain: str) -> str:
-            kw_join = ", ".join(self._domain_keywords.get(domain, []))
             desc = (self._domain_descriptions.get(domain) or "").strip()
             if not desc:
-                return f"- {domain}: {kw_join}"
+                return f"- {domain}"
             scope, notfor = _split_scope_notfor(desc)
             line = f"- {domain}: {scope}."
             if notfor:
@@ -927,15 +845,15 @@ class DomainPrefilter:
         """Compose the byte-stable prefilter SYSTEM prompt for the current domain config.
 
         Contains the static classifier instructions, the AVAILABLE DOMAINS list (rendered
-        from the current descriptions, keywords only for a domain without one), the task,
+        from the current descriptions), the task,
         wrapper/encoding rules, the per-domain evidence + NOT-clause + confidence procedure,
         the safety-recall rules and a one-line description of the reply fields (the shape is
         enforced by the response_format schema when supported). Byte-identical across requests while the
         domain config and available_domains are unchanged, so the prefix is cache-eligible for
         OpenAI automatic prompt caching (an actual cache hit still depends on prompt length /
         provider conditions - byte-stability is necessary, not sufficient). The rendered
-        domain_list changes when either set_domain_keywords / set_domain_descriptions mutate the
-        effective map (which also clear self._cache, keeping local cache and cached prefix
+        domain_list changes when set_domain_descriptions mutates the
+        effective map (which also clears self._cache, keeping local cache and cached prefix
         consistent) or the per-request available_domains differs.
         """
         # NOTE: the prompt is built by implicit string concatenation so source lines stay within the
@@ -1585,7 +1503,6 @@ class ConstitutionRetriever:
             self._domain_prefilter = DomainPrefilter(
                 openai_config=config.openai_config or OpenAIClientConfig.default(),
                 max_domains=config.max_prefilter_domains,
-                domain_keywords=data_provider.get_domain_keywords(),
                 cost_tracker=cost_tracker,
                 domain_descriptions=data_provider.get_domain_descriptions(),
             )
@@ -1640,13 +1557,11 @@ class ConstitutionRetriever:
 
         available_domains = ["core"] + self._provider._get_available_domains()
 
-        prefilter_kw_changed = False
+        prefilter_desc_changed = False
         prefilter_cache_hit: bool | None = None
         if self._config.use_enhanced_retrieval and self._config.use_domain_prefilter and self._domain_prefilter:
             assert self._domain_prefilter is not None
-            prefilter_kw_changed = self._domain_prefilter.set_domain_keywords(self._provider.get_domain_keywords())
-            # Keep descriptions in sync with the same lifecycle as keywords.
-            self._domain_prefilter.set_domain_descriptions(self._provider.get_domain_descriptions())
+            prefilter_desc_changed = self._domain_prefilter.set_domain_descriptions(self._provider.get_domain_descriptions())
             outcome = self._domain_prefilter._filter_domains_scoped(
                 query,
                 available_domains,
@@ -1663,11 +1578,13 @@ class ConstitutionRetriever:
             relevant_domains = list(available_domains)
 
         prefilter_status = (
-            _prefilter_combined_cache_status(prefilter_kw_changed, prefilter_cache_hit)
+            _prefilter_combined_cache_status(prefilter_desc_changed, prefilter_cache_hit)
             if self._config.use_enhanced_retrieval and self._config.use_domain_prefilter and self._domain_prefilter
             else "n/a"
         )
-        inv_reason = "effective_keywords_changed" if prefilter_kw_changed and self._domain_prefilter is not None else None
+        inv_reason = (
+            "effective_descriptions_changed" if prefilter_desc_changed and self._domain_prefilter is not None else None
+        )
 
         debug: dict[str, Any] = {
             # Single source of truth (plan §6 point 5): stamped once here, so the
@@ -1680,15 +1597,15 @@ class ConstitutionRetriever:
             "prefiltered_domains": relevant_domains,
             "confidence_threshold": self._config.confidence_threshold,
             "prefilter_cache_status": prefilter_status,
-            "prefilter_keywords_changed": (
-                bool(prefilter_kw_changed)
+            "prefilter_descriptions_changed": (
+                bool(prefilter_desc_changed)
                 if self._config.use_enhanced_retrieval and self._config.use_domain_prefilter and self._domain_prefilter
                 else None
             ),
             "prefilter_cache_invalidation_reason": inv_reason,
             "prefilter_cache_lookup_hit": prefilter_cache_hit,
-            "prefilter_keywords_fingerprint_prefix": (
-                (self._domain_prefilter._keywords_fingerprint[:16] if self._domain_prefilter else "")
+            "prefilter_descriptions_fingerprint_prefix": (
+                (self._domain_prefilter._descriptions_fingerprint[:16] if self._domain_prefilter else "")
                 if self._config.use_enhanced_retrieval and self._config.use_domain_prefilter
                 else ""
             ),
@@ -1876,7 +1793,6 @@ class ConstitutionRetriever:
         try:
             available = ["core"] + self._provider._get_available_domains()
             if self._domain_prefilter is not None:
-                _ = self._domain_prefilter.set_domain_keywords(self._provider.get_domain_keywords())
                 _ = self._domain_prefilter.set_domain_descriptions(self._provider.get_domain_descriptions())
                 return self._domain_prefilter.filter_domains(query, available)
             return []

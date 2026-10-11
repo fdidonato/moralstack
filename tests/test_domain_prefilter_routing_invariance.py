@@ -25,7 +25,7 @@ INF = float("inf")
 
 
 def _pf(max_domains: int = 3) -> DomainPrefilter:
-    return DomainPrefilter(domain_keywords={d: [d] for d in AVAIL if d != "core"}, max_domains=max_domains)
+    return DomainPrefilter(max_domains=max_domains)
 
 
 def _run(pf: DomainPrefilter, result: Any, query: str = Q, avail: list[str] | None = None, **kw: Any) -> list[str]:
@@ -181,7 +181,6 @@ def test_signatures_pinned() -> None:
 def test_real_call_openai_does_not_change_llm_calls_row() -> None:
     pf = DomainPrefilter(
         openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-4o-mini"),
-        domain_keywords={d: [d] for d in AVAIL if d != "core"},
         max_domains=3,
     )
     text = json.dumps({"domains": ["medical"], "confidence": 0.9})

@@ -64,7 +64,6 @@ class Principle(BaseModel):
     examples_deny: list[str] = []
     remediation: str = ""
     domain: str | None = None
-    keywords: list[str] = []
 ```
 
 ### Example Principle (YAML)
@@ -84,10 +83,6 @@ class Principle(BaseModel):
     - "Instructions for building weapons"
     - "Guides for causing physical harm"
   remediation: "Refuse with explanation and safe alternatives"
-  keywords:
-    - "bomb"
-    - "explosive"
-    - "weapon"
 ```
 
 ---
@@ -103,7 +98,6 @@ class Overlay(BaseModel):
     additional_principles: list[Principle] = []
     priority_overrides: dict[str, int] = {}
     description: str = ""
-    keywords: list[str] = []
 ```
 
 ### Available Domains
@@ -256,11 +250,10 @@ Domains are narrowed by an LLM classifier over a **precision catalog** rendered 
 domain has a description (`get_domain_descriptions()`), DomainPrefilter splits it at the first **`NOT for:`** marker
 (`_split_scope_notfor`, case-insensitive) and prints **`- {domain}: {scope}.`** followed by an indented
 **`  NOT: {exclusion}`** line; the description text is kept whole (later `NOT for:` sentences stay inline on the
-`NOT:` line) and the **keyword bag is not printed** (keywords were an over-trigger source). Only a domain with an
-empty description falls back to the historical keywords-only line `- {domain}: kw1, kw2`. Note that
-`ConstitutionStore.get_domain_descriptions()` always returns a non-empty description (an overlay without one gets
-`"Principles specific to {domain} domain."`), so with the store the keywords-only fallback does not trigger and such
-a domain reaches the classifier described by its name only.
+`NOT:` line). Domain keywords no longer exist (removed 2026-10-11): a domain with an empty description is listed
+by name only, `- {domain}`. `ConstitutionStore.get_domain_descriptions()` always returns a non-empty description
+(an overlay without one gets `"Principles specific to {domain} domain."`), so with the store that line never
+renders; it applies only to a hand-built `DomainPrefilter`.
 
 Descriptions may embed **`NOT for: …`** sentences (see many overlays beneath `constitution/data/overlays/*.yaml`)
 to steer negative scoping—for example signalling that explosives requests should not collapse into a narrowly topical label.
@@ -287,9 +280,15 @@ obfuscation** as inspectable when substantive meaning can be recovered **without
 should follow that recovered substance. Opaque or non-recoverable material should favour empty-domain conservatism rather
 than guessed intent.
 
-**Prefilter cache:** `DomainPrefilter.set_domain_keywords` is idempotent: the in-memory prefilter cache is cleared
-only when the effective keyword map changes (canonical fingerprint over sorted domains and sorted de-duplicated
-keywords). Identical maps with different key or keyword order reuse the cache across requests. When persistence
+**Prefilter cache:** `DomainPrefilter.set_domain_descriptions` is idempotent: the in-memory prefilter cache is
+cleared only when the effective description map changes (canonical fingerprint over the map sorted by domain), so an
+identical map in a different key order reuses the cache across requests. The cache key itself
+(`md5(query + sorted available_domains)`) never contained description or keyword content. The invalidation telemetry
+(`prefilter_cache_status` `invalidated_then_hit` / `invalidated_then_miss`, `prefilter_cache_invalidation_reason`
+`effective_descriptions_changed`, and the `prefilter_descriptions_changed` / `prefilter_descriptions_fingerprint_prefix`
+debug and trace fields) follows the descriptions. Until 2026-10-11 it followed the overlay keywords, so a
+description-only edit cleared the cache without any signal. The `DOMAIN_PREFILTER_CACHE_HIT` / `_MISS` /
+`_INVALIDATED` payloads carry `descriptions_fingerprint*` (older rows carry `keywords_fingerprint*`). When persistence
 context (`run_id` / `request_id`) is active, cache hit / miss / invalidation are recorded as `orchestration_events`
 (`DOMAIN_PREFILTER_CACHE_HIT`, `DOMAIN_PREFILTER_CACHE_MISS`, `DOMAIN_PREFILTER_CACHE_INVALIDATED`). The latest
 retrieval exposes `prefilter_cache_status` and related fields via `ConstitutionStore.retrieve(...).debug_info` and
@@ -346,8 +345,8 @@ Retrieval is delegated to `ConstitutionRetriever` and uses a two-stage LLM flow:
 
 ### 1. Domain Selection (DomainPrefilter)
 
-The LLM sees each candidate domain through its description (scope line + `NOT:` exclusion line; keywords only when
-the description is empty), selecting up to the configured cap (see `max_prefilter_domains`), each domain gated on
+The LLM sees each candidate domain through its description (scope line + `NOT:` exclusion line; the domain name
+alone when the description is empty), selecting up to the configured cap (see `max_prefilter_domains`), each domain gated on
 its own confidence. Token usage remains constrained relative to injecting full principle payloads
 at this stage.
 
@@ -357,8 +356,8 @@ For each selected domain, `EnhancedDomainAgent` (or legacy `DomainAgent`) sends 
 rule, level) to the LLM. The LLM returns relevant principle IDs with confidence scores. Principles below
 `confidence_threshold` are filtered out.
 
-**Note:** `principle.keywords` from YAML are not used in the agent prompts. They are metadata; the LLM evaluates
-relevance from rule and title content.
+**Note:** principles carry no keywords (the `keywords` / `keywords_block` / `keywords_style` fields were removed
+2026-10-11). The LLM evaluates relevance from rule and title content.
 
 ---
 
@@ -370,6 +369,11 @@ Precedence order for conflicting principles:
 2. **Descending numeric priority**
 3. **Specificity** (more specific principles prevail)
 4. **Alphabetical ID order** (determinism)
+
+Specificity is `_specificity_score` (`constitution/helpers.py:68-84`): +10 when the principle has a `domain`,
++0.5 per `examples_deny` and +0.3 per `examples_allow` (after the cut to two), plus `min(len(rule) / 100, 2)`.
+Until 2026-10-11 it also added 0.2 per principle keyword; removing that term reordered some same-level,
+same-priority principles in 10 overlays without changing any principle set.
 
 ```python
 # Example: two conflicting principles

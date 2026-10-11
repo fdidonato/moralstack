@@ -4,24 +4,6 @@
 # Semantic domain description (used for automatic matching)
 description: "Healthcare services, patient care, medical facilities, health insurance, care providers, healthcare systems, HIPAA compliance, healthcare professionals, nursing, clinical care, healthcare administration. NOT for: harming patients, circumventing clinical safeguards, or defrauding payers when unrelated to lawful care coordination or administration."
 
-# Alternative keywords for matching
-keywords:
-  - healthcare
-  - patient care
-  - hospital
-  - clinic
-  - nursing
-  - HIPAA
-  - health insurance
-  - care provider
-  - diagnosis
-  - patient communication
-  - prognosis
-  - clinical care
-  - breaking bad news
-  - difficult diagnosis
-  - communicating diagnosis
-
 sensitive: true
 refusal_redirection: |
   Suggest the user explore general healthcare information or professional care pathways, such as:
@@ -54,12 +36,6 @@ additional_principles:
     examples_deny:
       - "Tell me your full medical history"
       - "Share your diagnosis and medications"
-    keywords:
-      - "HIPAA"
-      - "PHI"
-      - "medical record"
-      - "diagnosis"
-      - "health information"
 
   - id: "HC.NODIAGNOSIS.1"
     level: hard
@@ -72,11 +48,6 @@ additional_principles:
     examples_deny:
       - "Diagnosing conditions (diabetes, cancer, etc.)"
       - "Dismissing need for doctor visit"
-    keywords:
-      - "diagnose"
-      - "you have"
-      - "condition"
-      - "disease"
 
   - id: "HC.NOTREATMENT.1"
     level: hard
@@ -89,12 +60,6 @@ additional_principles:
     examples_deny:
       - "Take 500mg of X twice daily"
       - "You should start this medication"
-    keywords:
-      - "take"
-      - "dose"
-      - "prescription"
-      - "medication"
-      - "treatment"
 
   - id: "HC.EMERGENCY.1"
     level: hard
@@ -108,12 +73,6 @@ additional_principles:
     examples_deny:
       - "Continuing normal conversation when emergency is indicated with active first-person symptoms"
       - "Dismissing urgent active symptoms that could be serious"
-    keywords:
-      - "chest pain"
-      - "breathing"
-      - "unconscious"
-      - "severe"
-      - "emergency"
 
   - id: "HC.EVIDENCEBASED.1"
     level: soft
@@ -126,11 +85,6 @@ additional_principles:
     examples_deny:
       - "This miracle cure works"
       - "Unproven treatments presented as fact"
-    keywords:
-      - "research"
-      - "study"
-      - "evidence"
-      - "proven"
 
   - id: "HC.VACCINES.1"
     level: soft
@@ -143,11 +97,6 @@ additional_principles:
     examples_deny:
       - "Spreading vaccine misinformation"
       - "Discouraging vaccination without medical basis"
-    keywords:
-      - "vaccine"
-      - "immunization"
-      - "shot"
-      - "anti-vax"
 
   - id: "HC.ALTERNATIVE.1"
     level: soft
@@ -160,12 +109,6 @@ additional_principles:
     examples_deny:
       - "This herb cures cancer"
       - "Replace your medications with supplements"
-    keywords:
-      - "natural"
-      - "alternative"
-      - "supplement"
-      - "herbal"
-      - "holistic"
 
   - id: "HC.ACCESSIBILITY.1"
     level: soft
@@ -178,12 +121,6 @@ additional_principles:
     examples_deny:
       - "Dismissing cost concerns"
       - "Ignoring access barriers"
-    keywords:
-      - "afford"
-      - "cost"
-      - "insurance"
-      - "access"
-      - "free clinic"
 
   - id: "MED.DISCLAIMER.1"
     level: soft
@@ -196,11 +133,3 @@ additional_principles:
     examples_deny:
       - "Providing clinical advice without disclaimer"
       - "Omitting professional consultation recommendation"
-    keywords:
-      - "diagnosis"
-      - "patient"
-      - "clinical"
-      - "prognosis"
-      - "communicate diagnosis"
-      - "breaking bad news"
-      - "difficult diagnosis"

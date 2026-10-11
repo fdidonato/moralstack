@@ -38,7 +38,6 @@ class Principle(BaseModel):
     examples_deny: list[str] = []
     remediation: str = ""
     domain: str | None = None
-    keywords: list[str] = []
 
     @field_validator("priority")
     @classmethod
@@ -57,7 +56,6 @@ class Overlay(BaseModel):
     additional_principles: list[Principle] = []
     priority_overrides: dict[str, int] = {}
     description: str = ""
-    keywords: list[str] = []
     sensitive: bool = False
     excluded: bool = False
     refusal_redirection: str = ""
@@ -108,7 +106,6 @@ class Constitution(BaseModel):
 class PrincipleYAML(BaseModel):
     """
     Struttura di un principio come appare nel YAML.
-    Accetta keywords, keywords_block, keywords_style; vengono uniti in Principle.keywords.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -122,9 +119,6 @@ class PrincipleYAML(BaseModel):
     examples_deny: list[str] = []
     remediation: str = ""
     domain: str | None = None
-    keywords: list[str] = []
-    keywords_block: list[str] = []
-    keywords_style: list[str] = []
 
     @field_validator("priority")
     @classmethod
@@ -134,21 +128,10 @@ class PrincipleYAML(BaseModel):
         return v
 
     def to_principle(self) -> Principle:
-        """Converte in Principle unendo keywords, keywords_block, keywords_style.
+        """Converte in Principle.
         Limita examples a max 2 per tipo per ridurre token.
         Remediation ignorato (non usato nei prompt).
         """
-        keywords = list(self.keywords)
-        keywords.extend(self.keywords_block)
-        keywords.extend(self.keywords_style)
-        # Deduplica mantenendo ordine
-        seen: set[str] = set()
-        merged: list[str] = []
-        for k in keywords:
-            s = str(k).strip()
-            if s and s not in seen:
-                seen.add(s)
-                merged.append(s)
         return Principle(
             id=self.id,
             level=self.level,
@@ -159,7 +142,6 @@ class PrincipleYAML(BaseModel):
             examples_deny=list(self.examples_deny)[:2],
             remediation="",  # Non usato nei prompt; omesso dai YAML per risparmio token
             domain=self.domain,
-            keywords=merged,
         )
 
 
@@ -177,7 +159,6 @@ class OverlayYAML(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     description: str = ""
-    keywords: list[str] = []
     sensitive: bool = False
     excluded: bool = False
     priority_overrides: dict[str, int] = {}

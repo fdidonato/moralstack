@@ -115,7 +115,7 @@ def _types(evs: list[dict[str, Any]]) -> list[str]:
 
 
 def _pf(max_domains: int = 3) -> DomainPrefilter:
-    return DomainPrefilter(domain_keywords={d: [d] for d in AVAIL if d != "core"}, max_domains=max_domains)
+    return DomainPrefilter(max_domains=max_domains)
 
 
 def _run(pf: DomainPrefilter, result: Any, query: str = Q, avail: list[str] | None = None, **kw: Any) -> list[str]:
@@ -158,7 +158,6 @@ def real_env(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(_LLM_PERSIST_PATH, lambda **kw: rows.append(kw))
         pf = DomainPrefilter(
             openai_config=OpenAIClientConfig(api_key=api_key, model="gpt-4o-mini"),
-            domain_keywords={d: [d] for d in AVAIL if d != "core"},
             max_domains=max_domains,
         )
         return pf, rows, client, ctor
@@ -515,7 +514,7 @@ def test_rejection_reemitted_after_cache_invalidation(events):
     pf = _pf()
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["xyz"], "confidence": 0.9}):
         pf.filter_domains(Q, AVAIL)
-        assert pf.set_domain_keywords({"legal": ["changed"]}) is True
+        assert pf.set_domain_descriptions({"legal": "changed"}) is True
         pf.filter_domains(Q, AVAIL)
     assert _types(events).count(REJ) == 2
     assert DOMAIN_PREFILTER_CACHE_INVALIDATED in _types(events)
@@ -730,7 +729,6 @@ def test_status_reset_for_no_key(events, real_env):
     events.clear()
     no_key = DomainPrefilter(
         openai_config=OpenAIClientConfig(api_key="", model="gpt-4o-mini"),
-        domain_keywords={d: [d] for d in AVAIL if d != "core"},
     )
     assert no_key.filter_domains(Q + " other", AVAIL) == ["core"]
     assert _of(events, REJ) == []
