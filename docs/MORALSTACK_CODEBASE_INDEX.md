@@ -577,17 +577,24 @@ static prefix and the user message carries only per-request dynamic data
 - **DomainPrefilter** (`constitution/retriever.py`): `DomainPrefilter._build_prefilter_system_prompt(domain_list)`
   composes a per-config-instance (not module-level constant) SYSTEM prompt —
   classifier role, `AVAILABLE DOMAINS` list rendered from the current
-  keywords/descriptions, classification procedure, falsification checks,
-  confidence scale, JSON schema. Byte-identical across requests while the
+  descriptions (scope + `NOT:` line via `_split_scope_notfor`; keywords only for an
+  empty description), task, wrapper/encoding rules, per-domain evidence +
+  confidence procedure, safety-recall rules, reply-field description. Reply shape
+  `selections[{domain, evidence, confidence}]`, enforced by a strict `json_schema`
+  (`_build_prefilter_response_format`, `enum` = request candidates without `core`)
+  when `supports_json_schema(model)`, else `json_object`; each selection is gated
+  on its own confidence (`_selected_from_selections`), the legacy
+  `{domains, confidence}` shape keeps the global gate. Byte-identical across requests while the
   domain config is unchanged (`set_domain_keywords`/`set_domain_descriptions`
   clear `self._cache` in lockstep with any prompt-byte change). The USER
   message is query-only: `f"USER QUERY:\n{query}"`. `_call_openai(prompt, *,
-  system_prompt, retrieval_phase=...)` threads the same builder output into
+  system_prompt, response_format=None, retrieval_phase=...)` threads the same builder output into
   both the OpenAI system message and the persisted `system_prompt` (single
   source); the old hardcoded 11-word `sys_msg` is gone. Proposed-but-not-applied domains are
   audited (write-only, never routing) as `DOMAIN_PREFILTER_DOMAINS_REJECTED` orchestration
   events on a cache miss (`_audit_rejected_domains`; reasons `unknown_domain`, `low_confidence`,
-  `over_cap`, `parse_failed`; parse status via a module-level `ContextVar`).
+  `over_cap`, `parse_failed`; parse status via a module-level `ContextVar`; for the `selections`
+  shape `low_confidence` is attributed per domain via `_selection_confidences`).
 - **DCCL**: verified already static system + dynamic later messages — no code
   change (A6, verify-only).
 

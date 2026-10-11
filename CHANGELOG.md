@@ -136,6 +136,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Domain prefilter: precision-first classification.** The classifier now returns
+  `selections[{domain, evidence, confidence}]` and each domain is gated on its own
+  confidence (`>= 0.5`) instead of one global score, so a weak secondary domain no longer
+  rides a strong primary. The catalog prints each overlay description as a scope line plus
+  a `NOT:` exclusion line (split at the first `NOT for:`) and no longer prints keywords
+  (kept only for a domain with an empty description). Models with strict Structured Outputs
+  get a `json_schema` whose `domain` enum is the request's candidate set (without `core`);
+  other models keep `json_object`. Output budget raised from 200 to 400 tokens. Replies in
+  the legacy `{domains, confidence}` shape keep the unchanged global gate. The rejected-domain
+  audit attributes `low_confidence` per domain for the new shape.
+
 - **AI review harness: the external Codex reviewer is replaced by an internal,
   isolated `adversarial-reviewer` sub-agent** (`.claude/agents/adversarial-reviewer.md`:
   read-only tools, `model: claude-fable-5-1` pinned in its frontmatter — a model
