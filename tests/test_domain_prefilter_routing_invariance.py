@@ -167,8 +167,10 @@ def test_cache_hit_returns_copy_and_skips_llm() -> None:
 
 def test_signatures_pinned() -> None:
     params = inspect.signature(DomainPrefilter._call_openai).parameters
-    assert list(params) == ["self", "prompt", "system_prompt", "retrieval_phase"]
+    assert list(params) == ["self", "prompt", "system_prompt", "response_format", "retrieval_phase"]
     assert params["system_prompt"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert params["response_format"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert params["response_format"].default is None
     assert params["retrieval_phase"].kind is inspect.Parameter.KEYWORD_ONLY
     assert params["retrieval_phase"].default == "risk_routing"
     for fn in (DomainPrefilter._filter_domains_scoped, DomainPrefilter.filter_domains):

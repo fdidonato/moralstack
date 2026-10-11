@@ -264,7 +264,8 @@ Overlays are in `moralstack/constitution/data/overlays/`. Supported domains:
 ```yaml
 # Example: medical.yaml
 
-# Keywords for domain selection (DomainPrefilter uses these in LLM prompt as domain descriptors)
+# Keywords: DomainPrefilter prints them only for a domain whose description is empty;
+# the overlay `description` (scope + "NOT for:" exclusions) is what the classifier sees
 keywords:
   - medical
   - health

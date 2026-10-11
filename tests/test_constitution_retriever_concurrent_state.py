@@ -80,7 +80,7 @@ def test_retrieve_keeps_own_domains_under_deterministic_interleave() -> None:
     entered = threading.Event()
     release = threading.Event()
 
-    def _fake_prefilter_call(self, prompt, *, system_prompt, retrieval_phase="risk_routing"):  # noqa: ARG001
+    def _fake_prefilter_call(self, prompt, *, system_prompt, response_format=None, retrieval_phase="risk_routing"):  # noqa: ARG001
         if "LEGAL" in prompt:
             return {"domains": ["legal"], "confidence": 0.9}
         return {"domains": ["medical"], "confidence": 0.9}

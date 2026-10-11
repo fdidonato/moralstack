@@ -252,14 +252,31 @@ unavailable.
 
 ## Domain Selection (DomainPrefilter)
 
-Domains are narrowed using **compact keyword maps** backed by YAML overlay metadata to keep token budgets small. When
-each overlay declares a human-authored `description` and the provider exposes `get_domain_descriptions()`, DomainPrefilter
-prints **`- {domain}: {description}` plus a Keywords line** in the classifier prompt (`moralstack/constitution/retriever.py`).
-Missing descriptions cleanly fall back to the historical keywords-only line. Keywords may likewise be derived purely from
-deterministic extraction when YAML lacks explicit lists.
+Domains are narrowed by an LLM classifier over a **precision catalog** rendered from YAML overlay metadata. When a
+domain has a description (`get_domain_descriptions()`), DomainPrefilter splits it at the first **`NOT for:`** marker
+(`_split_scope_notfor`, case-insensitive) and prints **`- {domain}: {scope}.`** followed by an indented
+**`  NOT: {exclusion}`** line; the description text is kept whole (later `NOT for:` sentences stay inline on the
+`NOT:` line) and the **keyword bag is not printed** (keywords were an over-trigger source). Only a domain with an
+empty description falls back to the historical keywords-only line `- {domain}: kw1, kw2`. Note that
+`ConstitutionStore.get_domain_descriptions()` always returns a non-empty description (an overlay without one gets
+`"Principles specific to {domain} domain."`), so with the store the keywords-only fallback does not trigger and such
+a domain reaches the classifier described by its name only.
 
-Descriptions may embed trailing **`NOT for: …`** sentences (see many overlays beneath `constitution/data/overlays/*.yaml`)
+Descriptions may embed **`NOT for: …`** sentences (see many overlays beneath `constitution/data/overlays/*.yaml`)
 to steer negative scoping—for example signalling that explosives requests should not collapse into a narrowly topical label.
+A `(use X)` redirect inside the exclusion tells the classifier to consider domain X instead.
+
+**Reply shape and per-domain gate.** The classifier answers
+`{"payload", "selections": [{"domain", "evidence", "confidence"}], "wrapper_ignored"}`. When
+`supports_json_schema(model)` is true the call uses strict Structured Outputs
+(`_build_prefilter_response_format`): `selections[].domain` is an `enum` of this request's candidate domains
+(`available_domains` minus `core`), so an out-of-catalog name cannot be decoded; other models fall back to
+`{"type": "json_object"}`. Each selection is gated on its **own** confidence (`>= DOMAIN_CONFIDENCE_THRESHOLD`,
+`_selected_from_selections`, parsing via `_parse_selection`: non-dict entries, non-string domains, non-numeric or
+non-finite confidences are dropped; a numeric string such as `"0.9"` is accepted), ordered by confidence descending
+(ties keep model order), de-duplicated, then filtered by `available_domains` and cut to `max_domains`. A reply in the
+legacy `{domains, confidence}` shape (no `selections` list) still goes through the unchanged single-global gate.
+Output budget: `PREFILTER_MAX_OUTPUT_TOKENS = 400` (was 200); a truncated reply fails to parse and routes core-only.
 
 The classifier prompt instructs the model to treat **verbatim embedded segments that use arbitrary encoding or
 obfuscation** as inspectable when substantive meaning can be recovered **without fabricating absent material**; domains
@@ -279,7 +296,10 @@ domain the classifier proposed but that was not applied, as one bounded `DOMAIN_
 orchestration event (`stage="retrieval"`, `component="domain_prefilter"`). It is a write-only audit: the applied
 list, its order, the cache and the `llm_calls` row are byte-identical with or without it, and nothing reads the event
 for routing. Each distinct proposed value gets one `{domain, reason}` entry, with the **first gate in routing order**
-that dropped it: `low_confidence` (confidence below `DOMAIN_CONFIDENCE_THRESHOLD`, the whole proposal is discarded),
+that dropped it: `low_confidence` (legacy shape: global confidence below `DOMAIN_CONFIDENCE_THRESHOLD`, the whole
+proposal is discarded; `selections` shape: that domain has no scorable entry at or above the threshold — the builder
+receives a per-domain best-confidence map from `_selection_confidences`, the same `_parse_selection` the routing gate
+uses — and this check runs before `unknown_domain`/`over_cap`, matching routing order),
 `parse_failed` (JSON unrecoverable, or a malformed shape; `payload.parse_status` tells the two apart). Only
 **non-iterable `domains`** (e.g. `null`, a number) and a **non-comparable `confidence`** make routing fall back to
 core-only without caching, recorded as `parse_failed` with `routing_fallback=true`; **string `domains`** are iterated
@@ -294,7 +314,10 @@ Cache hits emit nothing: join a hit to the miss that produced it through `cache_
 CACHE_MISS/HIT). Nothing is emitted for a clean accept, an empty proposal, the short-query bypass, no candidate
 domains, no API key or an API exception (known gap: those paths return `{}` and core-only is cached). The only bound
 is 16 entries x 64 characters per label (`truncated` flags a cut); the sinks do not truncate. The payload carries no
-query text. Model labels are echoed, the full raw output stays in `llm_calls.raw_response`. The parse status travels
+query text. Model labels are echoed, the full raw output stays in `llm_calls.raw_response`. For a `selections` reply,
+`_call_openai` projects it onto the legacy fields when the model did not also send `domains`: `domains` = every
+string-domain selection in confidence order (non-finite/non-numeric confidences rank as 0.0), `confidence` = the best
+per-domain score; so `proposed` lists below-threshold selections too and the payload `confidence` is that maximum. The parse status travels
 from `_call_openai` to the audit through a module-level `ContextVar` (no instance attributes). Contract: **at most
 one event per miss under normal operation**; the audit call on the success path sits inside the routing `try`, so
 only a `BaseException` escaping the audit's own swallow could produce a second call on the except branch.
@@ -305,8 +328,10 @@ material: rendered system/user messages plus model, temperature, `json_object`, 
 The rendered compact principle text includes id, level, and truncated rule. It intentionally does not include
 principle titles, so title-only changes do not invalidate the agent cache.
 
-**Structured LLM output:** Domain prefilter and domain agents use OpenAI Chat Completions with
-`response_format={"type":"json_object"}` where the model must return a JSON object; legacy `DomainAgent`
+**Structured LLM output:** Domain agents use OpenAI Chat Completions with
+`response_format={"type":"json_object"}` where the model must return a JSON object; the domain prefilter uses a strict
+`json_schema` response format when `supports_json_schema(model)` is true and `json_object` otherwise (see Domain
+Selection above); legacy `DomainAgent`
 uses an object wrapper `{"principle_ids": [...]}` (root arrays are not valid for `json_object` mode).
 Tolerant regex / `extract_json` fallbacks remain for observability and compatibility. When persistence
 context is active, `llm_calls` rows include `parse_contract` metadata (see `moralstack/utils/llm_parse_contract.py`).
@@ -317,8 +342,9 @@ Retrieval is delegated to `ConstitutionRetriever` and uses a two-stage LLM flow:
 
 ### 1. Domain Selection (DomainPrefilter)
 
-The LLM sees each candidate domain primarily through the description + Keywords bundle when present, selecting up to the
-configured cap (see `max_prefilter_domains`). Token usage remains constrained relative to injecting full principle payloads
+The LLM sees each candidate domain through its description (scope line + `NOT:` exclusion line; keywords only when
+the description is empty), selecting up to the configured cap (see `max_prefilter_domains`), each domain gated on
+its own confidence. Token usage remains constrained relative to injecting full principle payloads
 at this stage.
 
 ### 2. Domain Agent Evaluation
