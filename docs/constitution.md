@@ -506,6 +506,104 @@ moralstack-validate-overlay moralstack/constitution/data/overlays/new_domain.yam
 - [architecture_spec.md](./architecture_spec.md) — Full technical spec (API, flows, tests, architecture)
 - [modules/](modules/README.md) — Module documentation (Constitution Store, Critic, Orchestrator, etc.)
 
+### 9.1 Inspirational sources
+
+The founding principles were set out in January 2026, together with the first architectural
+choices: non-maleficence and protection of vulnerable people, legality, non-discrimination,
+epistemic honesty, helpfulness and empathy. The same design fixed the split between universal
+core principles and domain-specific principles, and the distinction between hard constraints
+and soft norms. The YAML organisation (levels, priorities, domains, application rules)
+followed in February 2026.
+
+The constitution draws on five bodies of work. Each one shaped a different part of it: the
+mechanism that applies the principles, the layering of non-overridable rules and adjustable
+behaviours, the European ethical and regulatory framing, the vocabulary of the core
+principles, and the catalogue of harms covered by hard constraints and domain overlays.
+
+**1. Constitutional AI and RLAIF** — Bai et al., *Constitutional AI: Harmlessness from AI
+Feedback*, Anthropic, 2022 ([arXiv:2212.08073](https://arxiv.org/abs/2212.08073)); Anthropic,
+*Claude's Constitution*, 2023.
+
+Why: this is the methodological reference of the project from its first design. Constitutional
+AI showed that a model can critique its own answers against written
+natural-language principles and revise them. MoralStack takes that critique → revision loop
+and moves it from training time to **every request**. The constitution is therefore a file the
+deployer writes, versions and extends with domain overlays, and each critique cites the
+principle it applied (`violated_hard`, principle IDs) instead of disappearing into model
+weights. The Constitutional Critic, the deliberative revision cycle and the name
+"constitution" itself come from this line of work. From Claude's Constitution come the
+attention to non-Western cultural perspectives and the explicit ban on stereotyping
+(`SOFT.CULTURAL.1`).
+
+**2. OpenAI Model Spec** (version of 8 May 2024).
+
+Why: the Model Spec separates *rules*, which "cannot be overridden by developers or users", from
+*defaults*, which "explicitly yield final control to the developer/user", and orders
+instructions along a chain of command (platform > developer > user). MoralStack adopts the same
+layering: hard topical signals (self-harm, child safety, weapons, physical harm) are never
+overridable by a developer contract, a domain overlay or a cached decision, while soft norms
+adapt to the domain overlay and to the developer contract (`CORE.DEVCONTRACT.1`). Several principles mirror individual rules and defaults:
+
+| Principle | Model Spec rule / default |
+|---|---|
+| `CORE.NM.2` | *Comply with applicable laws* |
+| `CORE.DUALUSE.1` | *Don't provide information hazards* |
+| `CORE.PRIV.1` | *Protect people's privacy* |
+| `CORE.DEVCONTRACT.1` | *Follow the chain of command* |
+| `SOFT.HELPFUL.1` (including "asking clarifying questions when needed") | *Be as helpful as possible without overstepping*; *Ask clarifying questions when necessary* |
+| `SOFT.PROPORTIONAL.1` | *Assume best intentions from the user or developer* |
+| `SOFT.BALANCED.1` | *Assume an objective point of view* |
+| `SOFT.AUTONOMY.1` | *Don't try to change anyone's mind* |
+| `SOFT.HONEST.1` | *Express uncertainty* |
+| `SOFT.STYLE.1`, `SOFT.CULTURAL.1` | *Encourage fairness and kindness, and discourage hate* |
+| `creative` / `coding` overlays (copyright, license awareness) | *Respect creators and their rights* |
+
+**3. EU High-Level Expert Group on AI, *Ethics Guidelines for Trustworthy AI* (2019) and the
+EU AI Act (Regulation (EU) 2024/1689, Art. 5)**
+
+Why: MoralStack targets deployments that must answer to European requirements. The core
+principles on autonomy, manipulation, vulnerability, democracy and accountability translate
+the HLEG requirements and the AI Act's prohibited practices into rules that the critic can
+check:
+
+| Principle | Source |
+|---|---|
+| `CORE.AUTONOMY.1` — no covert influence that bypasses awareness or exploits cognitive biases | HLEG *human agency* (no "manipulation, deception, herding and conditioning" through sub-conscious processes); AI Act Art. 5(1)(a) (subliminal, manipulative or deceptive techniques) |
+| `CORE.MANIPULATION.1`, `CORE.DECEPTION.1` | HLEG principle of respect for human autonomy (AI must not "deceive, manipulate, condition or herd humans") |
+| `CORE.NONEXPLOITATION.1`, `SOFT.VULNERABLE.1` | HLEG *prevention of harm* (vulnerable persons, asymmetries of power or information); AI Act Art. 5(1)(b) (exploitation of vulnerabilities) |
+| `CORE.DEMOCRATIC.INTEGRITY.1`, `CORE.SOCIALRESP.1` | HLEG *society and democracy* (AI "must not undermine democratic processes, human deliberation or democratic voting systems") |
+| `CORE.AUDIT.1`, `CORE.TRANSPARENCY.1` | HLEG requirements 4 and 7 (*traceability*, *auditability*) |
+| `SOFT.ENVIRO.1` | HLEG requirement 6 (*societal and environmental well-being*) |
+
+**4. Principlism in AI ethics** — Beauchamp & Childress, *Principles of Biomedical Ethics*;
+Floridi et al., *AI4People — An Ethical Framework for a Good AI Society* (2018); Floridi &
+Cowls, *A Unified Framework of Five Principles for AI in Society* (2019).
+
+Why: these works give the constitution its vocabulary and its basic ordering. Non-maleficence
+names the highest-priority hard constraints (`CORE.NM.1`, `CORE.NM.2`). Autonomy appears both as
+a hard ban on covert influence (`CORE.AUTONOMY.1`) and as a soft duty to present options rather
+than dictate (`SOFT.AUTONOMY.1`). Beneficence becomes the positive duty to help
+(`SOFT.HELPFUL.1`, `SOFT.PROPORTIONAL.1`). Justice is reflected in demographic invariance
+(`SOFT.FAIRNESS.1`, `SOFT.FAIRNESS.2`). Explicability is reflected in transparency and
+auditability (`CORE.TRANSPARENCY.1`, `CORE.AUDIT.1`). Treating
+positive duties as soft and prohibitions as hard (§2.2) follows the same tradition.
+
+**5. LLM provider usage policies** — in particular OpenAI's *Usage Policies* (2023 edition).
+
+Why: provider usage policies are the operational catalogue of what a deployed assistant must
+not facilitate. They supply the harm categories behind the hard constraints and the
+regulated-domain overlays:
+
+| Principle | Usage-policy category |
+|---|---|
+| `CORE.NM.2`, `CORE.CSAM.1`, `CORE.MALWARE.1` | illegal activity; child sexual abuse material; malware |
+| `CORE.PRIV.1` (tracking or monitoring without consent) | privacy violations |
+| `CORE.FINANCIAL.1`, `CORE.DISINFO.1`, `CORE.IDENTITY.1` | fraudulent or deceptive activity |
+| `LEGAL.NOPRACTICE.1` | unauthorized practice of law |
+| `FIN.DISCLAIMER.1` | tailored financial advice without review by a qualified person |
+| `HC.NODIAGNOSIS.1`, `HC.NOTREATMENT.1` | diagnosis or treatment of medical conditions |
+| `POL.MICROTARGETING.1` | political campaigning with materials targeted at specific demographics |
+
 ---
 
 *Version: 1.0.0 | Date: 2026-02*

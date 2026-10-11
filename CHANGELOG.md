@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Documented: constitution inspirational sources.** `docs/constitution.md` §9.1 now records
+  the design history of the constitution and the five bodies of work it draws on
+  (Constitutional AI/RLAIF, OpenAI Model Spec, HLEG guidelines and AI Act Art. 5, principlism,
+  provider usage policies), mapping each to the principles it shaped. Docs only.
+
 - **Domain-prefilter rejected-domain audit.** On a prefilter cache miss, every domain the
   classifier proposed but routing did not apply is now recorded as one bounded
   `DOMAIN_PREFILTER_DOMAINS_REJECTED` orchestration event, with reasons `unknown_domain`,
