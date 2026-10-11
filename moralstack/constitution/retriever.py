@@ -526,8 +526,11 @@ class DomainPrefilter:
     MIN_QUERY_LEN_FOR_CLASSIFICATION = 10
     # Output-token budget for the classifier reply. The per-domain schema carries
     # one short evidence span per selection instead of a free-text ``reason``, so
-    # this bounds cost while leaving headroom: the old 200 risked truncating the
-    # JSON (-> parse failure -> core-only fallback) once payload + reason grew.
+    # this bounds cost while leaving headroom (the old 200 was hit by ~0.6% of
+    # replies). A cut reply is usually repaired by the parser (``fallback_ok``),
+    # so its effect depends on where it falls: inside ``payload`` routing is
+    # core-only, inside ``selections`` the cut domain is silently dropped.
+    # ``finish_reason`` is not read.
     PREFILTER_MAX_OUTPUT_TOKENS = 400
 
     def __init__(

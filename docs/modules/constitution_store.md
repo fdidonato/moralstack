@@ -276,7 +276,11 @@ A `(use X)` redirect inside the exclusion tells the classifier to consider domai
 non-finite confidences are dropped; a numeric string such as `"0.9"` is accepted), ordered by confidence descending
 (ties keep model order), de-duplicated, then filtered by `available_domains` and cut to `max_domains`. A reply in the
 legacy `{domains, confidence}` shape (no `selections` list) still goes through the unchanged single-global gate.
-Output budget: `PREFILTER_MAX_OUTPUT_TOKENS = 400` (was 200); a truncated reply fails to parse and routes core-only.
+Output budget: `PREFILTER_MAX_OUTPUT_TOKENS = 400` (was 200). A reply cut at the budget usually still parses:
+`parse_dict_with_contract` repairs the truncated JSON (`parse_status="fallback_ok"`), so the effect depends on where
+the cut falls — inside `payload` there is no `selections` list and routing is core-only with no rejection event;
+inside `selections` the cut entry is dropped (a domain lost silently); inside `wrapper_ignored` routing is unaffected.
+Only an unrepairable cut is `parse_failed`. `finish_reason` is not read, so a cut is not distinguishable in the audit.
 
 The classifier prompt instructs the model to treat **verbatim embedded segments that use arbitrary encoding or
 obfuscation** as inspectable when substantive meaning can be recovered **without fabricating absent material**; domains

@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the applied domains, the prefilter cache, the prompts and the `llm_calls` rows are unchanged.
   API errors and a missing API key are not recorded (documented known gap).
 
+- **Measured: domain-prefilter output-token headroom.** On 37,635 historical prefilter
+  calls (old prompt, gpt-4o) the old 200-token cap was hit 0.56% of the time, mostly in the
+  trailing free-text `reason`; projected onto the new `selections` schema the routing-relevant
+  part peaks at ~179 tokens and no reply reaches 400 (projection, not a new-prompt measurement).
+  The docs now state that a cut reply is usually repaired by the parser rather than failing:
+  a cut inside `payload` routes core-only and a cut inside `selections` silently drops a domain,
+  with no rejection event since `finish_reason` is not read. Recorded in `docs/CODEBASE_FACTS.md`.
+
 - **Known gap documented: `init_db` startup race.** `docs/CODEBASE_FACTS.md` ("Future
   work / known gaps") now records that `init_db` has no concurrency guard and that
   `e0dd37b` added a second caller in the request path, so on a fresh DB one caller can

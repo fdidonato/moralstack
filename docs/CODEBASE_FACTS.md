@@ -198,9 +198,17 @@ take this same silent path.
 hand-annotated A/B at equal recall, with obfuscation probes at 1.0 and 0 out-of-catalog selections; no run artifact
 is in the repo and no `selections`-shaped `llm_calls` row exists in the local DBs (checked 2026-10-11). Open risks:
 (1) `payload` is generated first and has no length bound, so a long decoded payload could exhaust the 400-token budget
-and truncate `selections` (parse failure -> cached core-only); `finish_reason` is not recorded; for reasoning models
+and truncate `selections` (the parser usually repairs the cut JSON as `fallback_ok`: a cut inside `payload` routes
+core-only with no rejection event, a cut inside `selections` silently drops the cut domain; both cached);
+`finish_reason` is not recorded; for reasoning models
 (`max_completion_tokens`) the budget also covers reasoning tokens. (2) Dropping keywords removes terms absent from
 some descriptions, notably `healthcare` (`prognosis`, `breaking bad news`, `communicating diagnosis`, `clinic`).
+Offline measurement 2026-10-11 (old prompt, gpt-4o, 37,635 deduplicated prefilter calls with token counts from the
+repo, compl-ai and airbench-2024 DBs): the old 200-token cap was hit 209 times (0.56%), 185 of them while writing the
+trailing free-text `reason` (repaired, routing intact), 25 unrepairable (`failed`); the old payload field was at most
+~62 tokens and at most 3 domains were ever proposed. Projected onto the new schema (payload + ~40 tokens per selection),
+the routing-relevant prefix (payload + selections) is p99 ~125, max ~179 tokens; whole reply max ~309: no case
+reaches 400. This is a projection from old-prompt outputs, not a measurement of the new prompt.
 
 ### `init_db` has no concurrency guard, and `e0dd37b` added a second caller (observed live 2026-09-10, NOT fixed)
 
