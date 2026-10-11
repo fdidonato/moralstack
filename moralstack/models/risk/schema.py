@@ -170,11 +170,6 @@ class RiskEstimatorConfig:
     sull'analisi semantica dell'LLM che valuta intento, contesto e significato.
     """
 
-    # Soglie di rischio per decisioni di deliberazione
-    low_threshold: float = 0.3  # Sotto: minimal deliberation
-    medium_threshold: float = 0.7  # Tra low e medium: standard deliberation
-    # Sopra medium: full deliberation con multiple prospettive
-
     # LLM settings per l'analisi semantica
     max_retries: int = 2
     max_tokens: int = 512  # Token per risposta del giudice (512 per evitare troncamento JSON)
@@ -183,7 +178,6 @@ class RiskEstimatorConfig:
     # Fallback quando LLM non disponibile
     fallback_risk_score: float = 0.5  # Score conservativo
     fallback_confidence: float = 0.3  # Bassa confidenza senza LLM
-    require_deliberation_on_fallback: bool = True  # Sempre deliberare senza LLM
 
     # Focused mini-estimator strategy (3 focused LLM calls).
     intent_model: str = "gpt-4o"

@@ -27,9 +27,6 @@ class _ProtocolOnlyRiskEstimator:
         self.calls.append({"prompt": prompt, **kwargs})
         return RiskEstimation(score=0.1, confidence=0.9, risk_category=RiskCategory.BENIGN)
 
-    def quick_estimate(self, prompt: str) -> Any:
-        return None
-
 
 def _controller(risk_estimator: _ProtocolOnlyRiskEstimator) -> OrchestrationController:
     config = OrchestratorConfig(risk_thresholds=RiskThresholds())

@@ -64,7 +64,8 @@ class RiskCategory(Enum):
 
 ### RiskParseResult (parsing)
 
-`parse_risk_response(text)` returns an immutable `RiskParseResult` (from `parse_result.py`) used to build
+`parse_risk_dict(data)` turns the merged mini-estimator dict (output of `merge_mini_estimator_results`) into an
+immutable `RiskParseResult` (from `parse_result.py`); `_post_process_crisis` and `_to_risk_estimation` then build
 `RiskEstimation`. Core fields: score, confidence, category, signals, rationale, risk_policy_action,
 domain_sensitivity, operational_risk, intent_clarity, misuse_plausibility, actionability_risk, harm_type,
 self_harm_language, requested_instructions, intent_to_harm, request_type, intent_operational, detected_language.
@@ -145,11 +146,11 @@ Three concurrent LLM calls (`estimate_intent`, `estimate_signals`, `estimate_ope
 `merge_mini_estimator_results()` in `calibration.py`, then parsed and calibrated. `RiskEstimation.estimation_mode="parallel"`.
 
 When the caller supplies `developer_contract_text` or `conversation_history`,
-`_format_context_block` prepends context to each mini-estimator request. The
-history block is intentionally bounded to the last up to 3 prior turns and is
-declared in-prompt as `context_mode=role_serialized_truncated`; the controller
-emits `CONTEXT_SHAPE_RECORDED` so audit can distinguish available prior turns
-from the subset used by risk estimation.
+context travels through `_risk_context_messages` (`models/risk/estimator.py:210`): a native `developer`
+message plus the last up to 3 prior turns (at most 200 characters each), sent via `policy.generate_messages`, with
+the final user message prefixed by a short instruction that frames them as contract and history. The controller
+emits `CONTEXT_SHAPE_RECORDED` (`orchestration/controller.py:_emit_context_shape`) so audit can distinguish
+available prior turns from the subset used by risk estimation.
 
 ### Prompt-Caching Static/Dynamic Split (Part A / A1)
 
@@ -344,27 +345,16 @@ configuration is the single source of configuration — no CLI or code path over
 
 ### Thresholds and path routing
 
-#### MORALSTACK_RISK_LOW_THRESHOLD
-
-- **Default**: `0.3`
-- **Tipo**: float (0–1)
-- **Significato**: Score below this is considered "low" risk. Used by `get_risk_level()` and `should_deliberate()`.
-  Requests with score &lt; low_threshold take the Fast Path (minimal deliberation, fewer cycles).
-- **Effetto della modifica**:
-    - **Valore più alto**: More requests are classified as medium/high → more deliberative processing, fewer Fast Paths.
-      More conservative.
-    - **Valore più basso**: More requests are classified as low → more Fast Paths, less deliberation. More permissive.
-- **Esempio**: Setting `0.4` sends more borderline requests into deliberation.
-
-#### MORALSTACK_RISK_MEDIUM_THRESHOLD
-
-- **Default**: `0.7`
-- **Tipo**: float (0–1)
-- **Significato**: Boundary between "medium" and "high" risk. Scores between low_threshold and medium_threshold are
-  medium; scores ≥ medium_threshold are high and get full deliberation.
-- **Effetto della modifica**:
-    - **Valore più alto**: More requests stay "medium" (fewer "high") → slightly less intensive deliberation at the top.
-    - **Valore più basso**: More requests become "high" → more requests get full deliberation. More conservative.
+> **Routing thresholds are NOT configured here.** Fast Path vs deliberation routing uses
+> `MORALSTACK_ORCHESTRATOR_RISK_LOW_THRESHOLD` and `MORALSTACK_ORCHESTRATOR_RISK_MEDIUM_THRESHOLD`
+> (see [orchestrator.md](orchestrator.md); read in `orchestration/config_loader.py`).
+>
+> Earlier versions of this page said that `MORALSTACK_RISK_LOW_THRESHOLD` and
+> `MORALSTACK_RISK_MEDIUM_THRESHOLD` drove the Fast Path, and `.env.minimal` shipped them with non-default values
+> (0.25 / 0.65). That was wrong: they never affected routing. They were removed together with
+> `MORALSTACK_RISK_REQUIRE_DELIBERATION_ON_FALLBACK` and `MORALSTACK_RISK_CATEGORIZE_{BENIGN,SENSITIVE,CLEARLY_HARMFUL}_THRESHOLD`
+> (and the matching `RiskEstimatorConfig` fields). If they are still set in your environment they are
+> silently ignored. To tune routing, set the `MORALSTACK_ORCHESTRATOR_RISK_*` variables.
 
 ### LLM and retry behaviour
 
@@ -434,7 +424,9 @@ relying on the other two estimators to compensate.
 
 - **Default**: `0.5`
 - **Tipo**: float (0–1)
-- **Significato**: Risk score used when no LLM is available (e.g. policy=None or all retries failed). Drives path and
+- **Significato**: Risk score used only in the no-LLM conservative mode (`policy=None`, e.g.
+  `create_conservative_estimator()`). Exhausted retries do not use it: they return `RiskEstimation.from_error`
+  (score 0.6, confidence 0.4, `SYSTEM.REQUIRES_DELIBERATION`; `schema.py:from_error`). Drives path and
   deliberation requirements.
 - **Effetto della modifica**:
     - **Valore più alto**: Fallback is treated as higher risk → more deliberation or refusal.
@@ -448,16 +440,6 @@ relying on the other two estimators to compensate.
   uncertainty.
 - **Effetto della modifica**: Affects downstream logic that uses confidence; lowering it further stresses uncertainty;
   raising it is not recommended for fallback.
-
-#### MORALSTACK_RISK_REQUIRE_DELIBERATION_ON_FALLBACK
-
-- **Default**: `true`
-- **Tipo**: bool (`true`/`false`, `1`/`0`, `yes`/`no`)
-- **Significato**: When true, the system always requires deliberation when the estimator uses the fallback (no LLM).
-  Ensures safe behaviour on failure.
-- **Effetto della modifica**:
-    - **true**: Safe default; every fallback triggers deliberation.
-    - **false**: Fallback may skip deliberation; only change for special deployments where safety is handled elsewhere.
 
 ### LLM generation and constitution context
 
@@ -514,40 +496,6 @@ relying on the other two estimators to compensate.
 - **Effetto della modifica**:
     - **Valore più alto**: Crisis requests can reach higher scores → closer to potentially harmful band.
     - **Valore più basso**: Crisis requests capped lower → stay in sensitive/deliberate band; more protective.
-
-### Score-to-category mapping (categorize_from_score)
-
-#### MORALSTACK_RISK_CATEGORIZE_BENIGN_THRESHOLD
-
-- **Default**: `0.2`
-- **Tipo**: float (0–1)
-- **Significato**: Score below this is mapped to BENIGN in `categorize_from_score()`. Together with low_threshold,
-  defines the benign band.
-- **Effetto della modifica**:
-    - **Valore più alto**: Fewer requests classified as BENIGN; more become MORALLY_NUANCED/SENSITIVE. More
-      conservative.
-    - **Valore più basso**: More requests classified as BENIGN. More permissive.
-
-#### MORALSTACK_RISK_CATEGORIZE_SENSITIVE_THRESHOLD
-
-- **Default**: `0.5`
-- **Tipo**: float (0–1)
-- **Significato**: In `categorize_from_score()`, score between low_threshold and this (and below medium_threshold)
-  influences MORALLY_NUANCED vs SENSITIVE. Boundary between nuanced ethical dilemmas and sensitive topics.
-- **Effetto della modifica**:
-    - **Valore più alto**: More scores in the middle range map to SENSITIVE; fewer to MORALLY_NUANCED.
-    - **Valore più basso**: More scores map to MORALLY_NUANCED; fewer to SENSITIVE.
-
-#### MORALSTACK_RISK_CATEGORIZE_CLEARLY_HARMFUL_THRESHOLD
-
-- **Default**: `0.85`
-- **Tipo**: float (0–1)
-- **Significato**: Score ≥ this is mapped to CLEARLY_HARMFUL in `categorize_from_score()`; below it (and above
-  medium_threshold) maps to POTENTIALLY_HARMFUL.
-- **Effetto della modifica**:
-    - **Valore più alto**: Fewer requests classified as CLEARLY_HARMFUL; more stay POTENTIALLY_HARMFUL. More permissive
-      at the top.
-    - **Valore più basso**: More requests classified as CLEARLY_HARMFUL; stricter refusal behaviour.
 
 ---
 
@@ -606,7 +554,7 @@ estimation = RiskEstimation.clearly_harmful(
 ```python
 # Fallback on error (assumes moderate risk)
 estimation = RiskEstimation.from_error("LLM parsing failed")
-# Returns score=0.5, requires deliberation for safety
+# Returns score=0.6, confidence=0.4, requires deliberation for safety
 ```
 
 ---

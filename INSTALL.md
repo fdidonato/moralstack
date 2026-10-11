@@ -178,7 +178,7 @@ See [docs/modules/openai_params.md](docs/modules/openai_params.md) for details a
 
 **Risk Estimator**: Optional overrides (e.g. `MORALSTACK_RISK_MODEL`,
 `MORALSTACK_RISK_INTENT_MODEL`, `MORALSTACK_RISK_SIGNALS_MODEL`, `MORALSTACK_RISK_OPERATIONAL_MODEL`,
-`MORALSTACK_RISK_LOW_THRESHOLD`, `MORALSTACK_RISK_MEDIUM_THRESHOLD`, `MORALSTACK_RISK_MAX_RETRIES`, …) are listed in
+`MORALSTACK_RISK_TOP_K`, `MORALSTACK_RISK_MAX_RETRIES`, …) are listed in
 `.env.template` and fully documented in [docs/modules/risk_estimator.md](docs/modules/risk_estimator.md#environment-variables). Leave them commented to use
 built-in defaults (risk estimator uses the same model as `OPENAI_MODEL` when `MORALSTACK_RISK_MODEL` is not set). Each
 optional `MORALSTACK_RISK_*_MODEL` slot falls back to `MORALSTACK_RISK_MODEL` if set,

@@ -204,7 +204,7 @@ The `llm_calls.system_prompt`/`prompt` columns (and the equivalent
 `parsed_summary_json`/persistence payloads for the risk estimator and each
 deliberative module) now reflect the reordered static/dynamic split so the
 audit trail still shows the full prompt actually sent:
-- **Risk minis** (`models/risk/estimator.py:888-924`): `system_prompt` is the
+- **Risk minis** (`models/risk/estimator.py:839-845,1019-1061`): `system_prompt` is the
   path-specific `*_SYSTEM_PROMPT` (intent/signals/operational); `prompt` is
   dynamic-only.
 - **Critic**, **Simulator**, **Hindsight**, **Perspectives** (persisted by

@@ -1,5 +1,5 @@
 """
-Dedicated tests for risk response parsing (parse_risk_response -> RiskParseResult).
+Dedicated tests for risk response parsing (parse_risk_dict -> RiskParseResult).
 """
 
 import pytest
@@ -9,8 +9,14 @@ from moralstack.models.risk import (
     RiskCategory,
     RiskParseResult,
     RiskPolicyAction,
-    parse_risk_response,
+    extract_json,
 )
+from moralstack.models.risk.calibration import parse_risk_dict
+
+
+def _parse_risk_text(text: str) -> RiskParseResult:
+    """Inline of the removed ``parse_risk_response`` wrapper: ``parse_risk_dict(extract_json(text))``."""
+    return parse_risk_dict(extract_json(text))
 
 
 class TestRiskParsingHappyPath:
@@ -31,7 +37,7 @@ class TestRiskParsingHappyPath:
             "actionability_risk": "LOW",
             "detected_language": "en"
         }"""
-        result = parse_risk_response(text)
+        result = _parse_risk_text(text)
         assert isinstance(result, RiskParseResult)
         assert result.score == 0.6
         assert result.confidence == 0.9
@@ -48,7 +54,7 @@ class TestRiskParsingMissingFields:
 
     def test_minimal_json_defaults(self):
         text = '{"risk_score": 0.2, "request_type": "factual_query", "harm_type": "none"}'
-        result = parse_risk_response(text)
+        result = _parse_risk_text(text)
         # factual_query + none: score > 0.25 is clamped to 0.15; 0.2 is unchanged
         assert result.score == 0.2
         assert result.category == RiskCategory.BENIGN
@@ -60,7 +66,7 @@ class TestRiskParsingMissingFields:
 
     def test_empty_signals_when_no_questions(self):
         text = '{"request_type": "sensitive_topic", "harm_type": "emotional_relational"}'
-        result = parse_risk_response(text)
+        result = _parse_risk_text(text)
         assert "request_type:sensitive_topic" in result.signals or result.signals
 
 
@@ -69,11 +75,11 @@ class TestRiskParsingInvalidJson:
 
     def test_invalid_json_raises(self):
         with pytest.raises(JSONParseError):
-            parse_risk_response("not json at all")
+            _parse_risk_text("not json at all")
 
     def test_malformed_json_raises(self):
         with pytest.raises(JSONParseError):
-            parse_risk_response("{ invalid }")
+            _parse_risk_text("{ invalid }")
 
 
 class TestRiskParsingActionCoercion:
@@ -88,7 +94,7 @@ class TestRiskParsingActionCoercion:
             "operational_risk": "HIGH",
             "intent_operational": true
         }"""
-        result = parse_risk_response(text)
+        result = _parse_risk_text(text)
         assert result.category == RiskCategory.CLEARLY_HARMFUL
         assert result.risk_policy_action == RiskPolicyAction.DENY
 
@@ -100,12 +106,12 @@ class TestRiskParsingActionCoercion:
             "harm_type": "illegal",
             "operational_risk": "LOW"
         }"""
-        result = parse_risk_response(text)
+        result = _parse_risk_text(text)
         assert result.risk_policy_action == RiskPolicyAction.DELIBERATE
 
     def test_benign_implies_allow(self):
         text = '{"risk_score": 0.1, "request_type": "factual_query", "harm_type": "none"}'
-        result = parse_risk_response(text)
+        result = _parse_risk_text(text)
         assert result.risk_policy_action == RiskPolicyAction.ALLOW
 
     def test_explicit_action_in_json_respected(self):
@@ -116,7 +122,7 @@ class TestRiskParsingActionCoercion:
             "harm_type": "emotional_relational",
             "risk_policy_action": "ALLOW_WITH_CAVEAT"
         }"""
-        result = parse_risk_response(text)
+        result = _parse_risk_text(text)
         assert result.risk_policy_action == RiskPolicyAction.ALLOW  # NONE forces ALLOW
 
 
@@ -130,12 +136,12 @@ class TestRiskParsingEdgeCases:
             "harm_type": "none",
             "detected_language": "verylongcode"
         }"""
-        result = parse_risk_response(text)
+        result = _parse_risk_text(text)
         assert len(result.detected_language) <= 10
 
     def test_legacy_category_field_when_no_request_type_harm_type(self):
         text = '{"category": "benign", "risk_score": 0.2}'
-        result = parse_risk_response(text)
+        result = _parse_risk_text(text)
         assert result.category == RiskCategory.BENIGN
         assert result.request_type == ""
         assert result.harm_type == ""

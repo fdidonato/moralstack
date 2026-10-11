@@ -140,7 +140,6 @@ class TestQ74EstimateContextPropagation:
                 return_value=_PrinciplesContextResult(formatted_context="", runtime_domain=None),
             ),
             patch.object(llm_risk_estimator, "_policy_for_mini_estimator_model", return_value=mock_policy),
-            patch("moralstack.models.risk.estimator.persist_llm_call", return_value=False),
         ):
             llm_risk_estimator.estimate(
                 Q74_PROMPT,
@@ -232,7 +231,6 @@ class TestSingleTurnByteEquivalence:
                 return_value=_PrinciplesContextResult(formatted_context="", runtime_domain=None),
             ),
             patch.object(llm_risk_estimator, "_policy_for_mini_estimator_model", return_value=mock_policy),
-            patch("moralstack.models.risk.estimator.persist_llm_call", return_value=False),
         ):
             llm_risk_estimator.estimate(Q74_PROMPT)
 

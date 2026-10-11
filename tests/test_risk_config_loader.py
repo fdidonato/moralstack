@@ -7,51 +7,116 @@ env when set and non-empty, and fall back to defaults otherwise.
 
 from __future__ import annotations
 
+import json
+import os
+from types import SimpleNamespace
+
+import moralstack.models.risk.estimator as risk_estimator_module
 from moralstack.models.risk.config_loader import (
     ENV_INTENT_MODEL,
-    ENV_LOW_THRESHOLD,
     ENV_MAX_RETRIES,
-    ENV_MEDIUM_THRESHOLD,
     ENV_MODEL,
     ENV_OPERATIONAL_MODEL,
-    ENV_REQUIRE_DELIBERATION_ON_FALLBACK,
     ENV_SIGNALS_MODEL,
+    ENV_TOP_P,
     get_risk_env_bool,
     get_risk_env_float,
     get_risk_env_int,
     get_risk_env_str,
     load_risk_estimator_config_from_env,
 )
+from moralstack.models.risk.estimator import LLMBasedRiskEstimator
+
+# Generic bool-parsing key for get_risk_env_bool (no risk-estimator var is boolean any more).
+_BOOL_KEY = "MORALSTACK_TEST_BOOL_FLAG"
+
+# Env vars of the retired single-estimator configuration: nothing reads them any more.
+_REMOVED_ENV_VARS = {
+    "MORALSTACK_RISK_LOW_THRESHOLD": "0.9",
+    "MORALSTACK_RISK_MEDIUM_THRESHOLD": "0.95",
+    "MORALSTACK_RISK_REQUIRE_DELIBERATION_ON_FALLBACK": "false",
+    "MORALSTACK_RISK_CATEGORIZE_BENIGN_THRESHOLD": "0.9",
+    "MORALSTACK_RISK_CATEGORIZE_SENSITIVE_THRESHOLD": "0.9",
+    "MORALSTACK_RISK_CATEGORIZE_CLEARLY_HARMFUL_THRESHOLD": "0.9",
+}
+
+_BENIGN_MINI_JSON = json.dumps(
+    {
+        "request_type": "factual_query",
+        "intent_to_harm": "no",
+        "requested_instructions": "no",
+        "harm_type": "none",
+        "q1_confidential": "no",
+        "domain_sensitivity": "LOW",
+        "risk_score": 0.1,
+        "confidence": 0.95,
+        "operational_risk": "NONE",
+        "risk_policy_action": "ALLOW",
+        "rationale": "benign",
+    }
+)
+
+
+class _BenignPolicy:
+    """Answers every mini-estimator call with the same benign JSON."""
+
+    model = "m"
+    tracker = None
+
+    def generate(self, *, prompt, system, config=None):
+        return SimpleNamespace(text=_BENIGN_MINI_JSON)
+
+
+def _clear_ambient_risk_env(monkeypatch):
+    """Isolate from the shell: clear every other risk knob and OPENAI_MODEL.
+
+    All three model slots then resolve to the same default, so the estimator can never construct a real
+    OpenAIPolicy. The retired vars under test (_REMOVED_ENV_VARS) are left alone on purpose.
+    """
+    for key in list(os.environ):
+        if key.startswith("MORALSTACK_RISK_") and key not in _REMOVED_ENV_VARS:
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+
+
+def _estimate_hello(monkeypatch):
+    _clear_ambient_risk_env(monkeypatch)
+    monkeypatch.setattr(risk_estimator_module, "_obs_route_batch", lambda envs: None)
+    monkeypatch.setattr(risk_estimator_module, "_obs_route", lambda env: None)
+    config = load_risk_estimator_config_from_env()
+    policy = _BenignPolicy()
+    policy.model = config.intent_model  # all three slots resolve to the same model: no pooled policy needed
+    return LLMBasedRiskEstimator(policy=policy, config=config).estimate("hello")
 
 
 class TestGetRiskEnvFloat:
     """Tests for get_risk_env_float."""
 
     def test_missing_key_returns_default(self, monkeypatch):
-        monkeypatch.delenv(ENV_LOW_THRESHOLD, raising=False)
-        assert get_risk_env_float(ENV_LOW_THRESHOLD, 0.3) == 0.3
+        monkeypatch.delenv(ENV_TOP_P, raising=False)
+        assert get_risk_env_float(ENV_TOP_P, 0.3) == 0.3
 
     def test_empty_key_returns_default(self, monkeypatch):
-        monkeypatch.setenv(ENV_LOW_THRESHOLD, "")
-        assert get_risk_env_float(ENV_LOW_THRESHOLD, 0.3) == 0.3
+        monkeypatch.setenv(ENV_TOP_P, "")
+        assert get_risk_env_float(ENV_TOP_P, 0.3) == 0.3
 
     def test_whitespace_only_returns_default(self, monkeypatch):
-        monkeypatch.setenv(ENV_LOW_THRESHOLD, "  ")
-        assert get_risk_env_float(ENV_LOW_THRESHOLD, 0.3) == 0.3
+        monkeypatch.setenv(ENV_TOP_P, "  ")
+        assert get_risk_env_float(ENV_TOP_P, 0.3) == 0.3
 
     def test_valid_value_used(self, monkeypatch):
-        monkeypatch.setenv(ENV_LOW_THRESHOLD, "0.4")
-        assert get_risk_env_float(ENV_LOW_THRESHOLD, 0.3) == 0.4
+        monkeypatch.setenv(ENV_TOP_P, "0.4")
+        assert get_risk_env_float(ENV_TOP_P, 0.3) == 0.4
 
     def test_clamp_min_max(self, monkeypatch):
-        monkeypatch.setenv(ENV_LOW_THRESHOLD, "-0.1")
-        assert get_risk_env_float(ENV_LOW_THRESHOLD, 0.3, 0.0, 1.0) == 0.0
-        monkeypatch.setenv(ENV_LOW_THRESHOLD, "1.5")
-        assert get_risk_env_float(ENV_LOW_THRESHOLD, 0.3, 0.0, 1.0) == 1.0
+        monkeypatch.setenv(ENV_TOP_P, "-0.1")
+        assert get_risk_env_float(ENV_TOP_P, 0.3, 0.0, 1.0) == 0.0
+        monkeypatch.setenv(ENV_TOP_P, "1.5")
+        assert get_risk_env_float(ENV_TOP_P, 0.3, 0.0, 1.0) == 1.0
 
     def test_invalid_value_returns_default(self, monkeypatch):
-        monkeypatch.setenv(ENV_LOW_THRESHOLD, "not_a_number")
-        assert get_risk_env_float(ENV_LOW_THRESHOLD, 0.3) == 0.3
+        monkeypatch.setenv(ENV_TOP_P, "not_a_number")
+        assert get_risk_env_float(ENV_TOP_P, 0.3) == 0.3
 
 
 class TestGetRiskEnvInt:
@@ -102,23 +167,23 @@ class TestGetRiskEnvBool:
     """Tests for get_risk_env_bool."""
 
     def test_missing_key_returns_default(self, monkeypatch):
-        monkeypatch.delenv(ENV_REQUIRE_DELIBERATION_ON_FALLBACK, raising=False)
-        assert get_risk_env_bool(ENV_REQUIRE_DELIBERATION_ON_FALLBACK, True) is True
-        assert get_risk_env_bool(ENV_REQUIRE_DELIBERATION_ON_FALLBACK, False) is False
+        monkeypatch.delenv(_BOOL_KEY, raising=False)
+        assert get_risk_env_bool(_BOOL_KEY, True) is True
+        assert get_risk_env_bool(_BOOL_KEY, False) is False
 
     def test_empty_key_returns_default(self, monkeypatch):
-        monkeypatch.setenv(ENV_REQUIRE_DELIBERATION_ON_FALLBACK, "")
-        assert get_risk_env_bool(ENV_REQUIRE_DELIBERATION_ON_FALLBACK, True) is True
+        monkeypatch.setenv(_BOOL_KEY, "")
+        assert get_risk_env_bool(_BOOL_KEY, True) is True
 
     def test_true_values(self, monkeypatch):
         for val in ("1", "true", "TRUE", "yes", "Yes"):
-            monkeypatch.setenv(ENV_REQUIRE_DELIBERATION_ON_FALLBACK, val)
-            assert get_risk_env_bool(ENV_REQUIRE_DELIBERATION_ON_FALLBACK, False) is True
+            monkeypatch.setenv(_BOOL_KEY, val)
+            assert get_risk_env_bool(_BOOL_KEY, False) is True
 
     def test_false_values(self, monkeypatch):
         for val in ("0", "false", "FALSE", "no", "No"):
-            monkeypatch.setenv(ENV_REQUIRE_DELIBERATION_ON_FALLBACK, val)
-            assert get_risk_env_bool(ENV_REQUIRE_DELIBERATION_ON_FALLBACK, True) is False
+            monkeypatch.setenv(_BOOL_KEY, val)
+            assert get_risk_env_bool(_BOOL_KEY, True) is False
 
 
 class TestLoadRiskEstimatorConfigFromEnv:
@@ -126,47 +191,34 @@ class TestLoadRiskEstimatorConfigFromEnv:
 
     def test_empty_env_returns_defaults(self, monkeypatch):
         for key in (
-            ENV_LOW_THRESHOLD,
-            ENV_MEDIUM_THRESHOLD,
             ENV_MAX_RETRIES,
             "MORALSTACK_RISK_MAX_TOKENS",
             "MORALSTACK_RISK_TEMPERATURE",
             "MORALSTACK_RISK_FALLBACK_SCORE",
             "MORALSTACK_RISK_FALLBACK_CONFIDENCE",
-            ENV_REQUIRE_DELIBERATION_ON_FALLBACK,
         ):
             monkeypatch.delenv(key, raising=False)
         config = load_risk_estimator_config_from_env()
-        assert config.low_threshold == 0.3
-        assert config.medium_threshold == 0.7
         assert config.max_retries == 2
         assert config.max_tokens == 512
         assert config.temperature == 0.1
         assert config.fallback_risk_score == 0.5
         assert config.fallback_confidence == 0.3
-        assert config.require_deliberation_on_fallback is True
 
-    def test_low_threshold_override(self, monkeypatch):
-        monkeypatch.delenv("MORALSTACK_RISK_MEDIUM_THRESHOLD", raising=False)
-        monkeypatch.setenv(ENV_LOW_THRESHOLD, "0.4")
-        config = load_risk_estimator_config_from_env()
-        assert config.low_threshold == 0.4
-        assert config.medium_threshold == 0.7
+    def test_removed_single_estimator_env_vars_are_ignored(self, monkeypatch):
+        """The retired routing/categorize/deliberation vars are read by no code: config and estimates are unchanged."""
+        _clear_ambient_risk_env(monkeypatch)
+        for key in _REMOVED_ENV_VARS:
+            monkeypatch.delenv(key, raising=False)
+        baseline_config = load_risk_estimator_config_from_env()
+        baseline = _estimate_hello(monkeypatch)
 
-    def test_empty_low_threshold_uses_default(self, monkeypatch):
-        monkeypatch.setenv(ENV_LOW_THRESHOLD, "")
-        config = load_risk_estimator_config_from_env()
-        assert config.low_threshold == 0.3
+        for key, value in _REMOVED_ENV_VARS.items():
+            monkeypatch.setenv(key, value)
 
-    def test_medium_threshold_override(self, monkeypatch):
-        monkeypatch.setenv(ENV_MEDIUM_THRESHOLD, "0.8")
-        config = load_risk_estimator_config_from_env()
-        assert config.medium_threshold == 0.8
-
-    def test_require_deliberation_false(self, monkeypatch):
-        monkeypatch.setenv(ENV_REQUIRE_DELIBERATION_ON_FALLBACK, "false")
-        config = load_risk_estimator_config_from_env()
-        assert config.require_deliberation_on_fallback is False
+        assert load_risk_estimator_config_from_env() == baseline_config
+        with_vars = _estimate_hello(monkeypatch)
+        assert (with_vars.score, with_vars.risk_category) == (baseline.score, baseline.risk_category)
 
     def test_parallel_mini_models_fallback_to_builtin_when_no_env(self, monkeypatch):
         """Unset mini slots and base models → built-in default for all three slots."""
