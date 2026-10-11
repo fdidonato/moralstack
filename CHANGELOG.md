@@ -256,6 +256,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Constitution keywords (breaking for custom YAML).** Overlay `keywords` and principle
+  `keywords` / `keywords_block` / `keywords_style` are gone from the schema and from the 22
+  bundled YAML files. Because the schema rejects unknown fields, a custom overlay that
+  still carries them now fails to load, and the store fails at construction with
+  `ConstitutionLoadError` (not just that domain): delete those keys. Removed with them:
+  `ConstitutionStore.get_domain_keywords`, the description keyword extractor, the unused
+  lexical scorer (`_compute_relevance` / `_expand_query`), the `domain_keywords` argument
+  and `set_domain_keywords` of `DomainPrefilter`, and the keyword fields of
+  `moralstack-validate-overlay` (`keywords_count` / `keywords_source`).
+  - **No change to the prompts:** domain keywords never reached a prompt with the bundled
+    store, and the prefilter system prompt is byte-identical.
+  - **Behaviour change:** principle keywords counted 0.2 each in the specificity
+    tie-break of `resolve_conflict`. Without them some same-level, same-priority
+    principles are ordered differently in 10 overlays. Principle sets are unchanged.
+    Measured offline on 30,215 past retrievals: order changes in 6.7%; the 10 principles
+    the risk estimator reads change in 16 cases (0.05%).
+  - **Telemetry:** the prefilter cache-invalidation status now follows the domain
+    descriptions; before, a description-only edit cleared the cache without any signal.
+    The debug, trace and UI fields are renamed `prefilter_descriptions_changed` /
+    `prefilter_descriptions_fingerprint_prefix`, and cache events carry
+    `descriptions_fingerprint`. Older rows keep the old `keywords_*` names.
+
 - **GitHub Actions workflows (`ci.yml`, `publish.yml`).** Removed at the request of
   GitHub support during the review of the suspended account. `ci.yml` ran lint, mypy,
   the 3.11/3.12 test matrix and the `-m slow` benchmarks on every push with no branch

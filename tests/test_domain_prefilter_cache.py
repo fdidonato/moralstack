@@ -10,13 +10,15 @@ import pytest
 
 from moralstack.constitution.openai_config import OpenAIClientConfig
 from moralstack.constitution.retriever import (
+    ConstitutionRetriever,
+    ConstitutionRetrieverConfig,
     DomainAgent,
     DomainPrefilter,
     EnhancedDomainAgent,
-    _fingerprint_domain_keywords,
-    _normalize_domain_keywords,
+    _fingerprint_domain_descriptions,
+    _normalize_domain_descriptions,
 )
-from moralstack.constitution.schema import Principle
+from moralstack.constitution.schema import Overlay, Principle
 from moralstack.observability import router
 from moralstack.observability import service as service_module
 from moralstack.observability.context import set_current_request_id, set_current_run_id
@@ -75,49 +77,27 @@ def _principle(*, title: str = "Title", rule: str = "Rendered rule") -> Principl
     )
 
 
-def test_normalize_keywords_order_invariant():
-    a = {"b": ["z", "a", "a"], "a": ["m"]}
-    b = {"a": ["m"], "b": ["a", "z"]}
-    assert _normalize_domain_keywords(a) == _normalize_domain_keywords(b)
-    assert _fingerprint_domain_keywords(a) == _fingerprint_domain_keywords(b)
+def test_normalize_descriptions_order_invariant():
+    a = {"b": "second", "a": "first"}
+    b = {"a": "first", "b": "second"}
+    assert _normalize_domain_descriptions(a) == _normalize_domain_descriptions(b)
+    assert _fingerprint_domain_descriptions(a) == _fingerprint_domain_descriptions(b)
 
 
-def test_set_domain_keywords_idempotent_preserves_cache():
-    kw = {"core": ["c"], "dom": ["x", "y"]}
-    p = DomainPrefilter(domain_keywords=kw, max_domains=3)
-    with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["dom"], "confidence": 0.9}):
-        p.filter_domains("same query", ["core", "dom"])
-    assert len(p._cache) == 1
-    assert p.set_domain_keywords({"dom": ["y", "x"], "core": ["c"]}) is False
-    assert len(p._cache) == 1
-
-
-def test_set_domain_keywords_change_clears_cache():
-    kw = {"core": ["c"], "dom": ["x"]}
-    p = DomainPrefilter(domain_keywords=kw, max_domains=3)
-    with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["dom"], "confidence": 0.9}):
-        p.filter_domains("query about banking", ["core", "dom"])
-    assert len(p._cache) == 1
-    fp_before = p._keywords_fingerprint
-    assert p.set_domain_keywords({"core": ["c"], "dom": ["z"]}) is True
-    assert len(p._cache) == 0
-    assert p._keywords_fingerprint != fp_before
-
-
-def test_snapshot_isolation_from_provider_mutation():
-    shared: dict[str, list[str]] = {"d": ["one"]}
-    p = DomainPrefilter(domain_keywords=shared, max_domains=3)
-    shared["d"].append("two")
-    assert p.set_domain_keywords({"d": ["one"]}) is False
-    assert p._domain_keywords["d"] == ["one"]
+def test_descriptions_snapshot_is_a_copy_of_the_provider_map():
+    shared: dict[str, str] = {"d": "one"}
+    p = DomainPrefilter(domain_descriptions=shared, max_domains=3)
+    shared["d"] = "two"
+    assert p.set_domain_descriptions({"d": "one"}) is False
+    assert p._domain_descriptions["d"] == "one"
 
 
 def test_repeated_filter_domains_single_openai_call():
-    kw = {"core": ["c"], "dom": ["x"]}
-    p = DomainPrefilter(domain_keywords=kw, max_domains=3)
+    desc = {"dom": "Banking and money"}
+    p = DomainPrefilter(domain_descriptions=desc, max_domains=3)
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["dom"], "confidence": 0.9}) as m:
         p.filter_domains("money advice question", ["core", "dom"])
-        p.set_domain_keywords(kw)
+        p.set_domain_descriptions(desc)
         p.filter_domains("money advice question", ["core", "dom"])
     assert m.call_count == 1
 
@@ -137,10 +117,9 @@ def _fake_completion_json_obj(content: str) -> MagicMock:
 def test_call_openai_persists_system_prompt_as_built_block_and_prompt_as_query_only():
     """Single source (task decision 4): the builder output feeds BOTH the API system
     message and the persisted system_prompt; the persisted prompt is query-only."""
-    kw = {"core": ["c"], "dom": ["x"]}
     p = DomainPrefilter(
         openai_config=OpenAIClientConfig(api_key="sk-test", model="gpt-4o-mini"),
-        domain_keywords=kw,
+        domain_descriptions={"dom": "Banking"},
         max_domains=3,
     )
     payload = json.dumps({"domains": ["dom"], "confidence": 0.9})
@@ -161,7 +140,7 @@ def test_call_openai_persists_system_prompt_as_built_block_and_prompt_as_query_o
         result = p.filter_domains(query, ["core", "dom"])
 
     assert result == ["core", "dom"]
-    domain_list = "\n".join(["- dom: x"])
+    domain_list = "\n".join(["- dom: Banking."])
     expected_system_prompt = p._build_prefilter_system_prompt(domain_list)
     assert captured["system_prompt"] == expected_system_prompt
     assert captured["prompt"] == f"USER QUERY:\n{query}"
@@ -254,11 +233,11 @@ def test_miss_then_hit_emits_events(tmp_path, monkeypatch):
     set_current_run_id("r-pf")
     set_current_request_id("q-pf")
 
-    kw = {"core": ["c"], "dom": ["x"]}
-    p = DomainPrefilter(domain_keywords=kw, max_domains=3)
+    desc = {"dom": "Banking"}
+    p = DomainPrefilter(domain_descriptions=desc, max_domains=3)
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["dom"], "confidence": 0.9}):
         p.filter_domains("qq long enough query", ["core", "dom"])
-        p.set_domain_keywords(kw)
+        p.set_domain_descriptions(desc)
         p.filter_domains("qq long enough query", ["core", "dom"])
 
     get_obs().flush(timeout=5.0)
@@ -269,7 +248,7 @@ def test_miss_then_hit_emits_events(tmp_path, monkeypatch):
     assert DOMAIN_PREFILTER_CACHE_INVALIDATED not in types
 
 
-def test_invalidate_only_when_keywords_change(tmp_path, monkeypatch):
+def test_invalidate_only_when_descriptions_change(tmp_path, monkeypatch):
     dbp = str(tmp_path / "pf2.db")
     monkeypatch.setenv("MORALSTACK_DB_PATH", dbp)
     monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "db_only")
@@ -279,14 +258,14 @@ def test_invalidate_only_when_keywords_change(tmp_path, monkeypatch):
     set_current_run_id("r2")
     set_current_request_id("q2")
 
-    kw = {"core": ["c"], "dom": ["x"]}
-    p = DomainPrefilter(domain_keywords=kw, max_domains=3)
-    p.set_domain_keywords(kw)
+    desc = {"dom": "Banking"}
+    p = DomainPrefilter(domain_descriptions=desc, max_domains=3)
+    p.set_domain_descriptions(desc)
     get_obs().flush(timeout=5.0)
     rows = get_orchestration_events_for_request("r2", "q2")
     assert not any(r.get("event_type") == DOMAIN_PREFILTER_CACHE_INVALIDATED for r in rows)
 
-    p.set_domain_keywords({"core": ["c"], "dom": ["y"]})
+    p.set_domain_descriptions({"dom": "Lending"})
     get_obs().flush(timeout=5.0)
     rows2 = get_orchestration_events_for_request("r2", "q2")
     assert any(r.get("event_type") == DOMAIN_PREFILTER_CACHE_INVALIDATED for r in rows2)
@@ -305,8 +284,8 @@ def test_request_analysis_trace_prefilter_fields():
                         "retrieval_count": 3,
                         "prefilter_cache_status": "hit",
                         "prefilter_cache_reason": None,
-                        "prefilter_keywords_changed": False,
-                        "prefilter_keywords_fingerprint_prefix": "abcd1234",
+                        "prefilter_descriptions_changed": False,
+                        "prefilter_descriptions_fingerprint_prefix": "abcd1234",
                     },
                 }
             ),
@@ -315,7 +294,7 @@ def test_request_analysis_trace_prefilter_fields():
     vm = build_runtime_decision_observability(traces=traces, orchestration_events=[])
     rac = vm["execution_strategy"]["request_analysis_context"]
     assert rac.get("prefilter_cache_status") == "hit"
-    assert rac.get("prefilter_keywords_fingerprint_prefix") == "abcd1234"
+    assert rac.get("prefilter_descriptions_fingerprint_prefix") == "abcd1234"
     summ = build_retrieval_reuse_summary(traces, [])
     assert summ.get("prefilter_cache_status") == "hit"
 
@@ -350,7 +329,7 @@ def test_clear_cache_forced_emits_when_non_empty(tmp_path, monkeypatch):
     set_current_run_id("r3")
     set_current_request_id("q3")
 
-    p = DomainPrefilter(domain_keywords={"core": ["a"]}, max_domains=3)
+    p = DomainPrefilter(max_domains=3)
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": [], "confidence": 0.0}):
         p.filter_domains("z long enough query", ["core"])
     p.clear_cache(reason="forced_refresh")
@@ -363,7 +342,7 @@ def test_short_query_bypasses_llm_and_returns_empty():
     """Queries < MIN_QUERY_LEN_FOR_CLASSIFICATION carry too little signal:
     the prefilter must skip the LLM round-trip and return an empty list so
     the caller's default (core principles) applies."""
-    p = DomainPrefilter(domain_keywords={"core": ["c"], "dom": ["x"]}, max_domains=3)
+    p = DomainPrefilter(max_domains=3)
     with patch.object(DomainPrefilter, "_call_openai") as m:
         result = p.filter_domains("51", ["core", "dom"])
         result2 = p.filter_domains("        ", ["core", "dom"])  # whitespace only
@@ -389,7 +368,7 @@ def test_short_query_emits_too_short_event(tmp_path, monkeypatch):
     set_current_run_id("r-short")
     set_current_request_id("q-short")
 
-    p = DomainPrefilter(domain_keywords={"core": ["c"], "dom": ["x"]}, max_domains=3)
+    p = DomainPrefilter(max_domains=3)
     p.filter_domains("63312", ["core", "dom"])
 
     get_obs().flush(timeout=5.0)
@@ -404,7 +383,7 @@ def test_short_query_emits_too_short_event(tmp_path, monkeypatch):
 
 def test_long_query_still_invokes_llm():
     """Regression guard: queries >= threshold must still hit the LLM classifier."""
-    p = DomainPrefilter(domain_keywords={"core": ["c"], "dom": ["x"]}, max_domains=3)
+    p = DomainPrefilter(max_domains=3)
     with patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["dom"], "confidence": 0.9}) as m:
         p.filter_domains("question about banking and finance", ["core", "dom"])
     assert m.call_count == 1
@@ -420,7 +399,7 @@ def test_clear_cache_noop_when_empty(tmp_path, monkeypatch):
     set_current_run_id("r4")
     set_current_request_id("q4")
 
-    p = DomainPrefilter(domain_keywords={"core": ["a"]}, max_domains=3)
+    p = DomainPrefilter(max_domains=3)
     p.clear_cache(reason="forced_refresh")
     get_obs().flush(timeout=5.0)
     rows = get_orchestration_events_for_request("r4", "q4")
@@ -514,3 +493,54 @@ def test_legacy_domain_agent_cache_miss_on_rendered_rule_change():
     assert call.call_count == 2
     assert first == ["TEST.P1"]
     assert second == []
+
+
+class _MutableDescriptionsProvider:
+    """Minimal ConstitutionDataProvider whose domain descriptions can be edited between calls."""
+
+    def __init__(self) -> None:
+        self.descriptions = {"core": "Universal.", "legal": "Law and contracts."}
+
+    def load_core(self) -> list[Principle]:
+        return [Principle(id="CORE.1", level="hard", priority=100, title="core", rule="core rule")]
+
+    def load_overlay(self, domain: str) -> Overlay:
+        return Overlay(domain=domain, description=self.descriptions.get(domain, ""))
+
+    def _get_available_domains(self) -> list[str]:
+        return ["legal"]
+
+    def get_domain_descriptions(self) -> dict[str, str]:
+        return dict(self.descriptions)
+
+
+def test_retrieve_cache_status_follows_description_changes():
+    """A description-only edit must surface as an invalidation in the retrieval debug.
+
+    Before 2026-10-11 the status followed the (now removed) keyword map, so this
+    edit cleared the prefilter cache while reporting a plain ``miss``.
+    """
+    provider = _MutableDescriptionsProvider()
+    retriever = ConstitutionRetriever(
+        config=ConstitutionRetrieverConfig(use_enhanced_retrieval=True, use_domain_prefilter=True),
+        data_provider=provider,
+    )
+    query = "a question about a contract dispute"
+    no_match = {"domain_match": False, "confidence": 0.0, "principle_ids": [], "reasoning": "n/a"}
+    with (
+        patch.object(DomainPrefilter, "_call_openai", return_value={"domains": ["legal"], "confidence": 0.9}),
+        patch.object(EnhancedDomainAgent, "_call_openai", return_value=dict(no_match)),
+    ):
+        first = retriever.retrieve(query, domain=None).debug_info
+        second = retriever.retrieve(query, domain=None).debug_info
+        provider.descriptions["legal"] = "Law, contracts and courts."
+        third = retriever.retrieve(query, domain=None).debug_info
+
+    assert first["prefilter_cache_status"] == "miss"
+    assert first["prefilter_descriptions_changed"] is False
+    assert second["prefilter_cache_status"] == "hit"
+    assert third["prefilter_cache_status"] == "invalidated_then_miss"
+    assert third["prefilter_descriptions_changed"] is True
+    assert third["prefilter_cache_invalidation_reason"] == "effective_descriptions_changed"
+    assert third["prefilter_descriptions_fingerprint_prefix"] != first["prefilter_descriptions_fingerprint_prefix"]
+    assert len(third["prefilter_descriptions_fingerprint_prefix"]) == 16

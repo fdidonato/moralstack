@@ -7,7 +7,6 @@ Caricamento YAML: solo ruamel.yaml. Validazione: solo Pydantic. Fail-fast.
 
 from __future__ import annotations
 
-import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from moralstack.constitution.helpers import _STOPWORDS, resolve_conflict, tokenize
+from moralstack.constitution.helpers import resolve_conflict
 from moralstack.constitution.loader import ConstitutionLoadError, load_yaml_file
 from moralstack.constitution.openai_config import OpenAIClientConfig
 from moralstack.constitution.retrieval_result import PrincipleRetrievalResult
@@ -47,34 +46,6 @@ REQUIRED_CORE_PRINCIPLE_ID = "CORE.BALANCE.1"
 
 # Alias per retrocompatibilità
 ConstitutionValidationError = ConstitutionLoadError
-
-
-def _extract_keywords_from_description(description: str) -> list[str]:
-    """
-    Estrae keyword compatte da una descrizione di dominio (deterministica, pure Python).
-
-    Usato quando overlay.keywords è vuoto: lowercase, rimozione stopwords,
-    parole len >= 4, deduplica, primi 12 token.
-
-    Args:
-        description: Descrizione testuale del dominio.
-
-    Returns:
-        Lista di keyword (max 12).
-    """
-    if not description or not description.strip():
-        return []
-    tokens = re.sub(r"[^\w\s]", " ", description.lower()).split()
-    seen: set[str] = set()
-    result: list[str] = []
-    for t in tokens:
-        w = t.strip()
-        if len(w) >= 4 and w not in _STOPWORDS and w not in seen:
-            seen.add(w)
-            result.append(w)
-            if len(result) >= 12:
-                break
-    return result
 
 
 def detect_domain(
@@ -230,209 +201,6 @@ Output ONLY valid JSON, nothing else:"""
         logger = logging.getLogger(__name__)
         logger.debug(f"LLM domain detection failed: {e}")
         return None
-
-
-def _expand_query(query_tokens: set[str]) -> set[str]:
-    """
-    Espande query con sinonimi e termini correlati comuni.
-
-    Query expansion base senza dipendenze esterne.
-    """
-    expanded = set(query_tokens)
-
-    # Mappa sinonimi comuni (italiano e inglese)
-    synonyms = {
-        # Medical/Health
-        "curare": {"trattare", "cura", "terapia", "cure", "treat", "treatment"},
-        "depressione": {"depression", "tristezza", "malinconia", "sadness"},
-        "medico": {"doctor", "dottore", "medico", "healthcare", "sanitario"},
-        "malattia": {"disease", "illness", "sickness", "malattia"},
-        "sintomi": {"symptoms", "sintomi", "segni"},
-        # Legal
-        "legale": {"legal", "law", "legge", "giuridico", "juridical"},
-        "avvocato": {"lawyer", "attorney", "avvocato", "legale"},
-        "contratto": {"contract", "contratto", "accordo", "agreement"},
-        "causa": {"lawsuit", "case", "causa", "processo", "trial"},
-        # Harm/Safety
-        "danno": {"harm", "hurt", "damage", "danno", "ferita", "injury"},
-        "uccidere": {"kill", "murder", "uccidere", "ammazzare"},
-        "violenza": {"violence", "violent", "violenza", "aggressione"},
-        "arma": {"weapon", "gun", "arma", "pistola"},
-        # Privacy
-        "privato": {"private", "privacy", "privato", "personale", "personal"},
-        "spiare": {"spy", "spying", "spiare", "sorvegliare", "surveillance"},
-        "dati": {"data", "information", "dati", "informazioni"},
-        # Deception
-        "ingannare": {"deceive", "trick", "ingannare", "imbrogliare", "fraud"},
-        "falso": {"fake", "false", "falso", "falsificare", "forge"},
-        "manipolare": {"manipulate", "manipulation", "manipolare"},
-    }
-
-    # Espandi con sinonimi
-    for token in query_tokens:
-        if token in synonyms:
-            expanded.update(synonyms[token])
-
-    return expanded
-
-
-def _compute_relevance(
-    principle: Principle,
-    query_tokens: set[str],
-    expanded_query: set[str] | None = None,
-    keyword_freq: dict[str, int] | None = None,
-) -> float:
-    """
-    Calcola relevance score tra principio e query.
-
-    Miglioramenti:
-    - Query expansion con sinonimi (passata come parametro per evitare ricalcoli)
-    - Matching più intelligente (substring per keyword multi-parola)
-    - Pesi dinamici basati su specificità del principio
-    - Boost per principi di dominio specifico
-    - Penalizzazione per keyword troppo comuni (TF-IDF-like)
-
-    Args:
-        principle: Principio da valutare
-        query_tokens: Token originali della query
-        expanded_query: Query espansa con sinonimi (opzionale, calcolata se None)
-        keyword_freq: Frequenza delle keyword nei principi (per penalizzare keyword comuni)
-    """
-    # Espandi query con sinonimi se non fornita
-    if expanded_query is None:
-        expanded_query = _expand_query(query_tokens)
-
-    score = 0.0
-
-    # Keywords diretti (peso massimo, con matching intelligente)
-    for kw in principle.keywords:
-        kw_tokens = tokenize(kw)
-
-        # Calcola peso base con penalizzazione per keyword comuni
-        base_weight = 10.0
-        if keyword_freq:
-            # Penalizza keyword che appaiono in molti principi (meno specifiche)
-            kw_freq = keyword_freq.get(kw.lower(), 1)
-            total_principles = max(keyword_freq.values()) if keyword_freq.values() else 1
-            # IDF-like: più rara la keyword, più importante
-            specificity = 1.0 + (total_principles / max(kw_freq, 1)) * 0.3
-            base_weight *= min(specificity, 2.0)  # Max 2x boost per keyword rare
-
-        # Match esatto
-        if kw_tokens & expanded_query:
-            keyword_score = base_weight
-
-            # Boost se keyword multi-parola matcha completamente
-            if len(kw_tokens) > 1 and kw_tokens.issubset(expanded_query):
-                keyword_score *= 1.5  # Boost 50% per match completo
-
-            score += keyword_score
-
-        # Match parziale (substring) per keyword multi-parola
-        elif len(kw_tokens) > 1:
-            # Controlla se almeno metà delle parole matchano
-            overlap_ratio = len(kw_tokens & expanded_query) / len(kw_tokens)
-            if overlap_ratio >= 0.5:
-                score += base_weight * overlap_ratio  # Peso proporzionale con specificità
-
-        # Match semantico: controlla se la keyword appare nella query (anche come substring)
-        # Utile per keyword come "manipulation" che potrebbe non matchare esattamente
-        kw_lower = kw.lower()
-        query_lower = " ".join(expanded_query).lower() if expanded_query else ""
-        if kw_lower in query_lower or any(kw_part in query_lower for kw_part in kw_lower.split()):
-            semantic_weight = 8.0
-            if keyword_freq:
-                # Applica stessa logica di specificità
-                kw_freq = keyword_freq.get(kw.lower(), 1)
-                total_principles = max(keyword_freq.values()) if keyword_freq.values() else 1
-                specificity = 1.0 + (total_principles / max(kw_freq, 1)) * 0.2
-                semantic_weight *= min(specificity, 1.5)
-            score += semantic_weight
-
-    # Title match (peso medio-alto)
-    title_tokens = tokenize(principle.title)
-    title_overlap = len(title_tokens & expanded_query)
-    if title_overlap > 0:
-        # Peso base per ogni parola matchata
-        title_score = title_overlap * 3.0
-        # Boost se match completo del title
-        if title_tokens.issubset(expanded_query):
-            title_score *= 1.3
-        score += title_score
-
-    # Rule match (peso medio-alto, importante per contesto semantico)
-    rule_tokens = tokenize(principle.rule)
-    rule_overlap = len(rule_tokens & expanded_query)
-    if rule_overlap > 0:
-        # Peso base (aumentato da 1.0 a 2.0)
-        rule_score = rule_overlap * 2.0
-        # Boost se molte parole matchano (indica alta rilevanza)
-        if rule_overlap >= 3:
-            rule_score *= 1.5  # Boost maggiore
-        score += rule_score
-
-    # Rule substring match (per matching semantico più robusto)
-    # Cerca parole chiave della rule nella query originale
-    query_original_lower = " ".join(query_tokens).lower() if query_tokens else ""
-    # Cerca parole significative della rule (es. "covert", "persuasion", "manipulation")
-    significant_rule_words = [w for w in rule_tokens if len(w) > 4]  # Parole > 4 caratteri
-    for word in significant_rule_words:
-        if word in query_original_lower:
-            score += 3.0  # Peso per match semantico su rule
-
-    # Examples deny match (molto importante per detection)
-    for example in principle.examples_deny:
-        example_tokens = tokenize(example)
-        example_overlap = example_tokens & expanded_query
-        if example_overlap:
-            # Peso alto per match in esempi deny
-            example_score = 5.0
-            # Boost se match completo
-            if example_tokens.issubset(expanded_query):
-                example_score *= 1.5
-            score += example_score
-
-    # Boost per principi di dominio specifico (se query contiene termini del dominio)
-    if principle.domain is not None:
-        domain_keywords = {
-            "medical": {
-                "medico",
-                "salute",
-                "cura",
-                "malattia",
-                "sintomi",
-                "doctor",
-                "health",
-                "treatment",
-            },
-            "legal": {
-                "legale",
-                "avvocato",
-                "contratto",
-                "causa",
-                "legal",
-                "lawyer",
-                "contract",
-                "lawsuit",
-            },
-            "financial": {
-                "finanza",
-                "denaro",
-                "soldi",
-                "banca",
-                "finance",
-                "money",
-                "bank",
-                "financial",
-            },
-            "cybersecurity": {"sicurezza", "hack", "cyber", "security", "hacking", "vulnerability"},
-        }
-
-        domain_kw = domain_keywords.get(principle.domain, set())
-        if domain_kw & expanded_query:
-            score *= 1.2  # Boost 20% per principi di dominio rilevante
-
-    return score
 
 
 # =============================================================================
@@ -660,47 +428,6 @@ class ConstitutionStore:
 
         return descriptions
 
-    def get_domain_keywords(self) -> dict[str, list[str]]:
-        """
-        Ottiene le keywords di tutti i domini disponibili.
-
-        Se overlay.keywords è definito e non vuoto → usa quello.
-        Altrimenti se overlay.description è presente → estrae keyword deterministicamente.
-        Altrimenti → [domain_name].
-
-        Returns:
-            Dict {domain_name: [keywords]}
-        """
-        keywords_map: dict[str, list[str]] = {}
-
-        # Keywords per core
-        keywords_map["core"] = [
-            "harm",
-            "safety",
-            "privacy",
-            "deception",
-            "illegal",
-            "malware",
-            "child",
-            "honesty",
-            "transparency",
-        ]
-
-        # Carica keywords dagli overlay
-        for domain_name in self.get_available_domains():
-            try:
-                overlay = self.load_overlay(domain_name)
-                if overlay.keywords:
-                    keywords_map[domain_name] = list(overlay.keywords)
-                elif overlay.description:
-                    keywords_map[domain_name] = _extract_keywords_from_description(overlay.description)
-                else:
-                    keywords_map[domain_name] = [domain_name]
-            except FileNotFoundError:
-                keywords_map[domain_name] = [domain_name]
-
-        return keywords_map
-
     @property
     def principles(self) -> list[Principle]:
         """
@@ -826,7 +553,6 @@ class ConstitutionStore:
             additional_principles=additional,
             priority_overrides=dict(oy.priority_overrides),
             description=oy.description.strip(),
-            keywords=[str(k) for k in oy.keywords if k],
             sensitive=oy.sensitive,
             excluded=oy.excluded,
             refusal_redirection=oy.refusal_redirection.strip(),
@@ -1021,7 +747,6 @@ def create_default_constitution() -> Constitution:
                 "Best methods to harm someone",
             ],
             remediation="Refuse clearly, explain why, suggest safe alternatives",
-            keywords=["bomb", "explosive", "weapon", "harm", "hurt", "kill"],
         ),
         Principle(
             id="CORE.NM.2",
@@ -1035,7 +760,6 @@ def create_default_constitution() -> Constitution:
                 "How to make illegal drugs",
             ],
             remediation="Refuse and explain legal alternatives",
-            keywords=["hack", "steal", "illegal", "drug", "fraud"],
         ),
         Principle(
             id="CORE.PRIV.1",
@@ -1049,7 +773,6 @@ def create_default_constitution() -> Constitution:
                 "Find someone's personal address",
             ],
             remediation="Refuse and explain privacy rights",
-            keywords=["spy", "stalk", "private", "personal data", "doxx"],
         ),
         Principle(
             id="SOFT.HONEST.1",
@@ -1066,7 +789,6 @@ def create_default_constitution() -> Constitution:
                 "Claiming certainty when uncertain",
             ],
             remediation="Add appropriate caveats and cite limitations",
-            keywords=["accurate", "true", "fact", "certain"],
         ),
         Principle(
             id="SOFT.STYLE.1",
@@ -1083,7 +805,6 @@ def create_default_constitution() -> Constitution:
                 "I won't help you with that, period.",
             ],
             remediation="Reframe response with empathy",
-            keywords=["respectful", "empathetic", "polite"],
         ),
     ]
 

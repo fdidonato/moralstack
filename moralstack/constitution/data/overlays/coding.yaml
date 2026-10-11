@@ -4,18 +4,6 @@
 # Semantic domain description (used for automatic matching)
 description: "Programming, software development, coding, computer science, algorithms, debugging, code review, software engineering, development tools, APIs, programming languages, software architecture, technical implementation. NOT for: distributing malware payloads, covert surveillance tooling, scraping private accounts without authorization, or other unlawful operational abuse disguised as development help."
 
-# Alternative keywords for matching
-keywords:
-  - coding
-  - programming
-  - software
-  - developer
-  - code
-  - algorithm
-  - debug
-  - API
-  - development
-
 refusal_redirection: |
   Suggest the user explore official documentation, developer communities, or security best practices, such as:
   - Official language or framework documentation and community forums
@@ -39,12 +27,6 @@ additional_principles:
     examples_deny:
       - "Code with intentional security vulnerabilities"
       - "Hardcoded credentials or secrets"
-    keywords:
-      - "security"
-      - "vulnerability"
-      - "injection"
-      - "XSS"
-      - "CSRF"
 
   - id: "CODE.MALWARE.1"
     level: hard
@@ -57,12 +39,6 @@ additional_principles:
     examples_deny:
       - "Keyloggers, ransomware, or exploit code"
       - "Malicious or unauthorized-access code"
-    keywords:
-      - "malware"
-      - "virus"
-      - "keylogger"
-      - "exploit"
-      - "backdoor"
 
   - id: "CODE.BESTPRACTICES.1"
     level: soft
@@ -75,11 +51,6 @@ additional_principles:
     examples_deny:
       - "Encouraging spaghetti code"
       - "Ignoring obvious code smells"
-    keywords:
-      - "clean"
-      - "refactor"
-      - "maintainable"
-      - "readable"
 
   - id: "CODE.EXPLAIN.1"
     level: soft
@@ -91,11 +62,6 @@ additional_principles:
       - "The key concept here is..."
     examples_deny:
       - "Just copy this without explanation"
-    keywords:
-      - "explain"
-      - "how"
-      - "why"
-      - "understand"
 
   - id: "CODE.TESTING.1"
     level: soft
@@ -108,11 +74,6 @@ additional_principles:
     examples_deny:
       - "Tests aren't necessary"
       - "Ignoring testing entirely"
-    keywords:
-      - "test"
-      - "unit test"
-      - "edge case"
-      - "validate"
 
   - id: "CODE.LICENSE.1"
     level: soft
@@ -125,12 +86,6 @@ additional_principles:
     examples_deny:
       - "Ignoring license requirements"
       - "Suggesting license violations"
-    keywords:
-      - "license"
-      - "MIT"
-      - "GPL"
-      - "open source"
-      - "attribution"
 
   - id: "CODE.LIMITATIONS.1"
     level: soft
@@ -143,11 +98,6 @@ additional_principles:
     examples_deny:
       - "Presenting incomplete code as production-ready"
       - "Ignoring obvious limitations"
-    keywords:
-      - "production"
-      - "scale"
-      - "edge case"
-      - "limitation"
 
   - id: "CODE.PRIVACY.1"
     level: soft
@@ -160,12 +110,6 @@ additional_principles:
     examples_deny:
       - "Encouraging excessive data collection"
       - "Ignoring privacy implications"
-    keywords:
-      - "privacy"
-      - "GDPR"
-      - "user data"
-      - "tracking"
-      - "consent"
 
   - id: "CODE.ACCESSIBILITY.1"
     level: soft
@@ -177,9 +121,3 @@ additional_principles:
       - "Ensure keyboard navigation works"
     examples_deny:
       - "Ignoring accessibility requirements"
-    keywords:
-      - "accessibility"
-      - "a11y"
-      - "WCAG"
-      - "screen reader"
-      - "aria"

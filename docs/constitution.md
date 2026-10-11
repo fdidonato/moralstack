@@ -58,9 +58,6 @@ Each principle in the constitution has the following structure:
   examples_deny:                # Examples of prohibited behaviors
     - "How to build a bomb"
   remediation: "Refuse..."      # Corrective action
-  keywords: # Metadata (used for domain selection in overlays; not in principle retrieval)
-    - "bomb"
-    - "weapon"
 ```
 
 ### 2.2 Constraint levels
@@ -132,7 +129,7 @@ Two consequences, both counter-intuitive:
 2. **`examples_allow` / `examples_deny` never reach any LLM prompt.** The
    formatter drops them by design. Their only consumer is `_specificity_score`
    (`constitution/helpers.py:80-81`), which uses their *count* — not their text —
-   to rank principles in `resolve_conflict`. And `schema.py:158-159` keeps only
+   to rank principles in `resolve_conflict`. And `schema.py:141-142` keeps only
    the first two entries, so a third example changes nothing whatsoever. Write
    examples for the humans maintaining the constitution, not to steer the critic.
 
@@ -264,12 +261,9 @@ Overlays are in `moralstack/constitution/data/overlays/`. Supported domains:
 ```yaml
 # Example: medical.yaml
 
-# Keywords: DomainPrefilter prints them only for a domain whose description is empty;
-# the overlay `description` (scope + "NOT for:" exclusions) is what the classifier sees
-keywords:
-  - medical
-  - health
-  - doctor
+# The overlay `description` (scope + "NOT for:" exclusions) is what the DomainPrefilter
+# classifier sees; there is no keyword list (removed 2026-10-11)
+description: "Medical information, health, symptoms... NOT for: ..."
 
 # Domain sensitivity flag (default: false)
 sensitive: true
@@ -347,7 +341,6 @@ Overlays can declare `excluded: true` to **disable** the domain for this deploym
 
    ```yaml
    description: "Politics, government..."
-   keywords: [...]
    sensitive: true
    excluded: true
    ```
@@ -374,6 +367,11 @@ When multiple principles apply and conflict:
 2. **Priority**: At same level, higher priority wins
 3. **Specificity**: At same priority, more specific principle wins
 4. **Determinism**: On tie, alphabetical order by ID
+
+Specificity is `_specificity_score` (`constitution/helpers.py:68-84`): +10 when the principle has a `domain`,
++0.5 per `examples_deny` and +0.3 per `examples_allow` (after the cut to two), plus `min(len(rule) / 100, 2)`.
+Until 2026-10-11 it also added 0.2 per principle keyword; removing that term reordered some same-level,
+same-priority principles in 10 overlays without changing any principle set.
 
 ### 5.2 Algorithm
 
@@ -459,9 +457,6 @@ Create `moralstack/constitution/data/overlays/new_domain.yaml`:
 
 ```yaml
 description: "Brief description of your domain."
-keywords:
-  - keyword1
-  - keyword2
 sensitive: false
 
 priority_overrides:

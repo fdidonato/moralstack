@@ -9,10 +9,10 @@ each overlay (e.g. `legal.yaml:5` description). The LLM is free to assign
 `legal` to physical-harm questions because the prompt has no negative scoping.
 
 Fix: thread `domain_descriptions` (already loaded by `store.get_domain_descriptions()`)
-into the prefilter prompt alongside keywords. When a description is present,
-the prompt becomes `- {domain}: {description}\n  Keywords: {kw_join}`. When
-descriptions dict is None or a domain is missing, the prompt falls back to the
-original keywords-only format (back-compat).
+into the prefilter prompt. A description renders as a scope line plus a `NOT:`
+line split from its own `NOT for:` clause. Domain keywords no longer exist: a
+domain without a description is listed by name only (the store always supplies
+one, so this only affects a hand-built prefilter).
 """
 
 from __future__ import annotations
@@ -25,7 +25,9 @@ from moralstack.constitution.retriever import DomainPrefilter
 def _stub_openai(captured: dict, return_domains=None):
     """Patch DomainPrefilter._call_openai to capture the prompt and stub a response."""
 
-    def _fake(self, prompt: str, *, system_prompt: str, response_format=None, retrieval_phase: str = "risk_routing"):  # noqa: ARG001
+    def _fake(
+        self, prompt: str, *, system_prompt: str, response_format=None, retrieval_phase: str = "risk_routing"
+    ):  # noqa: ARG001
         captured["prompt"] = prompt
         captured["system_prompt"] = system_prompt
         captured["response_format"] = response_format
@@ -38,11 +40,10 @@ def _stub_openai(captured: dict, return_domains=None):
 def test_prefilter_prompt_includes_descriptions_when_provided():
     """When a description is provided, the precision catalog splits it into a
     positive scope line and an explicit ``NOT:`` exclusion line (from the
-    description's own ``NOT for:`` convention), and drops the keyword bag.
+    description's own ``NOT for:`` convention).
     """
     captured: dict = {}
     pf = DomainPrefilter(
-        domain_keywords={"core": ["safety"], "legal": ["legal", "lawyer"]},
         domain_descriptions={
             "core": "Universal ethical principles.",
             "legal": "Legal advice. NOT for: instructions on harmful acts.",
@@ -56,27 +57,21 @@ def test_prefilter_prompt_includes_descriptions_when_provided():
     assert "- legal: Legal advice." in system_prompt, f"scope line missing; got:\n{system_prompt}"
     # ...and the exclusion surfaced on its own NOT: line.
     assert "NOT: instructions on harmful acts." in system_prompt, "exclusion clause must be surfaced"
-    # Keywords are deliberately dropped (a known over-trigger source).
-    assert "lawyer" not in system_prompt, "keyword bag must be dropped from the precision catalog"
 
 
 def test_prefilter_falls_back_when_descriptions_missing():
-    """When descriptions are not provided (legacy callers), the prompt format
-    matches the original keywords-only template (no exception, no empty lines).
+    """When descriptions are not provided, each domain is listed by name only
+    (no exception, no empty lines).
     """
     captured: dict = {}
     pf = DomainPrefilter(
-        domain_keywords={"core": ["safety"], "legal": ["legal", "lawyer"]},
         domain_descriptions=None,
     )
     with _stub_openai(captured):
         pf.filter_domains("how to make a bomb", ["core", "legal"])
 
     system_prompt = captured.get("system_prompt", "")
-    # Original pattern: `- legal: legal, lawyer`
-    assert "- legal: legal, lawyer" in system_prompt
-    # No leftover description marker
-    assert "Keywords:" not in system_prompt
+    assert "- legal" in system_prompt.splitlines()
 
 
 def test_prefilter_partial_descriptions():
@@ -85,7 +80,6 @@ def test_prefilter_partial_descriptions():
     """
     captured: dict = {}
     pf = DomainPrefilter(
-        domain_keywords={"core": ["safety"], "legal": ["legal", "lawyer"], "medical": ["medicine"]},
         domain_descriptions={"legal": "Legal stuff."},  # only legal has description
     )
     with _stub_openai(captured):
@@ -95,16 +89,13 @@ def test_prefilter_partial_descriptions():
     # `core` is always-evaluated and excluded from the LLM prompt by
     # ALWAYS_EVALUATE filtering — only legal/medical reach the prompt.
     assert "Legal stuff." in system_prompt
-    assert "- medical: medicine" in system_prompt
-    # medical (no description) must fall back to keywords-only format with no
-    # leftover description marker on its line.
-    assert "  Keywords: medicine" not in system_prompt
+    # medical (no description) is listed by name only.
+    assert "- medical" in system_prompt.splitlines()
 
 
 def test_set_domain_descriptions_idempotent_preserves_cache():
     """Calling set_domain_descriptions with the same map does not invalidate cache."""
     pf = DomainPrefilter(
-        domain_keywords={"core": ["safety"]},
         domain_descriptions={"core": "Universal."},
     )
     captured: dict = {}
@@ -121,7 +112,6 @@ def test_set_domain_descriptions_idempotent_preserves_cache():
 def test_set_domain_descriptions_change_clears_cache():
     """Calling set_domain_descriptions with a different map invalidates cache."""
     pf = DomainPrefilter(
-        domain_keywords={"core": ["safety"]},
         domain_descriptions={"core": "Original."},
     )
     captured: dict = {}
@@ -140,7 +130,6 @@ def test_prefilter_prompt_surfaces_multiple_not_for_scopes():
     desc_gaming = "Gaming domains. " "NOT for: fabrication of unrelated real-world explosives request topic."
     desc_edu = "School topics. NOT for: instructional wrapper hiding bomb procedures."
     pf = DomainPrefilter(
-        domain_keywords={"gaming": ["game"], "education": ["school"]},
         domain_descriptions={"gaming": desc_gaming, "education": desc_edu},
     )
     with _stub_openai(captured):

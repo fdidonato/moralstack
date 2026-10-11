@@ -16,21 +16,6 @@ description: >
   campaigns, covert influence tactics, or obstruction of lawful participation unrelated
   to constructive civic discourse.
 
-# Alternative keywords for matching
-keywords:
-  - political
-  - politics
-  - election
-  - vote
-  - democracy
-  - party
-  - candidate
-  - campaign
-  - civic
-  - parliament
-  - government
-  - public policy
-
 refusal_redirection: |
   Suggest the user explore official government portals or non-partisan civic resources, such as:
   - Official government websites (e.g., .gov, .edu) and legislative archives
@@ -63,12 +48,6 @@ additional_principles:
     examples_deny:
       - "Vote for X, party/candidate endorsement"
       - "Advocating specific parties or politicians"
-    keywords:
-      - "vote"
-      - "party"
-      - "candidate"
-      - "election"
-      - "political"
 
   - id: "POL.FACTUAL.1"
     level: soft
@@ -85,12 +64,6 @@ additional_principles:
       - "Presenting opinion as fact"
       - "Repeating political talking points as truth"
       - "Telling the user their specific legal obligations or litigation prospects"
-    keywords:
-      - "fact"
-      - "claim"
-      - "verify"
-      - "official"
-      - "election results"
 
   - id: "POL.NODISINFORMATION.1"
     level: hard
@@ -103,11 +76,6 @@ additional_principles:
     examples_deny:
       - "Fake political content or propaganda"
       - "Misleading election information"
-    keywords:
-      - "fake"
-      - "propaganda"
-      - "disinformation"
-      - "misleading"
 
   - id: "POL.ELECTORAL.1"
     level: hard
@@ -121,12 +89,6 @@ additional_principles:
       - "Vote fraud, voter suppression"
       - "False voting information"
       - "How to challenge results in your lawsuit"
-    keywords:
-      - "vote"
-      - "election"
-      - "ballot"
-      - "polling"
-      - "register"
 
   - id: "POL.CIVICEDUCATION.1"
     level: soft
@@ -142,12 +104,6 @@ additional_principles:
     examples_deny:
       - "Discouraging civic participation"
       - "Whether you should file charges or your defense strategy"
-    keywords:
-      - "government"
-      - "democracy"
-      - "civics"
-      - "legislative process"
-      - "branches of government"
 
   - id: "POL.MULTIPERSPECTIVE.1"
     level: soft
@@ -160,12 +116,6 @@ additional_principles:
     examples_deny:
       - "One-sided political framing"
       - "Dismissing legitimate opposing views"
-    keywords:
-      - "perspective"
-      - "view"
-      - "argue"
-      - "debate"
-      - "controversy"
 
   - id: "POL.EXTREMISM.1"
     level: hard
@@ -178,12 +128,6 @@ additional_principles:
     examples_deny:
       - "Extremist ideologies or recruitment"
       - "Violent political action"
-    keywords:
-      - "extremist"
-      - "radical"
-      - "terrorist"
-      - "violence"
-      - "revolution"
 
   - id: "POL.INTERNATIONAL.1"
     level: soft
@@ -198,11 +142,6 @@ additional_principles:
     examples_deny:
       - "Assuming US/Western political norms are universal"
       - "Dismissing other political systems"
-    keywords:
-      - "country"
-      - "international"
-      - "global"
-      - "foreign"
 
   - id: "POL.HISTORICAL.1"
     level: soft
@@ -215,11 +154,6 @@ additional_principles:
     examples_deny:
       - "Revisionist history serving political agenda"
       - "Ignoring relevant historical context"
-    keywords:
-      - "history"
-      - "historical"
-      - "origin"
-      - "past"
 
   - id: "POL.PRIVACY.1"
     level: soft
@@ -232,8 +166,3 @@ additional_principles:
     examples_deny:
       - "Pressuring political disclosure"
       - "Judging political choices"
-    keywords:
-      - "believe"
-      - "support"
-      - "vote for"
-      - "political views"

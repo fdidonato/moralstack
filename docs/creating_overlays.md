@@ -18,9 +18,6 @@ Create a YAML file in `moralstack/constitution/data/overlays/`, validate it, and
 # 1. Create your overlay
 cat > moralstack/constitution/data/overlays/my_domain.yaml << 'EOF'
 description: "Brief semantic description of your domain."
-keywords:
-  - keyword1
-  - keyword2
 sensitive: false
 additional_principles: []
 EOF
@@ -40,12 +37,13 @@ The filename (without `.yaml`) becomes the domain name. A file called `my_domain
 
 Every field in an overlay YAML file corresponds to a field in the `OverlayYAML` Pydantic model (`moralstack/constitution/schema.py`). The schema uses `extra="forbid"`, so any unrecognized field causes a validation error — this prevents typos from silently being ignored.
 
+> **Removed fields:** `keywords` (overlay level) and `keywords` / `keywords_block` / `keywords_style` (principle level) were removed on 2026-10-11. They never reached any LLM prompt with the bundled store, so an overlay that still carries them now fails validation: delete those keys. Domain matching relies on `description` alone.
+
 ### Top-level fields
 
 | Field | Type | Default | Required | Description |
 |---|---|---|---|---|
 | `description` | `string` | `""` | Recommended | Semantic description of the domain. Used by the LLM-based domain detector to match incoming queries to this overlay. Write it as a comma-separated list of relevant topics and terms. |
-| `keywords` | `list[string]` | `[]` | Recommended | Alternative keywords for domain matching. If empty, keywords are auto-extracted from `description` (lowercase, stopwords removed, words ≥ 4 chars, max 12). |
 | `sensitive` | `bool` | `false` | No | When `true`, activates a risk score floor (default `0.35`) that forces the request into the deliberative path. Also triggers a `SAFE_COMPLETE` fallback if deliberation cycles are exhausted without convergence. |
 | `excluded` | `bool` | `false` | No | When `true`, requests detected as this domain get an early exit — no deliberation, just a short polite refusal in the user's language. Useful for domains your deployment should not handle at all. |
 | `priority_overrides` | `dict[string, int]` | `{}` | No | Alters the priority of existing core principles when this overlay is active. Keys are principle IDs (e.g., `SOFT.HONEST.1`), values are new priorities (1–100). |
@@ -69,7 +67,6 @@ Each principle in `additional_principles` follows the `PrincipleYAML` schema:
 | `examples_deny` | `list[string]` | `[]` | Recommended | 1–2 examples of behaviors that violate this principle. Same truncation rule. |
 | `remediation` | `string` | `""` | No | Corrective action text (currently not used in prompts — reserved for future use). |
 | `domain` | `string \| null` | `null` | No | Domain tag for the principle. Typically left `null` for overlay principles (the overlay itself provides domain context). |
-| `keywords` | `list[string]` | `[]` | Recommended | Keywords associated with this specific principle. Used for principle-level matching within the domain. |
 
 ---
 
@@ -77,7 +74,7 @@ Each principle in `additional_principles` follows the `PrincipleYAML` schema:
 
 Understanding how MoralStack uses each field helps you write effective overlays.
 
-### `description` and `keywords` → Domain Detection
+### `description` → Domain Detection
 
 When a user query arrives, MoralStack's domain detector (an LLM call) classifies the query against all available overlay descriptions. A good `description` is the single most important factor for accurate domain matching.
 
@@ -85,11 +82,7 @@ When a user query arrives, MoralStack's domain detector (an LLM call) classifies
 - Write it as a comma-separated list of topics, not a sentence: `"Healthcare services, patient care, medical facilities, health insurance, HIPAA compliance."`
 - Include both broad terms (`healthcare`) and specific terms (`HIPAA compliance`, `clinical care`).
 - Think about how users phrase queries in your domain — include those phrasings.
-
-**Tips for `keywords`:**
-- Use 5–15 keywords that are central to your domain.
-- Include both technical terms (`HIPAA`) and everyday language (`hospital`, `doctor`).
-- If you leave `keywords` empty, they are auto-extracted from `description` using a simple tokenizer (lowercase, stopwords removed, words ≥ 4 chars, max 12 keywords). This is usually sufficient, but explicit keywords give you more control.
+- Add an explicit `NOT for:` clause for nearby topics that belong to another domain: the prefilter prints it as a separate `NOT:` line, which is how it tells adjacent domains apart.
 
 ### `sensitive: true` → Deliberative Path Enforcement
 
@@ -193,16 +186,6 @@ Start with the minimal structure and expand:
 
 description: "Real estate, property transactions, housing market, home buying, selling, renting, mortgages, real estate agents, property valuation, landlord tenant law, housing regulations."
 
-keywords:
-  - real estate
-  - property
-  - mortgage
-  - housing
-  - rental
-  - landlord
-  - tenant
-  - home buying
-
 sensitive: true
 
 refusal_redirection: |
@@ -228,11 +211,6 @@ additional_principles:
     examples_deny:
       - "You should buy this property, it's a great investment"
       - "Lock in this mortgage rate now before it goes up"
-    keywords:
-      - "invest"
-      - "mortgage"
-      - "buy"
-      - "profit"
 
   - id: "RE.DISCLAIMER.1"
     level: soft
@@ -245,11 +223,6 @@ additional_principles:
     examples_deny:
       - "Presenting general info as applicable everywhere"
       - "Omitting professional consultation recommendation"
-    keywords:
-      - "law"
-      - "regulation"
-      - "jurisdiction"
-      - "contract"
 ```
 
 ### 3. Validate the overlay
@@ -267,7 +240,6 @@ On success:
 
   Domain name:           real_estate
   Description:           Real estate, property transactions, housing market, ...
-  Keywords:              8 explicit
   Sensitive:             true (risk floor: 0.35)
   Excluded:              false
   Priority overrides:    2 (SOFT.HONEST.1 → 90, SOFT.HELPFUL.1 → 85)
@@ -337,8 +309,8 @@ For a reusable end-to-end pattern, see `examples/custom_overlay/`. The script co
 Overlay development is iterative. Common adjustments:
 - **Too many refusals?** Lower the priority of hard principles, or rephrase `rule` to be more specific about what constitutes a violation.
 - **Not enough governance?** Add `sensitive: true`, increase priorities, or add more hard principles.
-- **Wrong domain detection?** Expand `description` and `keywords` with terms users actually use.
-- **Irrelevant principles triggering?** Narrow `keywords` and make `rule` more specific.
+- **Wrong domain detection?** Expand `description` with terms users actually use, and add a `NOT for:` clause for look-alike topics.
+- **Irrelevant principles triggering?** Make `rule` more specific and sharpen `examples_deny`.
 
 ---
 
@@ -406,8 +378,6 @@ For domains your deployment should not handle:
 ```yaml
 excluded: true
 description: "Domain description for detection purposes."
-keywords:
-  - keyword1
 ```
 
 When `excluded: true`, the `additional_principles`, `priority_overrides`, and other fields are still validated but not used at runtime — the request is refused before deliberation starts.
@@ -418,12 +388,13 @@ When `excluded: true`, the `additional_principles`, `priority_overrides`, and ot
 
 **"My overlay is never detected"**
 - Check that `description` contains terms similar to how users phrase queries.
-- Add more `keywords` — both technical and colloquial terms.
+- Add both technical and colloquial terms to `description`.
 - Use `moralstack --verbose` to see the domain detection reasoning.
 - Try forcing the overlay via the SDK: `GovernanceConfig(domain_overlay="my_domain")`.
 
 **"Validation fails with 'extra fields are not permitted'"**
 - The schema uses `extra="forbid"`. Check for typos in field names — a field like `sensitve` (misspelled) will be rejected.
+- An overlay written before 2026-10-11 may still carry `keywords`, `keywords_block` or `keywords_style`: those fields were removed, delete them.
 - Run `moralstack-validate-overlay` for a clear error message pointing to the offending field.
 
 **"My hard principle never triggers refusal"**

@@ -4,18 +4,6 @@
 # Semantic domain description (used for automatic matching)
 description: "Security vulnerabilities, hacking, malware, data protection, network security, cyber attacks, penetration testing, ethical hacking, cybersecurity practices, information security, security audits, threat analysis. NOT for: ransomware delivery targeting victims, operational account takeover unrelated to lawful authorized testing."
 
-# Alternative keywords for matching
-keywords:
-  - cybersecurity
-  - security
-  - hacking
-  - malware
-  - vulnerability
-  - penetration testing
-  - network security
-  - data protection
-  - cyber attack
-
 sensitive: true
 
 simulator_domain_guidance: |
@@ -69,12 +57,6 @@ additional_principles:
     examples_deny:
       - "Here's how to hack into someone else's account"
       - "Bypass this website's security"
-    keywords:
-      - "hack"
-      - "penetration testing"
-      - "pentest"
-      - "exploit"
-      - "vulnerability"
 
   - id: "SEC.DEFENSIVE.1"
     level: hard
@@ -88,11 +70,6 @@ additional_principles:
     examples_deny:
       - "Step-by-step SQL injection tutorial"
       - "How to exploit buffer overflows"
-    keywords:
-      - "common mistakes"
-      - "vulnerabilities to avoid"
-      - "security best practices"
-      - "how to prevent"
 
   - id: "SEC.MALWARE.1"
     level: hard
@@ -105,13 +82,6 @@ additional_principles:
     examples_deny:
       - "Malware, ransomware, or exploit code"
       - "Working malicious implementations"
-    keywords:
-      - "malware"
-      - "ransomware"
-      - "virus"
-      - "trojan"
-      - "keylogger"
-      - "exploit"
 
   - id: "SEC.DISCLOSURE.1"
     level: soft
@@ -124,12 +94,6 @@ additional_principles:
     examples_deny:
       - "Drop zero-days publicly"
       - "Sell exploits on black market"
-    keywords:
-      - "disclosure"
-      - "zero-day"
-      - "CVE"
-      - "report"
-      - "vulnerability"
 
   - id: "SEC.CREDENTIALS.1"
     level: hard
@@ -142,13 +106,6 @@ additional_principles:
     examples_deny:
       - "How to crack someone's password"
       - "Bypassing 2FA on accounts you don't own"
-    keywords:
-      - "password"
-      - "crack"
-      - "brute force"
-      - "credential"
-      - "login"
-      - "2FA"
 
   - id: "SEC.PRIVACY.1"
     level: hard
@@ -161,12 +118,6 @@ additional_principles:
     examples_deny:
       - "Spy on phone, track without consent"
       - "Stalkerware or surveillance tools"
-    keywords:
-      - "spy"
-      - "track"
-      - "monitor"
-      - "surveillance"
-      - "stalker"
 
   - id: "SEC.SOCIALENG.1"
     level: hard
@@ -179,11 +130,6 @@ additional_principles:
     examples_deny:
       - "Write a phishing email"
       - "How to manipulate someone into revealing passwords"
-    keywords:
-      - "phishing"
-      - "social engineering"
-      - "pretexting"
-      - "vishing"
 
   - id: "SEC.LEGAL.1"
     level: soft
@@ -195,12 +141,6 @@ additional_principles:
       - "GDPR requires consent for..."
     examples_deny:
       - "Ignoring legal implications of security actions"
-    keywords:
-      - "CFAA"
-      - "GDPR"
-      - "illegal"
-      - "law"
-      - "crime"
 
   - id: "SEC.EDUCATION.1"
     level: soft
@@ -212,9 +152,3 @@ additional_principles:
       - "Practice on platforms like HackTheBox or TryHackMe"
     examples_deny:
       - "Discouraging legitimate security learning"
-    keywords:
-      - "learn"
-      - "certification"
-      - "training"
-      - "CTF"
-      - "lab"

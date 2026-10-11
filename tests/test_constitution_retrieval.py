@@ -1,7 +1,7 @@
 """
 Behavioral regression tests for constitution retrieval and tokenization.
 
-Covers: tokenize(), _extract_keywords_from_description(), _compute_relevance.
+Covers: tokenize() and the legacy retrieval path.
 Ensures tokenization is stable and language-agnostic (no Italian stopwords).
 """
 
@@ -13,12 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from moralstack.constitution.helpers import tokenize
-from moralstack.constitution.schema import Principle
-from moralstack.constitution.store import (
-    ConstitutionStore,
-    _compute_relevance,
-    _extract_keywords_from_description,
-)
+from moralstack.constitution.store import ConstitutionStore
 
 # -----------------------------------------------------------------------------
 # tokenize() tests
@@ -54,81 +49,6 @@ def test_tokenize_english_stopwords_filtered():
     """English stopwords are filtered."""
     result = tokenize("the and a are is for")
     assert len(result) == 0
-
-
-# -----------------------------------------------------------------------------
-# _extract_keywords_from_description() tests
-# -----------------------------------------------------------------------------
-
-
-def test_extract_keywords_from_description_deterministic():
-    """Fixed English description produces deterministic output using shared stopwords."""
-    desc = "Principles for ethical communication and manipulation prevention."
-    result = _extract_keywords_from_description(desc)
-    assert "principles" in result
-    assert "ethical" in result
-    assert "communication" in result
-    assert "manipulation" in result
-    assert "prevention" in result
-    assert "and" not in result
-    assert "for" not in result
-    assert result == _extract_keywords_from_description(desc)
-
-
-def test_extract_keywords_from_description_empty():
-    """Empty or whitespace-only description returns empty list."""
-    assert _extract_keywords_from_description("") == []
-    assert _extract_keywords_from_description("   ") == []
-
-
-# -----------------------------------------------------------------------------
-# _compute_relevance() tests (behavioral retrieval scoring)
-# -----------------------------------------------------------------------------
-
-
-def test_compute_relevance_keyword_match():
-    """Principle with matching keyword gets positive score."""
-    principle = Principle(
-        id="TEST.1",
-        level="hard",
-        priority=90,
-        title="Test Manipulation",
-        rule="Do not manipulate users.",
-        keywords=["manipulation", "deception"],
-    )
-    query_tokens = tokenize("manipulation and covert influence")
-    score = _compute_relevance(principle, query_tokens, query_tokens, None)
-    assert score > 0
-
-
-def test_compute_relevance_title_match():
-    """Principle with matching title gets positive score."""
-    principle = Principle(
-        id="TEST.2",
-        level="soft",
-        priority=80,
-        title="Transparency and Disclosure",
-        rule="Disclose sources clearly.",
-        keywords=[],
-    )
-    query_tokens = tokenize("transparency disclosure sources")
-    score = _compute_relevance(principle, query_tokens, query_tokens, None)
-    assert score > 0
-
-
-def test_compute_relevance_no_match():
-    """Principle with no overlap gets zero score."""
-    principle = Principle(
-        id="TEST.3",
-        level="soft",
-        priority=70,
-        title="Unrelated Topic",
-        rule="Something about weather.",
-        keywords=["weather", "climate"],
-    )
-    query_tokens = tokenize("manipulation deception harm")
-    score = _compute_relevance(principle, query_tokens, query_tokens, None)
-    assert score == 0
 
 
 # -----------------------------------------------------------------------------

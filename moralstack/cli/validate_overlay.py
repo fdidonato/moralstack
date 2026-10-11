@@ -57,8 +57,6 @@ class OverlayValidationResult:
 
     # Populated only when valid
     description: str = ""
-    keywords_count: int = 0
-    keywords_source: str = ""  # "explicit" | "auto-extracted"
     sensitive: bool = False
     risk_floor: float | None = None
     excluded: bool = False
@@ -77,8 +75,6 @@ class OverlayValidationResult:
             d["errors"] = self.errors
         if self.valid:
             d["description"] = self.description
-            d["keywords_count"] = self.keywords_count
-            d["keywords_source"] = self.keywords_source
             d["sensitive"] = self.sensitive
             d["risk_floor"] = self.risk_floor
             d["excluded"] = self.excluded
@@ -162,17 +158,6 @@ def validate_overlay_file(path: Path) -> OverlayValidationResult:
     # Warnings are informational, not errors — overlay is still valid.
 
     # --- Build result ---
-    keywords_explicit = len(overlay.keywords) > 0
-    if keywords_explicit:
-        kw_count = len(overlay.keywords)
-        kw_source = "explicit"
-    else:
-        from moralstack.constitution.store import _extract_keywords_from_description
-
-        auto_kw = _extract_keywords_from_description(overlay.description)
-        kw_count = len(auto_kw)
-        kw_source = "auto-extracted" if kw_count > 0 else "none"
-
     principles_summary = [
         PrincipleSummary(
             id=p.id,
@@ -194,8 +179,6 @@ def validate_overlay_file(path: Path) -> OverlayValidationResult:
         domain=domain,
         valid=True,
         description=overlay.description,
-        keywords_count=kw_count,
-        keywords_source=kw_source,
         sensitive=overlay.sensitive,
         risk_floor=risk_floor,
         excluded=overlay.excluded,
@@ -267,7 +250,6 @@ def print_result(result: OverlayValidationResult, use_color: bool = True) -> Non
         _print_detail("Domain name", result.domain, use_color)
         desc_display = result.description[:60] + "..." if len(result.description) > 60 else result.description
         _print_detail("Description", desc_display or "(empty)", use_color)
-        _print_detail("Keywords", f"{result.keywords_count} {result.keywords_source}", use_color)
 
         if result.sensitive:
             floor_str = f"{result.risk_floor}" if result.risk_floor is not None else "default"

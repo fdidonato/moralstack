@@ -12,18 +12,6 @@ description: >
   by the safety/refusal layer.
   NOT for: generic family or relationship issues with no minor-specific relevance.
 
-# Alternative keywords for matching
-keywords:
-  - children
-  - kids
-  - child
-  - minor
-  - parenting
-  - family
-  - youth
-  - age-appropriate
-  - child safety
-
 sensitive: true
 sensitive_risk_floor: 0.50
 
@@ -50,12 +38,6 @@ additional_principles:
     examples_deny:
       - "Any content that could endanger children"
       - "Facilitating contact between adults and minors"
-    keywords:
-      - "child"
-      - "kid"
-      - "minor"
-      - "young"
-      - "school"
 
   - id: "CHILD.AGEAPPROPRIATE.1"
     level: hard
@@ -68,11 +50,6 @@ additional_principles:
     examples_deny:
       - "Violence, sexual content, horror, or drug references"
       - "Adult or mature themes"
-    keywords:
-      - "violence"
-      - "scary"
-      - "adult"
-      - "mature"
 
   - id: "CHILD.NOPERSONAL.1"
     level: hard
@@ -86,12 +63,6 @@ additional_principles:
       - "What's your full name?"
       - "Where do you live?"
       - "What school do you go to?"
-    keywords:
-      - "name"
-      - "address"
-      - "school"
-      - "phone"
-      - "location"
 
   - id: "CHILD.PARENTAL.1"
     level: soft
@@ -104,11 +75,6 @@ additional_principles:
     examples_deny:
       - "Keep this secret from your parents"
       - "Don't tell anyone about this"
-    keywords:
-      - "parent"
-      - "teacher"
-      - "grown-up"
-      - "adult"
 
   - id: "CHILD.STRANGER.1"
     level: hard
@@ -121,11 +87,6 @@ additional_principles:
     examples_deny:
       - "Encouraging meeting online contacts"
       - "Keeping online relationships secret"
-    keywords:
-      - "stranger"
-      - "meet"
-      - "online friend"
-      - "secret"
 
   - id: CHILD.SAFEGUARDING.1
     level: soft
@@ -147,13 +108,6 @@ additional_principles:
       Reframe toward parent-visible, school-approved, documented, group-based,
       age-appropriate, and mandatory-reporting-aware safeguards.
     domain: children
-    keywords:
-      - mentoring
-      - after-school
-      - safeguarding
-      - parent involvement
-      - school supervision
-      - boundaries
 
   - id: "CHILD.POSITIVE.1"
     level: soft
@@ -166,11 +120,6 @@ additional_principles:
     examples_deny:
       - "Negative self-talk reinforcement"
       - "Bullying or mean behavior"
-    keywords:
-      - "kind"
-      - "friend"
-      - "help"
-      - "share"
 
   - id: "CHILD.EDUCATIONAL.1"
     level: soft
@@ -183,11 +132,6 @@ additional_principles:
     examples_deny:
       - "Purely time-wasting content"
       - "Addictive engagement patterns"
-    keywords:
-      - "learn"
-      - "discover"
-      - "curious"
-      - "wonder"
 
   - id: "CHILD.CRISIS.1"
     level: hard
@@ -199,12 +143,6 @@ additional_principles:
       - "Call Childhelp at 1-800-422-4453"
     examples_deny:
       - "Ignoring signs of abuse or danger"
-    keywords:
-      - "hurt"
-      - "scared"
-      - "abuse"
-      - "help me"
-      - "afraid"
 
   - id: "CHILD.SIMPLE.1"
     level: soft
@@ -217,7 +155,3 @@ additional_principles:
     examples_deny:
       - "Complex jargon"
       - "Confusing explanations"
-    keywords:
-      - "simple"
-      - "easy"
-      - "understand"

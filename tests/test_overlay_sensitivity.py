@@ -27,17 +27,17 @@ class TestOverlaySensitiveSchema:
 
     def test_overlay_yaml_default_false(self):
         """OverlayYAML senza `sensitive` ha default False."""
-        oy = OverlayYAML(keywords=["test"])
+        oy = OverlayYAML()
         assert oy.sensitive is False
 
     def test_overlay_yaml_sensitive_true(self):
         """OverlayYAML con `sensitive: true` lo mantiene."""
-        oy = OverlayYAML(keywords=["mental health"], sensitive=True)
+        oy = OverlayYAML(sensitive=True)
         assert oy.sensitive is True
 
     def test_overlay_yaml_sensitive_false_explicit(self):
         """OverlayYAML con `sensitive: false` esplicito."""
-        oy = OverlayYAML(keywords=["creative"], sensitive=False)
+        oy = OverlayYAML(sensitive=False)
         assert oy.sensitive is False
 
     def test_overlay_default_false(self):
@@ -53,14 +53,12 @@ class TestOverlaySensitiveSchema:
     def test_overlay_sensitive_propagation(self):
         """Overlay costruito da OverlayYAML propaga `sensitive`."""
         oy = OverlayYAML(
-            keywords=["mental health"],
             sensitive=True,
             description="Mental health overlay",
         )
         overlay = Overlay(
             domain="mental_health",
             description=oy.description.strip(),
-            keywords=[str(k) for k in oy.keywords if k],
             sensitive=oy.sensitive,
         )
         assert overlay.sensitive is True
@@ -68,12 +66,10 @@ class TestOverlaySensitiveSchema:
     def test_overlay_sensitive_propagation_false(self):
         """Overlay costruito da OverlayYAML non-sensitive propaga False."""
         oy = OverlayYAML(
-            keywords=["creative writing"],
             sensitive=False,
         )
         overlay = Overlay(
             domain="creative",
-            keywords=[str(k) for k in oy.keywords if k],
             sensitive=oy.sensitive,
         )
         assert overlay.sensitive is False

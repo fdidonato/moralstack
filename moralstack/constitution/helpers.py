@@ -12,7 +12,7 @@ import unicodedata
 from moralstack.constitution.schema import Principle
 
 # Language-agnostic stopwords (English-only for compliance with Language-Agnostic invariant).
-# Single source of truth for both tokenize() and _extract_keywords_from_description().
+# Used by tokenize().
 _STOPWORDS = frozenset(
     {
         "a",
@@ -79,7 +79,6 @@ def _specificity_score(principle: Principle) -> float:
 
     score += len(principle.examples_deny) * 0.5
     score += len(principle.examples_allow) * 0.3
-    score += len(principle.keywords) * 0.2
     score += min(len(principle.rule) / 100, 2.0)
 
     return score

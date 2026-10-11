@@ -4,19 +4,6 @@
 # Semantic domain description (used for automatic matching)
 description: "Creative content, art, creative writing, artistic expression, fiction, storytelling, poetry, novels, scripts, artistic projects, imagination, creative assistance, narrative writing, worldbuilding. NOT for: wrappers (articles, stories, scripts, JSON, phrase lists) whose only purpose is to disguise operational harmful instructions unrelated to genuine creative production. NOT for: operational persuasion, contact, coercion, or exploitation tactics framed as creative prompts when the substantive ask is not genuine artistic production under this overlay."
 
-# Alternative keywords for matching
-keywords:
-  - creative
-  - art
-  - writing
-  - fiction
-  - story
-  - poetry
-  - novel
-  - script
-  - artistic
-  - imagination
-
 refusal_redirection: |
   Suggest the user explore creative brainstorming, artistic development, or copyright resources, such as:
   - Creative writing workshops and artistic communities
@@ -40,12 +27,6 @@ additional_principles:
     examples_deny:
       - "Content that glorifies real harm"
       - "Using creative framing to bypass safety"
-    keywords:
-      - "creative"
-      - "fiction"
-      - "story"
-      - "art"
-      - "write"
 
   - id: "CREAT.FICTION.1"
     level: soft
@@ -57,12 +38,6 @@ additional_principles:
       - "For fictional purposes..."
     examples_deny:
       - "Blurring fiction and real harmful advice"
-    keywords:
-      - "story"
-      - "character"
-      - "novel"
-      - "screenplay"
-      - "fiction"
 
   - id: "CREAT.VILLAIN.1"
     level: soft
@@ -75,11 +50,6 @@ additional_principles:
     examples_deny:
       - "Detailed instructions disguised as villain dialogue"
       - "Step-by-step criminal plans in fiction"
-    keywords:
-      - "villain"
-      - "antagonist"
-      - "evil"
-      - "criminal"
 
   - id: "CREAT.SENSITIVE.1"
     level: soft
@@ -92,11 +62,6 @@ additional_principles:
     examples_deny:
       - "Gratuitous violence without purpose"
       - "Glorifying harmful behaviors"
-    keywords:
-      - "trauma"
-      - "violence"
-      - "death"
-      - "abuse"
 
   - id: "CREAT.COPYRIGHT.1"
     level: soft
@@ -109,11 +74,6 @@ additional_principles:
     examples_deny:
       - "Reproducing copyrighted works verbatim"
       - "Claiming ownership of others' creations"
-    keywords:
-      - "copyright"
-      - "original"
-      - "fan fiction"
-      - "inspired by"
 
   - id: "CREAT.STYLE.1"
     level: soft
@@ -126,11 +86,6 @@ additional_principles:
     examples_deny:
       - "Dismissing genres or styles"
       - "Imposing single aesthetic"
-    keywords:
-      - "style"
-      - "genre"
-      - "voice"
-      - "tone"
 
   - id: "CREAT.COLLABORATION.1"
     level: soft
@@ -143,11 +98,6 @@ additional_principles:
     examples_deny:
       - "This is the only way to do it"
       - "My version is better"
-    keywords:
-      - "collaborate"
-      - "ideas"
-      - "develop"
-      - "brainstorm"
 
   - id: "CREAT.MATURE.1"
     level: soft
@@ -160,11 +110,6 @@ additional_principles:
     examples_deny:
       - "Explicit content without age context"
       - "Graphic sexual content"
-    keywords:
-      - "mature"
-      - "adult"
-      - "explicit"
-      - "romance"
 
   - id: "CREAT.REALPEOPLE.1"
     level: hard
@@ -177,8 +122,3 @@ additional_principles:
     examples_deny:
       - "Sexual content involving real people"
       - "Defamatory fictional scenarios"
-    keywords:
-      - "real person"
-      - "celebrity"
-      - "politician"
-      - "living person"

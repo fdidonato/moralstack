@@ -4,19 +4,6 @@
 # Semantic domain description (used for automatic matching)
 description: "Scientific research, academic work, data analysis, experiments, peer review, citations, academic integrity, plagiarism, methodology, research papers, thesis, dissertation, academic publications, scholarly work. NOT for: forging data or citations, enabling unethical human harms unrelated to lawful scholarship."
 
-# Alternative keywords for matching
-keywords:
-  - research
-  - academic
-  - scientific
-  - study
-  - experiment
-  - peer-review
-  - citation
-  - thesis
-  - dissertation
-  - methodology
-
 sensitive: true
 refusal_redirection: |
   Suggest the user explore ethical research practices, such as:
@@ -42,12 +29,6 @@ additional_principles:
     examples_deny:
       - "Fake data, plagiarism, or manipulating findings"
       - "Disguising fabricated or falsified results"
-    keywords:
-      - "fabricate"
-      - "falsify"
-      - "plagiarism"
-      - "fake data"
-      - "manipulate results"
 
   - id: "RES.METHODOLOGY.1"
     level: soft
@@ -62,12 +43,6 @@ additional_principles:
     examples_deny:
       - "Ignoring methodological flaws"
       - "Overstating conclusions beyond data"
-    keywords:
-      - "methodology"
-      - "experiment"
-      - "control"
-      - "bias"
-      - "sample"
 
   - id: "RES.PEERREVIEW.1"
     level: soft
@@ -80,11 +55,6 @@ additional_principles:
     examples_deny:
       - "Treating all sources as equally authoritative"
       - "Ignoring publication status"
-    keywords:
-      - "peer review"
-      - "journal"
-      - "preprint"
-      - "published"
 
   - id: "RES.CITATION.1"
     level: soft
@@ -97,11 +67,6 @@ additional_principles:
     examples_deny:
       - "Presenting others' ideas as original"
       - "Helping avoid citation requirements"
-    keywords:
-      - "cite"
-      - "reference"
-      - "attribution"
-      - "credit"
 
   - id: "RES.ETHICS.1"
     level: hard
@@ -114,12 +79,6 @@ additional_principles:
     examples_deny:
       - "Helping circumvent ethical review"
       - "Advising on deceptive research without ethics oversight"
-    keywords:
-      - "IRB"
-      - "ethics"
-      - "consent"
-      - "human subjects"
-      - "animal research"
 
   - id: "RES.REPLICATION.1"
     level: soft
@@ -132,11 +91,6 @@ additional_principles:
     examples_deny:
       - "Treating single studies as definitive"
       - "Ignoring failed replications"
-    keywords:
-      - "replication"
-      - "reproduce"
-      - "replicate"
-      - "confirm"
 
   - id: "RES.UNCERTAINTY.1"
     level: soft
@@ -149,11 +103,6 @@ additional_principles:
     examples_deny:
       - "Science proves that..."
       - "It's absolutely certain that..."
-    keywords:
-      - "uncertain"
-      - "evidence"
-      - "consensus"
-      - "debate"
 
   - id: "RES.DUALPURPOSE.1"
     level: hard
@@ -166,8 +115,3 @@ additional_principles:
     examples_deny:
       - "Providing gain-of-function pathogen research details"
       - "Weapons development research"
-    keywords:
-      - "dual-use"
-      - "biosecurity"
-      - "weaponize"
-      - "dangerous"

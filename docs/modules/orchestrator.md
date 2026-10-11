@@ -298,6 +298,12 @@ concurrent requests on real threads (`server/proxy.py`, `run_in_threadpool`). It
   `fork()`, and is **explicitly merged back** in `_run_full_parallel_evaluation` — where the critic
   runs on a fork and only `critiques`/`errors` were merged. The `critic_gated` strategy runs the
   critique on the main state before forking, so it needs no merge.
+- **Prefilter cache fields in the `REQUEST_ANALYSIS_CONTEXT` trace** (`deliberation_runner.py`,
+  stage payload): `prefilter_cache_status`, `prefilter_cache_reason`, `prefilter_descriptions_changed`
+  and `prefilter_descriptions_fingerprint_prefix`, copied from the retrieval `debug_info`. Until
+  2026-10-11 the last two were `prefilter_keywords_changed` / `prefilter_keywords_fingerprint_prefix`
+  and tracked the (now removed) overlay keywords; older trace rows keep those names and the UI simply
+  shows no invalidation badge for them.
 
 Before this became request-scoped, a slow request could make a concurrent one skip its critique
 (the module that detects hard violations) by leaving a stale start time on the shared instance, and

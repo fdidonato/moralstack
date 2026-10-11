@@ -832,7 +832,9 @@ class TestEdgeCases:
 def _fake_call_openai_capturing(captured: dict, return_domains: list[str] | None = None):
     """Patch DomainPrefilter._call_openai to capture (prompt, system_prompt) and stub a response."""
 
-    def _fake(self, prompt: str, *, system_prompt: str, response_format=None, retrieval_phase: str = "risk_routing"):  # noqa: ARG001
+    def _fake(
+        self, prompt: str, *, system_prompt: str, response_format=None, retrieval_phase: str = "risk_routing"
+    ):  # noqa: ARG001
         captured.setdefault("system_prompts", []).append(system_prompt)
         captured.setdefault("prompts", []).append(prompt)
         captured.setdefault("response_formats", []).append(response_format)
@@ -844,7 +846,6 @@ def _fake_call_openai_capturing(captured: dict, return_domains: list[str] | None
 class TestDomainPrefilterStaticPrefixStability:
     def test_system_prompt_byte_identical_across_different_queries_same_config(self):
         pf = DomainPrefilter(
-            domain_keywords={"core": ["safety"], "legal": ["legal", "lawyer"]},
             max_domains=3,
         )
         captured: dict = {}
@@ -860,7 +861,6 @@ class TestDomainPrefilterStaticPrefixStability:
 
     def test_user_message_is_query_only_no_static_text_leak(self):
         pf = DomainPrefilter(
-            domain_keywords={"core": ["safety"], "medical": ["medicine"]},
             max_domains=3,
         )
         captured: dict = {}
@@ -882,13 +882,13 @@ class TestDomainPrefilterStaticPrefixStability:
             assert marker not in prompt, f"{marker!r} leaked into user prompt: {prompt}"
             assert marker in system_prompt, f"{marker!r} missing from system prompt"
 
-    def test_system_prompt_changes_when_domain_keywords_change_and_cache_cleared_together(self):
-        pf = DomainPrefilter(domain_keywords={"core": ["safety"], "legal": ["legal"]}, max_domains=3)
+    def test_system_prompt_changes_when_domain_descriptions_change_and_cache_cleared_together(self):
+        pf = DomainPrefilter(max_domains=3, domain_descriptions={"legal": "Law"})
         captured: dict = {}
         with _fake_call_openai_capturing(captured):
             pf.filter_domains("query about legal contracts", ["core", "legal"])
 
-        assert pf.set_domain_keywords({"core": ["safety"], "legal": ["law", "contract"]}) is True
+        assert pf.set_domain_descriptions({"legal": "Law and contracts"}) is True
         assert len(pf._cache) == 0
 
         with _fake_call_openai_capturing(captured):
@@ -897,12 +897,12 @@ class TestDomainPrefilterStaticPrefixStability:
         assert captured["system_prompts"][0] != captured["system_prompts"][1]
 
     def test_system_prompt_unchanged_when_config_unchanged_via_idempotent_set(self):
-        pf = DomainPrefilter(domain_keywords={"core": ["safety"], "legal": ["legal", "lawyer"]}, max_domains=3)
+        pf = DomainPrefilter(max_domains=3, domain_descriptions={"core": "Universal", "legal": "Law"})
         captured: dict = {}
         with _fake_call_openai_capturing(captured):
             pf.filter_domains("query about legal contracts", ["core", "legal"])
 
-        assert pf.set_domain_keywords({"legal": ["lawyer", "legal"], "core": ["safety"]}) is False
+        assert pf.set_domain_descriptions({"legal": "Law", "core": "Universal"}) is False
 
         # Same-map idempotent set does NOT clear the local cache, so a repeat of
         # the same query would hit-cache and never reach _call_openai. Use a
@@ -914,7 +914,7 @@ class TestDomainPrefilterStaticPrefixStability:
         assert captured["system_prompts"][0] == captured["system_prompts"][1]
 
     def test_no_dangling_placeholders_or_double_braces(self):
-        pf = DomainPrefilter(domain_keywords={"core": ["safety"], "legal": ["legal"]}, max_domains=3)
+        pf = DomainPrefilter(max_domains=3)
         captured: dict = {}
         with _fake_call_openai_capturing(captured):
             pf.filter_domains("query about legal contracts", ["core", "legal"])
@@ -929,7 +929,7 @@ class TestDomainPrefilterStaticPrefixStability:
         assert "{{" not in prompt and "}}" not in prompt
 
     def test_static_block_phrases_preserved_verbatim(self):
-        pf = DomainPrefilter(domain_keywords={"core": ["safety"], "legal": ["legal"]}, max_domains=3)
+        pf = DomainPrefilter(max_domains=3)
         captured: dict = {}
         with _fake_call_openai_capturing(captured):
             pf.filter_domains("query about legal contracts", ["core", "legal"])
@@ -953,7 +953,7 @@ class TestDomainPrefilterStaticPrefixStability:
     def test_core_never_in_available_domains_section(self):
         """Invariant lock (PROJECT_SPEC 5.5, P0): core is retrieval-only and must
         never appear as an overlay entry inside the AVAILABLE DOMAINS section."""
-        pf = DomainPrefilter(domain_keywords={"core": ["safety"], "legal": ["legal"]}, max_domains=3)
+        pf = DomainPrefilter(max_domains=3, domain_descriptions={"core": "Universal", "legal": "Law"})
         captured: dict = {}
         with _fake_call_openai_capturing(captured):
             pf.filter_domains("query about legal contracts", ["core", "legal"])

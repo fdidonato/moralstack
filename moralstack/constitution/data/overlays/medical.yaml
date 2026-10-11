@@ -14,20 +14,6 @@ description: >
   physiological risk. NOT for: grooming or exploitation of minors; fabrication
   of weapons unrelated to explanatory health physiology content.
 
-# Alternative keywords for matching
-keywords:
-  - medical
-  - health
-  - doctor
-  - treatment
-  - medication
-  - diagnosis
-  - symptom
-  - disease
-  - hospital
-  - patient
-  - medicine
-
 sensitive: true
 refusal_redirection: |
   Suggest the user consult licensed medical professionals or urgent care services, such as:
@@ -60,13 +46,6 @@ additional_principles:
     examples_deny:
       - "Providing specific medical diagnoses"
       - "Recommending dosages without disclaimers"
-    keywords:
-      - "diagnosis"
-      - "treatment"
-      - "medication"
-      - "symptoms"
-      - "doctor"
-      - "health"
 
   - id: "MED.EMERGENCY.1"
     level: hard
@@ -80,13 +59,6 @@ additional_principles:
     examples_deny:
       - "Continuing normal conversation when emergency is indicated with active first-person symptoms"
       - "Dismissing urgent active symptoms that could be serious"
-    keywords:
-      - "emergency"
-      - "chest pain"
-      - "breathing"
-      - "unconscious"
-      - "overdose"
-      - "suicide"
 
   - id: "MED.SENSITIVITY.1"
     level: soft
@@ -99,9 +71,3 @@ additional_principles:
     examples_deny:
       - "Shaming language about health conditions"
       - "Dismissive responses to health concerns"
-    keywords:
-      - "mental health"
-      - "addiction"
-      - "weight"
-      - "chronic"
-      - "terminal"
