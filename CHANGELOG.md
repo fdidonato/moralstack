@@ -261,6 +261,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **No-LLM conservative mode of the risk estimator (BREAKING).** This supersedes the sentence
+  "The no-LLM conservative mode (`policy=None`, `create_conservative_estimator`,
+  `MORALSTACK_RISK_FALLBACK_*`) is kept" in the "Single risk-estimator residues" entry below,
+  which is left as written. No production code ever built an estimator without a policy.
+  - **BREAKING:** `create_conservative_estimator` is removed from `moralstack.models.risk` and
+    `moralstack.models.risk.estimator` (importing it raises `ImportError`). Migration: construct
+    `LLMBasedRiskEstimator(policy, config=...)` with a real policy.
+  - **BREAKING:** `LLMBasedRiskEstimator._fallback_estimate` and the `NO_LLM_AVAILABLE` marker
+    are removed. With `policy=None`, `estimate()` now returns `RiskEstimation.from_error("policy
+    not set")`: score 0.6, confidence 0.4, `SYSTEM.REQUIRES_DELIBERATION`, action DELIBERATE (it
+    was 0.5 / 0.3 / `NO_LLM_AVAILABLE` / DELIBERATE). It logs a WARNING and emits no `llm_calls`
+    row. It never returns ALLOW. Constructing the estimator with `policy=None` stays legal.
+  - **BREAKING:** the `RiskEstimatorConfig` fields `fallback_risk_score` and `fallback_confidence`
+    are removed (passing them raises `TypeError`).
+  - **BREAKING:** the env vars `MORALSTACK_RISK_FALLBACK_SCORE` and
+    `MORALSTACK_RISK_FALLBACK_CONFIDENCE` are ignored (no code reads them) and were dropped from the
+    `load_env` empty-value cleanup list. Delete
+    them from your own env file; `.env.minimal` and `.env.template` no longer list them.
+
 - **Dead remains of the risk estimator (BREAKING for direct importers; the live path is
   unchanged).** Nothing in the repository used any of these; every mini-estimator already
   passed an explicit strict `json_schema`.

@@ -22,8 +22,6 @@ get_risk_env_str = get_env_str
 ENV_MAX_RETRIES = "MORALSTACK_RISK_MAX_RETRIES"
 ENV_MAX_TOKENS = "MORALSTACK_RISK_MAX_TOKENS"
 ENV_TEMPERATURE = "MORALSTACK_RISK_TEMPERATURE"
-ENV_FALLBACK_SCORE = "MORALSTACK_RISK_FALLBACK_SCORE"
-ENV_FALLBACK_CONFIDENCE = "MORALSTACK_RISK_FALLBACK_CONFIDENCE"
 ENV_TOP_P = "MORALSTACK_RISK_TOP_P"
 ENV_TOP_K = "MORALSTACK_RISK_TOP_K"
 ENV_RULE_PREVIEW_LEN = "MORALSTACK_RISK_RULE_PREVIEW_LEN"
@@ -69,8 +67,6 @@ def load_risk_estimator_config_from_env() -> RiskEstimatorConfig:
     max_retries = get_env_int(ENV_MAX_RETRIES, 2, 1)
     max_tokens = get_env_int(ENV_MAX_TOKENS, 512, 1)
     temperature = get_env_float(ENV_TEMPERATURE, 0.1, 0.0, 2.0)
-    fallback_score = get_env_float(ENV_FALLBACK_SCORE, 0.5, 0.0, 1.0)
-    fallback_confidence = get_env_float(ENV_FALLBACK_CONFIDENCE, 0.3, 0.0, 1.0)
     mini_base = resolve_risk_base_model_from_env()
     intent_model = resolve_parallel_mini_model_slot(ENV_INTENT_MODEL, mini_base)
     signals_model = resolve_parallel_mini_model_slot(ENV_SIGNALS_MODEL, mini_base)
@@ -79,8 +75,6 @@ def load_risk_estimator_config_from_env() -> RiskEstimatorConfig:
         max_retries=max_retries,
         max_tokens=max_tokens,
         temperature=temperature,
-        fallback_risk_score=fallback_score,
-        fallback_confidence=fallback_confidence,
         intent_model=intent_model,
         signals_model=signals_model,
         operational_model=operational_model,

@@ -59,10 +59,10 @@ class RiskEstimation:
     intent_operational: bool = False  # true=HOW-TO/steps; false=informational/descriptive
     requested_instructions: bool = False
     intent_to_harm: bool = False
-    used_fallback_parse: bool = False  # True when using fallback/default (no LLM)
+    used_fallback_parse: bool = False  # True for from_error / parse-fallback estimates
     detected_language: str = ""  # ISO 639-1 (en, it, es) from user request; for refusal
     detected_domain: str | None = None  # Domain from _detect_domain() in risk estimator
-    estimation_mode: str = ""  # "parallel" | "" (fallback/no LLM)
+    estimation_mode: str = ""  # "parallel" | "" (fallback/error estimates)
 
     # ── Semantic flags (LLM-judged, language-agnostic) ─────────────────────
     # Surfaced from the intent estimator's EXECUTION-OF-STATED-INTENT framing
@@ -168,10 +168,6 @@ class RiskEstimatorConfig:
     max_retries: int = 2
     max_tokens: int = 512  # Token per risposta del giudice (512 per evitare troncamento JSON)
     temperature: float = 0.1  # Bassa per decisioni consistenti
-
-    # Fallback quando LLM non disponibile
-    fallback_risk_score: float = 0.5  # Score conservativo
-    fallback_confidence: float = 0.3  # Bassa confidenza senza LLM
 
     # Focused mini-estimator strategy (3 focused LLM calls).
     intent_model: str = "gpt-4o"

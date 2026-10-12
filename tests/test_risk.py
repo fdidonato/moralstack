@@ -19,7 +19,6 @@ from moralstack.models.risk import (
     RiskEstimatorConfig,
     RiskParseResult,
     RiskPolicyAction,
-    create_conservative_estimator,
     extract_json,
 )
 from moralstack.models.risk.calibration import parse_risk_dict
@@ -59,8 +58,8 @@ def _risk_test_env():
 
 @pytest.fixture(scope="module")
 def shared_conservative_estimator():
-    """Shared conservative estimator (no LLM) for tests that don't mutate it."""
-    return create_conservative_estimator(config=_DEFAULT_TEST_CONFIG)
+    """Shared policy-less estimator (fails closed via from_error) for tests that don't mutate it."""
+    return LLMBasedRiskEstimator(policy=None, config=_DEFAULT_TEST_CONFIG)
 
 
 @pytest.fixture(scope="module")
@@ -591,7 +590,7 @@ Done."""
 
 
 # =============================================================================
-# Test Conservative Estimator (No LLM - Fallback Mode)
+# Test policy-less estimator (fails closed via RiskEstimation.from_error)
 # =============================================================================
 
 
@@ -603,11 +602,13 @@ class TestConservativeEstimator:
     """
 
     def test_any_request_requires_deliberation(self, shared_conservative_estimator):
-        """Senza LLM, qualsiasi richiesta richiede deliberazione."""
+        """Senza LLM, qualsiasi richiesta richiede deliberazione (from_error)."""
         estimation = shared_conservative_estimator.estimate("What is the capital of France?")
-        # Fallback conservativo
-        assert estimation.score >= 0.3  # Sopra la soglia di deliberazione
-        assert "NO_LLM_AVAILABLE" in estimation.semantic_signals
+        assert estimation.score == 0.6
+        assert estimation.confidence == 0.4
+        assert estimation.risk_policy_action == RiskPolicyAction.DELIBERATE
+        assert "SYSTEM.REQUIRES_DELIBERATION" in estimation.semantic_signals
+        assert "policy not set" in estimation.rationale
 
     def test_empty_prompt_is_benign(self, shared_conservative_estimator):
         """Prompt vuoto è sempre benigno."""
@@ -759,19 +760,31 @@ class TestErrorHandling:
 class TestConfiguration:
     """Test per configurazione del Giudice Semantico."""
 
-    def test_fallback_configuration(self):
-        """Configurazione fallback funziona correttamente."""
-        config = RiskEstimatorConfig(
-            fallback_risk_score=0.6,
-            fallback_confidence=0.2,
-        )
-        estimator = LLMBasedRiskEstimator(policy=None, config=config)
+    @pytest.mark.parametrize("prompt", ["What is the capital of France?", "Any request", "Come posso aiutare un amico?"])
+    def test_policy_none_estimate_never_returns_allow(self, prompt):
+        """policy=None fails closed: never ALLOW, always above the deliberation threshold."""
+        estimation = LLMBasedRiskEstimator(policy=None, config=_DEFAULT_TEST_CONFIG).estimate(prompt)
+        assert estimation.risk_policy_action != RiskPolicyAction.ALLOW
+        assert estimation.score >= 0.3
 
-        estimation = estimator.estimate("Any request")
+    @pytest.mark.parametrize("kwarg", ["fallback_risk_score", "fallback_confidence"])
+    def test_risk_estimator_config_rejects_removed_fallback_fields(self, kwarg):
+        """The no-LLM fallback fields were removed: passing them is a TypeError."""
+        with pytest.raises(TypeError):
+            RiskEstimatorConfig(**{kwarg: 0.5})
 
-        # Usa i valori di fallback configurati
-        assert estimation.score == 0.6
-        assert estimation.confidence == 0.2
+    def test_create_conservative_estimator_not_exported(self):
+        """The no-LLM factory is gone from the estimator module, the package and __all__."""
+        import moralstack.models.risk as risk_pkg
+        import moralstack.models.risk.estimator as estimator_module
+
+        assert not hasattr(estimator_module, "create_conservative_estimator")
+        assert not hasattr(risk_pkg, "create_conservative_estimator")
+        assert "create_conservative_estimator" not in risk_pkg.__all__
+
+    def test_estimator_has_no_fallback_estimate(self):
+        """The policy-is-None short circuit was removed; fail-closed goes through from_error."""
+        assert not hasattr(LLMBasedRiskEstimator, "_fallback_estimate")
 
 
 # =============================================================================

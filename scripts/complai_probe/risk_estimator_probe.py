@@ -70,7 +70,7 @@ def _load_estimator_and_orchestrator(want_full: bool):
 
     if estimator is None or getattr(estimator, "policy", "missing") is None:
         sys.exit(
-            "RiskEstimator has no LLM policy: it would use the conservative fallback. "
+            "RiskEstimator has no LLM policy: every estimate would fail closed via from_error. "
             "Configure OPENAI_API_KEY / OPENAI_MODEL and retry."
         )
     return estimator, orchestrator

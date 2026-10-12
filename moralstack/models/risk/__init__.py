@@ -21,7 +21,7 @@ from .categories import (
     RiskCategory,
     RiskPolicyAction,
 )
-from .estimator import LLMBasedRiskEstimator, create_conservative_estimator
+from .estimator import LLMBasedRiskEstimator
 from .parse_result import RiskParseResult
 from .schema import RiskEstimation, RiskEstimatorConfig
 
@@ -41,7 +41,6 @@ __all__ = [
     "coerce_risk_policy_action",
     # Estimator
     "LLMBasedRiskEstimator",
-    "create_conservative_estimator",
     # Utility re-exports (per test compatibility)
     "extract_json",
     "JSONParseError",

@@ -276,8 +276,8 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   per-request accumulator (`observability/service.py`) skips them, so
   `request_token_usage` and the proxy `usage` field omit them — a known defect, see
   `docs/CODEBASE_FACTS.md`. `estimate(...)` is the only estimation entry (no factory, no
-  threshold or categorize helpers); `policy=None` uses the conservative no-LLM fallback
-  (`create_conservative_estimator`), and routing thresholds live in the orchestrator
+  threshold or categorize helpers); `policy=None` fails closed through
+  `RiskEstimation.from_error` (no no-LLM mode, no factory), and routing thresholds live in the orchestrator
   config (`MORALSTACK_ORCHESTRATOR_RISK_*`), not in `RiskEstimatorConfig`.
 - **Unified single-wave constitution retrieval** (unify-constitution-retrieval-
   single-pass): `_get_principles_context` is the ONE `get_relevant_principles`

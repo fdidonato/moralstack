@@ -278,6 +278,9 @@ class LLMBasedRiskEstimator:
 
         # Il giudice valuta l'intento (aiutare) non le parole ("depresso")
         print(risk.rationale)  # Spiega il ragionamento semantico
+
+        # Without a policy (policy=None) estimate() fails closed:
+        # RiskEstimation.from_error, hence DELIBERATE.
     """
 
     def __init__(
@@ -291,7 +294,8 @@ class LLMBasedRiskEstimator:
 
         Args:
             policy: Policy LLM per l'analisi semantica.
-                   Se None, usa fallback conservativo (richiede sempre deliberazione).
+                   If None, ``estimate()`` fails closed through
+                   ``RiskEstimation.from_error`` (DELIBERATE).
             config: Configurazione (opzionale).
             constitution_store: Constitution Store opzionale per arricchire l'analisi.
         """
@@ -372,10 +376,8 @@ class LLMBasedRiskEstimator:
         if not prompt or not prompt.strip():
             return RiskEstimation.benign(confidence=1.0, rationale="Empty request - no content to analyze")
 
-        # Se non c'è LLM, usa fallback conservativo
-        if self.policy is None:
-            return self._fallback_estimate(prompt)
-
+        # With policy=None this fails closed: _parallel_mini_analysis raises and
+        # _semantic_analysis maps it to RiskEstimation.from_error (DELIBERATE).
         # Analisi semantica via LLM (unica strategia)
         return self._semantic_analysis(
             prompt,
@@ -383,22 +385,6 @@ class LLMBasedRiskEstimator:
             conversation_history=conversation_history,
             retrieval_query=retrieval_query,
             retrieval_top_k=retrieval_top_k,
-        )
-
-    def _fallback_estimate(self, prompt: str) -> RiskEstimation:
-        """
-        Fallback conservativo quando LLM non è disponibile.
-
-        Senza capacità di analisi semantica, il sistema assume che
-        ogni richiesta richieda deliberazione per sicurezza.
-        """
-        return RiskEstimation(
-            score=self.config.fallback_risk_score,
-            confidence=self.config.fallback_confidence,
-            risk_category=RiskCategory.SENSITIVE,
-            semantic_signals=["NO_LLM_AVAILABLE"],
-            rationale="Semantic analysis unavailable (no LLM). " "Conservatively requiring deliberation for safety.",
-            used_fallback_parse=True,
         )
 
     def _build_generation_config(self, response_format: Any) -> Any:
@@ -1151,31 +1137,3 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
         except Exception as e:
             _RISK_LOG.warning("parallel mini-analysis failed, using safe fallback estimate: %s", e)
             return RiskEstimation.from_error(str(e))
-
-
-# =============================================================================
-# Factory Functions
-# =============================================================================
-
-
-def create_conservative_estimator(
-    config: RiskEstimatorConfig | None = None,
-) -> LLMBasedRiskEstimator:
-    """
-    Crea un estimator conservativo senza LLM.
-
-    Utile per testing o quando non si vuole/può usare un LLM.
-    Richiede sempre deliberazione per sicurezza.
-
-    Args:
-        config: Config esplicita (opzionale); se None, carica da env.
-
-    Returns:
-        LLMBasedRiskEstimator in modalità conservativa
-    """
-    if config is None:
-        config = load_risk_estimator_config_from_env()
-    return LLMBasedRiskEstimator(
-        policy=None,
-        config=config,
-    )

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import moralstack.models.risk.estimator as risk_estimator_module
@@ -30,7 +31,7 @@ from moralstack.utils.env_helpers import get_env_bool
 # Generic bool-parsing key for get_env_bool (no risk-estimator var is boolean any more).
 _BOOL_KEY = "MORALSTACK_TEST_BOOL_FLAG"
 
-# Env vars of the retired single-estimator configuration: nothing reads them any more.
+# Env vars of the retired single-estimator and no-LLM fallback configuration: nothing reads them any more.
 _REMOVED_ENV_VARS = {
     "MORALSTACK_RISK_LOW_THRESHOLD": "0.9",
     "MORALSTACK_RISK_MEDIUM_THRESHOLD": "0.95",
@@ -38,6 +39,8 @@ _REMOVED_ENV_VARS = {
     "MORALSTACK_RISK_CATEGORIZE_BENIGN_THRESHOLD": "0.9",
     "MORALSTACK_RISK_CATEGORIZE_SENSITIVE_THRESHOLD": "0.9",
     "MORALSTACK_RISK_CATEGORIZE_CLEARLY_HARMFUL_THRESHOLD": "0.9",
+    "MORALSTACK_RISK_FALLBACK_SCORE": "0.99",
+    "MORALSTACK_RISK_FALLBACK_CONFIDENCE": "0.99",
 }
 
 _BENIGN_MINI_JSON = json.dumps(
@@ -194,16 +197,12 @@ class TestLoadRiskEstimatorConfigFromEnv:
             ENV_MAX_RETRIES,
             "MORALSTACK_RISK_MAX_TOKENS",
             "MORALSTACK_RISK_TEMPERATURE",
-            "MORALSTACK_RISK_FALLBACK_SCORE",
-            "MORALSTACK_RISK_FALLBACK_CONFIDENCE",
         ):
             monkeypatch.delenv(key, raising=False)
         config = load_risk_estimator_config_from_env()
         assert config.max_retries == 2
         assert config.max_tokens == 512
         assert config.temperature == 0.1
-        assert config.fallback_risk_score == 0.5
-        assert config.fallback_confidence == 0.3
 
     def test_removed_single_estimator_env_vars_are_ignored(self, monkeypatch):
         """The retired routing/categorize/deliberation vars are read by no code: config and estimates are unchanged."""
@@ -285,3 +284,12 @@ class TestLoadRiskEstimatorConfigFromEnv:
         assert cfg.intent_model == "risk-dedicated"
         assert cfg.signals_model == "risk-dedicated"
         assert cfg.operational_model == "risk-dedicated"
+
+
+def test_env_templates_have_no_removed_risk_vars():
+    """The shipped templates no longer advertise the removed no-LLM fallback vars (templates only)."""
+    root = Path(__file__).resolve().parent.parent
+    for name in (".env.template", ".env.minimal"):
+        text = (root / name).read_text(encoding="utf-8")
+        assert "MORALSTACK_RISK_FALLBACK_SCORE" not in text, name
+        assert "MORALSTACK_RISK_FALLBACK_CONFIDENCE" not in text, name

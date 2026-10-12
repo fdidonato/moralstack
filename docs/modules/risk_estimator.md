@@ -424,26 +424,16 @@ relying on the other two estimators to compensate.
 
 ### Fallback when LLM is unavailable
 
-#### MORALSTACK_RISK_FALLBACK_SCORE
+There is no configurable fallback and no no-LLM mode. When the estimator has no policy (`policy=None`), or exhausted
+retries / any mini-analysis error occur, `estimate()` fails closed through `RiskEstimation.from_error` (score 0.6,
+confidence 0.4, `SYSTEM.REQUIRES_DELIBERATION`, action DELIBERATE; `schema.py:from_error`). With `policy=None` the
+cause is `RiskEstimationError("policy not set")`, caught in `_semantic_analysis`, which logs a WARNING and emits no
+`llm_calls` row. Constructing the estimator with `policy=None` remains legal.
 
-- **Default**: `0.5`
-- **Tipo**: float (0–1)
-- **Significato**: Risk score used only in the no-LLM conservative mode (`policy=None`, e.g.
-  `create_conservative_estimator()`). Exhausted retries do not use it: they return `RiskEstimation.from_error`
-  (score 0.6, confidence 0.4, `SYSTEM.REQUIRES_DELIBERATION`; `schema.py:from_error`). Drives path and
-  deliberation requirements.
-- **Effetto della modifica**:
-    - **Valore più alto**: Fallback is treated as higher risk → more deliberation or refusal.
-    - **Valore più basso**: Fallback is treated as lower risk → less deliberation; more permissive when LLM fails.
-
-#### MORALSTACK_RISK_FALLBACK_CONFIDENCE
-
-- **Default**: `0.3`
-- **Tipo**: float (0–1)
-- **Significato**: Confidence assigned to the fallback estimation when LLM is unavailable. Low value signals
-  uncertainty.
-- **Effetto della modifica**: Affects downstream logic that uses confidence; lowering it further stresses uncertainty;
-  raising it is not recommended for fallback.
+> **Removed (breaking).** `create_conservative_estimator`, the `RiskEstimatorConfig` fields
+> `fallback_risk_score` / `fallback_confidence` and the env vars `MORALSTACK_RISK_FALLBACK_SCORE` /
+> `MORALSTACK_RISK_FALLBACK_CONFIDENCE` no longer exist. If the env vars are still set in your environment they are
+> silently ignored.
 
 ### LLM generation and constitution context
 
@@ -607,7 +597,7 @@ on `RiskEstimation` / `RiskParseResult` mirrors the LLM’s q13 answer for downs
 **Intent falsification flags** (booleans on `RiskEstimation`, not the string list): **`stated_personal_bias`**,
 **`seeks_norm_circumvention`** — from the intent estimator; used with coherence / falsification rules in `prompts.py`.
 
-**System markers** (when applicable): e.g. `SYSTEM.REQUIRES_DELIBERATION`, `NO_LLM_AVAILABLE`.
+**System markers** (when applicable): e.g. `SYSTEM.REQUIRES_DELIBERATION`.
 
 ---
 
