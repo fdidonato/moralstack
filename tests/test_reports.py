@@ -224,6 +224,112 @@ class TestRequestReportFromDbFastPathConverged:
         assert report.total_cycles == 0
 
 
+class TestRiskRationaleFromDb:
+    """Characterization pins (risk-estimator-dual-config C0) for the risk rationale built from
+    ``risk_estimator`` rows by ``request_report_from_db`` and ``request_report_from_cli``."""
+
+    @staticmethod
+    def _report_for_rows(tmp_path, monkeypatch, rows):
+        import json
+
+        from moralstack.observability import obs
+        from moralstack.observability.emit_helpers import persist_decision_trace, persist_llm_call
+        from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
+        from moralstack.reports.model import request_report_from_db
+
+        db_path = str(tmp_path / "report_rationale.db")
+        monkeypatch.setenv("MORALSTACK_DB_PATH", db_path)
+        monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "db_only")
+        assert init_db(db_path)
+        run_id, request_id = "run-rationale", "req-rationale"
+        assert create_run(run_id, run_type="test", meta={})
+        assert upsert_request(run_id, request_id, prompt="Hello", domain="general")
+        trace_payload = {"path": "FAST_PATH", "total_cycles": 0, "final_action": "NORMAL_COMPLETE", "risk_score": 0.2}
+        assert persist_decision_trace(
+            run_id=run_id, request_id=request_id, stage="FINAL", sequence=2, trace_json=json.dumps(trace_payload)
+        )
+        for started_at, (action, raw) in enumerate(rows, start=1000):
+            assert persist_llm_call(
+                run_id=run_id,
+                request_id=request_id,
+                cycle=0,
+                phase="risk_estimation",
+                module="risk_estimator",
+                action=action,
+                model="test",
+                started_at=started_at,
+                duration_ms=1.0,
+                prompt="p",
+                system_prompt="s",
+                raw_response=raw,
+                sequence_in_cycle=None,
+            )
+        obs.flush(timeout=10.0)
+        report = request_report_from_db(run_id, request_id)
+        assert report is not None
+        return report
+
+    def test_intent_operational_and_guard_rows_build_the_merged_rationale(self, tmp_path, monkeypatch):
+        """Stays green through every phase: the three live row kinds feed the rationale."""
+        import json
+
+        report = self._report_for_rows(
+            tmp_path,
+            monkeypatch,
+            [
+                ("estimate_intent", json.dumps({"rationale": "asks for a recipe"})),
+                ("estimate_operational", json.dumps({"rationale": "low actionability"})),
+                ("calibration_guard", json.dumps({"rationale": "capped to 0.45"})),
+            ],
+        )
+
+        assert report.risk_rationale == "[intent] asks for a recipe | [op_risk] low actionability | ⚡ capped to 0.45"
+        assert report.calibration_guard_info == "capped to 0.45"
+
+    def test_legacy_estimate_row_still_feeds_the_rationale_today(self, tmp_path, monkeypatch):
+        """Flips in C1: the legacy single-estimator ``estimate`` row stops feeding the rationale (-> "")."""
+        import json
+
+        report = self._report_for_rows(
+            tmp_path, monkeypatch, [("estimate", json.dumps({"rationale": "legacy single estimate"}))]
+        )
+
+        assert report.risk_rationale == "legacy single estimate"
+
+    def test_cli_text_risk_row_yields_no_rationale(self):
+        """Stays green: the only CLI ``risk_estimator`` log_call writes non-JSON text ("Risk: ...")."""
+        from types import SimpleNamespace
+
+        from moralstack.cli.models import DeliberationTrace
+
+        trace = DeliberationTrace(
+            request_id="cli-risk-row",
+            prompt="Hi",
+            path="fast",
+            risk_score=0.3,
+            risk_category="",
+            response_type="NORMAL_COMPLETE",
+            total_cycles=1,
+            converged=True,
+            phases=[],
+        )
+        call_logger = SimpleNamespace(
+            calls=[
+                {
+                    "module": "risk_estimator",
+                    "action": "estimate",
+                    "prompt": "Hi",
+                    "response": "Risk: 0.30, Category: sensitive",
+                    "duration_ms": 1.0,
+                }
+            ]
+        )
+
+        report = request_report_from_cli(trace, call_logger, None, "Hi")
+
+        assert report.risk_rationale == ""
+
+
 class TestGetFinalResponseText:
     """Test get_final_response_text REFUSE vs NORMAL coherence (EVIDENZA-4)."""
 
