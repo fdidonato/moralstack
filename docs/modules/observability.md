@@ -201,6 +201,9 @@ models     = rs.get_models_used_for_run(run_id)
 
 - The rollup includes only **effective** `llm_calls` rows (`call_outcome` not in `skipped`, `cancelled`, `discarded`).
 - This prevents report headers (for example, "Models used") from showing models that were configured but never actually consumed in the selected run path.
+- `risk_estimator` rows are mapped by exact `action`: `estimate_intent` / `estimate_signals` / `estimate_operational` feed `risk_intent` / `risk_signals` / `risk_operational` (first row wins, ordered by `started_at`). Every `risk_estimator` row except `calibration_guard` also feeds the legacy `risk` key (`estimate`, retry rows, the minis). `calibration_guard` rows are synthetic (no provider call) and feed **no** key. The return type stays `dict[str, str]`.
+- The markdown report (`reports/markdown_export.py`, `_apply_db_risk_models`, used by `_resolve_models_config_for_run` and `_overlay_db_models`) renders three "MoralStack risk" rows when any mini key exists in the DB or in the benchmark JSON snapshot: a mini key is overwritten only when the DB has it, and shows "—" only when absent from both. A legacy run with only `risk` keeps the single risk row.
+- The UI run page reads the raw JSON snapshot (`ui/templates/run.html:48-96`), not the DB overlay, so the UI and the markdown report can disagree for benchmark runs. This is pre-existing and out of scope.
 
 ### Token usage accounting
 

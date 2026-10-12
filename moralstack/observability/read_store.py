@@ -18,6 +18,13 @@ from moralstack.observability.sinks.sqlite_sink import _get_connection
 
 logger = logging.getLogger(__name__)
 
+# Exact llm_calls.action -> "Models used" key for the three risk mini-estimators.
+_RISK_MINI_ACTION_KEYS: dict[str, str] = {
+    "estimate_intent": "risk_intent",
+    "estimate_signals": "risk_signals",
+    "estimate_operational": "risk_operational",
+}
+
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     """Return True when the given table exists in the connected SQLite DB."""
@@ -937,6 +944,12 @@ class SqliteReadStore:
                 # already excluded by the WHERE clause above.
                 result.setdefault("upstream_draft", model)
             elif module == "risk_estimator":
+                # The synthetic calibration_guard row is not a model call: it feeds no key.
+                if action == "calibration_guard":
+                    continue
+                mini_key = _RISK_MINI_ACTION_KEYS.get(action)
+                if mini_key:
+                    result.setdefault(mini_key, model)
                 result.setdefault("risk", model)
             elif module == "critic":
                 result.setdefault("critic", model)

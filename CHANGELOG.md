@@ -177,6 +177,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Templates: `.env.minimal` sets `MORALSTACK_RISK_MODEL=gpt-4o` (was `gpt-4o-mini`; with the
     slots at `gpt-4o` the billable models are unchanged); comments updated in both templates.
 
+- **Reports: "Models used" shows the three risk mini-estimator models on the DB path.**
+  `get_models_used_for_run` now also returns `risk_intent` / `risk_signals` / `risk_operational`
+  (mapped by exact `llm_calls.action`), and the single/interactive and benchmark-overlay report
+  paths render three "MoralStack risk" rows. Historical runs show the real per-mini models from
+  `llm_calls` (for example operational = `gpt-4o-mini` on June-August runs). `calibration_guard`
+  rows no longer feed the `risk` label; legacy runs with only `risk` render as before.
+  Non-breaking: the `risk` key and the return type are unchanged.
+
 - **Domain prefilter: precision-first classification.** The classifier now returns
   `selections[{domain, evidence, confidence}]` and each domain is gated on its own
   confidence (`>= 0.5`) instead of one global score, so a weak secondary domain no longer

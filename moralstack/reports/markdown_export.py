@@ -415,8 +415,29 @@ def _resolve_models_config_for_run(run_id: str) -> tuple[dict[str, Any], str]:
     # the row entirely in internal mode.
     if db_models.get("upstream_draft"):
         ms["upstream_draft"] = db_models["upstream_draft"]
+    _apply_db_risk_models(ms, db_models)
     cfg: dict[str, Any] = {"baseline": "—", "judge": "—", "moralstack": ms}
     return cfg, primary
+
+
+_RISK_MINI_KEYS = ("risk_intent", "risk_signals", "risk_operational")
+
+
+def _apply_db_risk_models(ms: dict[str, Any], db_models: dict[str, str]) -> None:
+    """Patch the three risk mini-estimator labels of *ms* in place from ``llm_calls``.
+
+    A mini key is overwritten only when the DB has it; a key missing from both *ms* and the DB
+    renders as "—". ``risk_parallel`` is set when any mini key exists in either source, so a
+    legacy run that only has ``risk`` keeps the single risk row.
+    """
+    if not any(k in ms or k in db_models for k in _RISK_MINI_KEYS):
+        return
+    ms["risk_parallel"] = True
+    for key in _RISK_MINI_KEYS:
+        if key in db_models:
+            ms[key] = db_models[key]
+        elif key not in ms:
+            ms[key] = "—"
 
 
 def _overlay_db_models(cfg: dict[str, Any], run_id: str) -> None:
@@ -434,6 +455,7 @@ def _overlay_db_models(cfg: dict[str, Any], run_id: str) -> None:
     for key in ("risk", "critic", "simulator", "hindsight", "perspectives", "upstream_draft"):
         if key in db_models:
             ms[key] = db_models[key]
+    _apply_db_risk_models(ms, db_models)
 
 
 _COMPLIANCE_VERDICT_EVENT_TYPES = frozenset(

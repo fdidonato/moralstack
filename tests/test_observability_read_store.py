@@ -318,6 +318,89 @@ def test_get_models_used_for_run(tmp_path, monkeypatch):
     assert models.get("critic") == "gpt-4o"
 
 
+def _emit_risk_rows(run_id: str, request_id: str, rows: list[tuple[str, str, str, int]]) -> None:
+    """Insert (module, action, model, started_at) llm_calls rows."""
+    for module, action, model, started_at in rows:
+        route(
+            make_envelope(
+                EVENT_LLM_CALL,
+                run_id=run_id,
+                request_id=request_id,
+                payload={
+                    "phase": "risk_estimation",
+                    "module": module,
+                    "action": action,
+                    "model": model,
+                    "started_at": started_at,
+                    "prompt": "",
+                    "raw_response": "",
+                    "attempts": 1,
+                },
+            )
+        )
+
+
+def test_get_models_used_for_run_maps_three_risk_minis(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    create_run("run-mu-3", run_type="test", meta={})
+    upsert_request("run-mu-3", "req-mu-3", prompt="p", domain="")
+    _emit_risk_rows(
+        "run-mu-3",
+        "req-mu-3",
+        [
+            ("risk_estimator", "estimate_signals", "gpt-4o", 2),
+            ("risk_estimator", "estimate_intent", "gpt-4o", 1),
+            ("risk_estimator", "estimate_operational", "gpt-4o-mini", 3),
+        ],
+    )
+
+    models = SqliteReadStore().get_models_used_for_run("run-mu-3")
+
+    assert models["risk_intent"] == "gpt-4o"
+    assert models["risk_signals"] == "gpt-4o"
+    assert models["risk_operational"] == "gpt-4o-mini"
+    assert models["risk"] == "gpt-4o"  # earliest mini row (intent, started_at=1)
+
+
+def test_get_models_used_for_run_guard_and_retry_rows_do_not_feed_mini_keys(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    create_run("run-mu-4", run_type="test", meta={})
+    upsert_request("run-mu-4", "req-mu-4", prompt="p", domain="")
+    _emit_risk_rows(
+        "run-mu-4",
+        "req-mu-4",
+        [
+            ("risk_estimator", "calibration_guard", "gpt-4o-mini", 1),
+            ("risk_estimator", "retry_failed_attempt_1", "gpt-4o-retry", 2),
+        ],
+    )
+
+    models = SqliteReadStore().get_models_used_for_run("run-mu-4")
+
+    assert not {"risk_intent", "risk_signals", "risk_operational"} & set(models)
+    # A3: the guard row feeds no key; the retry row keeps feeding the legacy "risk" label.
+    assert models == {"risk": "gpt-4o-retry"}
+
+
+def test_get_models_used_for_run_guard_row_alone_yields_no_risk_key(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    create_run("run-mu-5", run_type="test", meta={})
+    upsert_request("run-mu-5", "req-mu-5", prompt="p", domain="")
+    _emit_risk_rows("run-mu-5", "req-mu-5", [("risk_estimator", "calibration_guard", "gpt-4o-mini", 1)])
+
+    assert SqliteReadStore().get_models_used_for_run("run-mu-5") == {}
+
+
+def test_get_models_used_for_run_broken_db_returns_empty(tmp_path, monkeypatch):
+    dbp = str(tmp_path / "broken.db")
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", dbp)
+    monkeypatch.setenv("MORALSTACK_DB_PATH", dbp)
+    with open(dbp, "wb") as f:
+        f.write(b"this is not a sqlite database" * 100)
+
+    assert SqliteReadStore().get_models_used_for_run("any-run") == {}
+
+
 def test_read_store_protocol_via_obs():
     """obs.read_store exposes the same interface as SqliteReadStore."""
     rs = obs.read_store

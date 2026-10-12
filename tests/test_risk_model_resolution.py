@@ -394,11 +394,11 @@ def test_guard_row_alone_yields_no_risk_key(tmp_path, monkeypatch, captured):
     assert "risk" not in SqliteReadStore().get_models_used_for_run(run_id)
 
 
-def test_get_models_used_guard_row_inserted_directly_feeds_risk_until_c4(tmp_path, monkeypatch):
-    """Stays in C3, flips in C4: a guard row with a model, inserted directly, still defines "risk".
+def test_get_models_used_guard_row_inserted_directly_feeds_no_key(tmp_path, monkeypatch):
+    """Flipped in C4: a guard row with a model, inserted directly, no longer defines "risk".
 
-    C3 only stops the estimator from writing a model on that row; the read side is untouched until
-    C4 excludes ``calibration_guard`` rows by action.
+    Historical DBs hold guard rows with a fake model (719 gpt-4o-mini rows); C4 excludes
+    ``calibration_guard`` rows by action, so "risk" comes from the first real mini row.
     """
     run_id, request_id = "run-pin9-direct", "req-pin9-direct"
     _db_setup(tmp_path, monkeypatch, run_id, request_id)
@@ -426,7 +426,12 @@ def test_get_models_used_guard_row_inserted_directly_feeds_risk_until_c4(tmp_pat
             )
         )
 
-    assert SqliteReadStore().get_models_used_for_run(run_id) == {"risk": "gpt-4o-mini"}
+    assert SqliteReadStore().get_models_used_for_run(run_id) == {
+        "risk": "gpt-4o",
+        "risk_intent": "gpt-4o",
+        "risk_signals": "gpt-4o",
+        "risk_operational": "gpt-4o",
+    }
 
 
 # -- labels agree with the model the estimator really uses -------------------------------------
