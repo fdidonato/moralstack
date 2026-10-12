@@ -202,6 +202,12 @@ $OPENAI_API_KEY`, `python -c "print(os.environ[...])"` — the hook guarantees
 "no single Bash command *names* a secret path outside the exemption", not "no
 single Bash command can read one" and not "no secret value can be printed".
 
+**Credential-value scanner** (Edit/Write content and Bash command text): the
+`sk-…` pattern requires a non-alphanumeric character (or start of text) before
+`sk-` (2026-10-12), so words like `risk-…`/`task-…`/`disk-…` no longer read as a
+key. Residual: a real key glued directly to a letter or digit (`abcsk-…`) is not
+detected.
+
 ## Registration
 
 All wired in `.claude/settings.json`. `precompact_snapshot` is registered

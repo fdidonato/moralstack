@@ -436,6 +436,24 @@ def test_inline_credential_blocked(guard_secrets, run_hook, project):
     assert code == 2
 
 
+def test_inline_credential_after_separator_blocked(guard_secrets, run_hook, project):
+    # The left boundary must not open a hole for keys after `=`, a quote or a blank.
+    fake_key = "sk-" + "ant-" + "a" * 30
+    for cmd in (f"export K={fake_key}", f"curl -H 'Authorization: Bearer {fake_key}'"):
+        code, _ = run_hook(guard_secrets, _bash(cmd), project)
+        assert code == 2, cmd
+
+
+def test_sk_inside_word_not_a_credential(guard_secrets, run_hook, project):
+    # False positive seen 2026-10-11: a plan file name containing "risk-" blocked every Bash call naming it.
+    for cmd in (
+        "git log -- ai/plans/risk-estimator-single-residues.md",
+        "ls ai/tasks/task-abcdefghijklmnopqrstuvwxyz",
+    ):
+        code, _ = run_hook(guard_secrets, _bash(cmd), project)
+        assert code == 0, cmd
+
+
 def test_placeholder_allowed(guard_secrets, run_hook, project):
     payload = _write("config.py", content="KEY = '${OPENAI_API_KEY}'\n")
     code, _ = run_hook(guard_secrets, payload, project)
