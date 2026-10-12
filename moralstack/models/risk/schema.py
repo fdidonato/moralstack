@@ -170,6 +170,7 @@ class RiskEstimatorConfig:
     temperature: float = 0.1  # Bassa per decisioni consistenti
 
     # Focused mini-estimator strategy (3 focused LLM calls).
-    intent_model: str = "gpt-4o"
-    signals_model: str = "gpt-4o"
-    operational_model: str = "gpt-4o"
+    # None = inherit the main risk policy model (see resolve_risk_mini_model).
+    intent_model: str | None = None
+    signals_model: str | None = None
+    operational_model: str | None = None

@@ -73,7 +73,7 @@ class _BenignPolicy:
 def _clear_ambient_risk_env(monkeypatch):
     """Isolate from the shell: clear every other risk knob and OPENAI_MODEL.
 
-    All three model slots then resolve to the same default, so the estimator can never construct a real
+    All three model slots are then None (inherit the policy model), so the estimator can never construct a real
     OpenAIPolicy. The retired vars under test (_REMOVED_ENV_VARS) are left alone on purpose.
     """
     for key in list(os.environ):
@@ -88,7 +88,7 @@ def _estimate_hello(monkeypatch):
     monkeypatch.setattr(risk_estimator_module, "_obs_route", lambda env: None)
     config = load_risk_estimator_config_from_env()
     policy = _BenignPolicy()
-    policy.model = config.intent_model  # all three slots resolve to the same model: no pooled policy needed
+    policy.model = "m"  # slots are None (inherit policy.model): no pooled policy is needed
     return LLMBasedRiskEstimator(policy=policy, config=config).estimate("hello")
 
 
@@ -219,8 +219,8 @@ class TestLoadRiskEstimatorConfigFromEnv:
         with_vars = _estimate_hello(monkeypatch)
         assert (with_vars.score, with_vars.risk_category) == (baseline.score, baseline.risk_category)
 
-    def test_parallel_mini_models_fallback_to_builtin_when_no_env(self, monkeypatch):
-        """Unset mini slots and base models → built-in default for all three slots."""
+    def test_parallel_mini_slots_are_none_when_unset(self, monkeypatch):
+        """Unset mini slots stay None (inherit the main risk policy model); no built-in default is applied."""
         for key in (
             ENV_MODEL,
             ENV_INTENT_MODEL,
@@ -230,40 +230,30 @@ class TestLoadRiskEstimatorConfigFromEnv:
         ):
             monkeypatch.delenv(key, raising=False)
         cfg = load_risk_estimator_config_from_env()
-        assert cfg.intent_model == "gpt-4o"
-        assert cfg.signals_model == "gpt-4o"
-        assert cfg.operational_model == "gpt-4o"
+        assert cfg.intent_model is None
+        assert cfg.signals_model is None
+        assert cfg.operational_model is None
 
-    def test_parallel_mini_models_fallback_to_risk_model(self, monkeypatch):
-        monkeypatch.delenv(ENV_INTENT_MODEL, raising=False)
-        monkeypatch.delenv(ENV_SIGNALS_MODEL, raising=False)
-        monkeypatch.delenv(ENV_OPERATIONAL_MODEL, raising=False)
-        monkeypatch.delenv("OPENAI_MODEL", raising=False)
-        monkeypatch.setenv(ENV_MODEL, "gpt-4o-mini")
-        cfg = load_risk_estimator_config_from_env()
-        assert cfg.intent_model == "gpt-4o-mini"
-        assert cfg.signals_model == "gpt-4o-mini"
-        assert cfg.operational_model == "gpt-4o-mini"
-
-    def test_parallel_mini_models_fallback_to_openai_model(self, monkeypatch):
-        monkeypatch.delenv(ENV_MODEL, raising=False)
-        monkeypatch.delenv(ENV_INTENT_MODEL, raising=False)
-        monkeypatch.delenv(ENV_SIGNALS_MODEL, raising=False)
-        monkeypatch.delenv(ENV_OPERATIONAL_MODEL, raising=False)
-        monkeypatch.setenv("OPENAI_MODEL", "gpt-4.1")
-        cfg = load_risk_estimator_config_from_env()
-        assert cfg.intent_model == "gpt-4.1"
-        assert cfg.signals_model == "gpt-4.1"
-        assert cfg.operational_model == "gpt-4.1"
-
-    def test_parallel_mini_risk_model_over_openai_for_fallback(self, monkeypatch):
+    def test_parallel_mini_slots_ignore_risk_model_and_openai_model(self, monkeypatch):
+        """MORALSTACK_RISK_MODEL and OPENAI_MODEL are no longer read by the loader (design A)."""
         monkeypatch.delenv(ENV_INTENT_MODEL, raising=False)
         monkeypatch.delenv(ENV_SIGNALS_MODEL, raising=False)
         monkeypatch.delenv(ENV_OPERATIONAL_MODEL, raising=False)
         monkeypatch.setenv(ENV_MODEL, "risk-dedicated")
         monkeypatch.setenv("OPENAI_MODEL", "openai-primary")
         cfg = load_risk_estimator_config_from_env()
-        assert cfg.intent_model == "risk-dedicated"
+        assert cfg.intent_model is None
+        assert cfg.signals_model is None
+        assert cfg.operational_model is None
+
+    def test_parallel_mini_slots_blank_values_count_as_unset(self, monkeypatch):
+        monkeypatch.setenv(ENV_INTENT_MODEL, "")
+        monkeypatch.setenv(ENV_SIGNALS_MODEL, "   ")
+        monkeypatch.delenv(ENV_OPERATIONAL_MODEL, raising=False)
+        cfg = load_risk_estimator_config_from_env()
+        assert cfg.intent_model is None
+        assert cfg.signals_model is None
+        assert cfg.operational_model is None
 
     def test_parallel_mini_per_slot_override(self, monkeypatch):
         monkeypatch.setenv(ENV_MODEL, "gpt-4o-mini")
@@ -272,18 +262,8 @@ class TestLoadRiskEstimatorConfigFromEnv:
         monkeypatch.setenv(ENV_OPERATIONAL_MODEL, "custom-op")
         cfg = load_risk_estimator_config_from_env()
         assert cfg.intent_model == "gpt-4o"
-        assert cfg.signals_model == "gpt-4o-mini"
+        assert cfg.signals_model is None
         assert cfg.operational_model == "custom-op"
-
-    def test_model_slot_resolution_without_legacy_toggle_env(self, monkeypatch):
-        monkeypatch.setenv(ENV_MODEL, "risk-dedicated")
-        monkeypatch.delenv(ENV_INTENT_MODEL, raising=False)
-        monkeypatch.delenv(ENV_SIGNALS_MODEL, raising=False)
-        monkeypatch.delenv(ENV_OPERATIONAL_MODEL, raising=False)
-        cfg = load_risk_estimator_config_from_env()
-        assert cfg.intent_model == "risk-dedicated"
-        assert cfg.signals_model == "risk-dedicated"
-        assert cfg.operational_model == "risk-dedicated"
 
 
 def test_env_templates_have_no_removed_risk_vars():

@@ -199,7 +199,7 @@ Shared steps:
 5. **Mapping** — `_to_risk_estimation(...)` fills `RiskEstimation`, including `stated_personal_bias`,
    `seeks_norm_circumvention`, `q13_protected_class_targeting`, and `estimation_mode`.
 
-Persistence of LLM calls is best-effort and must not affect risk decisions. The three real mini-estimator rows are written as one synchronous batch; SQLite write failures roll back the whole mini-estimator group. The optional synthetic `calibration_guard` row remains a single synchronous write with `sequence_in_cycle=-8` and `billable_provider_call=False` (audit-only; excluded from token/cost aggregation so it never appears as a "missing"-usage row in the UI).
+Persistence of LLM calls is best-effort and must not affect risk decisions. The three real mini-estimator rows are written as one synchronous batch; SQLite write failures roll back the whole mini-estimator group. The optional synthetic `calibration_guard` row remains a single synchronous write with `sequence_in_cycle=-8`, a NULL `model` (synthetic row, no provider call) and `billable_provider_call=False` (audit-only; excluded from token/cost aggregation so it never appears as a "missing"-usage row in the UI).
 
 ### Constitution retrieval (single upstream wave)
 
@@ -291,8 +291,9 @@ groups based on characteristics commonly protected by anti-discrimination norms.
 `RiskEstimatorConfig` (in `moralstack/models/risk/schema.py`) controls LLM settings. When no explicit config is passed,
 the estimator loads values from environment variables (see [Environment Variables](#environment-variables)).
 
-- **Per-mini models** — `intent_model`, `signals_model`, `operational_model` (defaults `gpt-4o`; overridden only when
-  different from the estimator’s primary policy model so extra `OpenAIPolicy` instances are created).
+- **Per-mini models** — `intent_model`, `signals_model`, `operational_model` (default `None` = inherit the main risk
+  policy model via `resolve_risk_mini_model`; a dedicated pooled `OpenAIPolicy` is created only when a slot differs
+  from the estimator’s policy model).
 - **max_tokens**: 512 (configurable) — budget large enough for rationale plus q1–q17 and governance fields. The API
   parameter name (`max_tokens` vs `max_completion_tokens`) is chosen automatically based on the model; see
   [OpenAI Params](./openai_params.md).
@@ -311,11 +312,13 @@ configuration is the single source of configuration — no CLI or code path over
 
 #### MORALSTACK_RISK_MODEL
 
-- **Default**: *(none — uses the same model as the rest of the stack, e.g. `OPENAI_MODEL` or `gpt-4o`)*
+- **Default**: *(none — uses the primary model of the stack: SDK `GovernanceConfig.model` / CLI `--openai-model` / `OPENAI_MODEL` / `gpt-4o`)*
 - **Tipo**: string (OpenAI model id)
 - **Significato**: OpenAI model used **only** for the risk estimator (semantic judge). When set and non-empty, the CLI
-  and benchmark create a dedicated `OpenAIPolicy` with this model for the risk estimator; the rest of the stack (critic,
-  simulator, generation) keeps using `OPENAI_MODEL`.
+  and benchmark create a dedicated `OpenAIPolicy` with this model for the risk estimator (the main risk policy); the
+  rest of the stack (critic, simulator, generation) keeps using the primary model. This variable is read only where
+  the risk policy is chosen (builder, benchmark) and for report labels, not by the config loader. It serves mini calls
+  whose slot equals it, and is the fallback policy when creating a pooled policy fails.
 - **Effetto della modifica**:
     - **Set to a model id** (e.g. `gpt-4o`, `gpt-4o-mini`): The semantic judge uses that model. Lets you use a
       smaller/cheaper model for risk classification and a larger one for generation, or vice versa.
@@ -324,26 +327,26 @@ configuration is the single source of configuration — no CLI or code path over
 - **Esempio**: `MORALSTACK_RISK_MODEL=gpt-4o-mini` uses a smaller model for risk classification to reduce cost/latency
   while keeping `OPENAI_MODEL=gpt-4o` for generation.
 - **Interaction with parallel mode**: Unset `MORALSTACK_RISK_INTENT_MODEL`, `MORALSTACK_RISK_SIGNALS_MODEL`, and
-  `MORALSTACK_RISK_OPERATIONAL_MODEL` inherit the same resolution order as the primary risk policy:
-  `MORALSTACK_RISK_MODEL` if set, otherwise `OPENAI_MODEL`,
-  otherwise `gpt-4o`. When a mini-call's resolved model id differs from the estimator's primary policy model, a dedicated
-  pooled `OpenAIPolicy` is used for that call.
+  `MORALSTACK_RISK_OPERATIONAL_MODEL` inherit the main risk policy's model (`resolve_risk_mini_model`):
+  `MORALSTACK_RISK_MODEL` if set, otherwise the primary model. The config loader leaves unset slots as `None`; the
+  estimator resolves them against `policy.model` (`_effective_mini_model`). When a mini-call's resolved model id differs
+  from the estimator's policy model, a dedicated pooled `OpenAIPolicy` is used for that call.
 
 #### MORALSTACK_RISK_INTENT_MODEL
 
-- **Default**: inherits `MORALSTACK_RISK_MODEL` if set, else `OPENAI_MODEL`, else `gpt-4o`
+- **Default**: inherits `MORALSTACK_RISK_MODEL` if set, else the primary model
 - **Tipo**: string (OpenAI model id)
 - **Significato**: Model for the **intent / framing** mini-estimator (`estimate_intent`). Used when the id differs from the estimator’s primary policy model.
 
 #### MORALSTACK_RISK_SIGNALS_MODEL
 
-- **Default**: inherits `MORALSTACK_RISK_MODEL` if set, else `OPENAI_MODEL`, else `gpt-4o`
+- **Default**: inherits `MORALSTACK_RISK_MODEL` if set, else the primary model
 - **Tipo**: string (OpenAI model id)
 - **Significato**: Model for the **harm signal scanner** mini-estimator (`estimate_signals`), covering **q1–q17** and `domain_sensitivity`.
 
 #### MORALSTACK_RISK_OPERATIONAL_MODEL
 
-- **Default**: inherits `MORALSTACK_RISK_MODEL` if set, else `OPENAI_MODEL`, else `gpt-4o`
+- **Default**: inherits `MORALSTACK_RISK_MODEL` if set, else the primary model
 - **Tipo**: string (OpenAI model id)
 - **Significato**: Model for the **operational risk** mini-estimator (`estimate_operational`).
 

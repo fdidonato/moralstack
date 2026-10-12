@@ -154,6 +154,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Risk estimator: a single model-resolution rule for the three mini-estimators (BREAKING).**
+  Each mini model is now its own slot (`MORALSTACK_RISK_{INTENT,SIGNALS,OPERATIONAL}_MODEL`) when
+  set, else the main risk policy's model: `MORALSTACK_RISK_MODEL` where the builder or the
+  benchmark applies it, otherwise the primary model. The rule lives in one function,
+  `resolve_risk_mini_model`, used by the estimator, the CLI display and both report-label paths.
+  - **BREAKING (behaviour):** an SDK `GovernanceConfig(model=...)` or CLI `--openai-model`
+    without `MORALSTACK_RISK_MODEL` and without per-mini slots now runs all three risk minis,
+    including signals, on that primary model (previously env `OPENAI_MODEL`, or `gpt-4o`). Set
+    `MORALSTACK_RISK_MODEL` (or the slots) to keep the minis on a different model. The measured
+    gpt-4o vs gpt-4o-mini operational difference is in `docs/CODEBASE_FACTS.md`.
+  - **BREAKING:** `RiskEstimatorConfig.intent_model` / `signals_model` / `operational_model`
+    default to `None` (inherit) instead of `"gpt-4o"`; `load_risk_estimator_config_from_env()`
+    returns the raw slot env value or `None` and no longer reads `MORALSTACK_RISK_MODEL` or
+    `OPENAI_MODEL`. `resolve_risk_base_model_from_env` and `resolve_parallel_mini_model_slot` are
+    removed (migration: use `resolve_risk_mini_model(slot, policy_model)`).
+  - The `calibration_guard` row is persisted with `model = NULL` (synthetic row, no provider call);
+    historical rows are left as they are. A policy without a usable `.model` is likewise persisted
+    as NULL instead of the fake `"gpt-4o"`.
+  - The env-fallback benchmark report (`_get_benchmark_models_config_fallback`) now sets
+    `risk_parallel` and the three `risk_*` mini labels.
+  - Templates: `.env.minimal` sets `MORALSTACK_RISK_MODEL=gpt-4o` (was `gpt-4o-mini`; with the
+    slots at `gpt-4o` the billable models are unchanged); comments updated in both templates.
+
 - **Domain prefilter: precision-first classification.** The classifier now returns
   `selections[{domain, evidence, confidence}]` and each domain is gated on its own
   confidence (`>= 0.5`) instead of one global score, so a weak secondary domain no longer

@@ -82,14 +82,28 @@ def test_builder_whitespace_risk_model_counts_as_unset(monkeypatch):
     assert modules.risk_estimator.policy is modules.policy
 
 
-def test_builder_slots_follow_env_openai_model_not_the_primary_model_today(monkeypatch):
-    """Flips in C3: the mini slots are read from env only, so ``primary_model`` does not reach them.
+def test_builder_slots_are_none_and_minis_inherit_the_primary_model_not_env_openai_model(monkeypatch):
+    """Flipped in C3 (was: slots read from env ``OPENAI_MODEL``, ignoring ``primary_model``).
 
-    An SDK ``GovernanceConfig(model=...)`` that differs from env ``OPENAI_MODEL`` therefore runs the
-    three minis on the env model today; C3 makes unset slots inherit the risk policy's model.
+    Unset slots are now None and inherit the risk policy's model, so an SDK
+    ``GovernanceConfig(model=...)`` that differs from env ``OPENAI_MODEL`` drives the three minis.
     """
     monkeypatch.setenv("OPENAI_MODEL", "env-model")
-    modules, _ = _build(primary_model="sdk-model")
+    modules, meta = _build(primary_model="sdk-model")
 
-    cfg = modules.risk_estimator.config
-    assert (cfg.intent_model, cfg.signals_model, cfg.operational_model) == ("env-model",) * 3
+    estimator = modules.risk_estimator
+    cfg = estimator.config
+    assert (cfg.intent_model, cfg.signals_model, cfg.operational_model) == (None, None, None)
+    assert meta.risk_model == "sdk-model"
+    for mini in ("estimate_intent", "estimate_signals", "estimate_operational"):
+        assert estimator._effective_mini_model(mini) == "sdk-model"
+
+
+def test_builder_risk_model_drives_all_three_minis(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "env-model")
+    monkeypatch.setenv("MORALSTACK_RISK_MODEL", "risk-x")
+    modules, meta = _build(primary_model="sdk-model")
+
+    assert meta.risk_model == "risk-x"
+    for mini in ("estimate_intent", "estimate_signals", "estimate_operational"):
+        assert modules.risk_estimator._effective_mini_model(mini) == "risk-x"

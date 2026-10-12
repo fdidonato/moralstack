@@ -43,6 +43,7 @@ from .config_loader import (
     get_risk_env_float,
     get_risk_env_int,
     load_risk_estimator_config_from_env,
+    resolve_risk_mini_model,
 )
 from .parse_result import RiskParseResult
 from .prompts import (
@@ -311,6 +312,22 @@ class LLMBasedRiskEstimator:
         # Mini-estimator OpenAIPolicy reuse: keyed by model id on this estimator instance (thread-safe fill).
         self._mini_policy_pool: dict[str, Any] = {}
         self._mini_policy_pool_lock = threading.Lock()
+
+    def _effective_mini_model(self, mini_name: str) -> str | None:
+        """
+        Model id for one mini-estimator: its config slot when set, else the main risk policy model.
+
+        The policy model counts only when it is a non-empty ``str`` (a mock or missing
+        attribute is treated as unknown). None when neither is known.
+        """
+        slot = {
+            "estimate_intent": self.config.intent_model,
+            "estimate_signals": self.config.signals_model,
+            "estimate_operational": self.config.operational_model,
+        }.get(mini_name)
+        policy_model = getattr(self.policy, "model", None)
+        main_model = policy_model if isinstance(policy_model, str) and policy_model else None
+        return resolve_risk_mini_model(slot, main_model)
 
     def _policy_for_mini_estimator_model(self, target_model: str) -> Any:
         """
@@ -809,11 +826,11 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
         )
 
         _RISK_LOG.info(
-            "risk_estimator parallel mini-models (config): intent=%s signals=%s operational=%s; "
+            "risk_estimator parallel mini-models (effective): intent=%s signals=%s operational=%s; "
             "main risk policy model=%s",
-            self.config.intent_model,
-            self.config.signals_model,
-            self.config.operational_model,
+            self._effective_mini_model("estimate_intent"),
+            self._effective_mini_model("estimate_signals"),
+            self._effective_mini_model("estimate_operational"),
             getattr(_policy, "model", None),
         )
 
@@ -826,14 +843,8 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
         ) -> tuple[Any, str, float, int, int, Any, str | None, str | None]:
             from moralstack.utils.json_utils import JSONParseError
 
-            # Determine the model for this mini-call
-            target_model = None
-            if mini_name == "estimate_intent":
-                target_model = self.config.intent_model
-            elif mini_name == "estimate_signals":
-                target_model = self.config.signals_model
-            elif mini_name == "estimate_operational":
-                target_model = self.config.operational_model
+            # Determine the model for this mini-call: slot, else the main risk policy model
+            target_model = self._effective_mini_model(mini_name)
 
             # Use dedicated policy if model override is present and different from main policy
             effective_policy = _policy
@@ -850,10 +861,13 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
                     )
                     effective_policy = _policy
 
+            # Same non-empty-str filter as _effective_mini_model: a non-str or empty model counts as None.
             resolved_for_obs = getattr(effective_policy, "model", None)
-            if resolved_for_obs is None and target_model:
+            if not (isinstance(resolved_for_obs, str) and resolved_for_obs):
                 resolved_for_obs = target_model
-            resolved_model_str = str(resolved_for_obs) if resolved_for_obs is not None else None
+            # "" (not None) when unknown: the envelope builder maps "" to a NULL model, whereas None would
+            # fall back to str(self.policy.model).
+            resolved_model_str = resolved_for_obs if resolved_for_obs else ""
 
             raw_response = ""
 
@@ -1062,6 +1076,8 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
                 attempts=1,
                 sequence_in_cycle=-8,
                 billable_provider_call=False,
+                # Synthetic row, no provider call: persisted model is NULL.
+                llm_model="",
             )
 
         parsed = parse_risk_dict(merged)

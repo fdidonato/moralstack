@@ -133,3 +133,23 @@ class TestFormatModelsUsedMarkdownUpstreamRow:
         md = format_models_used_markdown(cfg, primary_model="governance-model-G")
         assert "MoralStack upstream draft (client model)" not in md
         assert "client-model-C" not in md
+
+
+class TestFormatModelsUsedMarkdownParallelRisk:
+    def test_three_risk_rows_render_when_risk_parallel(self) -> None:
+        cfg = {
+            "baseline": "gpt-4o",
+            "judge": "gpt-4o",
+            "moralstack": {
+                "policy": "governance-model-G",
+                "risk": "governance-model-G",
+                "risk_parallel": True,
+                "risk_intent": "model-i",
+                "risk_signals": "model-s",
+                "risk_operational": "model-o",
+            },
+        }
+        md = format_models_used_markdown(cfg, primary_model="governance-model-G")
+        assert "| **MoralStack risk · intent** | model-i |" in md
+        assert "| **MoralStack risk · signals** | model-s |" in md
+        assert "| **MoralStack risk · operational** | model-o |" in md

@@ -1718,6 +1718,7 @@ def get_benchmark_models_config(
             ENV_OPERATIONAL_MODEL,
             ENV_SIGNALS_MODEL,
             get_risk_env_str,
+            resolve_risk_mini_model,
         )
         from moralstack.models.risk.config_loader import ENV_MODEL as RISK_ENV_MODEL
         from moralstack.runtime.modules.critic_config_loader import ENV_MODEL as CRITIC_ENV_MODEL
@@ -1740,9 +1741,9 @@ def get_benchmark_models_config(
         simulator_m = get_simulator_env_str(SIMULATOR_ENV_MODEL, "") or policy_fallback
         hindsight_m = get_hindsight_env_str(HINDSIGHT_ENV_MODEL, "") or policy_fallback
         perspectives_m = get_perspective_env_str(PERSPECTIVES_ENV_MODEL, "") or policy_fallback
-        intent_m = get_risk_env_str(ENV_INTENT_MODEL, "") or risk_m
-        signals_m = get_risk_env_str(ENV_SIGNALS_MODEL, "") or risk_m
-        operational_m = get_risk_env_str(ENV_OPERATIONAL_MODEL, "") or risk_m
+        intent_m = resolve_risk_mini_model(get_risk_env_str(ENV_INTENT_MODEL, "") or None, risk_m)
+        signals_m = resolve_risk_mini_model(get_risk_env_str(ENV_SIGNALS_MODEL, "") or None, risk_m)
+        operational_m = resolve_risk_mini_model(get_risk_env_str(ENV_OPERATIONAL_MODEL, "") or None, risk_m)
     except ImportError:
         risk_m = critic_m = simulator_m = hindsight_m = perspectives_m = policy_fallback
 

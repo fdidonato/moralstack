@@ -2,12 +2,11 @@
 Load Risk Estimator configuration from environment variables.
 
 Reads MORALSTACK_RISK_* from os.environ. Empty or missing values fall back
-to hardcoded defaults. Used when no explicit RiskEstimatorConfig is passed.
+to hardcoded defaults (model slots: None = inherit the main risk policy model).
+Used when no explicit RiskEstimatorConfig is passed.
 """
 
 from __future__ import annotations
-
-import os
 
 from moralstack.utils.env_helpers import get_env_float, get_env_int, get_env_str
 
@@ -32,26 +31,16 @@ ENV_INTENT_MODEL = "MORALSTACK_RISK_INTENT_MODEL"
 ENV_SIGNALS_MODEL = "MORALSTACK_RISK_SIGNALS_MODEL"
 ENV_OPERATIONAL_MODEL = "MORALSTACK_RISK_OPERATIONAL_MODEL"
 
-_DEFAULT_MODEL_ID = "gpt-4o"
 
-
-def resolve_risk_base_model_from_env() -> str:
+def resolve_risk_mini_model(slot_model: str | None, main_risk_model: str | None) -> str | None:
     """
-    Default OpenAI model id for parallel mini-estimators when per-slot env vars are unset.
+    Model for one risk mini-estimator: the per-mini slot when set, else the main risk model.
 
-    Resolution order matches deliberation wiring (`build_deliberation_modules`): explicit
-    `MORALSTACK_RISK_MODEL`, then `OPENAI_MODEL`, then a built-in default.
+    The main risk model is the risk policy's model (MORALSTACK_RISK_MODEL when the builder
+    applied it, otherwise the primary model). None when neither is known.
+    Single source of truth for the estimator, the CLI display and the report labels.
     """
-    explicit_risk = get_env_str(ENV_MODEL, "")
-    if explicit_risk:
-        return explicit_risk
-    primary = (os.getenv("OPENAI_MODEL") or "").strip()
-    return primary if primary else _DEFAULT_MODEL_ID
-
-
-def resolve_parallel_mini_model_slot(env_key: str, base_model: str) -> str:
-    """Return mini-estimator model id: non-empty env override, else *base_model*."""
-    return get_env_str(env_key, "") or base_model
+    return slot_model or main_risk_model or None
 
 
 def load_risk_estimator_config_from_env() -> RiskEstimatorConfig:
@@ -59,18 +48,18 @@ def load_risk_estimator_config_from_env() -> RiskEstimatorConfig:
     Build RiskEstimatorConfig from environment variables.
 
     Only non-empty env values are used; otherwise defaults apply. Parallel mini-estimator
-    model slots (`*_INTENT_MODEL`, etc.) fall back to `MORALSTACK_RISK_MODEL`, then
-    `OPENAI_MODEL`, then ``gpt-4o`` when unset.
+    model slots (`*_INTENT_MODEL`, etc.) are the raw env value or None when unset/empty;
+    None means "inherit the main risk policy model" (see `resolve_risk_mini_model`).
+    No primary/risk-wide model variable is read here (the builder applies those to the risk policy).
 
     Float scores are clamped to [0, 1]. Ints are enforced >= 1 where applicable.
     """
     max_retries = get_env_int(ENV_MAX_RETRIES, 2, 1)
     max_tokens = get_env_int(ENV_MAX_TOKENS, 512, 1)
     temperature = get_env_float(ENV_TEMPERATURE, 0.1, 0.0, 2.0)
-    mini_base = resolve_risk_base_model_from_env()
-    intent_model = resolve_parallel_mini_model_slot(ENV_INTENT_MODEL, mini_base)
-    signals_model = resolve_parallel_mini_model_slot(ENV_SIGNALS_MODEL, mini_base)
-    operational_model = resolve_parallel_mini_model_slot(ENV_OPERATIONAL_MODEL, mini_base)
+    intent_model = get_env_str(ENV_INTENT_MODEL, "") or None
+    signals_model = get_env_str(ENV_SIGNALS_MODEL, "") or None
+    operational_model = get_env_str(ENV_OPERATIONAL_MODEL, "") or None
     return RiskEstimatorConfig(
         max_retries=max_retries,
         max_tokens=max_tokens,

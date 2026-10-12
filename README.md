@@ -395,7 +395,7 @@ existing env vars (`override=True`); optional empty values are purged after load
 |---|---|---|
 | Policy (generation) | `gpt-4o` | `OPENAI_MODEL` |
 | Policy (rewrite) | same as primary | `MORALSTACK_POLICY_REWRITE_MODEL` |
-| Risk estimator | follows `OPENAI_MODEL` | `MORALSTACK_RISK_MODEL` |
+| Risk estimator | follows the primary model; per-mini `MORALSTACK_RISK_{INTENT,SIGNALS,OPERATIONAL}_MODEL` | `MORALSTACK_RISK_MODEL` |
 | Critic | follows `OPENAI_MODEL` | `MORALSTACK_CRITIC_MODEL` |
 | Simulator | follows `OPENAI_MODEL` | `MORALSTACK_SIMULATOR_MODEL` |
 | Perspectives | follows `OPENAI_MODEL` | `MORALSTACK_PERSPECTIVES_MODEL` |

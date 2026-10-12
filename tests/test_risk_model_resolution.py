@@ -1,8 +1,8 @@
 """Characterization pins for how the risk estimator resolves and persists its three mini models.
 
-Phase C0 of ``risk-estimator-dual-config``: every test asserts the behavior at the starting HEAD.
-Tests marked "flips in Cn" document today's value; the named phase changes the expectation and
-justifies it in its commit message. The rest stay green unmodified through C1-C4.
+Phase C0 pinned the behavior at the starting HEAD; phase C3 flipped the design-A pins (marked
+"Flipped in C3") and added the resolution-rule tests. Rule: slot -> main risk policy model
+(``policy.model``) -> None; ``OPENAI_MODEL`` and ``MORALSTACK_RISK_MODEL`` are not read by the loader.
 
 Env isolation: every ``MORALSTACK_RISK_*`` knob, ``OPENAI_MODEL``, ``OPENAI_API_KEY``,
 ``OPENAI_BASE_URL`` and ``MORALSTACK_DB_PATH`` is cleared before each test (and any baseline is
@@ -14,13 +14,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 import moralstack.models.risk.estimator as risk_estimator_module
+from moralstack.models.risk.config_loader import resolve_risk_mini_model
 from moralstack.models.risk.estimator import LLMBasedRiskEstimator
 from moralstack.models.risk.prompts import INTENT_CONTEXT_SYSTEM_PROMPT, OPERATIONAL_RISK_SYSTEM_PROMPT
 from moralstack.models.risk.schema import RiskEstimatorConfig
@@ -31,6 +34,7 @@ from moralstack.observability.events import EVENT_LLM_CALL, make_envelope
 from moralstack.observability.read_store import SqliteReadStore
 from moralstack.observability.router import route
 from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
+from moralstack.reports.markdown_export import _get_benchmark_models_config_fallback, format_models_used_markdown
 
 _MINIS = ("estimate_intent", "estimate_signals", "estimate_operational")
 _MINI_BY_SYSTEM_PROMPT = {
@@ -187,68 +191,148 @@ def test_all_three_slots_equal_policy_model_never_builds_a_pooled_policy(capture
     assert _persisted_models(captured) == dict.fromkeys(_MINIS, "main-m")
 
 
-# -- pin 12: design-A flips (config=None) ------------------------------------------------------
+# -- design A: slots inherit the policy model (flipped in C3) ----------------------------------
 
 
-def test_config_none_slots_follow_env_openai_model_not_the_policy_model(monkeypatch, captured):
-    """Flips in C3: today (a) the slots come from env OPENAI_MODEL, so the minis ignore the policy model.
+def _bomb(**kwargs: Any) -> Any:
+    pytest.fail(f"no pooled policy expected, got OpenAIPolicy({kwargs})")
 
-    C3 makes an unset slot inherit the policy model: ``builder-primary`` served by the main policy,
-    no pooled policy built.
+
+def test_nothing_set_all_minis_use_the_policy_model_without_a_pool(captured):
+    """Flipped in C3 (was: slots followed env OPENAI_MODEL, pooling ``env-primary``). Also needs no API key."""
+    main = FakePolicy("primary-x")
+    with patch("moralstack.models.policy.OpenAIPolicy", side_effect=_bomb):
+        est = LLMBasedRiskEstimator(policy=main).estimate("hello world")
+
+    assert est.score == 0.1
+    assert sorted(main.calls) == sorted(_MINIS)
+    assert _persisted_models(captured) == dict.fromkeys(_MINIS, "primary-x")
+
+
+def test_risk_policy_model_drives_all_minis_when_risk_model_was_applied_by_the_builder(captured):
+    """Flipped in C3 (was: MORALSTACK_RISK_MODEL fed the slots through the loader).
+
+    The builder applies ``MORALSTACK_RISK_MODEL`` to the risk policy; the minis inherit ``policy.model``.
     """
-    monkeypatch.setenv("OPENAI_MODEL", "env-primary")
-    main = FakePolicy("builder-primary")
-    pool = PoolRecorder()
-    with patch("moralstack.models.policy.OpenAIPolicy", side_effect=pool):
+    main = FakePolicy("risk-y")
+    with patch("moralstack.models.policy.OpenAIPolicy", side_effect=_bomb):
         LLMBasedRiskEstimator(policy=main).estimate("hello world")
 
-    assert main.calls == []
-    assert set(pool.built) == {"env-primary"}
-    assert _persisted_models(captured) == dict.fromkeys(_MINIS, "env-primary")
+    assert sorted(main.calls) == sorted(_MINIS)
+    assert _persisted_models(captured) == dict.fromkeys(_MINIS, "risk-y")
 
 
-def test_config_none_slots_follow_env_risk_model(monkeypatch, captured):
-    """Flips in C3: today (b) MORALSTACK_RISK_MODEL feeds the slots through the loader.
-
-    C3 stops reading it there; the builder applies it to the risk policy instead, so the minis
-    inherit the policy model.
-    """
-    monkeypatch.setenv("OPENAI_MODEL", "env-primary")
+def test_env_risk_model_and_openai_model_are_ignored_by_the_estimator(monkeypatch, captured):
+    monkeypatch.setenv("OPENAI_MODEL", "legacy-z")
     monkeypatch.setenv("MORALSTACK_RISK_MODEL", "risk-env")
-    main = FakePolicy("builder-primary")
+    main = FakePolicy("primary-x")
+    with patch("moralstack.models.policy.OpenAIPolicy", side_effect=_bomb):
+        LLMBasedRiskEstimator(policy=main).estimate("hello world")
+
+    assert _persisted_models(captured) == dict.fromkeys(_MINIS, "primary-x")
+
+
+def test_only_intent_slot_set_pools_intent_and_the_others_use_the_policy_model(monkeypatch, captured):
+    monkeypatch.setenv("MORALSTACK_RISK_INTENT_MODEL", "slot-i")
+    main = FakePolicy("primary-x")
     pool = PoolRecorder()
     with patch("moralstack.models.policy.OpenAIPolicy", side_effect=pool):
         LLMBasedRiskEstimator(policy=main).estimate("hello world")
 
-    assert main.calls == []
-    assert set(pool.built) == {"risk-env"}
-    assert _persisted_models(captured) == dict.fromkeys(_MINIS, "risk-env")
+    assert set(pool.built) == {"slot-i"}
+    assert sorted(main.calls) == ["estimate_operational", "estimate_signals"]
+    assert _persisted_models(captured) == {
+        "estimate_intent": "slot-i",
+        "estimate_signals": "primary-x",
+        "estimate_operational": "primary-x",
+    }
 
 
-def test_policy_without_model_attribute_persists_the_gpt4o_slot_default(captured):
-    """Flips in C3: today (c) a policy with no ``.model`` is persisted as the schema default "gpt-4o".
+def test_whitespace_slot_values_count_as_unset(monkeypatch, captured):
+    for key in ("INTENT", "SIGNALS", "OPERATIONAL"):
+        monkeypatch.setenv(f"MORALSTACK_RISK_{key}_MODEL", "   ")
+    main = FakePolicy("primary-x")
+    with patch("moralstack.models.policy.OpenAIPolicy", side_effect=_bomb):
+        LLMBasedRiskEstimator(policy=main).estimate("hello world")
 
-    C3 persists None instead (no fake model).
-    """
-    policy = ModellessPolicy()
+    assert _persisted_models(captured) == dict.fromkeys(_MINIS, "primary-x")
+
+
+def test_explicit_config_slot_wins_over_the_policy_model(captured):
+    main = FakePolicy("primary-x")
     pool = PoolRecorder()
+    cfg = RiskEstimatorConfig(intent_model="cfg-i", max_retries=1)
     with patch("moralstack.models.policy.OpenAIPolicy", side_effect=pool):
+        LLMBasedRiskEstimator(policy=main, config=cfg).estimate("hello world")
+
+    assert set(pool.built) == {"cfg-i"}
+    assert _persisted_models(captured)["estimate_intent"] == "cfg-i"
+    assert _persisted_models(captured)["estimate_signals"] == "primary-x"
+
+
+def test_two_estimators_built_under_different_env_are_independent(monkeypatch):
+    monkeypatch.setenv("MORALSTACK_RISK_INTENT_MODEL", "slot-a")
+    first = LLMBasedRiskEstimator(policy=FakePolicy("primary-x"))
+    monkeypatch.setenv("MORALSTACK_RISK_INTENT_MODEL", "slot-b")
+    second = LLMBasedRiskEstimator(policy=FakePolicy("primary-x"))
+
+    assert first.config.intent_model == "slot-a"
+    assert second.config.intent_model == "slot-b"
+    assert first._effective_mini_model("estimate_intent") == "slot-a"
+    assert second._effective_mini_model("estimate_intent") == "slot-b"
+
+
+# -- resolve_risk_mini_model unit cases --------------------------------------------------------
+
+
+def test_resolve_risk_mini_model_slot_wins_then_inherits_then_none():
+    assert resolve_risk_mini_model("slot", "main") == "slot"
+    assert resolve_risk_mini_model(None, "main") == "main"
+    assert resolve_risk_mini_model("", "main") == "main"
+    assert resolve_risk_mini_model(None, None) is None
+    assert resolve_risk_mini_model("", "") is None
+
+
+# -- policy edge cases -------------------------------------------------------------------------
+
+
+def test_policy_without_model_attribute_persists_none_and_builds_no_pool(captured):
+    """Flipped in C3 (was: persisted the schema default "gpt-4o")."""
+    policy = ModellessPolicy()
+    with patch("moralstack.models.policy.OpenAIPolicy", side_effect=_bomb):
         est = LLMBasedRiskEstimator(policy=policy).estimate("hello world")
 
     assert est.score == 0.1
-    assert pool.built == {}
     assert sorted(policy.calls) == sorted(_MINIS)
-    assert _persisted_models(captured) == dict.fromkeys(_MINIS, "gpt-4o")
+    assert _persisted_models(captured) == dict.fromkeys(_MINIS, None)
 
 
-def test_loader_slots_today_resolve_to_gpt4o_when_env_is_empty():
-    """Flips in C3 (slots become None). Baseline read AFTER the env was cleared by the autouse fixture."""
+def test_mock_model_attribute_is_not_persisted_as_a_repr(captured):
+    policy = FakePolicy("ignored")
+    policy.model = MagicMock()
+    with patch("moralstack.models.policy.OpenAIPolicy", side_effect=_bomb):
+        LLMBasedRiskEstimator(policy=policy).estimate("hello world")
+
+    assert sorted(policy.calls) == sorted(_MINIS)
+    assert _persisted_models(captured) == dict.fromkeys(_MINIS, None)
+
+
+def test_empty_policy_model_is_treated_as_none(captured):
+    policy = FakePolicy("")
+    with patch("moralstack.models.policy.OpenAIPolicy", side_effect=_bomb):
+        LLMBasedRiskEstimator(policy=policy).estimate("hello world")
+
+    assert _persisted_models(captured) == dict.fromkeys(_MINIS, None)
+
+
+def test_loader_slots_are_none_when_env_is_empty():
+    """Flipped in C3 (was: ("gpt-4o",) * 3). Baseline read AFTER the env was cleared by the autouse fixture."""
     cfg = LLMBasedRiskEstimator(policy=None).config
 
-    assert (cfg.intent_model, cfg.signals_model, cfg.operational_model) == ("gpt-4o", "gpt-4o", "gpt-4o")
+    assert (cfg.intent_model, cfg.signals_model, cfg.operational_model) == (None, None, None)
 
 
-# -- pin 9: calibration-guard row end to end ---------------------------------------------------
+# -- calibration-guard row end to end ----------------------------------------------------------
 
 
 def _db_setup(tmp_path, monkeypatch, run_id: str, request_id: str) -> None:
@@ -263,38 +347,51 @@ def _db_setup(tmp_path, monkeypatch, run_id: str, request_id: str) -> None:
     set_current_request_id(request_id)
 
 
-def test_get_models_used_includes_guard_model_today_end_to_end(tmp_path, monkeypatch, captured):
-    """Flips in C3: estimate() -> route() -> SqliteReadStore with the guard row sorted first.
-
-    Today the synthetic guard row carries the main policy model and defines the "risk" label when it
-    sorts first. In production the guard row is built after the three futures resolve, so it sorts
-    last within a request (review NB5); the ``started_at`` rewrite below reproduces the worst case.
-    C3 persists NULL on the guard row, so the label becomes a real mini model.
-    """
-    run_id, request_id = "run-pin9", "req-pin9"
-    _db_setup(tmp_path, monkeypatch, run_id, request_id)
+def _estimate_with_guard(captured):
     pool = PoolRecorder(_GUARD_ANSWERS)
     with patch("moralstack.models.policy.OpenAIPolicy", side_effect=pool):
         LLMBasedRiskEstimator(policy=FakePolicy("main-m", _GUARD_ANSWERS), config=_slots("s-i", "s-s", "s-o")).estimate(
             "hello world"
         )
-
     assert len(captured.singles) == 1
     guard = captured.singles[0]
     assert guard.payload["action"] == "calibration_guard"
-    assert guard.payload["model"] == "main-m"
+    return guard
+
+
+def test_guard_row_persists_null_model_and_no_longer_defines_the_risk_label(tmp_path, monkeypatch, captured):
+    """Flipped in C3: estimate() -> route() -> SqliteReadStore with the guard row sorted first.
+
+    Was: the synthetic guard row carried the main policy model and defined the "risk" label when it
+    sorted first. Now its model is NULL, so the label is a real mini model. The ``started_at`` rewrite
+    reproduces the worst case (production builds the guard row after the minis, review NB5).
+    """
+    run_id, request_id = "run-pin9", "req-pin9"
+    _db_setup(tmp_path, monkeypatch, run_id, request_id)
+    guard = _estimate_with_guard(captured)
+    assert guard.payload["model"] is None
+    assert guard.payload["billable_provider_call"] is False
     guard.payload["started_at"] = 1  # earliest row of the run
     for env in [*captured.batches[0], guard]:
         route(env)
 
     rows = SqliteReadStore().get_llm_calls_for_request(run_id, request_id)
     assert {r["action"]: r["model"] for r in rows} == {
-        "calibration_guard": "main-m",
+        "calibration_guard": None,
         "estimate_intent": "s-i",
         "estimate_signals": "s-s",
         "estimate_operational": "s-o",
     }
-    assert SqliteReadStore().get_models_used_for_run(run_id)["risk"] == "main-m"
+    assert SqliteReadStore().get_models_used_for_run(run_id)["risk"] in {"s-i", "s-s", "s-o"}
+
+
+def test_guard_row_alone_yields_no_risk_key(tmp_path, monkeypatch, captured):
+    run_id, request_id = "run-guard-only", "req-guard-only"
+    _db_setup(tmp_path, monkeypatch, run_id, request_id)
+    guard = _estimate_with_guard(captured)
+    route(guard)
+
+    assert "risk" not in SqliteReadStore().get_models_used_for_run(run_id)
 
 
 def test_get_models_used_guard_row_inserted_directly_feeds_risk_until_c4(tmp_path, monkeypatch):
@@ -330,3 +427,97 @@ def test_get_models_used_guard_row_inserted_directly_feeds_risk_until_c4(tmp_pat
         )
 
     assert SqliteReadStore().get_models_used_for_run(run_id) == {"risk": "gpt-4o-mini"}
+
+
+# -- labels agree with the model the estimator really uses -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {},
+        {"MORALSTACK_RISK_MODEL": "risk-env"},
+        {"MORALSTACK_RISK_INTENT_MODEL": "slot-i"},
+        {
+            "MORALSTACK_RISK_MODEL": "risk-env",
+            "MORALSTACK_RISK_INTENT_MODEL": "slot-i",
+            "MORALSTACK_RISK_SIGNALS_MODEL": "slot-s",
+            "MORALSTACK_RISK_OPERATIONAL_MODEL": "slot-o",
+        },
+    ],
+)
+def test_report_labels_equal_the_models_the_estimator_uses(monkeypatch, captured, env):
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    ms = _get_benchmark_models_config_fallback("base-m", "judge-m", moralstack_policy_model="policy-m")["moralstack"]
+    # The builder/benchmark risk policy: MORALSTACK_RISK_MODEL when set, else the primary model.
+    main = FakePolicy(env.get("MORALSTACK_RISK_MODEL", "policy-m"))
+    pool = PoolRecorder()
+    with patch("moralstack.models.policy.OpenAIPolicy", side_effect=pool):
+        LLMBasedRiskEstimator(policy=main).estimate("hello world")
+
+    persisted = _persisted_models(captured)
+    assert ms["risk_parallel"] is True
+    assert ms["risk_intent"] == persisted["estimate_intent"]
+    assert ms["risk_signals"] == persisted["estimate_signals"]
+    assert ms["risk_operational"] == persisted["estimate_operational"]
+
+
+def test_fallback_labels_always_set_risk_parallel_and_render_three_rows(monkeypatch):
+    for env in ({}, {"MORALSTACK_RISK_MODEL": "risk-env"}):
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        cfg = _get_benchmark_models_config_fallback("base-m", "judge-m", moralstack_policy_model="policy-m")
+        assert cfg["moralstack"]["risk_parallel"] is True
+        md = format_models_used_markdown(cfg, primary_model="policy-m")
+        assert "| **MoralStack risk** | parallel mini-estimators |" in md
+        assert "risk · intent" in md and "risk · signals" in md and "risk · operational" in md
+
+
+# -- CLI display (never "None") ----------------------------------------------------------------
+
+
+def test_cli_display_renders_the_resolved_model_never_none(capsys):
+    from moralstack.cli.loader import ModuleLoader
+    from moralstack.cli.models import CLIConfig
+
+    est = LLMBasedRiskEstimator(policy=None, config=RiskEstimatorConfig())
+    built = SimpleNamespace(
+        policy=object(),
+        constitution_store=SimpleNamespace(get_excluded_domains=lambda: set()),
+        risk_estimator=est,
+    )
+    meta = SimpleNamespace(policy_model="p", risk_model="x")
+    loader = ModuleLoader(CLIConfig(openai_api_key="k", minimal=True))
+    with patch("moralstack.pipeline.deliberation_stack.build_deliberation_modules", return_value=(built, meta)):
+        loader.load_all()
+
+    status = loader.get_status()["risk_estimator"]
+    assert "intent: x, signals: x, op: x" in status
+    assert "None" not in status
+    assert "None" not in capsys.readouterr().out
+
+
+# -- design A reader pin -----------------------------------------------------------------------
+
+
+def test_risk_model_env_is_read_only_where_the_risk_policy_or_labels_are_chosen():
+    """``MORALSTACK_RISK_MODEL`` / the risk ``ENV_MODEL`` appear only in the policy-choice and label sites."""
+    root = Path(__file__).resolve().parent.parent
+    allowed = {
+        "moralstack/pipeline/deliberation_stack.py",
+        "scripts/benchmark_moralstack.py",
+        "moralstack/reports/markdown_export.py",
+        "moralstack/models/risk/config_loader.py",
+        "moralstack/utils/env_loader.py",
+    }
+    pattern = re.compile(r"RISK_ENV_MODEL|MORALSTACK_RISK_MODEL|risk\.config_loader import[^)]*\bENV_MODEL\b")
+    hits = set()
+    for base in ("moralstack", "scripts"):
+        for path in (root / base).rglob("*.py"):
+            if pattern.search(path.read_text(encoding="utf-8", errors="ignore")):
+                hits.add(path.relative_to(root).as_posix())
+    assert hits <= allowed, sorted(hits - allowed)
+    # The estimator and the CLI display must not read the env var at all.
+    for rel in ("moralstack/models/risk/estimator.py", "moralstack/cli/loader.py"):
+        assert "MORALSTACK_RISK_MODEL" not in (root / rel).read_text(encoding="utf-8")

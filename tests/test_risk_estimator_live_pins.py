@@ -356,8 +356,9 @@ def test_estimate_emits_calibration_guard_row(captured):
     assert payload["action"] == "calibration_guard"
     assert payload["sequence_in_cycle"] == -8
     assert payload["billable_provider_call"] is False
-    # Intentionally changed in C3 of risk-estimator-dual-config: the synthetic row will persist None.
-    assert payload["model"] == policy.model == "m"
+    # Changed in C3 of risk-estimator-dual-config: synthetic row, no provider call, so no model is persisted.
+    assert policy.model == "m"
+    assert payload["model"] is None
     assert payload["prompt"] == "<synthetic — no LLM call>"
     raw = json.loads(payload["raw_response"])
     assert raw["guard_applied"] is True

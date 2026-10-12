@@ -906,9 +906,16 @@ def _get_benchmark_models_config_fallback(
     """Fallback: load MoralStack model config from env when models_config not in report
     (backward compat)."""
     policy_fallback = moralstack_policy_model or baseline_model
+    intent_m = signals_m = operational_m = None
     try:
+        from moralstack.models.risk.config_loader import (
+            ENV_INTENT_MODEL,
+            ENV_OPERATIONAL_MODEL,
+            ENV_SIGNALS_MODEL,
+            get_risk_env_str,
+            resolve_risk_mini_model,
+        )
         from moralstack.models.risk.config_loader import ENV_MODEL as RISK_ENV_MODEL
-        from moralstack.models.risk.config_loader import get_risk_env_str
         from moralstack.runtime.modules.critic_config_loader import ENV_MODEL as CRITIC_ENV_MODEL
         from moralstack.runtime.modules.critic_config_loader import get_critic_env_str
         from moralstack.runtime.modules.hindsight_config_loader import (
@@ -929,24 +936,34 @@ def _get_benchmark_models_config_fallback(
         simulator_m = get_simulator_env_str(SIMULATOR_ENV_MODEL, "") or policy_fallback
         hindsight_m = get_hindsight_env_str(HINDSIGHT_ENV_MODEL, "") or policy_fallback
         perspectives_m = get_perspective_env_str(PERSPECTIVES_ENV_MODEL, "") or policy_fallback
+        intent_m = resolve_risk_mini_model(get_risk_env_str(ENV_INTENT_MODEL, "") or None, risk_m)
+        signals_m = resolve_risk_mini_model(get_risk_env_str(ENV_SIGNALS_MODEL, "") or None, risk_m)
+        operational_m = resolve_risk_mini_model(get_risk_env_str(ENV_OPERATIONAL_MODEL, "") or None, risk_m)
     except ImportError:
         risk_m = critic_m = simulator_m = hindsight_m = perspectives_m = policy_fallback
 
     rewrite_raw = (os.getenv("MORALSTACK_POLICY_REWRITE_MODEL") or "").strip()
     policy_rewrite_m = rewrite_raw if rewrite_raw else policy_fallback
 
+    moralstack_cfg: dict[str, Any] = {
+        "policy": policy_fallback,
+        "policy_rewrite": policy_rewrite_m,
+        "risk": risk_m,
+        "critic": critic_m,
+        "simulator": simulator_m,
+        "hindsight": hindsight_m,
+        "perspectives": perspectives_m,
+    }
+    if intent_m is not None:
+        moralstack_cfg["risk_parallel"] = True
+        moralstack_cfg["risk_intent"] = intent_m
+        moralstack_cfg["risk_signals"] = signals_m
+        moralstack_cfg["risk_operational"] = operational_m
+
     return {
         "baseline": baseline_model,
         "judge": judge_model,
-        "moralstack": {
-            "policy": policy_fallback,
-            "policy_rewrite": policy_rewrite_m,
-            "risk": risk_m,
-            "critic": critic_m,
-            "simulator": simulator_m,
-            "hindsight": hindsight_m,
-            "perspectives": perspectives_m,
-        },
+        "moralstack": moralstack_cfg,
     }
 
 

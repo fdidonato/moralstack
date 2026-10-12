@@ -356,7 +356,8 @@ class RiskEstimator(Protocol):
 
 **Configurazione**: `LLMBasedRiskEstimator` accepts an optional `RiskEstimatorConfig`. When omitted, config is loaded
 from environment variables (`MORALSTACK_RISK_*`);
-see [modules/risk_estimator.md](modules/risk_estimator.md#environment-variables).
+see [modules/risk_estimator.md](modules/risk_estimator.md#environment-variables). Unset per-mini model slots
+(`MORALSTACK_RISK_{INTENT,SIGNALS,OPERATIONAL}_MODEL`) inherit the risk policy's model (`resolve_risk_mini_model`).
 
 *[impl]* In `moralstack` the protocol uses `estimate(prompt: str)`. The implementation is LLM-based (structured prompts
 in `models/risk/prompts.py`) and uses **three parallel mini-estimators** (intent, harm signals q1–q17 + `domain_sensitivity`,

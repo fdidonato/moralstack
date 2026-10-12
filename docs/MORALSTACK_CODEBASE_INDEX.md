@@ -269,7 +269,7 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `llm_call` envelopes are built with the local 16-key risk payload (the 16th key
   is `billable_provider_call`) and enqueued as one observability batch; a synthetic
   `calibration_guard` row remains a separate single enqueue and is emitted with
-  `billable_provider_call=False` (it is no real provider call: audit-tracked but
+  `billable_provider_call=False` and `model=NULL` (it is no real provider call: audit-tracked but
   excluded from token/cost aggregation, so it never surfaces as a spurious "missing"
   token row). The three real mini rows leave the flag unset (`None`): the read store
   counts them as billable through its `COALESCE(...,1)` default, but the in-process

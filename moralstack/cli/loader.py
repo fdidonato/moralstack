@@ -176,10 +176,13 @@ class ModuleLoader:
         modules["risk_estimator"] = built_modules.risk_estimator
         risk_cfg = getattr(built_modules.risk_estimator, "config", None)
         if risk_cfg is not None:
+            from moralstack.models.risk.config_loader import resolve_risk_mini_model
+
             display_info = (
                 f"Focused Parallel Mode | main: {meta.risk_model} | "
-                f"intent: {risk_cfg.intent_model}, signals: {risk_cfg.signals_model}, "
-                f"op: {risk_cfg.operational_model}"
+                f"intent: {resolve_risk_mini_model(risk_cfg.intent_model, meta.risk_model)}, "
+                f"signals: {resolve_risk_mini_model(risk_cfg.signals_model, meta.risk_model)}, "
+                f"op: {resolve_risk_mini_model(risk_cfg.operational_model, meta.risk_model)}"
             )
         else:
             display_info = f"Focused Parallel Mode | main: {meta.risk_model}"
