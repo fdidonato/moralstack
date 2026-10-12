@@ -322,6 +322,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Docs: risk mini-estimator `response_format`.** `docs/modules/risk_estimator.md` said the
+  mini-estimators request `json_object`; each one actually sends its own strict `json_schema`
+  (`intent_response_format()`, `operational_response_format()`,
+  `harm_signal_response_format(registry)`), and the plain `json_object` default of
+  `_build_generation_config` is never hit by the live path. Docs only.
+
 - **AI harness (lot 1).** Fixed five defects in `.claude/` hooks/guards: doc-path
   references now consistently use the on-disk `docs/traces/` casing (several
   files used an upper-case variant, invisible on case-insensitive filesystems);

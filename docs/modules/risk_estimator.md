@@ -175,13 +175,17 @@ across requests for that mini:
   once and appended to the system prefix. The user template is `REQUEST` only.
 
 Verified by `tests/test_static_prefix_stability.py` (byte-identical system across
-two distinct requests, equal to the module constant); `response_format` stays
-`json_object` and retries/parsers are unchanged.
+two distinct requests, equal to the module constant); retries/parsers are unchanged.
+(`response_format` is now a strict per-mini `json_schema` — see "Output schemas are
+enforced by the provider" below.)
 
 Shared steps:
 
 1. **Prompt building** — dedicated templates in `prompts.py` (`INTENT_CONTEXT_*`, `HARM_SIGNAL_*`, `OPERATIONAL_RISK_*`). `GenerationConfig`
-   requests OpenAI **`response_format={"type":"json_object"}`**. Per-mini model overrides use **pooled** `OpenAIPolicy`
+   requests a strict per-mini **`response_format={"type":"json_schema", ...}`** (`intent_response_format()`,
+   `operational_response_format()`, `harm_signal_response_format(registry)`); the plain
+   `{"type":"json_object"}` default of `_build_generation_config` is never hit by the live path.
+   Per-mini model overrides use **pooled** `OpenAIPolicy`
    instances keyed by model id (`get_pooling_diagnostics()`).
 2. **LLM call(s) with retry** — each mini-call retries up to `max_retries`
    independently; observable persistence actions include `estimate_intent`, `estimate_signals`, `estimate_operational`.
