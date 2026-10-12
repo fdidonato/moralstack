@@ -328,6 +328,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     supersedes the "persisted `estimation_mode` and `estimate` rows stay readable" note in the
     "Single risk-estimator residues" entry below, which is left as written. The census found
     0 such rows in 114 local DBs.
+  - The CLI-path `calibration_guard` branch of `reports/model.py` is removed too, so
+    `request_report_from_cli(...).calibration_guard_info` is always `""`. The branch was
+    unreachable: the only CLI `log_call(module="risk_estimator")` (the controller's) writes
+    non-JSON text, and the mini-estimators never call `log_call`. The DB path still reports
+    the guard.
 
 - **Single risk-estimator residues (breaking for direct importers).** The retired
   single-estimator surface is gone; the live path (three mini-estimators plus the
