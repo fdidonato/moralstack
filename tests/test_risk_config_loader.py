@@ -19,15 +19,15 @@ from moralstack.models.risk.config_loader import (
     ENV_OPERATIONAL_MODEL,
     ENV_SIGNALS_MODEL,
     ENV_TOP_P,
-    get_risk_env_bool,
     get_risk_env_float,
     get_risk_env_int,
     get_risk_env_str,
     load_risk_estimator_config_from_env,
 )
 from moralstack.models.risk.estimator import LLMBasedRiskEstimator
+from moralstack.utils.env_helpers import get_env_bool
 
-# Generic bool-parsing key for get_risk_env_bool (no risk-estimator var is boolean any more).
+# Generic bool-parsing key for get_env_bool (no risk-estimator var is boolean any more).
 _BOOL_KEY = "MORALSTACK_TEST_BOOL_FLAG"
 
 # Env vars of the retired single-estimator configuration: nothing reads them any more.
@@ -163,27 +163,27 @@ class TestGetRiskEnvStr:
         assert get_risk_env_str(ENV_MODEL, "gpt-4o") == "gpt-4o-mini"
 
 
-class TestGetRiskEnvBool:
-    """Tests for get_risk_env_bool."""
+class TestGetEnvBool:
+    """Tests for env_helpers.get_env_bool (the only test of bool parsing)."""
 
     def test_missing_key_returns_default(self, monkeypatch):
         monkeypatch.delenv(_BOOL_KEY, raising=False)
-        assert get_risk_env_bool(_BOOL_KEY, True) is True
-        assert get_risk_env_bool(_BOOL_KEY, False) is False
+        assert get_env_bool(_BOOL_KEY, True) is True
+        assert get_env_bool(_BOOL_KEY, False) is False
 
     def test_empty_key_returns_default(self, monkeypatch):
         monkeypatch.setenv(_BOOL_KEY, "")
-        assert get_risk_env_bool(_BOOL_KEY, True) is True
+        assert get_env_bool(_BOOL_KEY, True) is True
 
     def test_true_values(self, monkeypatch):
         for val in ("1", "true", "TRUE", "yes", "Yes"):
             monkeypatch.setenv(_BOOL_KEY, val)
-            assert get_risk_env_bool(_BOOL_KEY, False) is True
+            assert get_env_bool(_BOOL_KEY, False) is True
 
     def test_false_values(self, monkeypatch):
         for val in ("0", "false", "FALSE", "no", "No"):
             monkeypatch.setenv(_BOOL_KEY, val)
-            assert get_risk_env_bool(_BOOL_KEY, True) is False
+            assert get_env_bool(_BOOL_KEY, True) is False
 
 
 class TestLoadRiskEstimatorConfigFromEnv:

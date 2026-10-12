@@ -319,7 +319,7 @@ class RiskEstimation:
     score: float                       # [0, 1]
     confidence: float                  # [0, 1]
     risk_category: RiskCategory
-    semantic_signals: list[str]        # *[impl]* alias triggered_signals; calibrated strings (e.g. Qn:..., request_type:...)
+    semantic_signals: list[str]        # calibrated strings (e.g. Qn:..., request_type:...)
     domain_sensitivity: str = "LOW"   # LOW | MEDIUM | HIGH
     operational_risk: str = "NONE"     # NONE | LOW | HIGH
     risk_policy_action: RiskPolicyAction = RiskPolicyAction.DELIBERATE

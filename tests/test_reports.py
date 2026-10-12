@@ -286,15 +286,18 @@ class TestRiskRationaleFromDb:
         assert report.risk_rationale == "[intent] asks for a recipe | [op_risk] low actionability | ⚡ capped to 0.45"
         assert report.calibration_guard_info == "capped to 0.45"
 
-    def test_legacy_estimate_row_still_feeds_the_rationale_today(self, tmp_path, monkeypatch):
-        """Flips in C1: the legacy single-estimator ``estimate`` row stops feeding the rationale (-> "")."""
+    def test_legacy_estimate_row_no_longer_feeds_the_rationale(self, tmp_path, monkeypatch):
+        """Flipped in C1: the legacy single-estimator ``estimate`` row no longer feeds the rationale (-> "").
+
+        Justification: the mono estimator was removed in 178b8cf and 0 such rows were found in 114 DBs.
+        """
         import json
 
         report = self._report_for_rows(
             tmp_path, monkeypatch, [("estimate", json.dumps({"rationale": "legacy single estimate"}))]
         )
 
-        assert report.risk_rationale == "legacy single estimate"
+        assert report.risk_rationale == ""
 
     def test_cli_text_risk_row_yields_no_rationale(self):
         """Stays green: the only CLI ``risk_estimator`` log_call writes non-JSON text ("Risk: ...")."""

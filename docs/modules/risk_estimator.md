@@ -183,10 +183,10 @@ Shared steps:
 
 1. **Prompt building** — dedicated templates in `prompts.py` (`INTENT_CONTEXT_*`, `HARM_SIGNAL_*`, `OPERATIONAL_RISK_*`). `GenerationConfig`
    requests a strict per-mini **`response_format={"type":"json_schema", ...}`** (`intent_response_format()`,
-   `operational_response_format()`, `harm_signal_response_format(registry)`); the plain
-   `{"type":"json_object"}` default of `_build_generation_config` is never hit by the live path.
+   `operational_response_format()`, `harm_signal_response_format(registry)`); `_build_generation_config(response_format)` requires the
+   argument (there is no plain-JSON default).
    Per-mini model overrides use **pooled** `OpenAIPolicy`
-   instances keyed by model id (`get_pooling_diagnostics()`).
+   instances keyed by model id (internal `_mini_policy_pool`).
 2. **LLM call(s) with retry** — each mini-call retries up to `max_retries`
    independently; observable persistence actions include `estimate_intent`, `estimate_signals`, `estimate_operational`.
    The three mini-estimator `llm_call` envelopes are persisted synchronously as one `router.route_batch(...)`

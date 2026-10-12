@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 
-from moralstack.utils.env_helpers import get_env_bool, get_env_float, get_env_int, get_env_str
+from moralstack.utils.env_helpers import get_env_float, get_env_int, get_env_str
 
 from .schema import RiskEstimatorConfig
 
@@ -17,7 +17,6 @@ from .schema import RiskEstimatorConfig
 get_risk_env_float = get_env_float
 get_risk_env_int = get_env_int
 get_risk_env_str = get_env_str
-get_risk_env_bool = get_env_bool
 
 # Environment variable names (single source of truth)
 ENV_MAX_RETRIES = "MORALSTACK_RISK_MAX_RETRIES"

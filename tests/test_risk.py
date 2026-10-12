@@ -284,7 +284,6 @@ class TestRiskEstimation:
         estimation = RiskEstimation.benign()
         assert estimation.score == 0.1
         assert estimation.risk_category == RiskCategory.BENIGN
-        assert estimation.triggered_signals == []
 
     def test_clearly_harmful_factory(self):
         """Test factory method clearly_harmful."""
@@ -293,8 +292,6 @@ class TestRiskEstimation:
         assert estimation.score == 0.95
         assert estimation.risk_category == RiskCategory.CLEARLY_HARMFUL
         assert estimation.semantic_signals == signals
-        # Backward compatibility: triggered_signals è alias per semantic_signals
-        assert estimation.triggered_signals == signals
 
     def test_from_error_factory(self):
         """Test factory method from_error (richiede deliberazione)."""

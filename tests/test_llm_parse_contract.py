@@ -79,11 +79,11 @@ def test_enrich_llm_badges_from_parse_contract():
     assert "retry x2" in b
 
 
-def test_generation_config_includes_json_object():
+def test_build_generation_config_requires_response_format():
+    """The plain-JSON default is gone: every mini passes an explicit schema."""
     est = LLMBasedRiskEstimator(policy=None)
-    cfg = est._build_generation_config()
-    assert cfg is not None
-    assert getattr(cfg, "response_format", None) == {"type": "json_object"}
+    with pytest.raises(TypeError):
+        est._build_generation_config()
 
 
 def test_parallel_mini_persist_parse_contract(monkeypatch):

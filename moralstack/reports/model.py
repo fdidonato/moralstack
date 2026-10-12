@@ -428,7 +428,6 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
         # Parallel mode: merge intent + operational rationales
         intent_rat = ""
         op_rat = ""
-        mono_rat = ""
         guard_rat = ""
         for c in risk_est_calls:
             action = (c.get("action") or "").strip().lower()
@@ -451,8 +450,6 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
                 intent_rat = rat
             elif action == "estimate_operational":
                 op_rat = rat
-            elif action == "estimate":
-                mono_rat = rat
             elif action == "calibration_guard":
                 guard_rat = rat
                 calibration_guard_info = rat
@@ -462,8 +459,6 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
             risk_rationale = intent_rat
         elif op_rat:
             risk_rationale = op_rat
-        elif mono_rat:
-            risk_rationale = mono_rat
         if guard_rat:
             risk_rationale = f"{risk_rationale} | ⚡ {guard_rat}" if risk_rationale else f"⚡ {guard_rat}"
 
@@ -670,7 +665,6 @@ def request_report_from_cli(trace: Any, call_logger: Any, result: Any, prompt: s
 
         _intent_rat = ""
         _op_rat = ""
-        _guard_rat = ""
         for call in call_logger.calls:
             module = (call.get("module") or "").strip().lower()
             if module != "risk_estimator":
@@ -695,19 +689,12 @@ def request_report_from_cli(trace: Any, call_logger: Any, result: Any, prompt: s
                 _intent_rat = rat
             elif action == "estimate_operational" and rat:
                 _op_rat = rat
-            elif action == "estimate" and rat:
-                cli_risk_rationale = cli_risk_rationale or rat
-            elif action == "calibration_guard" and rat:
-                _guard_rat = rat
-                cli_calibration_guard_info = rat
         if _intent_rat and _op_rat:
             cli_risk_rationale = f"[intent] {_intent_rat} | [op_risk] {_op_rat}"
         elif _intent_rat:
             cli_risk_rationale = cli_risk_rationale or f"[intent] {_intent_rat}"
         elif _op_rat:
             cli_risk_rationale = cli_risk_rationale or f"[op_risk] {_op_rat}"
-        if _guard_rat:
-            cli_risk_rationale = f"{cli_risk_rationale} | ⚡ {_guard_rat}" if cli_risk_rationale else f"⚡ {_guard_rat}"
         cli_risk_rationale = cli_risk_rationale.strip().strip("|").strip()
 
     return RequestReport(

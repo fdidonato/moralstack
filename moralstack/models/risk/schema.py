@@ -102,12 +102,6 @@ class RiskEstimation:
     retrieval_succeeded: bool = False
     retrieval_error: str | None = None
 
-    # Alias per backward compatibility
-    @property
-    def triggered_signals(self) -> list[str]:
-        """Alias per semantic_signals (backward compatibility)."""
-        return self.semantic_signals
-
     def __post_init__(self) -> None:
         # Clamp values in range valido (object.__setattr__ per frozen)
         object.__setattr__(self, "score", max(0.0, min(1.0, self.score)))

@@ -307,22 +307,6 @@ class LLMBasedRiskEstimator:
         # Mini-estimator OpenAIPolicy reuse: keyed by model id on this estimator instance (thread-safe fill).
         self._mini_policy_pool: dict[str, Any] = {}
         self._mini_policy_pool_lock = threading.Lock()
-        self._mini_policy_pool_hits: int = 0
-        self._mini_policy_pool_misses: int = 0
-
-    def get_pooling_diagnostics(self) -> dict[str, Any]:
-        """
-        Optional low-noise diagnostics for mini-estimator policy pooling.
-
-        Not merged into main request UI by default; for advanced debug / benchmarks.
-        """
-        with self._mini_policy_pool_lock:
-            models = list(self._mini_policy_pool.keys())
-        return {
-            "risk_mini_policy_pool_models": models,
-            "risk_policy_pool_hits": self._mini_policy_pool_hits,
-            "risk_policy_pool_misses": self._mini_policy_pool_misses,
-        }
 
     def _policy_for_mini_estimator_model(self, target_model: str) -> Any:
         """
@@ -337,9 +321,7 @@ class LLMBasedRiskEstimator:
         with self._mini_policy_pool_lock:
             existing = self._mini_policy_pool.get(key)
             if existing is not None:
-                self._mini_policy_pool_hits += 1
                 return existing
-            self._mini_policy_pool_misses += 1
             pol = OpenAIPolicy(model=target_model)
             if self.policy is not None and hasattr(self.policy, "tracker") and getattr(self.policy, "tracker", None):
                 pol.set_cost_tracker(self.policy.tracker)
@@ -419,28 +401,22 @@ class LLMBasedRiskEstimator:
             used_fallback_parse=True,
         )
 
-    def _build_generation_config(self, response_format: Any = None) -> Any:
-        """Build optional GenerationConfig for policy.generate. Returns None if unavailable.
+    def _build_generation_config(self, response_format: Any) -> Any:
+        """Build the GenerationConfig for policy.generate.
 
-        `response_format` defaults to plain JSON mode. A mini-estimator whose
-        output shape is fully specified passes a strict `json_schema` instead,
-        so the provider enforces the key names and enums rather than the
-        tolerant `data.get(key, default)` downstream silently reading a
+        `response_format` is required: each mini-estimator passes its strict
+        `json_schema`, so the provider enforces the key names and enums rather
+        than the tolerant `data.get(key, default)` downstream silently reading a
         misspelled or missing key as an absent signal.
         """
-        try:
-            from moralstack.models.policy import GenerationConfig
+        from moralstack.models.policy import GenerationConfig
 
-            return GenerationConfig(
-                max_tokens=self.config.max_tokens,
-                temperature=self.config.temperature,
-                top_p=self._top_p,
-                # OpenAI Chat Completions: enforce a single JSON object (tolerant recovery still in extract_json).
-                response_format=response_format or {"type": "json_object"},
-            )
-        except ImportError as e:
-            _RISK_LOG.debug("GenerationConfig unavailable: %s", e)
-            return None
+        return GenerationConfig(
+            max_tokens=self.config.max_tokens,
+            temperature=self.config.temperature,
+            top_p=self._top_p,
+            response_format=response_format,
+        )
 
     def _get_principles_context(
         self,
@@ -818,10 +794,8 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
 
         _policy = self.policy  # narrowed non-optional for closure capture
 
-        gen_config = self._build_generation_config()
         # Each mini-estimator declares a different output contract, so each gets
-        # its own provider-enforced schema. `gen_config` stays the plain-JSON
-        # fallback for any call that is not one of the three.
+        # its own provider-enforced schema.
         gen_config_signals = self._build_generation_config(response_format=harm_signal_response_format(signal_registry))
         gen_config_intent = self._build_generation_config(response_format=intent_response_format())
         gen_config_operational = self._build_generation_config(response_format=operational_response_format())
@@ -931,7 +905,7 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
                 result: Any = None
                 try:
                     start_gen = time.time()
-                    call_config = gen_config_by_mini.get(mini_name, gen_config)
+                    call_config = gen_config_by_mini[mini_name]
                     if (developer_contract_text or conversation_history) and _supports_native_messages(effective_policy):
                         result = effective_policy.generate_messages(
                             messages=_risk_context_messages(

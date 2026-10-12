@@ -261,6 +261,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Dead remains of the risk estimator (BREAKING for direct importers; the live path is
+  unchanged).** Nothing in the repository used any of these; every mini-estimator already
+  passed an explicit strict `json_schema`.
+  - **BREAKING:** `RiskEstimation.triggered_signals` is removed (it was an uncalled alias);
+    use `semantic_signals`.
+  - **BREAKING:** `get_risk_env_bool` is removed from `moralstack.models.risk.config_loader`;
+    use `moralstack.utils.env_helpers.get_env_bool`.
+  - **BREAKING:** `LLMBasedRiskEstimator.get_pooling_diagnostics()` and its write-only hit/miss
+    counters are removed; the pool itself is unchanged.
+  - **BREAKING:** `LLMBasedRiskEstimator._build_generation_config` now requires its
+    `response_format` argument (no `json_object` default; calling it with no argument raises
+    `TypeError`) and no longer swallows an `ImportError`.
+  - Legacy `estimate` rows (single-estimator era) no longer feed the report rationale
+    (`reports/model.py`, DB and CLI paths); they are still stored and shown raw. This
+    supersedes the "persisted `estimation_mode` and `estimate` rows stay readable" note in the
+    "Single risk-estimator residues" entry below, which is left as written. The census found
+    0 such rows in 114 local DBs.
+
 - **Single risk-estimator residues (breaking for direct importers).** The retired
   single-estimator surface is gone; the live path (three mini-estimators plus the
   calibration guard) is unchanged. Removed names and migrations:

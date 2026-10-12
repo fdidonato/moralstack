@@ -89,21 +89,7 @@ def test_risk_estimator_pools_mini_policies_per_model():
         assert p3 is not p1
         assert mock_policy_cls.call_count == 2
 
-    d = est.get_pooling_diagnostics()
-    assert set(d["risk_mini_policy_pool_models"]) == {"gpt-mini-x", "gpt-mini-y"}
-    assert d["risk_policy_pool_misses"] == 2
-    assert d["risk_policy_pool_hits"] >= 1
-
-
-def test_get_pooling_diagnostics_stable_keys():
-    main = MagicMock()
-    main.model = "m"
-    main.tracker = None
-    est = LLMBasedRiskEstimator(policy=main, config=RiskEstimatorConfig())
-    d = est.get_pooling_diagnostics()
-    assert "risk_mini_policy_pool_models" in d
-    assert "risk_policy_pool_hits" in d
-    assert "risk_policy_pool_misses" in d
+    assert set(est._mini_policy_pool) == {"gpt-mini-x", "gpt-mini-y"}
 
 
 def test_persist_mini_llm_call_records_effective_model_not_main_policy():
