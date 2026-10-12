@@ -395,6 +395,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Docs: stale line anchors in `docs/CODEBASE_FACTS.md`.** The 2026-10-12 risk-estimator
+  cleanup shifted `moralstack/models/risk/estimator.py`; five existing fact rows (domain
+  routing, retrieval metadata, billable flag, provider retry, `RiskEstimatorConfig`) cited
+  the old lines. Re-anchored after matching each cited line by content at HEAD. Docs only.
+
 - **Docs: risk mini-estimator `response_format`.** `docs/modules/risk_estimator.md` said the
   mini-estimators request `json_object`; each one actually sends its own strict `json_schema`
   (`intent_response_format()`, `operational_response_format()`,
