@@ -271,11 +271,11 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `calibration_guard` row remains a separate single enqueue and is emitted with
   `billable_provider_call=False` and `model=NULL` (it is no real provider call: audit-tracked but
   excluded from token/cost aggregation, so it never surfaces as a spurious "missing"
-  token row). The three real mini rows leave the flag unset (`None`): the read store
-  counts them as billable through its `COALESCE(...,1)` default, but the in-process
-  per-request accumulator (`observability/service.py`) skips them, so
-  `request_token_usage` and the proxy `usage` field omit them — a known defect, see
-  `docs/CODEBASE_FACTS.md`. `estimate(...)` is the only estimation entry (no factory, no
+  token row). The three real mini rows leave the flag unset (`None`): both the read store
+  (`COALESCE(...,1)` default) and the in-process per-request accumulator
+  (`observability/service.py:_counts_as_billable`: only a falsy flag excludes) count them
+  as billable, so `request_token_usage` and the proxy `usage` field include them (fixed
+  2026-10-13; between `5439aaf` and that fix they were omitted, see `docs/CODEBASE_FACTS.md`). `estimate(...)` is the only estimation entry (no factory, no
   threshold or categorize helpers); `policy=None` fails closed through
   `RiskEstimation.from_error` (no no-LLM mode, no factory), and routing thresholds live in the orchestrator
   config (`MORALSTACK_ORCHESTRATOR_RISK_*`), not in `RiskEstimatorConfig`.

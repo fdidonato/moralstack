@@ -137,7 +137,14 @@ entirely through `.get(...)`, so the additive key is safe for older rows that la
   `llm.call` envelopes in-process (keyed by `(run_id, request_id)`). At request
   end, `controller._finalize_token_accounting` pops the accumulator and emits
   `request.token_usage_finalized`, populating `ResponseMetadata` token fields and
-  the proxy/SDK `usage` payload.
+  the proxy/SDK `usage` payload. The in-process billable gate
+  (`service._counts_as_billable`) mirrors SQL `COALESCE(billable_provider_call, 1) = 1`:
+  a falsy flag excludes the row; `True`, `None` or an absent key counts it (the three
+  risk mini-estimator rows carry `None`).
+- **Comparability**: `request_token_usage` and the proxy `usage` are unaffected by the
+  mini-row gap before `5439aaf` (2026-07-18), miss the three mini calls from `5439aaf` to the
+  2026-10-13 fix, and include them after it (best-effort throughout); compare within one
+  regime only.
 - **`request_token_usage` row**: best-effort summary at finalization time. It may
   be partial (late speculative discards, queue drops) and must not be treated as
   a canonical total.

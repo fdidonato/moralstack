@@ -372,3 +372,106 @@ def test_billable_provider_call_parity_between_accumulator_and_sql_reconstructio
     assert store_totals is not None
     assert store_totals["total_tokens"] == 30
     conn.close()
+
+
+def _emit_billable_rows(rows):
+    from moralstack.observability.events import EVENT_LLM_CALL, make_envelope
+
+    for module, flag, tokens in rows:
+        payload = {"module": module, "model": "gpt-test" if tokens else ""}
+        if tokens:
+            payload["token_usage_json"] = json.dumps(
+                {"prompt_tokens": tokens, "completion_tokens": 0, "total_tokens": tokens, "source": "exact"}
+            )
+        if flag != "ABSENT":
+            payload["billable_provider_call"] = flag
+        obs.emit(make_envelope(EVENT_LLM_CALL, run_id="run-par2", request_id="req-par2", payload=payload))
+    obs.flush(timeout=5.0)
+
+
+def test_billable_parity_with_none_and_absent_rows(tmp_path, monkeypatch):
+    from moralstack.observability.request_token_accumulator import finalize_and_persist
+
+    dbp = _setup_db(tmp_path, monkeypatch)
+    create_run("run-par2", run_type="test", meta={})
+    upsert_request("run-par2", "req-par2", prompt="hi", domain="")
+
+    _emit_billable_rows(
+        [
+            ("policy", True, 10),
+            ("policy", True, 20),
+            ("risk_estimator", None, 7),
+            ("retriever", "ABSENT", 5),
+            ("diag", False, 9999),
+            ("risk_estimator", False, 0),  # guard-shaped synthetic row: no model, no usage
+        ]
+    )
+
+    sync_totals = finalize_and_persist("run-par2", "req-par2")
+    assert sync_totals is not None
+    conn = _get_connection(dbp)
+    try:
+        sql_totals = _sql_billable_totals(conn, "run-par2", "req-par2")
+    finally:
+        conn.close()
+    obs.flush(timeout=5.0)
+    store_totals = SqliteReadStore().get_token_usage_totals("run-par2", "req-par2")
+    assert store_totals is not None
+    assert sync_totals.total_tokens == sql_totals["total_tokens"] == store_totals["total_tokens"] == 42
+    assert sync_totals.llm_call_count == 4
+
+
+def test_guard_shaped_false_row_is_excluded_in_process_and_in_sql(tmp_path, monkeypatch):
+    from moralstack.observability.request_token_accumulator import finalize_and_persist
+
+    dbp = _setup_db(tmp_path, monkeypatch)
+    create_run("run-par2", run_type="test", meta={})
+    upsert_request("run-par2", "req-par2", prompt="hi", domain="")
+
+    _emit_billable_rows([("risk_estimator", False, 0)])
+
+    totals = finalize_and_persist("run-par2", "req-par2")
+    assert totals is not None and totals.total_tokens == 0 and totals.llm_call_count == 0
+    conn = _get_connection(dbp)
+    try:
+        assert _sql_billable_totals(conn, "run-par2", "req-par2")["total_tokens"] == 0
+        count = conn.execute(
+            "SELECT COUNT(*) AS c FROM llm_calls WHERE run_id = 'run-par2' AND COALESCE(billable_provider_call, 1) = 1"
+        ).fetchone()["c"]
+    finally:
+        conn.close()
+    assert count == 0
+
+
+def test_persist_llm_call_without_flag_is_counted_once_and_stored_null(tmp_path, monkeypatch):
+    """A6: retriever-style persist_llm_call (no flag): accumulator called once, row NULL and counted by COALESCE."""
+    from moralstack.observability import emit_helpers
+
+    dbp = _setup_db(tmp_path, monkeypatch)
+    create_run("run-par2", run_type="test", meta={})
+    upsert_request("run-par2", "req-par2", prompt="hi", domain="")
+    recorded: list[tuple] = []
+    monkeypatch.setattr(service_module, "record_llm_call_usage", lambda *a, **k: recorded.append(a))
+
+    ok = emit_helpers.persist_llm_call(
+        run_id="run-par2",
+        request_id="req-par2",
+        phase="constitution_retrieval",
+        module="constitution_retriever",
+        action="retrieve",
+        model="gpt-test",
+        token_usage_json=json.dumps({"prompt_tokens": 4, "completion_tokens": 0, "total_tokens": 4, "source": "exact"}),
+    )
+    obs.flush(timeout=5.0)
+
+    assert ok
+    assert len(recorded) == 1
+    conn = _get_connection(dbp)
+    try:
+        row = conn.execute(
+            "SELECT billable_provider_call FROM llm_calls WHERE run_id = 'run-par2' AND request_id = 'req-par2'"
+        ).fetchone()
+        assert row["billable_provider_call"] is None
+        assert _sql_billable_totals(conn, "run-par2", "req-par2")["total_tokens"] == 4
+    finally:
+        conn.close()

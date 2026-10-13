@@ -372,3 +372,45 @@ def test_risk_estimator_failed_retries_are_persisted(monkeypatch):
     assert all(c["billable_provider_call"] is True for c in retries)
     assert all(json.loads(c["token_usage_json"])["total_tokens"] == 14 for c in retries)
     assert all(c["action"] == f"retry_failed_attempt_{c['attempts']}" for c in retries)
+
+
+def test_mini_rows_tokens_reach_request_token_accumulator(tmp_path, monkeypatch):
+    """The three real mini-estimator calls must be summed by the in-process accumulator too."""
+    import moralstack.observability.request_token_accumulator as rta
+
+    db_path = str(tmp_path / "risk-batch-acc.db")
+    run_id = "run-risk-batch-acc"
+    request_id = "req-risk-batch-acc"
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", db_path)
+    monkeypatch.setenv("MORALSTACK_DB_PATH", db_path)
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
+    with rta._lock:
+        rta._store.clear()
+    assert init_db(db_path)
+    assert create_run(run_id, run_type="test", meta={})
+    assert upsert_request(run_id, request_id, prompt="request", domain="test")
+    _set_context(run_id, request_id)
+
+    _estimator()._persist_mini_llm_calls_batch(_mini_calls())
+    obs.flush(timeout=10.0)
+    totals = rta.finalize_and_persist(run_id, request_id)
+
+    assert totals is not None
+    assert totals.total_tokens == 25
+    assert totals.input_tokens == 11
+    assert totals.output_tokens == 14
+    assert totals.llm_call_count == 3
+    obs.flush(timeout=10.0)
+    conn = _get_connection(db_path)
+    try:
+        sql_total = conn.execute(
+            "SELECT COALESCE(SUM(total_tokens), 0) FROM llm_calls "
+            "WHERE run_id = ? AND request_id = ? AND COALESCE(billable_provider_call, 1) = 1",
+            (run_id, request_id),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert sql_total == 25
+    store_totals = SqliteReadStore().get_token_usage_totals(run_id, request_id)
+    assert store_totals is not None
+    assert store_totals["total_tokens"] == sql_total

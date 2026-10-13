@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
 from moralstack.observability.events import EVENT_LLM_CALL, EventEnvelope
 from moralstack.observability.read_store import SqliteReadStore
@@ -19,6 +19,16 @@ from moralstack.observability.request_token_accumulator import record_llm_call_u
 from moralstack.observability.write_queue import ObservabilityWriteQueue
 
 logger = logging.getLogger(__name__)
+
+
+def _counts_as_billable(payload: Mapping[str, Any]) -> bool:
+    """In-process side of the billable rule; must match the persisted reading.
+
+    The sink stores a missing/None flag as NULL and the read store counts NULL as
+    billable (COALESCE(billable_provider_call, 1) = 1): only a falsy flag excludes.
+    """
+    raw = payload.get("billable_provider_call")
+    return raw is None or bool(raw)
 
 
 class ObservabilityService:
@@ -44,8 +54,8 @@ class ObservabilityService:
     def emit(self, envelope: EventEnvelope) -> None:
         """Fire-and-forget: enqueue envelope for async dispatch. Never raises."""
         if envelope.event_type == EVENT_LLM_CALL and envelope.run_id and envelope.request_id:
-            if envelope.payload.get("billable_provider_call", True):
-                try:
+            try:
+                if _counts_as_billable(envelope.payload):
                     token_json = envelope.payload.get("token_usage_json")
                     if token_json is not None and not isinstance(token_json, str):
                         import json as _json
@@ -56,8 +66,8 @@ class ObservabilityService:
                         envelope.request_id,
                         token_json if isinstance(token_json, str) else None,
                     )
-                except Exception:
-                    logger.debug("token usage accumulation failed", exc_info=True)
+            except Exception:
+                logger.debug("token usage accumulation failed", exc_info=True)
         try:
             self._queue.submit_envelope(envelope)
         except Exception as exc:
@@ -67,8 +77,8 @@ class ObservabilityService:
         """Fire-and-forget batch emit. Never raises."""
         for envelope in envelopes:
             if envelope.event_type == EVENT_LLM_CALL and envelope.run_id and envelope.request_id:
-                if envelope.payload.get("billable_provider_call", True):
-                    try:
+                try:
+                    if _counts_as_billable(envelope.payload):
                         token_json = envelope.payload.get("token_usage_json")
                         if token_json is not None and not isinstance(token_json, str):
                             import json as _json
@@ -79,8 +89,8 @@ class ObservabilityService:
                             envelope.request_id,
                             token_json if isinstance(token_json, str) else None,
                         )
-                    except Exception:
-                        logger.debug("token usage accumulation failed", exc_info=True)
+                except Exception:
+                    logger.debug("token usage accumulation failed", exc_info=True)
         try:
             if not envelopes:
                 return

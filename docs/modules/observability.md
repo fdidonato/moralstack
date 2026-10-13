@@ -223,6 +223,15 @@ Per-request token totals are tracked through two complementary mechanisms:
    writes, queue drops, or non-billable diagnostic rows can make it diverge from
    durable `llm_calls` rows.
 
+   One billable rule applies in-process and in SQL: a falsy `billable_provider_call`
+   excludes the row, while `True`, `None` or an absent key counts it
+   (`service._counts_as_billable` mirrors `COALESCE(billable_provider_call, 1) = 1`).
+   The three risk mini-estimator rows carry `None` and are therefore counted. Comparability:
+   the summary was unaffected by the mini-row gap before `5439aaf` (2026-07-18), missing
+   those three calls from `5439aaf` until the 2026-10-13 fix, and includes them again after it
+   (it stays best-effort throughout); compare it only within
+   one regime, and across regimes use `SUM(llm_calls)` over billable rows.
+
 2. **Offline reconstruction from `llm_calls`** — `get_token_usage_breakdown()` and
    ad-hoc `SUM(...)` queries over billable rows
    (`COALESCE(billable_provider_call, 1) = 1`) are the **most complete source
@@ -237,7 +246,9 @@ Per-request token totals are tracked through two complementary mechanisms:
    from `token_usage_estimated`/`token_usage_missing`.
 
 The OpenAI-compatible proxy `usage` field mirrors the synchronous accumulator totals
-on the success path (zeros on fail-closed paths with no generation).
+on the success path (zeros on fail-closed paths with no generation). Since the 2026-10-13
+fix these totals (and the SDK `GovernanceMetadata` token fields and `llm_call_count`)
+include the risk mini-estimators: values rise, shapes are unchanged.
 
 `billable_provider_call` on `llm_calls` excludes diagnostic/synthetic rows (speculative
 reuse, cache hits, skipped modules, leakage-only rows, and the risk estimator's synthetic

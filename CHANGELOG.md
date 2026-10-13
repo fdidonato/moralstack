@@ -44,8 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `billable_provider_call=None`. The in-process accumulator behind `request_token_usage`
   and the proxy `usage` field skips them (`observability/service.py`), while the read
   store counts NULL as billable, so the per-request summary under-counts governed
-  requests and disagrees with the UI (measurement in `docs/CODEBASE_FACTS.md`). Not
-  fixed yet. The same curation verified five further hypotheses against the code
+  requests and disagrees with the UI (measurement in `docs/CODEBASE_FACTS.md`). Fixed
+  afterwards, see "Fixed" (count null-billable llm calls). The same curation verified five further hypotheses against the code
   (canary rotate race, unsynchronized ledger storage and executor init, estimator
   `domain_channel` reset, path-agnostic persistence init), recorded that absorbed
   provider errors leave no trace in the DB, and corrected stale rows (critic rule
@@ -394,6 +394,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository settings. The workflows remain recoverable from git history.
 
 ### Fixed
+
+- **Observability: the per-request token totals count the three risk mini-estimator calls
+  again.** The in-process accumulator skipped `LLM_CALL` rows whose
+  `billable_provider_call` key is present as `None` (the mini-estimator rows since
+  `5439aaf`), while SQL counts NULL as billable. Both now share one rule
+  (`service._counts_as_billable`): a falsy flag excludes, `True`/`None`/absent counts; the
+  gate also moved inside the swallowing `try`. **Client-visible, values only (shapes
+  unchanged):** proxy `usage` tokens and SDK `GovernanceMetadata` token fields rise for every
+  request that runs the parallel risk estimator, and `llm_call_count` grows by 3 when all
+  three minis succeed (`calibration_guard` stays non-billable, retry rows were already
+  counted). **Comparability break:** `request_token_usage` and archived `usage` figures
+  (still best-effort) are unaffected by the mini-row gap before `5439aaf` (2026-07-18), miss
+  the three mini calls from then until this fix, and include them after it; compare within one regime, or use `SUM(llm_calls)` with
+  `COALESCE(billable_provider_call,1)=1` (never affected).
 
 - **Observability: the rollback->WAL switch of a new SQLite file is serialized per file within
   the process.** On a fresh file a concurrent `PRAGMA journal_mode=WAL` fails at once with
