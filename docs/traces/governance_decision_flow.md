@@ -275,6 +275,39 @@ ran (rows persisted before 2026-09-18 are the exception — the guard's
 regeneration was then written with the fast-path coordinates; the UI re-homes
 them, see `docs/traces/observability_db_to_ui.md`).
 
+**Fast-path HARD check fails closed (2026-10-13).** `DeliberationRunner.run_fast_path`
+delivers the fast draft only if `critic.quick_check` ran and passed, or the check is
+skipped by design (`critic is None`, or no constitution store configured). Three
+triggers escalate to `run_deliberative_path` (`escalation_trigger` in the audit):
+`quick_check_violation` (`passed=False`), `quick_check_error` (`quick_check` raised:
+provider error, unparseable reply, or a reply with no `violated` key -- see
+`docs/modules/critic.md`), and `constitution_unavailable` (F3: a store is configured
+but `get_constitution_safe` returned `None` after the retry). The escalation must end
+with a **completed, non-skipped last critique**
+(`_escalation_has_completed_critique`); then the deliberative result is returned as
+before. If it raises (any exception, `OrchestratorTimeoutError` included) the result is a
+governed REFUSE with reason `fast_path_escalation_failed`; if it returns without a
+completed critique (no critique, `CriticReport.empty_skipped`, or an escalation that
+starts between 90% and 100% of `timeout_ms`, where the `_critique` guard raises and is
+swallowed) the reason is `fast_path_escalation_unverified`; an escalation that starts past
+100% of `timeout_ms` is stopped earlier by the `while` guard in `run_deliberative_path`
+(`deliberation_runner.py:2130-2133`), which raises, so the reason is
+`fast_path_escalation_failed`. The REFUSE is built from structured signals only
+(`_decision_as_refuse` keeps `hard_violations`), a rebuilt `DecisionExplanation`
+(`winning_rule="fast_path_fail_closed"`), and the REFUSE branch of
+`ResponseAssembler.assemble`, so `finalize_delivery` reports REFUSE/`content_filter`; the
+refusal LLM receives a neutral rationale ("The safety check could not be completed.")
+instead of the benign risk rationale. A FINAL trace row (sequence 2, appended after the
+controller-side FINAL row; readers take the last FINAL row) carries
+`hard_violation_source="fast_path_fail_closed"` and `stage_payload`
+`{original_final_action, flip_reason, escalation_trigger}`;
+`ResponseMetadata.original_final_action` / `hard_violation_flip_reason` carry the
+same values, `internal_draft_reused` is `False` and an upstream-origin draft is not
+claimed (`draft_origin="internal"`). `path_taken="fast"` / `path="FAST_PATH"` /
+`total_cycles=0` are kept. Known gaps (see `docs/CODEBASE_FACTS.md`): the completed
+critique may predate a rewrite (F5 on the general route), and the ledger caches
+and reapplies the fail-closed REFUSE (D6).
+
 ## 10. Final action → governed delivery (Plan 1)
 
 Back in the entry layer, delivery is **governed-only**: the delivered text is

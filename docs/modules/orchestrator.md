@@ -620,6 +620,22 @@ The Orchestrator implements a fail-safe system:
   | DCCL draft-match classifier | `(False, "none", conf)` -> normal pipeline |
 
   An injected policy must therefore accept the `PolicyLLMProtocol` kwargs (`system`, `config`, `overrides`, `model_override`).
+- **Fast-path HARD check fails closed** (`DeliberationRunner.run_fast_path`): the fast draft is never
+  delivered when the check did not run and pass. Outcomes:
+
+  | Situation | Outcome |
+  |---|---|
+  | `quick_check` passes | fast draft delivered (unchanged) |
+  | `quick_check` says `passed=False`, raises (no verdict, incl. a reply without `violated`), or a configured store returns no constitution | escalate to `run_deliberative_path` (`escalation_trigger` = `quick_check_violation` / `quick_check_error` / `constitution_unavailable`) |
+  | escalation returns a completed, non-skipped last critique | deliberative result (unchanged) |
+  | escalation or result build raises (incl. `OrchestratorTimeoutError`) | governed REFUSE `fast_path_escalation_failed` |
+  | escalation returns no completed critique (none, skipped, or started between 90% and 100% of `timeout_ms`, where the `_critique` guard raises and is swallowed) | governed REFUSE `fast_path_escalation_unverified` |
+  | escalation starts past 100% of `timeout_ms` (the `while` guard in `run_deliberative_path` raises) | governed REFUSE `fast_path_escalation_failed` |
+  | `critic is None`, or no constitution store configured | check skipped by design (unchanged) |
+
+  The REFUSE goes through `assemble`'s REFUSE branch (`finalize_delivery`: REFUSE/`content_filter`), records
+  `original_final_action="NORMAL_COMPLETE"` / `hard_violation_flip_reason` on the metadata and a FINAL trace row,
+  and is not an error-handler path (those label the result NORMAL_COMPLETE, see the F6 gap in `docs/CODEBASE_FACTS.md`).
 - **`_estimate_risk` is the only compatibility shim**: `RiskEstimatorProtocol` declares only `estimate(prompt)`, so the
   controller filters the context kwargs (`developer_contract_text`, `conversation_history`, `retrieval_query`, `retrieval_top_k`)
   by the estimator's signature (`_supported_estimate_kwargs`) before calling, and logs a warning when that drops a non-None

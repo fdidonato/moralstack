@@ -403,6 +403,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Fast path fails closed when the HARD safety check cannot be completed.** Client-visible
+  effect: where an unchecked draft used to be delivered as `NORMAL_COMPLETE`, the request is now
+  escalated to deliberation, or answered with a governed REFUSE (`content_filter`), whenever the
+  HARD `quick_check` fails, errors (provider/transport error, unparseable reply, or a reply without
+  the `violated` key) or cannot run because the constitution failed to load although a store is
+  configured. If the escalation raises (`fast_path_escalation_failed`) or ends without a completed
+  critique (`fast_path_escalation_unverified`) the draft, including an upstream-origin draft, is
+  never delivered. `LLMConstitutionalCritic.quick_check` now raises instead of returning
+  `passed=True` on errors. The refusal carries `original_final_action` / `hard_violation_flip_reason`
+  and a FINAL trace row (`hard_violation_source="fast_path_fail_closed"`). Prompts are unchanged.
+  Cost: a transient `quick_check` error now costs a full deliberation or, if that also fails, a
+  refusal that the semantic ledger can cache and reapply (documented in `docs/CODEBASE_FACTS.md`).
+
 - **Orchestration: the second, ungoverned generation call after a `TypeError` is gone.** Ten call
   sites (`deliberation_runner.py`: benign fast path, safe-complete text, fast path, soft revision,
   generate/rewrite; `controller.py`: risk estimate, speculative draft, compliance regeneration,

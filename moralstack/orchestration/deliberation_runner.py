@@ -11,7 +11,7 @@ import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass, replace
 from typing import Any, Literal, Union, cast
 
 from moralstack.constitution.retrieval_result import warn_missing_retrieve_once
@@ -406,6 +406,15 @@ def _constitution_corrupted(constitution: object) -> bool:
 HARD_VIOLATION_REGENERATION_FAILED = "hard_violation_regeneration_failed"
 HARD_VIOLATION_STILL_VIOLATING = "hard_violation_still_violating"
 
+# Fail-closed reasons for the fast-path HARD check (DeliberationRunner.run_fast_path).
+# Same audit-only contract as above: recorded on
+# ResponseMetadata.hard_violation_flip_reason / the reconciled FINAL trace row,
+# never used to route or gate anything. ``FAST_PATH_FAIL_CLOSED_SOURCE`` is the
+# FINAL trace ``hard_violation_source`` / explanation ``winning_rule`` for those rows.
+FAST_PATH_ESCALATION_FAILED = "fast_path_escalation_failed"
+FAST_PATH_ESCALATION_UNVERIFIED = "fast_path_escalation_unverified"
+FAST_PATH_FAIL_CLOSED_SOURCE = "fast_path_fail_closed"
+
 
 def _hard_violation_regeneration_guidance(hard_violations: list[str]) -> str:
     """User-side guidance naming the violated principle ids for the
@@ -473,10 +482,19 @@ def _append_hard_violation_flip_final_trace(
     original_final_action: str,
     flip_reason: str,
     decision_explanation: DecisionExplanation | None,
+    source: str = "hard_violation_guard_fail_closed",
+    actor: str = "hard_violation_guard",
+    extra_payload: dict[str, str] | None = None,
 ) -> None:
     """Best-effort audit-coherence reconciliation (PROJECT_SPEC §5.6): appends
-    a NEW FINAL decision-trace row reflecting the hard-violation guard's
-    fail-closed REFUSE flip.
+    a NEW FINAL decision-trace row reflecting a fail-closed REFUSE flip.
+
+    Used by the hard-violation delivery guard (defaults: the output is
+    byte-identical to the guard's historical row) and by the fast-path HARD
+    check (``run_fast_path``), which passes its own ``source`` / ``actor`` /
+    ``extra_payload``. ``source`` is stored as ``trace.hard_violation_source``
+    (a generic "fail-closed source" field), ``actor`` prefixes
+    ``why_not_refuse``, and ``extra_payload`` is merged into ``stage_payload``.
 
     The canonical report reader takes the LAST FINAL row for a request
     (``reports/markdown_export.py:610-614``); this appends -- it never
@@ -494,7 +512,7 @@ def _append_hard_violation_flip_final_trace(
         trace.path = decision.path
         trace.final_action = "REFUSE"
         trace.hard_violation_codes = list(decision.hard_violations)
-        trace.hard_violation_source = "hard_violation_guard_fail_closed"
+        trace.hard_violation_source = source
         trace.decision_reason = flip_reason
         trace.reason_codes = list(decision.reason_codes)
         if decision_explanation is not None:
@@ -503,15 +521,16 @@ def _append_hard_violation_flip_final_trace(
             trace.activated_signals = list(decision_explanation.activated_signals)
             trace.overlay_applied = decision_explanation.overlay_applied or ""
             trace.domain_overlay = decision_explanation.overlay_applied or ""
-        trace.why_not_refuse = f"hard_violation_guard flipped to REFUSE: {flip_reason}"
+        trace.why_not_refuse = f"{actor} flipped to REFUSE: {flip_reason}"
         trace.stage_payload = {
             "original_final_action": original_final_action,
             "flip_reason": flip_reason,
+            **(extra_payload or {}),
         }
         normalize_trace_fields(trace)
         append_decision_trace(trace)
     except Exception:
-        _LOG.debug("hard_violation_guard: FINAL trace reconciliation failed", exc_info=True)
+        _LOG.debug("%s: FINAL trace reconciliation failed", actor, exc_info=True)
 
 
 def _decision_explanation_for_hard_violation_flip(
@@ -569,6 +588,68 @@ def _decision_explanation_for_hard_violation_flip(
             f"which the guard could not deliver ({flip_reason})."
         ),
     )
+
+
+def _decision_explanation_for_fast_path_fail_closed(
+    original: DecisionExplanation | None,
+    decision: Decision,
+    reason: str,
+) -> DecisionExplanation:
+    """Rebuild the ``DecisionExplanation`` passed to ``assemble`` when
+    ``run_fast_path`` fails closed (the HARD check did not clear the fast draft).
+
+    Same rationale as ``_decision_explanation_for_hard_violation_flip``:
+    ``ResponseMetadata.from_decision`` prefers the explanation over the decision,
+    so a stale NORMAL_COMPLETE explanation would reproduce an audit incoherence
+    (``final_action == "REFUSE"`` with NORMAL_COMPLETE ``why_not_*``). The wording
+    is specific to this path: no regeneration happened and no HARD violation
+    was established -- the draft simply was not verified. Request properties
+    (risk score/category, signals, overlay) are carried over from ``original``.
+    """
+    base = original
+    return DecisionExplanation(
+        request_id=(base.request_id if base is not None else "") or "",
+        final_action="REFUSE",
+        risk_score=(base.risk_score if base is not None else 0.0),
+        risk_category=(base.risk_category if base is not None else ""),
+        activated_signals=(list(base.activated_signals) if base is not None else []),
+        overlay_applied=((base.overlay_applied if base is not None else "") or ""),
+        winning_rule=FAST_PATH_FAIL_CLOSED_SOURCE,
+        reason_codes=list(decision.reason_codes),
+        why_not_refuse=f"REFUSE chosen: the fast-path draft was not cleared by a HARD check ({reason}).",
+        why_not_safe_complete=(
+            f"SAFE_COMPLETE not selected: the fast-path HARD check could not be completed ({reason}); "
+            "no draft is regenerated on this path."
+        ),
+        why_not_normal_complete=(
+            f"NORMAL_COMPLETE not selected: the fast-path draft was not verified by a HARD check ({reason})."
+        ),
+    )
+
+
+def _escalation_has_completed_critique(state: DeliberationState) -> bool:
+    """True when the fast-path -> deliberative escalation ended with a critique that
+    actually ran. ``is not True`` (not truthiness) so a ``MagicMock`` critique,
+    whose ``skipped`` attribute is a truthy mock, still counts as completed."""
+    last = state.last_critique
+    return last is not None and getattr(last, "skipped", False) is not True
+
+
+def _neutral_refusal_risk_estimation(risk_estimation: RiskEstimationProtocol) -> RiskEstimationProtocol:
+    """Wording only (not a decision input): the refusal LLM is fed
+    ``risk_estimation.rationale``; on the fast-path fail-closed REFUSE that rationale
+    describes a benign request, so it is replaced by a neutral statement. Returns a
+    shallow copy when ``risk_estimation`` is a dataclass, else it is returned as-is."""
+    if is_dataclass(risk_estimation) and not isinstance(risk_estimation, type):
+        try:
+            return cast(
+                RiskEstimationProtocol,
+                replace(risk_estimation, rationale="The safety check could not be completed."),
+            )
+        except Exception:
+            # Wording only: fall back to the original estimation, never fail the REFUSE.
+            _LOG.debug("run_fast_path: neutral refusal rationale not applicable", exc_info=True)
+    return risk_estimation
 
 
 class DeliberationRunner:
@@ -1341,6 +1422,16 @@ class DeliberationRunner:
         """Path veloce: genera draft + quick check costituzionale;
         se fallisce passa a deliberative.
 
+        Fail closed (PROJECT_SPEC §5.6/§5.7): the fast draft is delivered only if the
+        HARD ``quick_check`` ran and passed, or the check is skipped by design (no
+        critic, or no constitution store configured). Otherwise the request is
+        escalated to ``run_deliberative_path`` -- ``quick_check`` said ``passed=False``,
+        raised (no verdict), or the store is configured but the constitution could not
+        be loaded (F3) -- and the escalation must end with a completed, non-skipped
+        critique. If it raises (``fast_path_escalation_failed``) or ends with no such
+        critique (``fast_path_escalation_unverified``) the result is a governed REFUSE
+        assembled through the REFUSE branch; the draft is never delivered.
+
         ``request_analysis``: risk-owned retrieval context (single upstream wave).
         When supplied, ``quick_check`` filters the shared principles to HARD
         instead of self-retrieving (still falls back to the constitution's own
@@ -1487,7 +1578,19 @@ class DeliberationRunner:
                 raise GenerationError(f"Generation failed: {e}")
         else:
             state.draft_response = f"[Mock response to: {request.prompt[:50]}...]"
-        if self.critic is not None and constitution is not None:
+        fail_closed_reason = ""
+        escalation_trigger = ""
+        rid = request.request_id or ""
+        if self.critic is not None and constitution is None and self.constitution_store is not None:
+            # F3: a store is configured but the constitution could not be loaded
+            # (get_constitution_safe swallowed a load error). The HARD check cannot
+            # run, so it must not be silently skipped (fail closed).
+            escalation_trigger = "constitution_unavailable"
+            _LOG.warning(
+                "run_fast_path constitution unavailable request_id=%s; escalating",
+                rid,
+            )
+        elif self.critic is not None and constitution is not None:
             try:
                 pre_retrieved_principles = (
                     list(request_analysis.relevant_principles) if request_analysis is not None else None
@@ -1499,16 +1602,29 @@ class DeliberationRunner:
                     pre_retrieved_principles,
                 )
                 if not quick_result.passed:
-                    _delib_provenance = draft_provenance if speculative_draft else None
-                    state_delib, risk_score, outcome = self.run_deliberative_path(
-                        request,
-                        risk_estimation,
-                        start_time,
-                        constitution=constitution,
-                        speculative_draft=state.draft_response,
-                        request_analysis=request_analysis,
-                        draft_provenance=_delib_provenance,
-                    )
+                    escalation_trigger = "quick_check_violation"
+            except Exception as e:
+                # Governance, not telemetry (§5.6): "no verdict" is never a pass.
+                escalation_trigger = "quick_check_error"
+                _LOG.warning(
+                    "run_fast_path quick_check raised request_id=%s error_type=%s error=%s; escalating",
+                    rid,
+                    type(e).__name__,
+                    e,
+                )
+        if escalation_trigger:
+            _delib_provenance = draft_provenance if speculative_draft else None
+            try:
+                state_delib, risk_score, outcome = self.run_deliberative_path(
+                    request,
+                    risk_estimation,
+                    start_time,
+                    constitution=constitution,
+                    speculative_draft=state.draft_response,
+                    request_analysis=request_analysis,
+                    draft_provenance=_delib_provenance,
+                )
+                if _escalation_has_completed_critique(state_delib):
                     return self._build_deliberative_result(
                         request,
                         state_delib,
@@ -1520,30 +1636,62 @@ class DeliberationRunner:
                         draft_provenance=_delib_provenance,
                         request_analysis=request_analysis,
                     )
-            except Exception as e:
-                rid = request.request_id or ""
                 _LOG.warning(
-                    "run_fast_path quick_check failed request_id=%s error_type=%s error=%s",
+                    "run_fast_path escalation produced no completed critique request_id=%s trigger=%s",
                     rid,
+                    escalation_trigger,
+                )
+                fail_closed_reason = FAST_PATH_ESCALATION_UNVERIFIED
+            except Exception as e:
+                _LOG.warning(
+                    "run_fast_path escalation failed request_id=%s trigger=%s error_type=%s error=%s",
+                    rid,
+                    escalation_trigger,
                     type(e).__name__,
                     e,
                 )
+                fail_closed_reason = FAST_PATH_ESCALATION_FAILED
         processing_time = int((time.time() - start_time) * 1000)
         risk_score = risk_estimation.score
         if constitution is not None and _constitution_corrupted(constitution):
             risk_score = 1.0
+        deliver_decision = decision
+        deliver_explanation = decision_explanation
+        deliver_risk_estimation = risk_estimation
+        if fail_closed_reason:
+            # Governed REFUSE built from structured signals only (§5.1); the fast
+            # draft is never delivered. ``hard_violations`` are preserved (§5.3).
+            deliver_decision = _decision_as_refuse(decision, fail_closed_reason)
+            deliver_explanation = _decision_explanation_for_fast_path_fail_closed(
+                decision_explanation, deliver_decision, fail_closed_reason
+            )
+            deliver_risk_estimation = _neutral_refusal_risk_estimation(risk_estimation)
+            _append_hard_violation_flip_final_trace(
+                request_id=rid,
+                decision=deliver_decision,
+                original_final_action=decision.final_action,
+                flip_reason=fail_closed_reason,
+                decision_explanation=deliver_explanation,
+                source=FAST_PATH_FAIL_CLOSED_SOURCE,
+                actor="fast_path_fail_closed",
+                extra_payload={"escalation_trigger": escalation_trigger},
+            )
         response = self.assembler.assemble(
             request,
             state,
-            decision,
+            deliver_decision,
             risk_score=risk_score,
             processing_time_ms=processing_time,
             constitution=constitution,
-            risk_estimation=risk_estimation,
-            decision_explanation=decision_explanation,
+            risk_estimation=deliver_risk_estimation,
+            decision_explanation=deliver_explanation,
             constitution_store=self.constitution_store,
-            draft_provenance=draft_provenance if speculative_draft else None,
+            # Belt-and-braces: the REFUSE branch of assemble returns before _apply_draft_provenance.
+            draft_provenance=draft_provenance if speculative_draft and not fail_closed_reason else None,
         )
+        if fail_closed_reason and getattr(response, "metadata", None) is not None:
+            response.metadata.original_final_action = decision.final_action
+            response.metadata.hard_violation_flip_reason = fail_closed_reason
         if getattr(response.metadata, "final_action", "") == "REFUSE" or response.response_type == ResponseType.FULL_REFUSAL:
             # NOTE: the refusal LLM call (with full system+user prompt) is
             # persisted by ResponseAssembler.assemble itself, so it is visible
@@ -1568,13 +1716,14 @@ class DeliberationRunner:
                 )
             except Exception:
                 pass
-        # Reaching here means quick_check passed (or was skipped): the draft set
-        # above is delivered as final content. If a speculative draft was
-        # supplied it was reused verbatim — no second policy generate.
-        # (The quick_check-failed branch returns earlier via the deliberative
-        # path, where a fresh deliberation produces the answer.)
+        # Reaching here means either quick_check passed (or the check is skipped by
+        # design: no critic / no store): the draft set above is delivered as final
+        # content, and a supplied speculative draft was reused verbatim -- no second
+        # policy generate. Or the request failed closed (``fail_closed_reason``): a
+        # governed REFUSE was assembled and no draft was delivered. (A verified
+        # escalation returns earlier via the deliberative path.)
         if getattr(response, "metadata", None) is not None:
-            response.metadata.internal_draft_reused = bool(speculative_draft)
+            response.metadata.internal_draft_reused = bool(speculative_draft) and not fail_closed_reason
         return OrchestratorResult(
             response=response,
             request_id=request.request_id,

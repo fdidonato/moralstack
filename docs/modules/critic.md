@@ -95,6 +95,24 @@ constitution's own top HARD constraints (never silently skips the check). When
 `pre_retrieved_principles` is `None` (no risk-owned context available —
 fail-safe), `quick_check` self-retrieves exactly as before.
 
+**Error contract (fail closed, 2026-10-13).** `quick_check` returns
+`passed=True` only after a *parsed, falsy* `violated`, or on the unchanged
+early pass when no HARD principle is available at all. Every other outcome is
+"no verdict" and **raises**: a provider/transport error from `policy.generate`
+propagates unchanged, and an unparseable reply, a non-object reply (e.g. `[]`) or
+a JSON object **without the `violated` key** raise `JSONParseError`
+(`critic_module.py:715-716`). Before this change the whole call sat in
+`except (JSONParseError, Exception): return QuickCheckResult(passed=True)` and
+a missing key defaulted to "not violated", so any provider blip passed an
+unchecked draft on the fast path, where no full critique runs afterwards. The
+only in-tree caller, `DeliberationRunner.run_fast_path`, treats every raise as
+"no verdict": it escalates to the deliberative path and, if that cannot produce a
+completed critique, fails closed to a governed REFUSE (see
+`docs/traces/governance_decision_flow.md` §9). `passed=False` comes only from a
+model reply of `violated: true`; a truthy non-boolean such as `"false"` also yields
+`passed=False` (a false *escalation*, never a false pass). The prompt bytes are
+unchanged (pinned by `tests/test_static_prefix_stability.py`).
+
 ---
 
 ## Output Structure
@@ -351,11 +369,18 @@ elif report.violations:
 For the fast path, quick check of hard constraints only:
 
 ```python
-result = critic.quick_check(response, hard_only=True)
+result = critic.quick_check(
+    request,
+    response,
+    constitution,
+    pre_retrieved_principles,  # optional: the risk-owned shared principles
+)
 
 if not result.passed:
     # Hard constraint violation found
     print(result.critical_violation)
+# Any provider error or missing verdict raises: the caller must treat a raise
+# as "no verdict", never as a pass.
 ```
 
 ---

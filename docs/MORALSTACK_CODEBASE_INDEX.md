@@ -168,7 +168,13 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   never widened beyond its own configured top_k. `run_fast_path` forwards the
   shared principles to `critic.quick_check(..., pre_retrieved_principles)`
   (filtered to HARD there) and to the quick-check-failed `run_deliberative_path`
-  fallback call, so FAST_PATH never re-retrieves either. **Request-scoped
+  fallback call, so FAST_PATH never re-retrieves either. **FAST_PATH fails
+  closed (2026-10-13):** a `quick_check` that fails, raises or has no verdict, or
+  a configured store with no loadable constitution, escalates to the deliberative
+  path; an escalation that raises or ends without a completed, non-skipped
+  critique becomes a governed REFUSE (`fast_path_escalation_failed` /
+  `fast_path_escalation_unverified`), never the unchecked draft
+  (`deliberation_runner.py` `run_fast_path`, `_escalation_has_completed_critique`). **Request-scoped
   (retrieval-request-scoped-state §8b, commit 2, P0 fix):** `DeliberationRunner`
   no longer carries per-request state on `self`. The wall-clock start (read by
   the four timeout gates before critique/simulation/hindsight/perspectives) is
@@ -206,7 +212,10 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `ResponseMetadata`'s `reason_codes`/`why_not_*`/`winning_rule` describe the
   REFUSE that is actually delivered, not the pre-flip decision. Fail-closed
   deliveries record `ResponseMetadata.original_final_action` /
-  `hard_violation_flip_reason` (additive-only fields). `response_assembler.py`
+  `hard_violation_flip_reason` (additive-only, generic fail-closed fields: the
+  fast-path HARD check also writes `fast_path_escalation_failed` /
+  `fast_path_escalation_unverified` there, with `hard_violation_source=
+  "fast_path_fail_closed"` on its FINAL trace row). `response_assembler.py`
   is untouched by this fix (hard constraint: it is a deterministic renderer with
   no critic/output-protector access). **Persisted rows:** the guard's two
   `llm_calls` rows are written in the cycle that raised the violation
@@ -655,7 +664,9 @@ modules can also be absent, disabled, or skipped by timeout or gating:
   per request, global scope); still falls back to the constitution's own top HARD
   constraints if the filtered shared list has zero HARD principles (never skips
   the check); self-retrieves as before when no shared list is supplied
-  (fail-safe).
+  (fail-safe). **Raises** on any provider error, unparseable or non-object reply,
+  or reply without the `violated` key (no verdict is never a pass); `passed=True`
+  only after a parsed falsy `violated` or when no HARD principle exists.
 - **Consequence Simulator** (`LLMConsequenceSimulator`) — projected harm /
   expected valence. Runs in parallel with perspectives.
 - **Perspectives Ensemble** — multi-stakeholder approval scores.
@@ -783,7 +794,7 @@ See `docs/traces/openai_compatible_multiturn.md`.
   early return; `_log_final_trace` copies it onto the FINAL row. **It is NOT a
   "did the module execute" flag:** a full-parallel simulation runs but is
   discarded on a critic hard violation without merging `state.simulations`
-  (`deliberation_runner._run_full_parallel_evaluation:2525-2533`), so the
+  (`deliberation_runner._run_full_parallel_evaluation:3251-3259`), so the
   simulator can have executed while this reads `False` — correct, because those
   FINAL metrics are then defaults. A carried-forward result counts as measured.
   Never read it as a plain bool.

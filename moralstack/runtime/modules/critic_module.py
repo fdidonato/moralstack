@@ -645,6 +645,14 @@ class LLMConstitutionalCritic:
 
         Returns:
             QuickCheckResult con pass/fail
+
+        Raises:
+            JSONParseError: the reply is unparseable, is not a JSON object, or has
+                no ``violated`` key (no verdict).
+            Exception: any provider/transport error from ``policy.generate``
+                propagates unchanged. The caller must treat every raise as "no
+                verdict", never as a pass (``passed=True`` is returned only after
+                a parsed, falsy ``violated``, or when there are no HARD principles).
         """
         import time
 
@@ -693,52 +701,49 @@ class LLMConstitutionalCritic:
             response_format={"type": "json_object"},
         )
 
-        try:
-            result = self.policy.generate(
-                prompt=prompt,
-                system=CRITIC_SYSTEM_PROMPT,
-                config=quick_config,
+        # No try/except: a provider/transport error, an unparseable reply, a non-dict
+        # reply or a reply without the ``violated`` key is "no verdict" and must
+        # propagate. Swallowing it as ``passed=True`` would fail OPEN on the fast
+        # path, where no full critique runs afterwards.
+        result = self.policy.generate(
+            prompt=prompt,
+            system=CRITIC_SYSTEM_PROMPT,
+            config=quick_config,
+        )
+
+        data = extract_json(result.text)
+        if not isinstance(data, dict) or "violated" not in data:
+            raise JSONParseError("quick_check reply carries no 'violated' verdict")
+        violated = data["violated"]
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+
+        if violated:
+            principle_id = str(data.get("principle_id", "UNKNOWN"))
+            evidence = str(data.get("evidence", ""))
+
+            # Trova il principio
+            principle = next((p for p in hard_constraints if p.id == principle_id), None)
+
+            violation = Violation(
+                principle_id=principle_id,
+                principle_title=principle.title if principle else principle_id,
+                severity=1.0,  # Hard constraint = max severity
+                constraint_type="hard",
+                rationale="Quick check detected hard constraint violation",
+                evidence=evidence,
             )
 
-            data = extract_json(result.text)
-            violated = data.get("violated", False)
-
-            elapsed_ms = (time.perf_counter() - start) * 1000
-
-            if violated:
-                principle_id = str(data.get("principle_id", "UNKNOWN"))
-                evidence = str(data.get("evidence", ""))
-
-                # Trova il principio
-                principle = next((p for p in hard_constraints if p.id == principle_id), None)
-
-                violation = Violation(
-                    principle_id=principle_id,
-                    principle_title=principle.title if principle else principle_id,
-                    severity=1.0,  # Hard constraint = max severity
-                    constraint_type="hard",
-                    rationale="Quick check detected hard constraint violation",
-                    evidence=evidence,
-                )
-
-                return QuickCheckResult(
-                    passed=False,
-                    critical_violation=violation,
-                    check_time_ms=elapsed_ms,
-                )
-
             return QuickCheckResult(
-                passed=True,
+                passed=False,
+                critical_violation=violation,
                 check_time_ms=elapsed_ms,
             )
 
-        except (JSONParseError, Exception):
-            # In caso di errore, fallback a full critique
-            elapsed_ms = (time.perf_counter() - start) * 1000
-            return QuickCheckResult(
-                passed=True,  # Assume pass, full critique farà il lavoro
-                check_time_ms=elapsed_ms,
-            )
+        return QuickCheckResult(
+            passed=True,
+            check_time_ms=elapsed_ms,
+        )
 
     def critique_with_relevant_principles(
         self,
