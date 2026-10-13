@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from unittest.mock import patch
 
@@ -39,8 +40,87 @@ def test_default_persistence_lazy_db_init_flag(tmp_path, monkeypatch):
     with patch("moralstack.orchestration.default_persistence.init_db", return_value=True) as init_db:
         dp.ensure_run_and_upsert_request("req1", "hello")
         dp.ensure_run_and_upsert_request("req2", "hello2")
+        dp.ensure_run_and_upsert_request("req3", "hello3")
         assert init_db.call_count == 1
-    assert dp._db_initialized is True
+    assert dp._db_initialized_for == db_path
+
+
+def test_default_persistence_reinitializes_on_path_change(tmp_path, monkeypatch):
+    path_a = str(tmp_path / "a.db")
+    path_b = str(tmp_path / "b.db")
+    monkeypatch.delenv("MORALSTACK_OBSERVABILITY_DB_PATH", raising=False)
+    monkeypatch.setenv("MORALSTACK_DB_PATH", path_a)
+    set_current_run_id("run-repoint")
+
+    dp = DefaultPersistence()
+    with patch("moralstack.orchestration.default_persistence.init_db", return_value=True) as init_db:
+        dp.ensure_run_and_upsert_request("req1", "p1")
+        dp.ensure_run_and_upsert_request("req2", "p2")
+        monkeypatch.setenv("MORALSTACK_DB_PATH", path_b)
+        dp.ensure_run_and_upsert_request("req3", "p3")
+        dp.ensure_run_and_upsert_request("req4", "p4")
+        assert [c.args[0] for c in init_db.call_args_list] == [path_a, path_b]
+
+        # MORALSTACK_OBSERVABILITY_DB_PATH takes precedence over the legacy variable.
+        path_c = str(tmp_path / "c.db")
+        monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", path_c)
+        dp.ensure_run_and_upsert_request("req5", "p5")
+        assert [c.args[0] for c in init_db.call_args_list] == [path_a, path_b, path_c]
+
+        # The second entry point follows the same path-aware cache.
+        path_d = str(tmp_path / "d.db")
+        monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", path_d)
+        dp.update_request_domain("req5", "general")
+        dp.update_request_domain("req5", "general")
+        assert [c.args[0] for c in init_db.call_args_list] == [path_a, path_b, path_c, path_d]
+
+
+def test_default_persistence_failed_init_is_not_cached(tmp_path, monkeypatch):
+    monkeypatch.delenv("MORALSTACK_OBSERVABILITY_DB_PATH", raising=False)
+    monkeypatch.setenv("MORALSTACK_DB_PATH", str(tmp_path / "retry.db"))
+    set_current_run_id("run-retry")
+
+    dp = DefaultPersistence()
+    with patch("moralstack.orchestration.default_persistence.init_db", side_effect=[False, True]) as init_db:
+        dp.ensure_run_and_upsert_request("req1", "p1")
+        dp.ensure_run_and_upsert_request("req2", "p2")
+        dp.ensure_run_and_upsert_request("req3", "p3")
+        assert init_db.call_count == 2
+
+
+def test_default_persistence_no_path_never_calls_init_db(monkeypatch):
+    monkeypatch.delenv("MORALSTACK_DB_PATH", raising=False)
+    monkeypatch.delenv("MORALSTACK_OBSERVABILITY_DB_PATH", raising=False)
+    set_current_run_id("run-nopath")
+
+    dp = DefaultPersistence()
+    with patch("moralstack.orchestration.default_persistence.init_db") as init_db:
+        dp.ensure_run_and_upsert_request("req1", "p1")
+        dp.update_request_domain("req1", "general")
+        assert dp._ensure_db_initialized() is False
+        init_db.assert_not_called()
+
+
+def test_default_persistence_repoint_writes_land_in_new_db(tmp_path, monkeypatch):
+    path_a = str(tmp_path / "repoint_a.db")
+    path_b = str(tmp_path / "repoint_b.db")
+    monkeypatch.delenv("MORALSTACK_DB_PATH", raising=False)
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_MODE", "db_only")
+    set_current_run_id("run-land")
+
+    dp = DefaultPersistence()
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", path_a)
+    dp.ensure_run_and_upsert_request("req-a", "prompt a")
+    monkeypatch.setenv("MORALSTACK_OBSERVABILITY_DB_PATH", path_b)
+    dp.ensure_run_and_upsert_request("req-b", "prompt b")
+
+    for path, req in ((path_a, "req-a"), (path_b, "req-b")):
+        conn = sqlite3.connect(path)
+        try:
+            rows = conn.execute("SELECT request_id FROM requests WHERE run_id = ?", ("run-land",)).fetchall()
+        finally:
+            conn.close()
+        assert [r[0] for r in rows] == [req]
 
 
 def test_default_persistence_noop_when_no_run_id(tmp_path, monkeypatch):
@@ -106,6 +186,9 @@ def test_concurrent_ensure_run_and_upsert_request(tmp_path, monkeypatch):
 
     def _worker(idx: int) -> None:
         try:
+            # Context vars are not inherited by new threads: without this the call
+            # returns early (no run_id) and the test would pass vacuously.
+            set_current_run_id(run_id)
             set_current_request_id(f"req-{idx}")
             dp.ensure_run_and_upsert_request(f"req-{idx}", f"prompt-{idx}")
         except Exception as exc:
@@ -117,3 +200,9 @@ def test_concurrent_ensure_run_and_upsert_request(tmp_path, monkeypatch):
     for t in threads:
         t.join(timeout=10)
     assert not errors
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute("SELECT request_id FROM requests WHERE run_id = ?", (run_id,)).fetchall()
+    finally:
+        conn.close()
+    assert sorted(r[0] for r in rows) == sorted(f"req-{i}" for i in range(10))

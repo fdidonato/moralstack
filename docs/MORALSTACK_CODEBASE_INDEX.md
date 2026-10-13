@@ -762,9 +762,10 @@ See `docs/traces/openai_compatible_multiturn.md`.
   `llm_calls`, `request_token_usage`, `orchestration_events`, `decision_traces`, `debug_events`,
   `exports_cache`, `conversation_states`, `ledger_events`,
   `session_store_events`, `proxy_request_events`. WAL + foreign keys enabled
-  (`_get_connection`, `sinks/sqlite_sink.py:497-504`).
+  (`_get_connection`, `sinks/sqlite_sink.py:577-585`; the rollback->WAL switch is serialized per file in-process by `_wal_switch_lock`, `:546-574`).
+  `DefaultPersistence` ensures the schema once per DB path (`_db_initialized_for`).
 - `decision_traces` stores the whole `DecisionTrace` as a **`trace_json` blob**
-  (`_DECISION_TRACES_INSERT`, `sinks/sqlite_sink.py:612-615`), not typed columns:
+  (`_DECISION_TRACES_INSERT`, `sinks/sqlite_sink.py:646-649`), not typed columns:
   adding a trace field is additive and needs no migration, but old rows simply
   lack the new key — readers must distinguish "absent" from a falsy value.
 - **`DecisionTrace.sim_metrics_measured`** (`runtime/trace/decision_trace.py`)

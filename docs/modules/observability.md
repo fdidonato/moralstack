@@ -147,6 +147,13 @@ class EventEnvelope:
 
 ---
 
+## Schema initialization and concurrency
+
+- `init_db()` creates the schema and applies the additive migrations idempotently; it never raises and returns a bool.
+- Every SQLite connection goes through `_get_connection` (`sinks/sqlite_sink.py:577-585`). On a **new** file, a concurrent `PRAGMA journal_mode=WAL` fails at once with `database is locked` (`busy_timeout` does not apply to that switch), so the pragma alone is serialized by a per-file lock (`_wal_switch_lock`, `:553-574`; key `normcase(abspath(path))`, lexical, so symlink / 8.3-alias spellings of one file get different locks). It covers every in-process opener (`init_db`, the write-queue worker, lifecycle writers, readers); the lock is held only for that pragma.
+- Not covered: the same switch racing **across processes**, and envelopes queued before the first `init_db` on a fresh / re-pointed file (see `docs/CODEBASE_FACTS.md`, Future work).
+- `DefaultPersistence` (`orchestration/default_persistence.py`) calls `init_db` lazily, once per DB path: it re-initializes when `get_db_path()` changes, and retries a failed init on the next call.
+
 ## Observability modes
 
 ### `db_only` (default when DB_PATH is set)
@@ -356,7 +363,7 @@ When using the Python SDK (`govern()` / `GovernedClient`), observability context
 ### What happens at `govern(OpenAI())`
 
 1. `GovernedClient.__init__` generates a session-scoped `run_id` (UUID4) and registers it via `set_current_run_id()`.
-2. If the active mode is `db_only` or `dual`, `init_db()` and `create_run()` are called to satisfy FK constraints for subsequent event inserts.
+2. If the active mode is `db_only` or `dual`, `init_db()` and `create_run()` are called to satisfy FK constraints for subsequent event inserts. (Only the WAL switch is serialized in-process; the rest of a concurrent `init_db` (executescript, migrations, DELETE dedupe) relies on `busy_timeout`, probe-verified on one platform: see "Schema initialization and concurrency".)
 3. At the end of every `chat.completions.create()` call **via the SDK wrapper**, `obs.flush()` is invoked inside a `try/finally` block to drain high-frequency queued telemetry for short-lived scripts. The server proxy does *not* flush per-request (the bounded flush timed out under burst load and only added overhead); it relies on the background worker plus a process-shutdown drain via FastAPI's `shutdown` hook. Final action metadata and `proxy.request_finalized` are synchronous on both SDK and proxy via `finalize_audit_sync`.
 
 ### Minimum working configuration

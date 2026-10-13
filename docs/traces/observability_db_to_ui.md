@@ -58,7 +58,7 @@ DB path from `MORALSTACK_OBSERVABILITY_DB_PATH` (legacy alias
 ## 3. What is logged to the DB (SQLite)
 
 Schema in `observability/sinks/sqlite_sink.py:48-489`; connection uses WAL +
-`foreign_keys=ON` (`:497-504`). Tables:
+`foreign_keys=ON` (`_get_connection`, `:577-585`; the rollback->WAL switch of a new file is serialized per file by `_wal_switch_lock`, `:546-574`, within the process only). Tables:
 
 | Table | Holds |
 |---|---|

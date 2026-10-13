@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -541,11 +543,43 @@ _SCHEMA = """
 # ---------------------------------------------------------------------------
 
 
+# Serializes the rollback->WAL journal switch per database file within this process:
+# on a new file SQLite rejects a concurrent `PRAGMA journal_mode=WAL` with
+# "database is locked" without applying busy_timeout. Cross-process races are not covered.
+_wal_switch_locks: dict[str, threading.Lock] = {}
+_wal_switch_locks_guard = threading.Lock()
+
+
+def _wal_switch_lock(db_path: str) -> threading.Lock:
+    """Returns the process-wide lock that serializes the WAL switch of ``db_path``.
+
+    The key is lexical, ``os.path.normcase(os.path.abspath(db_path))``: no filesystem
+    access. Symlinks and 8.3 short-name aliases of the same file map to different locks
+    (accepted limitation). The lock is not reentrant and is also taken for ``:memory:``.
+    Relative paths, including ``:memory:`` and ``""``, are keyed on the current working
+    directory; this is harmless because each in-memory connection is a separate database.
+    Never raises: an unusable path falls back to its string form as the key. On POSIX
+    ``abspath`` raises OSError when the working directory has been removed; that case is
+    covered by the fallback.
+    """
+    try:
+        key = os.path.normcase(os.path.abspath(db_path))
+    except (TypeError, ValueError, OSError):
+        key = str(db_path)
+    with _wal_switch_locks_guard:
+        lock = _wal_switch_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _wal_switch_locks[key] = lock
+        return lock
+
+
 def _get_connection(db_path: str) -> sqlite3.Connection:
     """Returns a connection with WAL and foreign_keys enabled."""
     conn = sqlite3.connect(db_path, timeout=10.0)
     conn.execute("PRAGMA busy_timeout=10000")
-    conn.execute("PRAGMA journal_mode=WAL")
+    with _wal_switch_lock(db_path):
+        conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.row_factory = sqlite3.Row
     return conn

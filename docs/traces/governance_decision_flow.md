@@ -45,7 +45,8 @@ Proxy equivalent: `conversation_id` resolution + stateless `turn_index`
 - Set context vars: `set_current_session_id`, `set_current_turn_number`.
 - `DefaultPersistence.set_request_context(request_id)` and
   `ensure_run_and_upsert_request(...)` — **side effect**: pre-inserts the
-  `requests` row so later FK-bound events succeed.
+  `requests` row so later FK-bound events succeed. The schema is ensured lazily,
+  once per DB path (`_db_initialized_for`): a changed `get_db_path()` triggers a new `init_db`.
 - `trace = self._trace_lifecycle.start_trace(request_id)`.
 
 ## 3. Risk estimation (`controller.py:1928-1935`)

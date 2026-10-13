@@ -21,21 +21,23 @@ class DefaultPersistence:
     PersistencePort implementation that uses context vars and SQLite.
     set_request_context sets the current request_id; ensure_run_and_upsert_request
     reads run_id from context and upserts the request when run_id and db_path are set.
-    init_db is called once at construction time, not on every request.
+    init_db is called lazily, once per database path: on the first request and again
+    only when get_db_path() changes. A failed init_db is retried on the next call.
     """
 
     def __init__(self) -> None:
-        self._db_initialized = False
+        self._db_initialized_for: str | None = None
 
     def _ensure_db_initialized(self) -> bool:
-        if self._db_initialized:
-            return True
         db_path = get_db_path()
         if not db_path:
             return False
+        if db_path == self._db_initialized_for:
+            return True
         if init_db(db_path):
-            self._db_initialized = True
-        return self._db_initialized
+            self._db_initialized_for = db_path
+            return True
+        return False
 
     def set_request_context(self, request_id: str) -> None:
         """Set the current request id in the persistence context."""

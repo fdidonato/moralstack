@@ -37,8 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   work / known gaps") now records that `init_db` has no concurrency guard and that
   `e0dd37b` added a second caller in the request path, so on a fresh DB one caller can
   hit `database is locked` and the schema is briefly absent (startup noise, measured
-  harmless on the 2026-09-10 run). Not fixed yet; the fix direction is a lock inside
-  `init_db`, keyed by path.
+  harmless on the 2026-09-10 run). The in-process WAL-switch loss is fixed (see "Fixed");
+  the cross-process race and the schema-ordering gap are not.
 - **Known defect documented: per-request token totals omit the risk mini-estimator
   calls.** Since `5439aaf` (2026-07-18) the three mini-estimator `llm_call` rows carry
   `billable_provider_call=None`. The in-process accumulator behind `request_token_usage`
@@ -394,6 +394,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository settings. The workflows remain recoverable from git history.
 
 ### Fixed
+
+- **Observability: the rollback->WAL switch of a new SQLite file is serialized per file within
+  the process.** On a fresh file a concurrent `PRAGMA journal_mode=WAL` fails at once with
+  `database is locked` (`busy_timeout` does not apply), so `init_db` could return `False` and
+  leave the schema briefly absent. `_get_connection` now holds a per-file lock around that one
+  pragma (`sqlite_sink._wal_switch_lock`, lexical path key), covering every opener, not only
+  `init_db`. `DefaultPersistence` now re-initializes the schema when `get_db_path()` changes
+  (it cached a path-agnostic flag, so writes after a re-point hit a DB with no schema) and
+  a failed init is still not cached and is retried on the next call. Not covered: the same race across processes, and envelopes queued
+  before the first `init_db` on a fresh file (recorded as a hypothesis in
+  `docs/CODEBASE_FACTS.md`). No API or payload change.
 
 - **Docs: stale line anchors in `docs/CODEBASE_FACTS.md`.** The 2026-10-12 risk-estimator
   cleanup shifted `moralstack/models/risk/estimator.py`; five existing fact rows (domain
