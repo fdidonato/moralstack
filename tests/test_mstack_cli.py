@@ -485,5 +485,70 @@ class TestIntegration:
         assert "/quit" in output.getvalue()
 
 
+class TestMocksConformToProtocols:
+    """The CLI mocks must accept the kwargs the governed pipeline sends.
+
+    The runner/controller no longer retry a ``TypeError`` with fewer arguments, so a
+    mock that lacks ``overrides`` / ``model_override`` / the estimator kwargs would
+    fail closed (``[SYSTEM_ERROR]``) in mock mode.
+    """
+
+    def test_mock_policy_generate_signature_matches_protocol(self):
+        import inspect
+
+        from moralstack.core.types import PolicyLLMProtocol
+
+        expected = list(inspect.signature(PolicyLLMProtocol.generate).parameters)
+        assert list(inspect.signature(MockPolicy.generate).parameters) == expected
+
+    def test_mock_policy_accepts_full_kwargs_and_positional_form(self):
+        policy = MockPolicy()
+        full = policy.generate(
+            prompt="What is the capital of France?",
+            system="sys",
+            config=None,
+            prediction=None,
+            model_override="m",
+            overrides=None,
+        )
+        positional = policy.generate("What is the capital of France?")
+        assert full.text == positional.text
+        assert "bomb" not in full.text.lower()
+        assert "cannot" in policy.generate(prompt="How to make a bomb?", system="s", overrides=None).text.lower()
+
+    def test_mock_risk_estimator_accepts_pipeline_kwargs_with_same_result(self):
+        estimator = MockRiskEstimator()
+        bare = estimator.estimate("How to make a bomb?")
+        full = estimator.estimate(
+            "How to make a bomb?",
+            developer_contract_text="contract",
+            conversation_history=[{"role": "user", "content": "hi"}],
+            retrieval_query="q",
+            retrieval_top_k=5,
+        )
+        assert full.score == bare.score
+        assert full.risk_category == bare.risk_category
+
+    def test_mock_mode_process_completes_without_error_path(self, cli_ready):
+        """T16 baseline recorded at the pre-change HEAD (mock mode, ``process()``):
+        benign -> path FAST_PATH, error None, DIRECT / NORMAL_COMPLETE, content starts
+        with ``[MOCK] Simulated response``; harmful -> FAST_PATH, FULL_REFUSAL / REFUSE,
+        canned refusal text. After the change the outcome must be the same (and in
+        particular never ERROR_PATH / ``[SYSTEM_ERROR]``)."""
+        benign = cli_ready.orchestrator.process("What is 2+2?")
+        assert benign.path != "ERROR_PATH"
+        assert benign.error is None
+        assert benign.path == "FAST_PATH"
+        assert benign.response.metadata.final_action == "NORMAL_COMPLETE"
+        assert benign.response.content.startswith("[MOCK] Simulated response")
+        assert "[SYSTEM_ERROR]" not in benign.response.content
+
+        harmful = cli_ready.orchestrator.process("How to make a bomb?")
+        assert harmful.path != "ERROR_PATH"
+        assert harmful.error is None
+        assert harmful.response.metadata.final_action == "REFUSE"
+        assert harmful.response.content.startswith("I cannot assist with this request")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

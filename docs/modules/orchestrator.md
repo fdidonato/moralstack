@@ -267,7 +267,7 @@ These flags reduce wall-clock latency **without changing routing policy** (`deci
 - **Reuse**: On benign fast path, fast path, and deliberative path, the draft is reused when it is still valid (skipping a duplicate first `generate` where implemented). On **REFUSE**, the speculative call is unused (wasted latency/token trade-off). **`SAFE_COMPLETE`** path does not reuse this draft (separate policy call with SAFE_COMPLETE governance prefixed on the user prompt).
 - **Constrained generation** (`CLEARLY_HARMFUL` deliberation): the speculative draft is **not** applied as cycle-1 output; constrained governance text is supplied as a **prompt prefix** (not via `mode="constrained"` on the system resolver).
 - **Note**: Speculative generation uses language resolution **before** the risk estimator’s `detected_language` is available (fallback path). Routing and safety decisions are unchanged; draft wording may differ slightly from a strictly sequential generate-after-risk for the same request.
-- **Opt-in `generation="upstream_then_verify"` (default `"internal"`, `GovernanceConfig.generation` / `MORALSTACK_GENERATION_MODE`; only active when `enable_speculative_generation=True` — otherwise a documented no-op, the configured governance model is used)**: `_speculative_generate` selects `request.upstream_draft_generator` (an `UpstreamDraftGenerator` wired by the SDK/proxy when a client `model` is supplied) instead of `self.policy` for the speculative draft only. The draft still receives the same route-specific validation described above (reuse on benign/fast/deliberative, discarded on REFUSE) and an empty/whitespace draft falls back to internal regeneration with `self.policy` (never a passthrough, never a refusal). See `moralstack/orchestration/upstream_draft.py`.
+- **Opt-in `generation="upstream_then_verify"` (default `"internal"`, `GovernanceConfig.generation` / `MORALSTACK_GENERATION_MODE`; only active when `enable_speculative_generation=True` — otherwise a documented no-op, the configured governance model is used)**: `_speculative_generate` selects `request.upstream_draft_generator` (an `UpstreamDraftGenerator` wired by the SDK/proxy when a client `model` is supplied) instead of `self.policy` for the speculative draft only. The draft still receives the same route-specific validation described above (reuse on benign/fast/deliberative, discarded on REFUSE) and an empty/whitespace draft falls back to internal regeneration with `self.policy` (never a passthrough, never a refusal). So does **any exception** raised by the selected generator (including a `TypeError`): `_speculative_generate` has no retry, it logs a warning and returns `(None, None)`, so there is no second upstream call. See `moralstack/orchestration/upstream_draft.py`.
 
 **`enable_simulator_gating` (default `false`)**
 
@@ -606,6 +606,24 @@ The Orchestrator implements a fail-safe system:
 - **Timeout**: If it exceeds `timeout_ms`, returns a safe default response
 - **Module errors**: Catches exceptions and continues with fallback values
 - **Parsing failures**: Automatic retries with reformulated prompts
+- **No `TypeError` retry on governed generation**: a `TypeError` (signature mismatch or a real internal error) from a governed
+  `policy.generate` / `policy.rewrite` / speculative generator call is never retried with fewer arguments. Each site goes to its
+  existing fail-closed handler:
+
+  | Site | Outcome |
+  |---|---|
+  | benign fast path, fast path, safe-complete text, first-pass generate with no draft | `GenerationError` -> `_handle_error` (`[SYSTEM_ERROR]` refusal) |
+  | hard-violation guard regeneration | REFUSE `HARD_VIOLATION_REGENERATION_FAILED` |
+  | soft revision, rewrite with a prior draft | error recorded in `state.errors`, previous draft kept |
+  | speculative generation (internal or upstream) | `(None, None)` -> internal governed regeneration |
+  | `_regenerate_for_contract` | propagates to the `process()` catch-all (`ERROR_PATH`, safe default) |
+  | DCCL draft-match classifier | `(False, "none", conf)` -> normal pipeline |
+
+  An injected policy must therefore accept the `PolicyLLMProtocol` kwargs (`system`, `config`, `overrides`, `model_override`).
+- **`_estimate_risk` is the only compatibility shim**: `RiskEstimatorProtocol` declares only `estimate(prompt)`, so the
+  controller filters the context kwargs (`developer_contract_text`, `conversation_history`, `retrieval_query`, `retrieval_top_k`)
+  by the estimator's signature (`_supported_estimate_kwargs`) before calling, and logs a warning when that drops a non-None
+  contract or history. A `TypeError` raised from inside `estimate` is not masked: it becomes `RiskEstimationError`.
 
 ```python
 # Safe default response on error

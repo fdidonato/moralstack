@@ -154,6 +154,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Governed generation no longer retries on `TypeError`; injected policies must conform.** A
+  programmatically injected policy must accept the `PolicyLLMProtocol` kwargs (`system`, `config`,
+  `overrides`, `model_override`); otherwise the request now fails closed (`[SYSTEM_ERROR]` / REFUSE,
+  or `ERROR_PATH` for the compliance regeneration) instead of silently losing the system prompt.
+  Risk estimators that do not accept the context kwargs keep working: `_estimate_risk` filters the
+  kwargs by the estimator's signature and logs a warning when a developer contract or conversation
+  history is dropped. `moralstack.cli.mocks.MockPolicy` / `MockRiskEstimator` gain optional
+  parameters only, so they stay backward compatible.
 - **Risk estimator: a single model-resolution rule for the three mini-estimators (BREAKING).**
   Each mini model is now its own slot (`MORALSTACK_RISK_{INTENT,SIGNALS,OPERATIONAL}_MODEL`) when
   set, else the main risk policy's model: `MORALSTACK_RISK_MODEL` where the builder or the
@@ -395,6 +403,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Orchestration: the second, ungoverned generation call after a `TypeError` is gone.** Ten call
+  sites (`deliberation_runner.py`: benign fast path, safe-complete text, fast path, soft revision,
+  generate/rewrite; `controller.py`: risk estimate, speculative draft, compliance regeneration,
+  draft-match classifier) caught `TypeError` and silently retried with fewer arguments, dropping the
+  composed system prompt (and `overrides`, `config`, `model_override`, or the whole multi-turn
+  `messages`), possibly billing the provider twice and persisting an audit row that described a
+  system prompt that was never sent. A `TypeError` now reaches the existing fail-closed handler of
+  its site.
 - **Orchestration: `InMemoryLedgerStorage` is now thread-safe.** The ledger storage is shared
   by every request of a pipeline (the proxy runs requests in a threadpool and locks only per
   `conversation_id`), but had no lock: a `put` during another request's `get_entries` raised

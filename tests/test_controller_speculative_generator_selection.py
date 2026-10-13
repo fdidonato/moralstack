@@ -4,8 +4,8 @@ Covers: uses `request.upstream_draft_generator` when present (and never
 `ctrl.policy.generate`); falls back to `self.policy` when the field is `None`;
 selection affects ONLY the speculative call site; multi-turn ->
 `generate_messages` on the selected generator; `module`/`model` in
-`persist_kwargs` reflect the generator; and the `except TypeError` fallback
-landmine (`controller.py`) uses the selected generator, not `self.policy`.
+`persist_kwargs` reflect the generator; and a `TypeError` inside the selected
+upstream generator is not retried and never substitutes the governance policy.
 
 Convention: two distinct, recognizable models -- "governance-model-G" (policy)
 and "client-model-C" (upstream draft) -- never sharing text.
@@ -13,6 +13,7 @@ and "client-model-C" (upstream draft) -- never sharing text.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock
 
 from moralstack.orchestration.controller import OrchestrationController
@@ -143,22 +144,23 @@ class TestGeneratorSelection:
         governance_gen.generate.assert_not_called()
         governance_gen.generate_messages.assert_not_called()
 
-    def test_typeerror_fallback_still_uses_selected_generator(self):
-        """Landmine: the `except TypeError` fallback (controller.py) MUST use
-        the selected `gen`, not hard-code `self.policy`."""
+    def test_typeerror_inside_upstream_generator_does_not_fall_back_to_policy_or_retry(self, caplog):
+        """A TypeError from the selected upstream generator is not retried (no
+        second billed upstream call without system prompt/history) and never
+        substitutes the governance policy: the speculative draft is dropped
+        (``(None, None)``) and the route falls back to internal governed
+        regeneration."""
         governance_gen = _FakeGenerator("governance-model-G", "governance text")
         ctrl = _make_controller(governance_gen)
 
         upstream_gen = _FakeGenerator("client-model-C", "client fallback draft")
-        # Simulate a generator whose `.generate(prompt=..., system=..., overrides=...)`
-        # signature does not accept keyword args (raises TypeError), forcing the
-        # `except TypeError: result = gen.generate(prompt_text)` fallback branch.
-        call_log: list[tuple] = []
 
+        # A generator whose `.generate(prompt=..., system=..., overrides=...)`
+        # signature does not accept keyword args (raises TypeError). At base this
+        # forced the `except TypeError: gen.generate(prompt_text)` retry.
         def _generate(*args, **kwargs):
             if kwargs:
                 raise TypeError("unexpected keyword argument")
-            call_log.append(args)
             return _FakeGenerationResult("client fallback draft")
 
         upstream_gen.generate = MagicMock(side_effect=_generate)
@@ -166,13 +168,13 @@ class TestGeneratorSelection:
         req = ProcessedRequest(prompt="hello", request_id="r5")
         req.upstream_draft_generator = upstream_gen
 
-        draft, persist_kwargs = ctrl._speculative_generate(req)
+        with caplog.at_level(logging.WARNING):
+            draft, persist_kwargs = ctrl._speculative_generate(req)
 
-        assert draft == "client fallback draft"
-        assert persist_kwargs is not None
-        assert persist_kwargs["model"] == "client-model-C"
-        assert persist_kwargs["module"] == "upstream_speculative"
-        # The fallback call must have gone to the upstream generator, never
-        # silently substituting the governance policy.
+        assert (draft, persist_kwargs) == (None, None)
+        # Exactly one call: the selected upstream generator, never retried.
+        assert upstream_gen.generate.call_count == 1
+        # Never silently substituting the governance policy.
         governance_gen.generate.assert_not_called()
-        assert upstream_gen.generate.call_count == 2  # first raises, fallback succeeds
+        governance_gen.generate_messages.assert_not_called()
+        assert "Speculative generation failed" in caplog.text

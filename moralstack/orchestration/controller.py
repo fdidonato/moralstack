@@ -5,6 +5,7 @@ process() governa il flusso in base a decision.path; nessuna logica interna comp
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import threading
@@ -123,6 +124,34 @@ from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decisi
 from moralstack.sdk.session_store import SessionStoreProtocol
 
 _LOG = logging.getLogger(__name__)
+
+
+def _supported_estimate_kwargs(estimate: Any, kwargs: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Split ``kwargs`` into those ``estimate`` can accept and the names it cannot.
+
+    ``RiskEstimatorProtocol`` declares only ``estimate(prompt)``; concrete estimators
+    accept optional context kwargs. Compatibility is decided from the signature before
+    the call so a ``TypeError`` raised from inside the estimator is never mistaken for
+    a signature mismatch. A ``**kwargs`` signature keeps everything; an un-inspectable
+    callable also keeps everything (a real mismatch then fails closed through
+    ``RiskEstimationError``). The ``TypeError`` handler below wraps ``inspect.signature``
+    only, never the estimate call.
+    """
+    try:
+        params = inspect.signature(estimate).parameters
+    except (TypeError, ValueError):
+        return dict(kwargs), []
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return dict(kwargs), []
+    accepted = {
+        name
+        for name, p in params.items()
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    kept = {name: value for name, value in kwargs.items() if name in accepted}
+    dropped = [name for name in kwargs if name not in accepted]
+    return kept, dropped
+
 
 # Fallback retrieval top_k when the configured risk_estimator does not expose its
 # own top_k (protocol-only estimator implementing only `estimate(prompt)`, e.g.
@@ -918,20 +947,36 @@ class OrchestrationController:
             retrieval_top_k = max(risk_top_k, critic_top_k)
 
             # The protocol exposes only `estimate(prompt)`. Concrete implementations
-            # accept optional kwargs; pass them only when meaningful so the byte-equivalent
-            # single-turn fast path is preserved.
-            try:
-                result = self.risk_estimator.estimate(  # type: ignore[call-arg]
-                    request.prompt,
-                    developer_contract_text=contract_text,
-                    conversation_history=history_dicts,
-                    retrieval_query=retrieval_query,
-                    retrieval_top_k=retrieval_top_k,
-                )
-            except TypeError:
-                # Defensive fallback: an estimator implementation that does not yet
-                # accept the new kwargs (e.g. a test double) still works.
-                result = self.risk_estimator.estimate(request.prompt)
+            # accept optional kwargs. Compatibility is decided from the estimator's
+            # signature BEFORE the call (never by catching a TypeError, which would
+            # mask real errors): kwargs it cannot accept are dropped, and a warning is
+            # logged when that loses the developer contract or the conversation history.
+            candidate_kwargs: dict[str, Any] = {
+                "developer_contract_text": contract_text,
+                "conversation_history": history_dicts,
+                "retrieval_query": retrieval_query,
+                "retrieval_top_k": retrieval_top_k,
+            }
+            kept_kwargs, dropped_kwargs = _supported_estimate_kwargs(self.risk_estimator.estimate, candidate_kwargs)
+            if dropped_kwargs:
+                lost_context = [
+                    name
+                    for name in dropped_kwargs
+                    if name in ("developer_contract_text", "conversation_history") and candidate_kwargs[name] is not None
+                ]
+                if lost_context:
+                    _LOG.warning(
+                        "risk estimator %s does not accept %s: context dropped from risk estimation",
+                        type(self.risk_estimator).__name__,
+                        ", ".join(lost_context),
+                    )
+                else:
+                    _LOG.debug(
+                        "risk estimator %s does not accept %s: dropped",
+                        type(self.risk_estimator).__name__,
+                        ", ".join(dropped_kwargs),
+                    )
+            result = self.risk_estimator.estimate(request.prompt, **kept_kwargs)
             try:
                 ctx = getattr(request, "conversation_context", None)
                 if ctx is not None:
@@ -1008,24 +1053,25 @@ class OrchestrationController:
                 ]
                 speculative_context_mode = "full_native"
             start = time.time()
-            try:
-                if messages is not None and hasattr(gen, "generate_messages"):
-                    result = gen.generate_messages(
-                        messages=messages,
-                        overrides=getattr(request, "generation_overrides", None),
-                    )
-                else:
-                    result = gen.generate(
-                        prompt=prompt_text,
-                        system=effective_system_for_request(
-                            base=self._protected_system_prompt,
-                            request=request,
-                            mode="normal",
-                        ),
-                        overrides=getattr(request, "generation_overrides", None),
-                    )
-            except TypeError:
-                result = gen.generate(prompt_text)
+            # No TypeError retry: any exception (including a signature mismatch) reaches
+            # the handler below, which drops the speculative draft so the route falls
+            # back to internal governed regeneration. A retry would be a second,
+            # ungoverned call without system prompt / history.
+            if messages is not None and hasattr(gen, "generate_messages"):
+                result = gen.generate_messages(
+                    messages=messages,
+                    overrides=getattr(request, "generation_overrides", None),
+                )
+            else:
+                result = gen.generate(
+                    prompt=prompt_text,
+                    system=effective_system_for_request(
+                        base=self._protected_system_prompt,
+                        request=request,
+                        mode="normal",
+                    ),
+                    overrides=getattr(request, "generation_overrides", None),
+                )
             elapsed = (time.time() - start) * 1000
             speculative_token_usage = TokenUsage.from_generation_result(result)
             raw_text = getattr(result, "text", None)
@@ -1322,10 +1368,7 @@ class OrchestrationController:
         config = GenerationConfig(max_tokens=1024, temperature=0.0, top_p=1.0)
         start = time.perf_counter()
         wall = int(time.time() * 1000)
-        try:
-            result = self.policy.generate(prompt=user, system=system, config=config)
-        except TypeError:
-            result = self.policy.generate(prompt=user, system=system)
+        result = self.policy.generate(prompt=user, system=system, config=config)
         elapsed_ms = (time.perf_counter() - start) * 1000
         text = getattr(result, "text", "") or ""
 
@@ -1404,12 +1447,6 @@ class OrchestrationController:
                 config=config,
                 model_override=get_dccl_llm_model(),
             )
-        except TypeError:
-            try:
-                result = self.policy.generate(prompt=prompt, system=DCCL_DRAFT_MATCH_SYSTEM_PROMPT)
-            except Exception:
-                _LOG.debug("compliance draft semantic revalidation failed", exc_info=True)
-                return (False, "none", conf)
         except Exception:
             _LOG.debug("compliance draft semantic revalidation failed", exc_info=True)
             return (False, "none", conf)

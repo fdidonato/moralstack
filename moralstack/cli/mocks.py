@@ -8,8 +8,16 @@ from typing import Any
 class MockPolicy:
     """Policy mock for testing without API."""
 
-    def generate(self, prompt: str, system: str = "", config: Any = None) -> Any:
-        """Generates mock response."""
+    def generate(
+        self,
+        prompt: str,
+        system: str = "",
+        config: Any = None,
+        prediction: Any = None,
+        model_override: str | None = None,
+        overrides: Any = None,
+    ) -> Any:
+        """Generates mock response (extra PolicyLLMProtocol parameters are ignored)."""
         from dataclasses import dataclass
 
         @dataclass
@@ -32,8 +40,16 @@ class MockPolicy:
 class MockRiskEstimator:
     """Risk estimator mock for testing."""
 
-    def estimate(self, prompt: str) -> Any:
-        """Estimates risk based on keywords."""
+    def estimate(
+        self,
+        prompt: str,
+        *,
+        developer_contract_text: Any = None,
+        conversation_history: Any = None,
+        retrieval_query: Any = None,
+        retrieval_top_k: Any = None,
+    ) -> Any:
+        """Estimates risk based on keywords (context kwargs are ignored)."""
         from moralstack.models.risk import RiskCategory, RiskEstimation
 
         prompt_lower = prompt.lower()

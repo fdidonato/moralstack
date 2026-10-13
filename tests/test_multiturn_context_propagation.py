@@ -18,7 +18,7 @@ from moralstack.models.risk import RiskCategory, RiskEstimation
 from moralstack.models.risk.estimator import LLMBasedRiskEstimator, _PrinciplesContextResult
 from moralstack.models.risk.schema import RiskEstimatorConfig
 from moralstack.orchestration.contract import DeveloperContract
-from moralstack.orchestration.controller import OrchestrationController
+from moralstack.orchestration.controller import OrchestrationController, RiskEstimationError
 from moralstack.orchestration.types import OrchestratorConfig, ProcessedRequest, RiskThresholds
 
 # compl-ai llm_rules-benign Q74 (Authentication scenario) — stable fixtures
@@ -242,27 +242,28 @@ class TestSingleTurnByteEquivalence:
 
 
 class TestTypeErrorFallback:
-    """Test 4 — legacy estimator without kwargs still works via TypeError fallback."""
+    """Test 4 -- a TypeError inside ``estimate`` is never masked by a retry.
 
-    def test_controller_retries_estimate_without_kwargs_on_type_error(
-        self, minimal_controller: OrchestrationController
-    ) -> None:
+    The former "legacy estimator keeps working via TypeError retry" behavior moved to
+    signature filtering (``tests/test_policy_typeerror_fail_closed.py``, T10/T11):
+    kwargs are chosen *before* the call, so a TypeError raised from inside the
+    estimator is a real error and fails closed through ``RiskEstimationError``.
+    """
+
+    def test_controller_does_not_retry_estimate_on_type_error(self, minimal_controller: OrchestrationController) -> None:
         benign = RiskEstimation.benign()
         risk_mock = MagicMock()
         risk_mock.estimate = MagicMock(side_effect=[TypeError("unexpected keyword"), benign])
         minimal_controller.risk_estimator = risk_mock
 
         request = ProcessedRequest(prompt=Q74_PROMPT)
-        result = minimal_controller._estimate_risk(request)
+        with pytest.raises(RiskEstimationError):
+            minimal_controller._estimate_risk(request)
 
-        assert result is benign
-        assert risk_mock.estimate.call_count == 2
+        # inspect.signature(MagicMock) is (*args, **kwargs): every kwarg is kept.
+        assert risk_mock.estimate.call_count == 1
 
         first_args, first_kwargs = risk_mock.estimate.call_args_list[0]
         assert first_args[0] == Q74_PROMPT
         assert "developer_contract_text" in first_kwargs
         assert "conversation_history" in first_kwargs
-
-        second_args, second_kwargs = risk_mock.estimate.call_args_list[1]
-        assert second_args == (Q74_PROMPT,)
-        assert second_kwargs == {}

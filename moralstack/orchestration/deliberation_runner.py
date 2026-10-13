@@ -846,16 +846,13 @@ class DeliberationRunner:
                         request.prompt,
                     )
                     start_gen = time.time()
-                    try:
-                        result = self.policy.generate(
-                            prompt=prompt_text,
-                            system=effective_system_for_request(
-                                base=self._protected_system_prompt, request=request, mode="normal"
-                            ),
-                            overrides=getattr(request, "generation_overrides", None),
-                        )
-                    except TypeError:
-                        result = self.policy.generate(prompt_text)
+                    result = self.policy.generate(
+                        prompt=prompt_text,
+                        system=effective_system_for_request(
+                            base=self._protected_system_prompt, request=request, mode="normal"
+                        ),
+                        overrides=getattr(request, "generation_overrides", None),
+                    )
                     elapsed = (time.time() - start_gen) * 1000
                     response_text = _policy_text(result)
                     prompt_used = _policy_prompt_used(
@@ -1038,14 +1035,11 @@ class DeliberationRunner:
                 request.prompt,
             )
             safe_prompt = safe_caveat + "\n\n" + prompt_text
-            try:
-                result = self.policy.generate(
-                    prompt=safe_prompt,
-                    system=safe_system,
-                    overrides=getattr(request, "generation_overrides", None),
-                )
-            except TypeError:
-                result = self.policy.generate(safe_prompt)
+            result = self.policy.generate(
+                prompt=safe_prompt,
+                system=safe_system,
+                overrides=getattr(request, "generation_overrides", None),
+            )
             elapsed = (time.time() - start_gen) * 1000
             response_text = _policy_text(result)
             protection_result = self._output_protector.validate(response_text)
@@ -1415,16 +1409,13 @@ class DeliberationRunner:
                         risk_estimation.detected_language or "",
                         request.prompt,
                     )
-                    try:
-                        result = self.policy.generate(
-                            prompt=prompt_text,
-                            system=effective_system_for_request(
-                                base=self._protected_system_prompt, request=request, mode="normal"
-                            ),
-                            overrides=getattr(request, "generation_overrides", None),
-                        )
-                    except TypeError:
-                        result = self.policy.generate(prompt_text)
+                    result = self.policy.generate(
+                        prompt=prompt_text,
+                        system=effective_system_for_request(
+                            base=self._protected_system_prompt, request=request, mode="normal"
+                        ),
+                        overrides=getattr(request, "generation_overrides", None),
+                    )
                     elapsed = (time.time() - start_gen) * 1000
                     response_text = _policy_text(result)
                     protection_result = self._output_protector.validate(response_text)
@@ -3163,16 +3154,13 @@ class DeliberationRunner:
         user_prompt_with_lang = resolve_prompt_with_language(request.prompt, det_iso, request.prompt)
         try:
             start = time.time()
-            try:
-                result = self.policy.rewrite(
-                    user_prompt_with_lang,
-                    state.draft_response,
-                    guidance,
-                    system=effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal"),
-                    overrides=getattr(request, "generation_overrides", None),
-                )
-            except TypeError:
-                result = self.policy.rewrite(user_prompt_with_lang, state.draft_response, guidance)
+            result = self.policy.rewrite(
+                user_prompt_with_lang,
+                state.draft_response,
+                guidance,
+                system=effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal"),
+                overrides=getattr(request, "generation_overrides", None),
+            )
             elapsed = (time.time() - start) * 1000
             response_text = _policy_text(result)
             protection_result = self._output_protector.validate(response_text)
@@ -3318,14 +3306,11 @@ class DeliberationRunner:
                 action = "generate"
                 prompt_text = resolve_prompt_with_language(request.prompt, det_iso, request.prompt)
                 policy_user_prompt = constrained_caveat + "\n\n" + prompt_text if constrained_caveat else prompt_text
-                try:
-                    result = self.policy.generate(
-                        prompt=policy_user_prompt,
-                        system=system_prompt,
-                        overrides=getattr(request, "generation_overrides", None),
-                    )
-                except TypeError:
-                    result = self.policy.generate(policy_user_prompt)
+                result = self.policy.generate(
+                    prompt=policy_user_prompt,
+                    system=system_prompt,
+                    overrides=getattr(request, "generation_overrides", None),
+                )
             else:
                 action = "rewrite"
                 guidance = pre_rewrite_guidance or ""
@@ -3335,16 +3320,13 @@ class DeliberationRunner:
                     constrained_caveat + "\n\n" + user_prompt_with_lang if constrained_caveat else user_prompt_with_lang
                 )
                 rewrite_system = system_prompt
-                try:
-                    result = self.policy.rewrite(
-                        policy_user_prompt,
-                        state.draft_response,
-                        guidance,
-                        system=rewrite_system,
-                        overrides=getattr(request, "generation_overrides", None),
-                    )
-                except TypeError:
-                    result = self.policy.rewrite(policy_user_prompt, state.draft_response, guidance)
+                result = self.policy.rewrite(
+                    policy_user_prompt,
+                    state.draft_response,
+                    guidance,
+                    system=rewrite_system,
+                    overrides=getattr(request, "generation_overrides", None),
+                )
             elapsed = (time.time() - start) * 1000
             response_text = _policy_text(result)
             protection_result = self._output_protector.validate(response_text)

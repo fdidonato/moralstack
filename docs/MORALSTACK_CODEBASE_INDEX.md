@@ -119,7 +119,9 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   and the unified `retrieval_top_k = max(risk_top_k, critic_top_k)` (guarded
   `getattr(risk_estimator, "_top_k", DEFAULT_RISK_TOP_K)` since
   `RiskEstimatorProtocol` exposes only `estimate(prompt)`), passing both into
-  `risk_estimator.estimate(...)`. `_build_request_analysis_from_risk` lifts the
+  `risk_estimator.estimate(...)`. `_estimate_risk` filters the four context kwargs
+  by the estimator's signature (`_supported_estimate_kwargs`, warning when a
+  non-None contract/history is dropped) and never retries on `TypeError`. `_build_request_analysis_from_risk` lifts the
   risk-owned retrieval into a `RequestAnalysisContext` (authoritative even when
   `relevant_principles == ()`, gated on `RiskEstimation.retrieval_succeeded` —
   never on emptiness) and emits the single `RELEVANT_PRINCIPLES_RETRIEVED` event;

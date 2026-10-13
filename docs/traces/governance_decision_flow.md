@@ -67,6 +67,10 @@ Proxy equivalent: `conversation_id` resolution + stateless `turn_index`
     below still apply unchanged; the draft is never a direct delivered answer.
     An empty/whitespace upstream draft is "no draft" → internal regeneration
     with `self.policy` (never a passthrough, never a refusal for that reason).
+    The same holds for any exception from the selected generator, `TypeError`
+    included: there is no retry (a retry would be a second, ungoverned upstream
+    call without system prompt or history); `_speculative_generate` returns
+    `(None, None)` and the route regenerates internally.
     See `moralstack/orchestration/upstream_draft.py` and
     `.claude/rules/governed-delivery.md`.
 - Else: `risk_estimation = self._estimate_risk(request)` (`controller.py:788`).
