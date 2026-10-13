@@ -46,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   store counts NULL as billable, so the per-request summary under-counts governed
   requests and disagrees with the UI (measurement in `docs/CODEBASE_FACTS.md`). Fixed
   afterwards, see "Fixed" (count null-billable llm calls). The same curation verified five further hypotheses against the code
-  (canary rotate race, unsynchronized ledger storage and executor init, estimator
+  (canary rotate race, unsynchronized ledger storage (fixed afterwards, see "Fixed") and executor init, estimator
   `domain_channel` reset, path-agnostic persistence init), recorded that absorbed
   provider errors leave no trace in the DB, and corrected stale rows (critic rule
   window 512, 16-key mini-estimator payload).
@@ -394,6 +394,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository settings. The workflows remain recoverable from git history.
 
 ### Fixed
+
+- **Orchestration: `InMemoryLedgerStorage` is now thread-safe.** The ledger storage is shared
+  by every request of a pipeline (the proxy runs requests in a threadpool and locks only per
+  `conversation_id`), but had no lock: a `put` during another request's `get_entries` raised
+  `RuntimeError: OrderedDict mutated during iteration`, which the `process()` catch-all turned
+  into an `ERROR_PATH` response for an unrelated request, and two concurrent `put`s could take
+  the same entry id and lose an entry. One plain `threading.Lock` now covers `get_entries`,
+  `put`, `size` and `clear`; `get_entries` returns a detached list. Eviction (insertion-order
+  FIFO, global; the "LRU" wording was inaccurate and is corrected) and TTL semantics are
+  unchanged. Residuals: the unguarded but benign `_embedding_dim` write in `ledger.py`, and
+  one ledger per worker process.
 
 - **Observability: the per-request token totals count the three risk mini-estimator calls
   again.** The in-process accumulator skipped `LLM_CALL` rows whose

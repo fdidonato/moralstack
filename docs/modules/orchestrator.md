@@ -46,7 +46,8 @@ non-deliberative). Response text is never read from the ledger (DAF-4); only gov
 The patched `Decision` carries `cached_decision_reused` as its last reason code (`LEDGER_FAST_PATH_REUSE` once
 mapped), so a replayed decision is distinguishable from a deliberated one in `proxy_request_events.metadata_json`.
 
-**Ledger scope.** `LedgerKey` is `(contract_hash, posture, domain)` and `InMemoryLedgerStorage` is process-local, so
+**Ledger scope.** `LedgerKey` is `(contract_hash, posture, domain)` and `InMemoryLedgerStorage` is process-local and internally
+synchronized (one lock), so it is safe to share across concurrent proxy requests, and
 entries are **not** scoped to a conversation: two different `conversation_id`s sharing contract, posture and domain
 can reuse each other's decisions when the prompts clear the similarity threshold. `LedgerResult.from_turn` is the
 `turn_index` of the stored entry and may therefore refer to a *different* conversation — do not read it as a

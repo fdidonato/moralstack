@@ -129,7 +129,7 @@ class EventEnvelope:
 |---|---|---|
 | `MORALSTACK_LEDGER_ENABLED` | `true` | Enable the SemanticDecisionLedger semantic cache. When `false`, every turn runs the full deliberation. |
 | `MORALSTACK_LEDGER_SIMILARITY_THRESHOLD` | `0.92` | Cosine similarity threshold for cache hit. Higher = stricter match. |
-| `MORALSTACK_LEDGER_MAX_ENTRIES` | `1000` | Maximum cached entries per process (LRU eviction beyond this). |
+| `MORALSTACK_LEDGER_MAX_ENTRIES` | `1000` | Maximum cached entries per process (insertion-order (FIFO) eviction beyond this; reads do not refresh). |
 | `MORALSTACK_LEDGER_EMBEDDING_MODEL` | (uses `OPENAI_EMBEDDING_MODEL` or `text-embedding-3-small`) | Override the embedding model used for similarity. |
 
 **Skip rules (by design, not configurable):**

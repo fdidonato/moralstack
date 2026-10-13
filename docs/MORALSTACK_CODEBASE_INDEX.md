@@ -227,6 +227,7 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 - `ledger.py`, `ledger_storage.py` — `SemanticDecisionLedger`, `CachedDecision`,
   `LedgerResult` (`query_embedding` carries the lookup-time vector for reuse in
   `store(prompt_embedding=…)`, eliminating double-embedding on miss→store).
+  `InMemoryLedgerStorage` (thread-safe, insertion-order eviction, TTL on read).
 - `refusal_handler.py`, `refusal_context.py`, `safe_refusal_generator.py` — refusal text.
 - `response_assembler.py` — `ResponseAssembler` builds the `FinalResponse`. `assemble(...,
   draft_provenance: DraftProvenance | None = None)` — centralized draft-provenance
