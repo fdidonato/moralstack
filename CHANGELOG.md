@@ -154,6 +154,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Internal: `DeliberationRunner._critique` split into helpers (no behavior change).** Gate, 90%
+  deadline, critic invocation and report summary are extracted into `_critique_gate_open`,
+  `_critique_deadline_error`, `_invoke_critic` and `_critic_report_summary`; critic-call arguments
+  and error handling are unchanged (pinned by new tests).
 - **Governed generation no longer retries on `TypeError`; injected policies must conform.** A
   programmatically injected policy must accept the `PolicyLLMProtocol` kwargs (`system`, `config`,
   `overrides`, `model_override`); otherwise the request now fails closed (`[SYSTEM_ERROR]` / REFUSE,

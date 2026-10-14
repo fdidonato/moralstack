@@ -211,6 +211,13 @@ def _policy_llm_model_for_action(policy: Any, action: str) -> str:
     return str(m) if m is not None else ""
 
 
+def _critic_report_summary(critique: Any) -> str:
+    """Short "Violations / Guidance" summary of a critic report (raises on a non-conforming report)."""
+    nv = len(critique.violations)
+    rg = (critique.revision_guidance[:100]) if critique.revision_guidance else "N/A"
+    return f"Violations: {nv}, Guidance: {rg}"
+
+
 def _module_model(module: Any) -> str:
     """Return the OpenAI model name used by a cognitive module (critic, simulator, …).
 
@@ -3546,6 +3553,127 @@ class DeliberationRunner:
                 raise GenerationError(f"Cannot generate response: {e}")
         return state
 
+    def _critique_gate_open(self, constitution: Any | None) -> bool:
+        """Return True when a critique can run.
+
+        A closed gate means "no critic configured" or "no constitution source": this is
+        the by-design skip, not a failure.
+        """
+        return self.critic is not None and not (self.constitution_store is None and constitution is None)
+
+    def _critique_deadline_error(self, start_time: float | None) -> OrchestratorTimeoutError | None:
+        """Return (not raise) the timeout error when more than 90% of the budget is spent."""
+        if start_time is None:
+            return None
+        elapsed = (time.time() - start_time) * 1000
+        elapsed_ratio = elapsed / self.config.timeout_ms
+        if elapsed_ratio > 0.90:
+            return OrchestratorTimeoutError(
+                f"Timeout approaching before critique: {elapsed:.0f}ms / "
+                f"{self.config.timeout_ms}ms ({elapsed_ratio * 100:.1f}%)"
+            )
+        return None
+
+    def _invoke_critic(
+        self,
+        state: DeliberationState,
+        request: ProcessedRequest,
+        *,
+        delib_context: DelibContext | None,
+        constitution: Any | None,
+        request_analysis: RequestAnalysisContext | None,
+    ) -> Any:
+        """Call the critic (precomputed, relevant-principles or plain branch) and return its report."""
+        assert self.critic is not None  # guaranteed by _critique_gate_open
+        prev_violations = ""
+        prev_guidance = ""
+        if state.last_critique:
+            if state.last_critique.violations:
+                prev_violations = "; ".join(
+                    f"{v.principle_id}: {v.rationale[:80]}" for v in state.last_critique.violations[:3]
+                )
+            prev_guidance = (state.last_critique.revision_guidance or "") if state.last_critique else ""
+        has_critique_with_principles = getattr(self.critic, "critique_with_relevant_principles", None) is not None
+        # A supplied request_analysis is authoritative even when empty (a
+        # successful zero-principle retrieval): gate on presence of the
+        # context, never on len(relevant_principles) > 0, so a legitimately
+        # empty result is used as-is and never triggers a second retrieval
+        # via critique_with_relevant_principles.
+        use_precomputed = request_analysis is not None and getattr(self.critic, "critique", None) is not None
+        precomputed_analysis = request_analysis if request_analysis is not None else None
+        const_for_precomputed: Any | None = None
+        if use_precomputed and precomputed_analysis is not None:
+            const_for_precomputed = precomputed_analysis.constitution
+            if const_for_precomputed is None:
+                const_for_precomputed = constitution
+            if const_for_precomputed is None and self.constitution_store is not None:
+                const_for_precomputed = get_constitution_safe(self.constitution_store, request.get_domain())
+            if const_for_precomputed is None:
+                use_precomputed = False
+        if use_precomputed and const_for_precomputed is not None and precomputed_analysis is not None:
+            # Never widen the critic beyond its own configured top_k, even when
+            # the unified retrieval top_k (max(risk_top_k, critic_top_k)) was larger.
+            critic_top_k = self.retrieval_top_k_for_request()
+            sliced_principles = list(precomputed_analysis.relevant_principles)[:critic_top_k]
+            critique = self.critic.critique(
+                request.prompt,
+                state.draft_response,
+                const_for_precomputed,
+                principles=sliced_principles,
+                request_id=request.request_id or "",
+                delib_context=delib_context,
+                previous_violations=prev_violations,
+                previous_guidance=prev_guidance,
+                developer_contract=request.developer_contract,
+                conversation_history=request.conversation_history,
+            )
+            if "critic" not in state._request_analysis_reuse_targets:
+                state._request_analysis_reuse_targets.append("critic")
+            try:
+                persist_orchestration_event(
+                    cycle=state.cycle,
+                    stage="deliberation",
+                    component="critic",
+                    event_type=RELEVANT_PRINCIPLES_REUSED,
+                    decision=str(len(sliced_principles)),
+                    status="ok",
+                    payload={
+                        "reuse_target": "critic",
+                        "principles_count": len(sliced_principles),
+                        "cycle": state.cycle,
+                        "request_scoped": True,
+                    },
+                )
+            except Exception:
+                _LOG.debug("emit RELEVANT_PRINCIPLES_REUSED failed", exc_info=True)
+        elif has_critique_with_principles and getattr(self.critic, "store", None) is not None:
+            critique = self.critic.critique_with_relevant_principles(
+                request=request.prompt,
+                response=state.draft_response,
+                domain=request.get_domain(),
+                request_id=request.request_id or "",
+                delib_context=delib_context,
+                previous_violations=prev_violations,
+                previous_guidance=prev_guidance,
+                developer_contract=request.developer_contract,
+                conversation_history=request.conversation_history,
+            )
+        else:
+            if constitution is None and self.constitution_store is not None:
+                constitution = get_constitution_safe(self.constitution_store, request.get_domain())
+            critique = self.critic.critique(
+                request.prompt,
+                state.draft_response,
+                constitution,
+                request_id=request.request_id or "",
+                delib_context=delib_context,
+                previous_violations=prev_violations,
+                previous_guidance=prev_guidance,
+                developer_contract=request.developer_contract,
+                conversation_history=request.conversation_history,
+            )
+        return critique
+
     def _critique(
         self,
         state: DeliberationState,
@@ -3556,110 +3684,36 @@ class DeliberationRunner:
         request_analysis: RequestAnalysisContext | None = None,
         start_time: float | None = None,
     ) -> DeliberationState:
-        if self.critic is None or (self.constitution_store is None and constitution is None):
+        """Run one critique pass and append the report to ``state.critiques``.
+
+        * Gate: returns ``state`` untouched when no critic or no constitution source exists.
+        * 90% gate: when ``start_time`` is given and more than 90% of ``timeout_ms`` is spent,
+          the critique is not attempted.
+        * Any error (including the 90% gate) is recorded in ``state.errors`` as
+          ``Critique error: ...`` plus a diagnostic ``critique (ERROR)`` row. Known gaps: that
+          diagnostic write is not itself wrapped (a raising diagnostics logger can escape), and
+          the append happens after the success-path telemetry, so a telemetry failure drops a
+          completed critique. A later phase addresses both.
+        * On success the critic report is appended to ``state.critiques``.
+        Otherwise returns ``state``.
+        """
+        if not self._critique_gate_open(constitution):
             return state
         try:
-            if start_time is not None:
-                elapsed = (time.time() - start_time) * 1000
-                elapsed_ratio = elapsed / self.config.timeout_ms
-                if elapsed_ratio > 0.90:
-                    raise OrchestratorTimeoutError(
-                        f"Timeout approaching before critique: {elapsed:.0f}ms / "
-                        f"{self.config.timeout_ms}ms ({elapsed_ratio * 100:.1f}%)"
-                    )
+            deadline_error = self._critique_deadline_error(start_time)
+            if deadline_error is not None:
+                raise deadline_error
             start = time.time()
             prompt_text = f"CRITIQUE\nPrompt: {request.prompt}\nResponse: {state.draft_response}"
-            prev_violations = ""
-            prev_guidance = ""
-            if state.last_critique:
-                if state.last_critique.violations:
-                    prev_violations = "; ".join(
-                        f"{v.principle_id}: {v.rationale[:80]}" for v in state.last_critique.violations[:3]
-                    )
-                prev_guidance = (state.last_critique.revision_guidance or "") if state.last_critique else ""
-            has_critique_with_principles = getattr(self.critic, "critique_with_relevant_principles", None) is not None
-            # A supplied request_analysis is authoritative even when empty (a
-            # successful zero-principle retrieval): gate on presence of the
-            # context, never on len(relevant_principles) > 0, so a legitimately
-            # empty result is used as-is and never triggers a second retrieval
-            # via critique_with_relevant_principles.
-            use_precomputed = request_analysis is not None and getattr(self.critic, "critique", None) is not None
-            precomputed_analysis = request_analysis if request_analysis is not None else None
-            const_for_precomputed: Any | None = None
-            if use_precomputed and precomputed_analysis is not None:
-                const_for_precomputed = precomputed_analysis.constitution
-                if const_for_precomputed is None:
-                    const_for_precomputed = constitution
-                if const_for_precomputed is None and self.constitution_store is not None:
-                    const_for_precomputed = get_constitution_safe(self.constitution_store, request.get_domain())
-                if const_for_precomputed is None:
-                    use_precomputed = False
-            if use_precomputed and const_for_precomputed is not None and precomputed_analysis is not None:
-                # Never widen the critic beyond its own configured top_k, even when
-                # the unified retrieval top_k (max(risk_top_k, critic_top_k)) was larger.
-                critic_top_k = self.retrieval_top_k_for_request()
-                sliced_principles = list(precomputed_analysis.relevant_principles)[:critic_top_k]
-                critique = self.critic.critique(
-                    request.prompt,
-                    state.draft_response,
-                    const_for_precomputed,
-                    principles=sliced_principles,
-                    request_id=request.request_id or "",
-                    delib_context=delib_context,
-                    previous_violations=prev_violations,
-                    previous_guidance=prev_guidance,
-                    developer_contract=request.developer_contract,
-                    conversation_history=request.conversation_history,
-                )
-                if "critic" not in state._request_analysis_reuse_targets:
-                    state._request_analysis_reuse_targets.append("critic")
-                try:
-                    persist_orchestration_event(
-                        cycle=state.cycle,
-                        stage="deliberation",
-                        component="critic",
-                        event_type=RELEVANT_PRINCIPLES_REUSED,
-                        decision=str(len(sliced_principles)),
-                        status="ok",
-                        payload={
-                            "reuse_target": "critic",
-                            "principles_count": len(sliced_principles),
-                            "cycle": state.cycle,
-                            "request_scoped": True,
-                        },
-                    )
-                except Exception:
-                    _LOG.debug("emit RELEVANT_PRINCIPLES_REUSED failed", exc_info=True)
-            elif has_critique_with_principles and getattr(self.critic, "store", None) is not None:
-                critique = self.critic.critique_with_relevant_principles(
-                    request=request.prompt,
-                    response=state.draft_response,
-                    domain=request.get_domain(),
-                    request_id=request.request_id or "",
-                    delib_context=delib_context,
-                    previous_violations=prev_violations,
-                    previous_guidance=prev_guidance,
-                    developer_contract=request.developer_contract,
-                    conversation_history=request.conversation_history,
-                )
-            else:
-                if constitution is None and self.constitution_store is not None:
-                    constitution = get_constitution_safe(self.constitution_store, request.get_domain())
-                critique = self.critic.critique(
-                    request.prompt,
-                    state.draft_response,
-                    constitution,
-                    request_id=request.request_id or "",
-                    delib_context=delib_context,
-                    previous_violations=prev_violations,
-                    previous_guidance=prev_guidance,
-                    developer_contract=request.developer_contract,
-                    conversation_history=request.conversation_history,
-                )
+            critique = self._invoke_critic(
+                state,
+                request,
+                delib_context=delib_context,
+                constitution=constitution,
+                request_analysis=request_analysis,
+            )
             elapsed = (time.time() - start) * 1000
-            nv = len(critique.violations)
-            rg = (critique.revision_guidance[:100]) if critique.revision_guidance else "N/A"
-            response_text = f"Violations: {nv}, Guidance: {rg}"
+            response_text = _critic_report_summary(critique)
             is_skipped = bool(getattr(critique, "skipped", False))
             skip_reason = getattr(critique, "skip_reason", "") or ""
             if is_skipped:

@@ -187,6 +187,9 @@ context to `critic.quick_check(..., pre_retrieved_principles=...)` and to the
 quick-check-failed `run_deliberative_path` escalation, so FAST_PATH and its
 deliberative fallback also reuse the single wave (see
 `docs/modules/critic.md` and `docs/traces/governance_decision_flow.md` §3).
+`DeliberationRunner._critique` is split into `_critique_gate_open`,
+`_critique_deadline_error`, `_invoke_critic` and `_critic_report_summary`
+helpers (pure extraction, behavior unchanged).
 
 ### Supporting modules (orchestration)
 
