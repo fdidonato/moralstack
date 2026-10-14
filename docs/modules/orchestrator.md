@@ -45,6 +45,9 @@ string route to skip deliberation only when a conservative gate allows (cached `
 non-deliberative). Response text is never read from the ledger (DAF-4); only governance metadata is reused.
 The patched `Decision` carries `cached_decision_reused` as its last reason code (`LEDGER_FAST_PATH_REUSE` once
 mapped), so a replayed decision is distinguishable from a deliberated one in `proxy_request_events.metadata_json`.
+Transient fail-closed REFUSEs (`metadata.hard_violation_flip_reason` in `LEDGER_NON_CACHEABLE_FLIP_REASONS`: the three
+`deliberation_critique_*` codes and the two `fast_path_escalation_*` codes) are never stored, so the next turn is re-governed;
+`hard_violation_*` guard refusals stay cached and lookup/reapply is unchanged.
 
 **Ledger scope.** `LedgerKey` is `(contract_hash, posture, domain)` and `InMemoryLedgerStorage` is process-local and internally
 synchronized (one lock), so it is safe to share across concurrent proxy requests, and

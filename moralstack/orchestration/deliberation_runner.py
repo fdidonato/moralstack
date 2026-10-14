@@ -447,6 +447,19 @@ DELIBERATION_CRITIQUE_TIMEOUT = "deliberation_critique_timeout"
 DELIBERATION_CRITIQUE_UNVERIFIED = "deliberation_critique_unverified"
 DELIBERATION_FAIL_CLOSED_SOURCE = "deliberation_fail_closed"
 
+# Transient fail-closed REFUSEs (critic/escalation outage, not an established
+# violation): never stored in the semantic ledger, so a later turn is re-governed
+# instead of replaying the refusal for the rest of the conversation (D6).
+LEDGER_NON_CACHEABLE_FLIP_REASONS: frozenset[str] = frozenset(
+    {
+        DELIBERATION_CRITIQUE_FAILED,
+        DELIBERATION_CRITIQUE_TIMEOUT,
+        DELIBERATION_CRITIQUE_UNVERIFIED,
+        FAST_PATH_ESCALATION_FAILED,
+        FAST_PATH_ESCALATION_UNVERIFIED,
+    }
+)
+
 
 def _hard_violation_regeneration_guidance(hard_violations: list[str]) -> str:
     """User-side guidance naming the violated principle ids for the

@@ -407,6 +407,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Transient fail-closed REFUSEs are no longer cached in the semantic ledger.** A critic outage
+  (`deliberation_critique_failed|timeout|unverified`) or a fast-path escalation failure
+  (`fast_path_escalation_failed|unverified`) used to be stored and then reapplied, pinning REFUSE for
+  similar later turns of the conversation. These five REFUSEs now skip the ledger store, so the next turn
+  is governed afresh. Hard-violation guard (`hard_violation_*`) refusals are still cached; lookup and
+  reapply are unchanged.
+
 - **Deliberative route fails closed when the critique did not complete.** Client-visible effect: where a
   deliberative draft used to be delivered on the risk signal alone because the critic failed, timed out
   (the 90% gate of `timeout_ms`) or was never invoked in the final cycle, the request is now answered with a

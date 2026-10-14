@@ -493,11 +493,13 @@ def test_f4_critic_none_check_is_skipped_by_design(persisted: Any) -> None:
 
 
 # =============================================================================
-# Ledger characterization (D6): the fail-closed REFUSE is cached and reapplied
+# Ledger characterization (D6): a cached fail-closed REFUSE is always reapplied
+# (lookup/reapply unchanged; the store skip for these codes is pinned by C11c in
+# test_deliberation_critique_fail_closed.py)
 # =============================================================================
 
 
-def test_d6_fail_closed_refuse_is_cacheable_and_always_reapplied(persisted: Any) -> None:
+def test_d6_cached_fail_closed_refuse_is_always_reapplied(persisted: Any) -> None:
     runner = _runner(_DraftPolicy(), _critic(passed=False))
     with patch.object(runner, "run_deliberative_path", side_effect=RuntimeError("boom")):
         result = _drive(runner)

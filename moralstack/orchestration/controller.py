@@ -47,6 +47,7 @@ from moralstack.orchestration.deliberation_override import evaluate_deliberation
 from moralstack.orchestration.deliberation_runner import (
     DELIBERATION_CRITIQUE_UNVERIFIED,
     DELIBERATION_FAIL_CLOSED_SOURCE,
+    LEDGER_NON_CACHEABLE_FLIP_REASONS,
     DeliberationRunner,
     _append_hard_violation_flip_final_trace,
     _build_enriched_retrieval_query,
@@ -666,6 +667,8 @@ class OrchestrationController:
         ledger is None.
 
         The ledger's internal skip rules handle the rest (turn_index < 1, ESCALATED).
+        Transient fail-closed REFUSEs (``hard_violation_flip_reason`` in
+        ``LEDGER_NON_CACHEABLE_FLIP_REASONS``) are never stored (D6).
         """
         if self._ledger is None:
             return
@@ -696,6 +699,16 @@ class OrchestrationController:
 
         if not final_action:
             # No decision produced (early failure); skip.
+            return
+
+        flip_reason = str(getattr(metadata, "hard_violation_flip_reason", "") or "") if metadata is not None else ""
+        if flip_reason in LEDGER_NON_CACHEABLE_FLIP_REASONS:
+            # Transient fail-closed REFUSE (D6): never cached; lookup/reapply untouched.
+            _LOG.info(
+                "ledger store skipped for transient fail-closed refuse request_id=%s flip_reason=%s",
+                request.request_id,
+                flip_reason,
+            )
             return
 
         # Build a CachedDecision directly (we don't have the Decision object here, just metadata).

@@ -197,8 +197,10 @@ When a `SemanticDecisionLedger` is configured and `conversation_id` is set:
   safe: `apply_cached_decision(...)` patches `decision` and `route`, re-evaluates
   `hard_signal_refuse`, sets `ledger_hit_applied=True`, emits
   `LEDGER_FAST_PATH_APPLIED`. If not safe: emits `LEDGER_FAST_PATH_NOT_APPLIED`
-  with a gate reason and deliberation proceeds. On a hit the controller does NOT
-  call `_maybe_store_in_ledger()` (deliberation is bypassed).
+  with a gate reason and deliberation proceeds. There is no ledger-hit gate on the
+  store: `_attach_trace_and_return` -> `_apply_conversation_metadata_to_result` calls
+  `_maybe_store_in_ledger()` for every result, which skips transient fail-closed
+  REFUSEs (`hard_violation_flip_reason` in `LEDGER_NON_CACHEABLE_FLIP_REASONS`).
 - On a miss, the embedding computed during lookup is reused in `_maybe_store_in_ledger()`
   via `prompt_embedding=call_ctx.ledger_lookup.query_embedding`, avoiding a redundant
   `embed()` call. On `no_candidates` misses, `query_embedding` is None and `store()`
@@ -292,7 +294,7 @@ completed critique (no critique, `CriticReport.empty_skipped`, a failed critique
 escalation that starts between 90% and 100% of `timeout_ms`, where the `_critique` guard
 records outcome `timeout`) the reason is `fast_path_escalation_unverified`; an escalation that starts past
 100% of `timeout_ms` is stopped earlier by the `while` guard in `run_deliberative_path`
-(`deliberation_runner.py:2289-2292`), which raises, so the reason is
+(`deliberation_runner.py:2302-2305`), which raises, so the reason is
 `fast_path_escalation_failed`. The REFUSE is built from structured signals only
 (`_decision_as_refuse` keeps `hard_violations`), a rebuilt `DecisionExplanation`
 (`winning_rule="fast_path_fail_closed"`), and the REFUSE branch of

@@ -44,6 +44,8 @@ from moralstack.models.risk.schema import RiskEstimation
 from moralstack.orchestration.controller import OrchestrationController
 from moralstack.orchestration.deliberation_runner import DeliberationRunner
 from moralstack.orchestration.delivery import GOVERNED_REFUSAL_SOURCE, finalize_delivery
+from moralstack.orchestration.ledger import SemanticDecisionLedger
+from moralstack.orchestration.ledger_storage import InMemoryLedgerStorage
 from moralstack.orchestration.null_persistence import NullPersistence
 from moralstack.orchestration.orchestration_event_taxonomy import RELEVANT_PRINCIPLES_REUSED
 from moralstack.orchestration.process_context import ProcessCallContext
@@ -55,9 +57,13 @@ from moralstack.orchestration.types import (
     DeliberationDependencies,
     DeliberationState,
     DraftProvenance,
+    FinalResponse,
     OrchestratorConfig,
+    OrchestratorResult,
     ProcessedRequest,
     RequestAnalysisContext,
+    ResponseMetadata,
+    ResponseType,
 )
 from moralstack.runtime.modules.critic_module import CriticReport
 from moralstack.runtime.orchestrator import create_orchestrator
@@ -970,6 +976,55 @@ def test_c10_override_cannot_downgrade_the_flip() -> None:
     _assert_deliberation_fail_closed(result, CODE_FAILED, original="SAFE_COMPLETE")
 
 
+class _StubEmbedder:
+    """Fixed-vector embedder: deterministic ledger without a real embedding model."""
+
+    def embed(self, text: str) -> list[float]:
+        return [1.0, 0.0]
+
+
+def _store_size(ctrl: Any, result: Any) -> int:
+    """Run ``_maybe_store_in_ledger`` with a real in-memory ledger; return the stored-entry count."""
+    ledger = SemanticDecisionLedger(_StubEmbedder(), InMemoryLedgerStorage())
+    ctrl._ledger = ledger
+    ctrl._maybe_store_in_ledger(
+        request=ProcessedRequest(prompt="p", request_id="req-c"),
+        result=result,
+        call_ctx=ProcessCallContext(conversation_id="c1", turn_index=1),
+    )
+    return ledger._storage.size()
+
+
+def _ledger_result(flip_reason: str, final_action: str = "REFUSE") -> OrchestratorResult:
+    metadata = ResponseMetadata(final_action=final_action, risk_score=0.1, hard_violation_flip_reason=flip_reason)
+    return OrchestratorResult(
+        response=FinalResponse(content="x", response_type=ResponseType.DIRECT, metadata=metadata),
+        execution_trace=MagicMock(),
+    )
+
+
+@pytest.mark.parametrize("code", [CODE_FAILED, CODE_TIMEOUT, CODE_UNVERIFIED])
+def test_c11a_ledger_skips_transient_codes(code: str) -> None:
+    assert _store_size(_controller(), _ledger_result(code)) == 0
+
+
+@pytest.mark.parametrize("flip_reason", ["", "hard_violation_regeneration_failed", "hard_violation_still_violating"])
+def test_c11b_ledger_still_stores_guard_and_normal(flip_reason: str) -> None:
+    assert _store_size(_controller(), _ledger_result(flip_reason)) == 1
+
+
+@pytest.mark.parametrize("code", ["fast_path_escalation_failed", "fast_path_escalation_unverified"])
+def test_c11c_fast_path_codes_skip_store(code: str) -> None:
+    assert _store_size(_controller(), _ledger_result(code)) == 0
+
+
+def test_c11d_real_fail_closed_result_is_not_stored() -> None:
+    ctrl = _controller()
+    result = _route(ctrl, _draft_state("failed"))
+    assert result.response.metadata.hard_violation_flip_reason == CODE_FAILED
+    assert _store_size(ctrl, result) == 0
+
+
 def test_c18b_check_raises_on_already_refuse_leaves_decision_untouched(final_traces: list[Any]) -> None:
     ctrl = _controller()
     explanation = _explanation("REFUSE")
@@ -985,6 +1040,8 @@ def test_c18b_check_raises_on_already_refuse_leaves_decision_untouched(final_tra
     assert meta.original_final_action == ""
     assert assemble.call_args.kwargs["decision_explanation"] is explanation
     assert final_traces == []
+    # ledger pin: this REFUSE carries no transient code, so it is still cached (D6)
+    assert _store_size(ctrl, result) == 1
 
 
 def test_c12_final_trace_exact_payload(final_traces: list[Any]) -> None:
@@ -1152,7 +1209,8 @@ def test_c18_check_raises_still_refuses_with_audit_shape(final_traces: list[Any]
     assert final_traces[0].hard_violation_source == "deliberation_fail_closed"
     assert final_traces[0].stage_payload["flip_reason"] == CODE_UNVERIFIED
     assert finalize_delivery(result).final_action == "REFUSE"
-    # phase 2: ledger skip
+    # D6: the unverified fallback REFUSE is a transient fail-closed code, never cached
+    assert _store_size(ctrl, result) == 0
 
 
 # =============================================================================
@@ -1193,6 +1251,46 @@ def test_i1_orchestrator_critic_raises_is_governed_refuse() -> None:
     assert delivery.final_action == "REFUSE"
     assert delivery.finish_reason == "content_filter"
     assert delivery.final_text_source == GOVERNED_REFUSAL_SOURCE
+
+
+class _FlakyCritic(MockCritic):
+    """Critic that is down until ``healthy`` is flipped (transient outage)."""
+
+    healthy = False
+
+    def critique(self, *args: Any, **kwargs: Any) -> Any:
+        if not self.healthy:
+            raise RuntimeError("critic provider down")
+        return super().critique(*args, **kwargs)
+
+
+def test_c11e_transient_refuse_then_next_turn_is_regoverned() -> None:
+    critic = _FlakyCritic()
+    ledger = SemanticDecisionLedger(_StubEmbedder(), InMemoryLedgerStorage())
+    orch = create_orchestrator(
+        policy=MockPolicy(),
+        risk_estimator=MockRiskEstimator(),
+        critic=critic,
+        simulator=MockSimulator(),
+        hindsight=MockHindsight(),
+        perspectives=MockPerspectives(),
+        constitution_store=MockConstitutionStore(),
+        max_cycles=1,
+        timeout_ms=60_000,
+        ledger=ledger,
+    )
+    turn1 = orch.process(
+        ProcessedRequest(prompt=_DELIBERATIVE_PROMPT, request_id="req-e1"), conversation_id="c1", turn_index=1
+    )
+    assert turn1.response.metadata.final_action == "REFUSE"
+    assert turn1.response.metadata.hard_violation_flip_reason == CODE_FAILED
+    assert ledger._storage.size() == 0
+    critic.healthy = True
+    turn2 = orch.process(
+        ProcessedRequest(prompt=_DELIBERATIVE_PROMPT, request_id="req-e2"), conversation_id="c1", turn_index=2
+    )
+    assert turn2.response.metadata.final_action != "REFUSE"
+    assert turn2.response.metadata.hard_violation_flip_reason == ""
 
 
 def test_i1_twin_plain_mock_critic_is_delivered() -> None:

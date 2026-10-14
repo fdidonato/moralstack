@@ -489,7 +489,9 @@ Inside `process()` (order verified in source):
 8. Dispatch to the matching `_route_*` handler (`controller.py:2345-end`).
 9. `_apply_conversation_metadata_to_result` stamps conversation linkage, builds
    `conversation_governance_state_out`, emits conversation events, and stores the
-   decision in the ledger (`controller.py:319-413`).
+   decision in the ledger (`controller.py:423-525`), except transient fail-closed
+   REFUSEs (`LEDGER_NON_CACHEABLE_FLIP_REASONS`: the `deliberation_critique_*` and
+   `fast_path_escalation_*` codes), which are never stored.
 
 See `docs/traces/governance_decision_flow.md` for the full trace.
 

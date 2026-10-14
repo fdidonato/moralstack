@@ -174,6 +174,11 @@ client's view.
   can be read by another sample under the *same* principal. (Whether a given
   run actually collides depends on the benchmark data containing
   identical-history samples under the same principal.)
+- **Ledger store skip for transient fail-closed REFUSEs.** `controller._maybe_store_in_ledger`
+  does not store a result whose `metadata.hard_violation_flip_reason` is one of
+  `LEDGER_NON_CACHEABLE_FLIP_REASONS` (`deliberation_critique_failed|timeout|unverified`,
+  `fast_path_escalation_failed|unverified`), so a critic outage is re-governed on the next turn instead
+  of replaying the REFUSE. Lookup/reapply is unchanged; `hard_violation_*` guard refusals stay cached.
 - **Mitigation available**: send a unique `X-Moralstack-Conversation-Id` header
   (or `extra_body.moralstack_conversation_id`) per logical conversation to bypass
   lineage hashing entirely, or a per-tenant `X-Moralstack-Tenant-Id` /
