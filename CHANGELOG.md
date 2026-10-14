@@ -429,6 +429,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A transient unexpected exception no longer pins a cached REFUSE (F6).** The fail-safe REFUSE
+  produced by the generic `except` in `process()` (and by the `ensure_final_action_and_return`
+  fallback) is no longer stored in the semantic ledger, where it was always reapplied to similar
+  later turns. It now carries `system_error` (flip reason and reason code) and the generic
+  except logs the `pipeline failed closed` WARNING.
+
 - **Pipeline errors now fail closed to a governed REFUSE (F6).** A `MoralStackError` or
   `OrchestratorTimeoutError` caught in `process()` used to leave `final_action` empty, so
   `finalize_delivery` relabelled the `[SYSTEM_ERROR]` / `[SYSTEM_TIMEOUT]` result NORMAL_COMPLETE

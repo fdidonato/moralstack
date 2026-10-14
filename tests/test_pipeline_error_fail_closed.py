@@ -640,3 +640,128 @@ def test_i2_transient_error_then_next_turn_is_regoverned() -> None:
     turn2 = orch.process(ProcessedRequest(prompt=prompt, request_id="req-e2"), conversation_id="c1", turn_index=2)
     assert turn2.response.metadata.final_action != "REFUSE"
     assert turn2.response.metadata.hard_violation_flip_reason == ""
+
+
+# =============================================================================
+# Phase 4: the generic-except / ensure-fallback fail-safe REFUSE is transient
+# =============================================================================
+
+GENERIC_EXC = [ValueError, RuntimeError, AssertionError, KeyError, TypeError]
+
+
+def test_p8a_for_fail_safe_carries_system_error_flip_reason() -> None:
+    for meta in (ResponseMetadata.for_fail_safe(3), FinalResponse.safe_default(3).metadata):
+        assert meta.hard_violation_flip_reason == "system_error"
+        assert meta.reason_codes == ["system_error"]
+        assert meta.final_action == "REFUSE"
+        assert meta.triggered_principles == ["SYSTEM.FAIL_SAFE"]
+        assert meta.path == "DELIBERATIVE_PATH"
+        assert meta.processing_time_ms == 3
+
+
+@pytest.mark.parametrize("exc_cls", GENERIC_EXC)
+def test_p8b_generic_exception_refuse_is_not_cached(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, exc_cls: type
+) -> None:
+    ledger = _new_ledger()
+    result = _fail(_ctrl(ledger=ledger, request=request), monkeypatch, exc_cls("unexpected"), conv=("c1", 1))
+    assert result.response.metadata.final_action == "REFUSE"
+    assert ledger._storage.size() == 0
+
+
+def test_p8c_generic_except_logs_pipeline_warning(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, ctrl_log: _ListHandler
+) -> None:
+    _fail(_ctrl(request=request), monkeypatch, ValueError("unexpected"))
+    warnings = _failure_warnings(ctrl_log)
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "request_id=req-f6" in message
+    assert "reason=system_error" in message
+    assert "error_type=ValueError" in message
+
+
+def test_p8d_ensure_fallback_refuse_is_not_cached(request: pytest.FixtureRequest) -> None:
+    ctrl = _ctrl(request=request)
+    bad = FinalResponse(content="x", response_type=None, metadata=ResponseMetadata())  # type: ignore[arg-type]
+    out = ctrl._diagnostics.ensure_final_action_and_return(
+        OrchestratorResult(response=bad, execution_trace=MagicMock()),
+        ProcessedRequest(prompt="p", request_id="req-d"),
+        time.time(),
+        None,
+        attach_trace_fn=lambda res, _req: res,
+    )
+    assert _store_size(ctrl, out) == 0
+    meta = out.response.metadata
+    assert out.error == "final_action_undefined"
+    assert meta.final_action == "REFUSE"
+    assert meta.hard_violation_flip_reason == "system_error"
+
+
+def test_p8c_generic_except_logging_failure_never_breaks_the_request(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, ctrl_log: _ListHandler
+) -> None:
+    def _boom(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("logging down")
+
+    monkeypatch.setattr(logging.getLogger("f6." + request.node.name), "warning", _boom)
+    result = _fail(_ctrl(request=request), monkeypatch, ValueError("unexpected"))
+    assert result.response.metadata.final_action == "REFUSE"
+    assert result.response.metadata.triggered_principles == ["SYSTEM.FAIL_SAFE"]
+    assert result.response.content == "[SYSTEM_ERROR]"
+
+
+@pytest.mark.parametrize("safe", [True, False])
+@pytest.mark.parametrize("exc_cls", GENERIC_EXC)
+def test_p11_generic_except_shape_unchanged(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, exc_cls: type, safe: bool
+) -> None:
+    exc = exc_cls("unexpected")
+    result = _fail(_ctrl(safe=safe, request=request), monkeypatch, exc)
+    meta = result.response.metadata
+    assert meta.final_action == "REFUSE"
+    assert meta.triggered_principles == ["SYSTEM.FAIL_SAFE"]
+    assert result.path == "ERROR_PATH"
+    assert result.path_taken == "error"
+    assert result.response.content == "[SYSTEM_ERROR]"
+    assert result.error == str(exc)
+
+
+@pytest.mark.parametrize("exc_cls", GENERIC_EXC)
+def test_p11_generic_except_reason_code_is_system_error(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, exc_cls: type
+) -> None:
+    result = _fail(_ctrl(request=request), monkeypatch, exc_cls("unexpected"))
+    assert result.response.metadata.reason_codes == ["system_error"]
+
+
+def test_i2_p3_transient_generic_failure_then_next_turn_is_regoverned(monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger = _new_ledger()
+    orch = create_orchestrator(
+        policy=MockPolicy(),
+        risk_estimator=MockRiskEstimator(),
+        critic=MockCritic(),
+        simulator=MockSimulator(),
+        hindsight=MockHindsight(),
+        perspectives=MockPerspectives(),
+        constitution_store=MockConstitutionStore(),
+        max_cycles=1,
+        timeout_ms=60_000,
+        ledger=ledger,
+    )
+    controller = orch._controller
+    # Failure injected AFTER the ledger lookup: every _route_* instance method raises.
+    with monkeypatch.context() as patch:
+        for name in [n for n in dir(controller) if n.startswith("_route_")]:
+            patch.setattr(controller, name, MagicMock(side_effect=ValueError("unexpected")))
+        prompt = "Tell me about depression medication"
+        turn1 = orch.process(ProcessedRequest(prompt=prompt, request_id="req-g1"), conversation_id="c1", turn_index=1)
+    assert turn1.response.metadata.final_action == "REFUSE"
+    assert turn1.error == "unexpected"
+    assert ledger._storage.size() == 0
+    turn2 = orch.process(ProcessedRequest(prompt=prompt, request_id="req-g2"), conversation_id="c1", turn_index=2)
+    assert turn2.response.metadata.final_action != "REFUSE"
+    assert turn2.response.metadata.hard_violation_flip_reason == ""
+    state2 = turn2.conversation_governance_state_out
+    assert state2 is not None
+    assert state2.turn_decisions_summary[-1].was_cached is False

@@ -82,6 +82,8 @@ class FailSafeException(MoralStackError):
 # Fail-closed reasons for pipeline failures caught in OrchestrationController.process()
 # (F6, PROJECT_SPEC §5.7). Recorded on ResponseMetadata.hard_violation_flip_reason and
 # reason_codes; audit/ledger only -- never used to route. Never cached (ledger).
+# "system_error" is also stamped by ResponseMetadata.for_fail_safe, used by the generic
+# except in process() and the ensure_final_action_and_return fallback (diagnostics.py).
 SYSTEM_ERROR_FAIL_CLOSED = "system_error"
 SYSTEM_TIMEOUT_FAIL_CLOSED = "system_timeout"
 
@@ -340,7 +342,10 @@ class ResponseMetadata:
     #  - a pipeline failure caught in OrchestrationController.process()
     #    (MoralStackError / OrchestratorTimeoutError): flip reason "system_error" /
     #    "system_timeout", original_final_action "" (no decision was produced) and no
-    #    FINAL trace row.
+    #    FINAL trace row;
+    #  - the generic except in process() and the ensure_final_action_and_return
+    #    fallback (diagnostics.py), via ResponseMetadata.for_fail_safe: flip reason
+    #    "system_error" (principle SYSTEM.FAIL_SAFE).
     # original_final_action records the pre-flip action (e.g. "SAFE_COMPLETE",
     # "NORMAL_COMPLETE"). The matching FINAL trace row carries the same values
     # in hard_violation_source / stage_payload. Additive audit only -- never
@@ -476,7 +481,11 @@ class ResponseMetadata:
 
     @classmethod
     def for_fail_safe(cls, processing_time_ms: int = 0) -> ResponseMetadata:
-        """Metadata for FAIL_SAFE fallback (REFUSE). Same shape as safe_default."""
+        """Metadata for the generic FAIL_SAFE fallback (REFUSE). Same shape as safe_default.
+
+        The refuse is transient: ``system_error`` is stamped on ``reason_codes`` and
+        ``hard_violation_flip_reason`` so the ledger never caches it.
+        """
         return cls(
             risk_score=1.0,
             deliberation_cycles=0,
@@ -489,6 +498,8 @@ class ResponseMetadata:
             intent_clarity="LOW",
             misuse_plausibility="LOW",
             actionability_risk="LOW",
+            reason_codes=[SYSTEM_ERROR_FAIL_CLOSED],
+            hard_violation_flip_reason=SYSTEM_ERROR_FAIL_CLOSED,
         )
 
 

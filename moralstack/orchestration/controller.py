@@ -3062,6 +3062,7 @@ class OrchestrationController:
         except MoralStackError as e:
             return self._attach_trace_and_return(self._handle_error(request, e, start_time), request, call_ctx)
         except (AssertionError, Exception) as e:
+            self._log_pipeline_failure(request, SYSTEM_ERROR_FAIL_CLOSED, e)
             orch_debug_log(
                 "orchestrator.py:process",
                 "early return Exception",

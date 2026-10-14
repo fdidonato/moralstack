@@ -178,7 +178,8 @@ client's view.
   does not store a result whose `metadata.hard_violation_flip_reason` is one of
   `LEDGER_NON_CACHEABLE_FLIP_REASONS` (`deliberation_critique_failed|timeout|unverified`,
   `fast_path_escalation_failed|unverified`, and the pipeline-failure codes
-  `system_error|system_timeout`), so a critic outage or a pipeline error is re-governed on the next turn instead
+  `system_error|system_timeout`; the generic-except / `ensure` fallback REFUSE, principle `SYSTEM.FAIL_SAFE`, also carries
+  `system_error` and is skipped too), so a critic outage or a pipeline error is re-governed on the next turn instead
   of replaying the REFUSE. Lookup/reapply is unchanged; `hard_violation_*` guard refusals stay cached.
 - **Mitigation available**: send a unique `X-Moralstack-Conversation-Id` header
   (or `extra_body.moralstack_conversation_id`) per logical conversation to bypass

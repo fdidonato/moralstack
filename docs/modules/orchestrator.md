@@ -626,6 +626,11 @@ The Orchestrator implements a fail-safe system:
   in `result.error` and the truncated WARNING, never in the delivered answer. No LLM call and no FINAL trace row (the UI
   recognizes a pipeline failure by `SYSTEM.ERROR` plus the absence of FINAL; `SYSTEM.TIMEOUT` is not detected yet). If
   `str(error)` is empty or raises, `error` is the exception class name
+- **Unexpected exceptions** (generic `except (AssertionError, Exception)` in `process()`, and the `ensure_final_action_and_return`
+  fallback): `FinalResponse.safe_default` -> `ResponseMetadata.for_fail_safe`, a REFUSE with principle `SYSTEM.FAIL_SAFE`,
+  `metadata.path="DELIBERATIVE_PATH"`, content `[SYSTEM_ERROR]`. Result `path` per producer: generic except `ERROR_PATH`; `ensure` fallback `DELIBERATIVE_PATH`. It also carries
+  `hard_violation_flip_reason` / `reason_codes` = `system_error`, so it is transient: never stored in the ledger. The generic
+  except logs the same `pipeline failed closed` WARNING (`reason=system_error`, `error_type=<class>`)
 - **Module errors**: Catches exceptions and continues with fallback values, except where a missing result would fail open: a
   critic that did not complete in the final cycle ends in a governed REFUSE (below)
 - **Parsing failures**: Automatic retries with reformulated prompts
@@ -639,7 +644,7 @@ The Orchestrator implements a fail-safe system:
   | hard-violation guard regeneration | REFUSE `HARD_VIOLATION_REGENERATION_FAILED` |
   | soft revision, rewrite with a prior draft | error recorded in `state.errors`, previous draft kept |
   | speculative generation (internal or upstream) | `(None, None)` -> internal governed regeneration |
-  | `_regenerate_for_contract` | propagates to the `process()` catch-all (`ERROR_PATH`, safe default) |
+  | `_regenerate_for_contract` | propagates to the `process()` catch-all (`ERROR_PATH`, safe default, `system_error`, not cached) |
   | DCCL draft-match classifier | `(False, "none", conf)` -> normal pipeline |
 
   An injected policy must therefore accept the `PolicyLLMProtocol` kwargs (`system`, `config`, `overrides`, `model_override`).
