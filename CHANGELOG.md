@@ -1293,6 +1293,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Development
 
+- **Test suite runs in parallel and ~5x faster** (`pyproject.toml`, `tests/conftest.py`).
+  `python -m pytest` now uses pytest-xdist (`-n auto --maxprocesses=8 --dist worksteal`;
+  new dev dependency `pytest-xdist>=3.5`); serial runs use `-n 0`. `tests/conftest.py` adds
+  test-only speed patches: one shared default httpx SSL context, a shared Jinja bytecode
+  cache for the UI templates, and `PRAGMA synchronous=OFF` on new SQLite connections (the
+  test asserting the production default opts out via `@pytest.mark.sqlite_default_synchronous`).
+  Full suite ~250 s → ~51-54 s on the reference laptop. `tests/harness/test_settings_hooks.py`
+  now runs the hook wrapper under Git Bash, not the WSL launcher, so it passes from PowerShell.
+  No production code change.
+
 - **Documented what the critic actually reads of a principle** (`docs/constitution.md`
   §2.2, `docs/CODEBASE_FACTS.md`). `format_principles_compact`
   (`constitution/prompt_formatter.py:70-94`, used at `critic_module.py:401,673`)

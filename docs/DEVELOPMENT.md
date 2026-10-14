@@ -10,7 +10,8 @@ pip install -e .[dev]
 
 ## Tools
 
-- **pytest** — Run tests: `pytest`
+- **pytest** — Run tests: `pytest` (parallel by default via **pytest-xdist**: `addopts` in `pyproject.toml`
+  sets `-n auto --maxprocesses=8 --dist worksteal`; use `pytest -n 0` for a serial run, e.g. with `--pdb`)
 - **pytest-cov** — Coverage reports: `pytest --cov=moralstack --cov-report=xml --cov-report=term`
 - **ruff** — Linting and formatting: `ruff check .` / `ruff format .`
 - **black** — Format check: `black --check .` (or `black .` to reformat)
@@ -51,7 +52,7 @@ ruff check .
 black --check .
 mypy moralstack
 pytest --cov=moralstack --cov-report=term --maxfail=3
-pytest -m slow --maxfail=1      # perf benchmarks, excluded from the default run by addopts
+pytest -n 0 -m slow --maxfail=1 # perf benchmarks, excluded from the default run by addopts; run them serially
 ```
 
 The first three also run as pre-commit hooks, so a normal commit already covers them.

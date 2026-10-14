@@ -273,6 +273,7 @@ def test_worker_connection_thread_ownership(monkeypatch):
     assert connections[0].close_thread_id == stats["worker_connection_thread_id"]
 
 
+@pytest.mark.sqlite_default_synchronous
 def test_second_queue_owns_separate_connection_and_ephemeral_stays_full(tmp_path, monkeypatch):
     """Each ObservabilityWriteQueue worker owns its OWN persistent connection, and an
     ephemeral _get_connection() stays synchronous=FULL — only the worker connection
