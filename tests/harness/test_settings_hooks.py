@@ -104,9 +104,43 @@ def test_stop_hook_timeout_covers_precommit_budget(settings_json, repo_root):
 
 # ---- F3: wrapper subprocess behavior -------------------------------------------
 
-_BASH = shutil.which("bash") or (
-    str(Path(shutil.which("git")).parent.parent / "bin" / "bash.exe") if shutil.which("git") else None
-)
+
+def _is_wsl_launcher(path: Path) -> bool:
+    """True for the Windows ``bash.exe`` stubs that launch WSL (System32 and the
+    WindowsApps alias): they are not the Git Bash the hooks run under, and without
+    an installed distro they fail with ``execvpe(/bin/bash) failed``."""
+    resolved = str(path.resolve()).lower()
+    system_root = os.environ.get("SystemRoot", r"C:\Windows").lower()
+    return resolved.startswith(os.path.join(system_root, "system32").lower()) or "\\windowsapps\\" in resolved
+
+
+def _find_bash() -> str | None:
+    """Locate the bash the hooks run under. On POSIX it is the one on PATH. On
+    Windows it is Git for Windows' ``usr/bin/bash.exe`` — the one Git Bash puts
+    first on PATH, whose directory is verified to carry no python/python3 (see
+    ``_run_wrapper``). From PowerShell/cmd ``bash`` on PATH is usually the WSL
+    launcher instead, so it is only a last resort and never a WSL stub."""
+    if os.name != "nt":
+        return shutil.which("bash")
+    candidates: list[Path] = []
+    override = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
+    if override:
+        candidates.append(Path(override))
+    git = shutil.which("git")
+    if git:
+        # git.exe lives in <root>/cmd, <root>/bin or <root>/mingw64/bin.
+        for root in list(Path(git).resolve().parents)[:3]:
+            candidates.append(root / "usr" / "bin" / "bash.exe")
+    which_bash = shutil.which("bash")
+    if which_bash:
+        candidates.append(Path(which_bash))
+    for candidate in candidates:
+        if candidate.is_file() and not _is_wsl_launcher(candidate):
+            return str(candidate)
+    return None
+
+
+_BASH = _find_bash()
 _HAS_BASH = bool(_BASH and Path(_BASH).exists())
 
 _GOOD_SHIM = (
