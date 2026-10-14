@@ -85,13 +85,16 @@ def create_orchestrator(
     perspectives: PerspectiveEnsembleProtocol | None = None,
     constitution_store: ConstitutionStoreProtocol | None = None,
     max_cycles: int = 2,
-    timeout_ms: int = 5000,
+    timeout_ms: int = 600000,
     enable_perspectives: bool = True,
     enable_simulation: bool = True,
     enable_hindsight: bool = True,
     ledger: Any = None,
 ) -> "Orchestrator":
-    """Factory that builds an ``Orchestrator`` with the given modules and optional ledger."""
+    """Factory that builds an ``Orchestrator`` with the given modules and optional ledger.
+
+    ``timeout_ms`` defaults to the same value as ``OrchestratorConfig.timeout_ms``.
+    """
     config = OrchestratorConfig(
         max_deliberation_cycles=max_cycles,
         timeout_ms=timeout_ms,

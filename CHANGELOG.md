@@ -154,6 +154,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Public API default change (BREAKING): `create_orchestrator()` now defaults `timeout_ms` to 600000
+  (was 5000)**, aligned with `OrchestratorConfig`. With the deliberative critique now failing
+  closed on its 90% time budget, the old 5 s default would have refused most real
+  deliberations. Callers that relied on a 5 s budget must pass `timeout_ms` explicitly.
+
 - **Internal: `DeliberationRunner._critique` split into helpers (no behavior change).** Gate, 90%
   deadline, critic invocation and report summary are extracted into `_critique_gate_open`,
   `_critique_deadline_error`, `_invoke_critic` and `_critic_report_summary`; critic-call arguments

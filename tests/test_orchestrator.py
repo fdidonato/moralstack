@@ -1069,6 +1069,13 @@ class TestFactoryFunctions:
         assert orchestrator.config.timeout_ms == 10000
         assert orchestrator.config.enable_perspectives is False
 
+    def test_create_orchestrator_default_timeout_matches_config(self):
+        """The factory's timeout_ms default matches OrchestratorConfig."""
+        orchestrator = create_orchestrator()
+
+        assert orchestrator.config.timeout_ms == 600000
+        assert orchestrator.config.timeout_ms == OrchestratorConfig().timeout_ms
+
     def test_create_minimal_orchestrator(self):
         """create_minimal_orchestrator crea versione minimale."""
         orchestrator = create_minimal_orchestrator()
