@@ -110,7 +110,6 @@ from moralstack.orchestration.types import (
     Decision,
     DeliberationDependencies,
     DraftProvenance,
-    FailSafeException,
     FinalResponse,
     LoggerProtocol,
     MoralStackError,
@@ -3018,35 +3017,6 @@ class OrchestrationController:
             return self._attach_trace_and_return(self._handle_timeout(request, str(e), start_time), request, call_ctx)
         except MoralStackError as e:
             return self._attach_trace_and_return(self._handle_error(request, e, start_time), request, call_ctx)
-        except FailSafeException:
-            orch_debug_log(
-                "orchestrator.py:process",
-                "early return FailSafeException",
-                {"path": "DELIBERATIVE_PATH", "deliberation_cycles": 0},
-                "H-except",
-                request_id=request_id,
-            )
-            log_deliberation_inconsistency(
-                getattr(request, "request_id", "") or "",
-                "DELIBERATIVE_PATH",
-                "",
-                "FailSafeException",
-                "none",
-            )
-            processing_time = int((time.time() - start_time) * 1000)
-            return self._attach_trace_and_return(
-                OrchestratorResult(
-                    response=FinalResponse.safe_default(processing_time),
-                    request_id=request.request_id,
-                    path_taken="error",
-                    path="ERROR_PATH",
-                    total_cycles=0,
-                    converged=False,
-                    error="FailSafeException",
-                ),
-                request,
-                call_ctx,
-            )
         except (AssertionError, Exception) as e:
             orch_debug_log(
                 "orchestrator.py:process",

@@ -633,6 +633,9 @@ The Orchestrator implements a fail-safe system:
   | DCCL draft-match classifier | `(False, "none", conf)` -> normal pipeline |
 
   An injected policy must therefore accept the `PolicyLLMProtocol` kwargs (`system`, `config`, `overrides`, `model_override`).
+- **No dedicated `FailSafeException` branch in `process()`**: the `except FailSafeException` clause was removed. It was
+  unreachable (`except MoralStackError` comes first and `FailSafeException` subclasses it) and the exception is never
+  raised. A `FailSafeException` is handled like any other `MoralStackError` (`_handle_error`).
 - **Fast-path HARD check fails closed** (`DeliberationRunner.run_fast_path`): the fast draft is never
   delivered when the check did not run and pass. Outcomes:
 

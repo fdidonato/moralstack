@@ -163,6 +163,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deadline, critic invocation and report summary are extracted into `_critique_gate_open`,
   `_critique_deadline_error`, `_invoke_critic` and `_critic_report_summary`; critic-call arguments
   and error handling are unchanged (pinned by new tests).
+- **Internal: unreachable `except FailSafeException` clause removed from `OrchestrationController.process()` (no
+  behavior change).** It sat after `except MoralStackError` (its base class) and the exception is never raised; a
+  `FailSafeException` is handled like any other `MoralStackError`.
 - **Governed generation no longer retries on `TypeError`; injected policies must conform.** A
   programmatically injected policy must accept the `PolicyLLMProtocol` kwargs (`system`, `config`,
   `overrides`, `model_override`); otherwise the request now fails closed (`[SYSTEM_ERROR]` / REFUSE,
