@@ -18,9 +18,13 @@ Purity rules (enforced by review, not by import side effects):
 - no DB/JSONL/event writes;
 - no output-spec validation or rewrite.
 
-It does not generate, rewrite, or revalidate any text. The only transformation
-it performs is the fail-closed substitution of a deterministic safe refusal when
-the governed content is blank — an empty answer must never be delivered.
+It does not generate, rewrite, or revalidate any text. It performs exactly two
+fail-closed substitutions of a deterministic safe refusal: when the governed
+content is blank (an empty answer must never be delivered), and when the result
+carries no valid decision label (``final_action`` outside NORMAL_COMPLETE /
+SAFE_COMPLETE / REFUSE). A label differing only in ASCII case or surrounding
+whitespace is normalized, not refused. The label decides; the text is never
+inspected.
 """
 
 from __future__ import annotations
@@ -34,6 +38,8 @@ from moralstack.orchestration.final_revalidation import DEFAULT_POST_REVALIDATIO
 GOVERNED_TEXT_SOURCE = "governed"
 GOVERNED_REFUSAL_SOURCE = "governed_refusal"
 GOVERNED_PIPELINE_REFUSAL_SOURCE = "governed_pipeline_refusal"
+
+_DELIVERABLE_FINAL_ACTIONS = frozenset({"NORMAL_COMPLETE", "SAFE_COMPLETE", "REFUSE"})
 
 # Historical ``final_text_source`` values that pre-date Plan 1. They are no
 # longer produced by active delivery code, but historical UI rows, report
@@ -58,8 +64,10 @@ class GovernedDelivery:
     Attributes:
         text: the exact text to deliver to the caller.
         final_text_source: provenance marker (see ``GOVERNED_*`` constants).
-        final_action: the action that governs delivery (may be downgraded to
-            ``REFUSE`` when governed content was blank).
+        final_action: the action that governs delivery (downgraded to
+            ``REFUSE`` when governed content was blank or the result carried
+            no valid decision label; an ASCII case/whitespace variant of a valid
+            label is normalized to its canonical form).
         finish_reason: OpenAI-compatible finish reason (``stop`` /
             ``content_filter``).
         original_final_action: the ``final_action`` recorded on the result
@@ -108,7 +116,25 @@ def finalize_delivery(result: Any, *, config: Any = None) -> GovernedDelivery:
             empty_governed_content=True,
         )
 
-    if original_final_action == "REFUSE":
+    action = original_final_action.strip()
+    if action.isascii():
+        # Normalize only ASCII case: str.upper() maps non-ASCII look-alikes
+        # (e.g. U+017F "ſ" -> "S") onto a deliverable label.
+        action = action.upper()
+
+    if action not in _DELIVERABLE_FINAL_ACTIONS:
+        # Fail closed: the result has no valid decision label. Defense in depth
+        # for the pipeline error contract; never deliver it as NORMAL_COMPLETE.
+        return GovernedDelivery(
+            text=DEFAULT_POST_REVALIDATION_REFUSAL,
+            final_text_source=GOVERNED_PIPELINE_REFUSAL_SOURCE,
+            final_action="REFUSE",
+            finish_reason="content_filter",
+            original_final_action=original_final_action,
+            empty_governed_content=False,
+        )
+
+    if action == "REFUSE":
         return GovernedDelivery(
             text=content,
             final_text_source=GOVERNED_REFUSAL_SOURCE,
@@ -122,7 +148,7 @@ def finalize_delivery(result: Any, *, config: Any = None) -> GovernedDelivery:
     return GovernedDelivery(
         text=content,
         final_text_source=GOVERNED_TEXT_SOURCE,
-        final_action=original_final_action or "NORMAL_COMPLETE",
+        final_action=action,
         finish_reason="stop",
         original_final_action=original_final_action,
         empty_governed_content=False,

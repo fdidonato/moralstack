@@ -1101,3 +1101,33 @@ def test_sdk_sync_error_result():
     assert isinstance(resp, GovernedResponse)
     assert resp.content == "[SYSTEM_ERROR]"
     assert resp.governance_metadata.final_action == "REFUSE"
+
+
+def _unlabelled_result() -> Any:
+    """Real result whose decision label is blank (no MagicMock)."""
+    from moralstack.orchestration.types import FinalResponse, OrchestratorResult, ResponseMetadata, ResponseType
+
+    return OrchestratorResult(
+        response=FinalResponse(
+            content="REAL ANSWER",
+            response_type=ResponseType.WITH_CAVEAT,
+            metadata=ResponseMetadata(final_action=""),
+        ),
+        request_id="req-c5",
+    )
+
+
+def test_sdk_sync_unlabelled_result_is_refusal():
+    from moralstack.orchestration.final_revalidation import DEFAULT_POST_REVALIDATION_REFUSAL
+
+    mock_openai = MagicMock()
+    orch = MagicMock()
+    orch.process.return_value = _unlabelled_result()
+    client = GovernedClient(mock_openai, orch, GovernanceConfig())
+
+    resp = client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
+
+    mock_openai.chat.completions.create.assert_not_called()
+    assert resp.content == DEFAULT_POST_REVALIDATION_REFUSAL
+    assert "REAL ANSWER" not in resp.content
+    assert resp.governance_metadata.final_action == "REFUSE"

@@ -51,7 +51,8 @@ pipeline-failure passthrough: a pipeline error fails closed to a deterministic
 governed refusal.
 
 `final_text_source` values produced by the active path are `governed`,
-`governed_refusal`, and the blank-content fail-closed `governed_pipeline_refusal`.
+`governed_refusal`, and the blank-content or unlabelled-result fail-closed
+`governed_pipeline_refusal`.
 `PROXY_OUTPUT_FINALIZED` records `governed_delivery=true`,
 `wrapped_client_delivery_call=false`, `final_text_source`,
 `original_final_action`, `empty_governed_content`, and retains the older guard

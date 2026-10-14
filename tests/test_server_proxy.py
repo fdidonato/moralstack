@@ -1901,3 +1901,51 @@ def test_proxy_sse_error_result():
     assert response.headers.get("X-Moralstack-Path") == "ERROR_PATH"
     assert "secret-ish body" not in response.text
     mock_openai.chat.completions.create.assert_not_called()
+
+
+def _unlabelled_app() -> tuple[TestClient, Any]:
+    mock_orchestrator = MagicMock()
+    mock_orchestrator.process = MagicMock(return_value=_make_result("", content="REAL ANSWER"))
+    mock_openai = MagicMock()
+    mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion("upstream"))
+    app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+    return TestClient(app), mock_openai
+
+
+def test_proxy_unlabelled_result_is_refusal():
+    from moralstack.orchestration.final_revalidation import DEFAULT_POST_REVALIDATION_REFUSAL
+
+    client, mock_openai = _unlabelled_app()
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+    )
+    assert response.status_code == 200
+    choice = response.json()["choices"][0]
+    assert choice["message"]["content"] == DEFAULT_POST_REVALIDATION_REFUSAL
+    assert choice["finish_reason"] == "content_filter"
+    assert "REAL ANSWER" not in response.text
+    mock_openai.chat.completions.create.assert_not_called()
+
+    sse = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o", "stream": True, "messages": [{"role": "user", "content": "Q"}]},
+    )
+    deltas: list[str] = []
+    finish_reasons: list[str] = []
+    for line in sse.text.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[len("data:") :].strip()
+        if data == "[DONE]":
+            continue
+        ch = json.loads(data)["choices"][0]
+        if ch.get("delta", {}).get("content"):
+            deltas.append(ch["delta"]["content"])
+        if ch.get("finish_reason"):
+            finish_reasons.append(ch["finish_reason"])
+    assert "".join(deltas) == DEFAULT_POST_REVALIDATION_REFUSAL
+    assert finish_reasons and finish_reasons[-1] == "content_filter"
+    assert "REAL ANSWER" not in sse.text
+    mock_openai.chat.completions.create.assert_not_called()

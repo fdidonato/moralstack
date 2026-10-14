@@ -642,7 +642,7 @@ class OrchestrationController:
         turn_idx_for_summary = state.turn_index if isinstance(state.turn_index, int) else 0
         new_summary = TurnDecisionSummary(
             turn_index=turn_idx_for_summary,
-            final_action=final_action or "NORMAL_COMPLETE",
+            final_action=final_action or "REFUSE",  # empty label => REFUSE, as in the delivery guard
             risk_score=risk_score,
             winning_rule=winning_rule,
             was_cached=was_cached,

@@ -36,6 +36,7 @@ from moralstack.cli.mocks import (
 )
 from moralstack.orchestration import types as orch_types
 from moralstack.orchestration.controller import OrchestrationController
+from moralstack.orchestration.conversation_state import ConversationGovernanceState
 from moralstack.orchestration.delivery import GOVERNED_REFUSAL_SOURCE, finalize_delivery
 from moralstack.orchestration.ledger import SemanticDecisionLedger
 from moralstack.orchestration.ledger_storage import InMemoryLedgerStorage
@@ -765,3 +766,47 @@ def test_i2_p3_transient_generic_failure_then_next_turn_is_regoverned(monkeypatc
     state2 = turn2.conversation_governance_state_out
     assert state2 is not None
     assert state2.turn_decisions_summary[-1].was_cached is False
+
+
+# ---------------------------------------------------------------------------
+# F6 phase 5: unlabelled results are refused at the consumer guard
+# ---------------------------------------------------------------------------
+
+
+def test_g5_turn_summary_relabel_matches_guard(request: pytest.FixtureRequest) -> None:
+    ctrl = _ctrl(request=request)
+    result = OrchestratorResult(
+        response=FinalResponse(
+            content="ANSWER", response_type=ResponseType.FULL_REFUSAL, metadata=ResponseMetadata(final_action="")
+        ),
+        request_id="req-g5",
+        conversation_id="c1",
+        turn_index=1,
+    )
+    state = ctrl._extend_state_out_v04(
+        state=ConversationGovernanceState(conversation_id="c1", turn_index=1),
+        request=ProcessedRequest(prompt="hello", request_id="req-g5"),
+        result=result,
+        call_ctx=ProcessCallContext(),
+    )
+    assert state.turn_decisions_summary[-1].final_action == "REFUSE"
+
+
+def test_g6_ensure_backfill_then_delivery_is_refuse(request: pytest.FixtureRequest) -> None:
+    ctrl = _ctrl(request=request)
+    result = OrchestratorResult(
+        response=FinalResponse(
+            content="ANSWER", response_type=ResponseType.FULL_REFUSAL, metadata=ResponseMetadata(final_action="")
+        ),
+        request_id="req-g6",
+    )
+    out = ctrl._diagnostics.ensure_final_action_and_return(
+        result,
+        ProcessedRequest(prompt="hello", request_id="req-g6"),
+        time.time(),
+        "g6",
+        lambda r, _req: r,
+    )
+    delivery = finalize_delivery(out)
+    assert delivery.final_action == "REFUSE"
+    assert delivery.finish_reason == "content_filter"

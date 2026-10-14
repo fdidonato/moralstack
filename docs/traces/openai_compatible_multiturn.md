@@ -61,7 +61,11 @@ pipeline for NORMAL_COMPLETE, SAFE_COMPLETE, and REFUSE. The upstream OpenAI
 client is not called to generate the delivered answer.
 
 Empty governed content fails closed to a governed refusal
-(`final_text_source="governed_pipeline_refusal"`). The stale compliance delivery
+(`final_text_source="governed_pipeline_refusal"`), and so does a result without a valid
+decision label (F6 phase 5; ASCII case/whitespace variants of a valid label are normalized).
+`X-Moralstack-Decision` is still built from the raw metadata (the raw label, `UNKNOWN` when it
+is empty) while the body is the refusal and `finish_reason` is `content_filter`
+(follow-up). The stale compliance delivery
 guard fields are retained as audit metadata, but they no longer route delivery to
 an upstream call. The SDK uses the same governed delivery invariant.
 

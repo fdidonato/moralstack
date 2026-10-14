@@ -429,6 +429,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`finalize_delivery` fails closed on a result without a valid decision label (F6, phase 5).** A
+  result whose `final_action` is outside `NORMAL_COMPLETE` / `SAFE_COMPLETE` / `REFUSE` (empty,
+  unknown, garbage) is now delivered as the deterministic governed refusal (`governed_pipeline_refusal`,
+  REFUSE, `content_filter`) instead of being delivered with `stop` (an empty label as NORMAL_COMPLETE,
+  any other label verbatim); the conversation turn summary defaults an empty label to REFUSE likewise.
+  A label that differs only in ASCII case or surrounding whitespace is normalized; a non-ASCII look-alike
+  is refused. Valid labels are byte-identical.
+
 - **A transient unexpected exception no longer pins a cached REFUSE (F6).** The fail-safe REFUSE
   produced by the generic `except` in `process()` (and by the `ensure_final_action_and_return`
   fallback) is no longer stored in the semantic ledger, where it was always reapplied to similar

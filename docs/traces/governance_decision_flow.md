@@ -353,10 +353,17 @@ wrapped SDK client or the proxy upstream client.
 The pure finalizer `finalize_delivery(result)`
 (`orchestration/delivery.py`) turns the already-governed `OrchestratorResult`
 into a transport-neutral `GovernedDelivery` (`text`, `final_text_source`,
-`final_action`, `finish_reason`). Its only transformation is the **fail-closed**
-substitution of a deterministic safe refusal when the governed content is
-blank/whitespace (`final_action` downgraded to `REFUSE`,
-`finish_reason="content_filter"`).
+`final_action`, `finish_reason`). It has exactly two **fail-closed**
+substitutions of the deterministic safe refusal (`final_action` `REFUSE`,
+`finish_reason="content_filter"`, `final_text_source="governed_pipeline_refusal"`):
+(1) the governed content is blank/whitespace (checked first); (2) the result carries
+no valid decision label (`final_action` outside `NORMAL_COMPLETE` / `SAFE_COMPLETE` /
+`REFUSE`, F6 phase 5), which was previously delivered with `stop` (an empty label as
+`NORMAL_COMPLETE`, any other label verbatim). A label differing only in ASCII case or
+surrounding whitespace is normalized to the canonical form; a non-ASCII look-alike is
+refused (`original_final_action` keeps the raw label). The label decides, the text is never
+inspected. The conversation turn summary defaults an empty label to `REFUSE`; it does not
+normalize case (a lowercase label is recorded raw).
 
 - **NORMAL_COMPLETE / SAFE_COMPLETE**: the SDK returns the governed text via
   `GovernedResponse.from_governed_text(...)` (`wrapper.py:372-415`); the proxy
