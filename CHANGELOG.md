@@ -412,6 +412,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Benchmark: pipeline-failure rows stay system errors.** `scripts/benchmark_moralstack.py` now
+  classifies rows whose MoralStack metadata carries `SYSTEM.ERROR` or `SYSTEM.TIMEOUT` as
+  `moralstack_final_action_failed` whatever their `final_action`, so they stay counted as system
+  errors and excluded from FN/FP once pipeline errors are labelled REFUSE. Neutral at HEAD (these rows
+  carry an empty `final_action` today); `SYSTEM.FAIL_SAFE` rows are still counted as REFUSE.
+
 - **Transient fail-closed REFUSEs are no longer cached in the semantic ledger.** A critic outage
   (`deliberation_critique_failed|timeout|unverified`) or a fast-path escalation failure
   (`fast_path_escalation_failed|unverified`) used to be stored and then reapplied, pinning REFUSE for
