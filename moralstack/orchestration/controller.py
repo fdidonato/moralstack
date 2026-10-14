@@ -45,9 +45,14 @@ from moralstack.orchestration.decision_service import decide_action
 from moralstack.orchestration.default_event_emitter import DefaultEventEmitter
 from moralstack.orchestration.deliberation_override import evaluate_deliberation_override
 from moralstack.orchestration.deliberation_runner import (
+    DELIBERATION_CRITIQUE_UNVERIFIED,
+    DELIBERATION_FAIL_CLOSED_SOURCE,
     DeliberationRunner,
+    _append_hard_violation_flip_final_trace,
     _build_enriched_retrieval_query,
+    _decision_as_refuse,
     _decision_explanation_for_hard_violation_flip,
+    _neutral_refusal_risk_estimation,
 )
 from moralstack.orchestration.diagnostics import (
     DiagnosticsLayer,
@@ -2213,6 +2218,46 @@ class OrchestrationController:
                 cycle=outcome.cycle,
                 max_cycles=outcome.max_cycles,
             )
+        # Deliberative critique coverage check (PROJECT_SPEC §5.3/§5.7): a draft whose
+        # final-cycle critique did not complete (failed / timeout / never invoked) is
+        # never delivered. Runs after every decision rewrite above (override,
+        # CYCLES_EXHAUSTED fallback, SAFE_COMPLETE gating) so none of them can undo the
+        # flip. See DeliberationRunner.enforce_verified_draft_delivery.
+        fc_original_action = ""
+        fc_flip_reason = ""
+        expl_checked: DecisionExplanation | None = explanation1
+        try:
+            decision1, expl_checked, fc_original_action, fc_flip_reason = self._runner.enforce_verified_draft_delivery(
+                request,
+                state,
+                decision1,
+                constitution=constitution,
+                decision_explanation=explanation1,
+            )
+        except Exception:
+            # Fail closed: if the coverage check itself breaks, never deliver the draft.
+            _LOG.exception("deliberation fail-closed check raised request_id=%s", request_id)
+            # An already-REFUSE decision is left untouched (no flip metadata, no FINAL row).
+            if decision1.final_action != "REFUSE":
+                fc_original_action = decision1.final_action
+                fc_flip_reason = DELIBERATION_CRITIQUE_UNVERIFIED
+                decision1 = _decision_as_refuse(decision1, DELIBERATION_CRITIQUE_UNVERIFIED)
+                # None: ResponseMetadata.from_decision then falls back to decision1.reason_codes
+                # instead of the pre-flip explanation (which describes the original action).
+                expl_checked = None
+                _append_hard_violation_flip_final_trace(
+                    request_id=request_id or "",
+                    decision=decision1,
+                    original_final_action=fc_original_action,
+                    flip_reason=DELIBERATION_CRITIQUE_UNVERIFIED,
+                    decision_explanation=None,
+                    source=DELIBERATION_FAIL_CLOSED_SOURCE,
+                    actor="deliberation_fail_closed",
+                    extra_payload={
+                        "critique_outcome": getattr(state, "_critique_outcome", "") or "not_invoked",
+                        "cycle": str(state.cycle),
+                    },
+                )
         # Update trace to reflect the FINAL decision (post-deliberation),
         # not the stale pre-deliberation values set at first decide_action() call.
         trace.decision_path = decision1.path
@@ -2220,7 +2265,7 @@ class OrchestrationController:
         processing_time = int((time.time() - start_time) * 1000)
         if constitution is not None and getattr(constitution, "constitution_corrupted", False):
             risk_score = 1.0
-        expl_for_assembler = explanation1
+        expl_for_assembler = expl_checked
         if decision1.final_action == "SAFE_COMPLETE" and "cycles_exhausted_sensitive_fallback" in getattr(
             decision1, "reason_codes", []
         ):
@@ -2237,14 +2282,15 @@ class OrchestrationController:
                 why_not_safe_complete="N/A; current action is SAFE_COMPLETE.",
                 why_not_normal_complete=("Cycles exhausted; safe framing applied (not full NORMAL_COMPLETE)."),
             )
-        log_decision_explanation(
-            expl_for_assembler,
-            request_id,
-            hypothesis_id="H-decision-delib",
-            risk_score=risk_score,
-            risk_category=risk_category_str(risk_estimation),
-            stop_reason=getattr(outcome, "stop_reason", "") or "",
-        )
+        if expl_for_assembler is not None:
+            log_decision_explanation(
+                expl_for_assembler,
+                request_id,
+                hypothesis_id="H-decision-delib",
+                risk_score=risk_score,
+                risk_category=risk_category_str(risk_estimation),
+                stop_reason=getattr(outcome, "stop_reason", "") or "",
+            )
         # Hard-signal-supremacy delivery guard (PROJECT_SPEC §5.3): a decision
         # carrying unresolved hard_violations must never deliver the
         # critic-rejected state.draft_response verbatim. No-op (no LLM call)
@@ -2279,15 +2325,17 @@ class OrchestrationController:
             risk_score=risk_score,
             processing_time_ms=processing_time,
             constitution=constitution,
-            risk_estimation=risk_estimation,
+            risk_estimation=(_neutral_refusal_risk_estimation(risk_estimation) if fc_flip_reason else risk_estimation),
             outcome=outcome,
             decision_explanation=expl_for_assembler,
             constitution_store=self.constitution_store,
             draft_provenance=draft_provenance,
         )
-        if hv_flip_reason:
-            response.metadata.original_final_action = hv_original_action
-            response.metadata.hard_violation_flip_reason = hv_flip_reason
+        flip_original = fc_original_action or hv_original_action
+        flip_reason = fc_flip_reason or hv_flip_reason
+        if flip_reason:
+            response.metadata.original_final_action = flip_original
+            response.metadata.hard_violation_flip_reason = flip_reason
         self._emit_deliberation_aggregate_trace(
             request_id=request_id,
             state=state,

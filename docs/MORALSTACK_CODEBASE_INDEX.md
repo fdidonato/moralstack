@@ -171,10 +171,18 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   fallback call, so FAST_PATH never re-retrieves either. **FAST_PATH fails
   closed (2026-10-13):** a `quick_check` that fails, raises or has no verdict, or
   a configured store with no loadable constitution, escalates to the deliberative
-  path; an escalation that raises or ends without a completed, non-skipped
-  critique becomes a governed REFUSE (`fast_path_escalation_failed` /
+  path; an escalation that raises or ends without a critique that completed in
+  the final cycle (cycle-scoped `_critique_outcome == "completed"`) becomes a governed REFUSE (`fast_path_escalation_failed` /
   `fast_path_escalation_unverified`), never the unchecked draft
-  (`deliberation_runner.py` `run_fast_path`, `_escalation_has_completed_critique`). **Request-scoped
+  (`deliberation_runner.py` `run_fast_path`, `_escalation_has_completed_critique`). **Deliberative
+  critique coverage fails closed (2026-10-14, F5):** `DeliberationRunner._critique` records a
+  per-cycle `DeliberationState._critique_outcome` (`""`/`completed`/`skipped`/`failed`/`timeout`,
+  constants `CRITIQUE_OUTCOME_*`, reset every cycle, copied by `fork()`) and never raises;
+  `DeliberationRunner.enforce_verified_draft_delivery`, called once in
+  `controller._route_deliberative` (with a try/except fallback to REFUSE), turns `failed` /
+  `timeout` / `""` with the critic gate open into a governed REFUSE
+  (`DELIBERATION_CRITIQUE_FAILED` / `_TIMEOUT` / `_UNVERIFIED`, source
+  `DELIBERATION_FAIL_CLOSED_SOURCE`); `skipped` is accepted with a WARNING. **Request-scoped
   (retrieval-request-scoped-state §8b, commit 2, P0 fix):** `DeliberationRunner`
   no longer carries per-request state on `self`. The wall-clock start (read by
   the four timeout gates before critique/simulation/hindsight/perspectives) is
@@ -201,9 +209,9 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   principle ids as a user-side prompt prefix, never critic rationale, never
   appended to the system prompt), then re-validates exactly once with a
   **direct** `self.critic.critique(...)` call via `_critique_hard_violation_regeneration`
-  — deliberately NOT the `_critique` wrapper (it swallows every exception and
-  enforces a 90%-of-`timeout_ms` guard that would fire routinely this late in a
-  full deliberation). Delivers the regenerated text as SAFE_COMPLETE if the
+  — deliberately NOT the `_critique` wrapper (it records a failure/timeout as an
+  outcome instead of raising, and enforces a 90%-of-`timeout_ms` guard that would
+  fire routinely this late in a full deliberation). Delivers the regenerated text as SAFE_COMPLETE if the
   critic clears it (no hard violation, no REFUSE verdict, not `skipped`);
   otherwise fails closed to REFUSE, appends a reconciled FINAL decision trace
   (`_append_hard_violation_flip_final_trace`, best-effort, never rewrites the
@@ -215,7 +223,9 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `hard_violation_flip_reason` (additive-only, generic fail-closed fields: the
   fast-path HARD check also writes `fast_path_escalation_failed` /
   `fast_path_escalation_unverified` there, with `hard_violation_source=
-  "fast_path_fail_closed"` on its FINAL trace row). `response_assembler.py`
+  "fast_path_fail_closed"` on its FINAL trace row; the deliberative critique
+  coverage check writes `deliberation_critique_failed` / `_timeout` / `_unverified`
+  with `hard_violation_source="deliberation_fail_closed"`). `response_assembler.py`
   is untouched by this fix (hard constraint: it is a deterministic renderer with
   no critic/output-protector access). **Persisted rows:** the guard's two
   `llm_calls` rows are written in the cycle that raised the violation

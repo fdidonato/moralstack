@@ -120,6 +120,9 @@ class TestUpstreamThenVerifyRevisedPath:
         # clears `_draft_verbatim_reuse`, so the ResponseAssembler must not
         # stamp upstream provenance onto this state.
         revised_state._draft_verbatim_reuse = False
+        # The hand-built state models a deliberation whose critic completed (the gate is
+        # open: MockCritic + MockConstitutionStore); the F5 delivery check requires it.
+        revised_state._critique_outcome = "completed"
 
         decision = Decision(
             final_action="NORMAL_COMPLETE",

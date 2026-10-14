@@ -55,6 +55,7 @@ from moralstack.orchestration.response_assembler import ResponseAssembler
 from moralstack.orchestration.system_prompt_resolver import effective_system_for_request
 from moralstack.orchestration.types import (
     ConvergenceOutcome,
+    CritiqueError,
     Decision,
     DecisionType,
     DeliberationDependencies,
@@ -212,7 +213,14 @@ def _policy_llm_model_for_action(policy: Any, action: str) -> str:
 
 
 def _critic_report_summary(critique: Any) -> str:
-    """Short "Violations / Guidance" summary of a critic report (raises on a non-conforming report)."""
+    """Short "Violations / Guidance" summary of a critic report (raises on a non-conforming report).
+
+    A missing report (``None``) is explicitly a failure, and the attribute reads are
+    deliberately NOT ``getattr`` with a default: a report without ``violations`` /
+    ``revision_guidance`` must never count as a clean, completed critique (fail-open).
+    """
+    if critique is None:
+        raise CritiqueError("critic returned no report")
     nv = len(critique.violations)
     rg = (critique.revision_guidance[:100]) if critique.revision_guidance else "N/A"
     return f"Violations: {nv}, Guidance: {rg}"
@@ -421,6 +429,23 @@ HARD_VIOLATION_STILL_VIOLATING = "hard_violation_still_violating"
 FAST_PATH_ESCALATION_FAILED = "fast_path_escalation_failed"
 FAST_PATH_ESCALATION_UNVERIFIED = "fast_path_escalation_unverified"
 FAST_PATH_FAIL_CLOSED_SOURCE = "fast_path_fail_closed"
+
+# Per-cycle outcome of ``DeliberationRunner._critique`` (``DeliberationState._critique_outcome``).
+# "" means the critic was not invoked in the cycle (gate closed, or hand-built state).
+CRITIQUE_OUTCOME_COMPLETED = "completed"
+CRITIQUE_OUTCOME_SKIPPED = "skipped"
+CRITIQUE_OUTCOME_FAILED = "failed"
+CRITIQUE_OUTCOME_TIMEOUT = "timeout"
+
+# Fail-closed reasons for the deliberative critique coverage check
+# (DeliberationRunner.enforce_verified_draft_delivery). Same audit-only contract as
+# above: recorded on ResponseMetadata.hard_violation_flip_reason / the reconciled FINAL
+# trace row, never used to route or gate anything. ``DELIBERATION_FAIL_CLOSED_SOURCE`` is
+# the FINAL trace ``hard_violation_source`` / explanation ``winning_rule`` for those rows.
+DELIBERATION_CRITIQUE_FAILED = "deliberation_critique_failed"
+DELIBERATION_CRITIQUE_TIMEOUT = "deliberation_critique_timeout"
+DELIBERATION_CRITIQUE_UNVERIFIED = "deliberation_critique_unverified"
+DELIBERATION_FAIL_CLOSED_SOURCE = "deliberation_fail_closed"
 
 
 def _hard_violation_regeneration_guidance(hard_violations: list[str]) -> str:
@@ -636,10 +661,68 @@ def _decision_explanation_for_fast_path_fail_closed(
 
 def _escalation_has_completed_critique(state: DeliberationState) -> bool:
     """True when the fast-path -> deliberative escalation ended with a critique that
-    actually ran. ``is not True`` (not truthiness) so a ``MagicMock`` critique,
-    whose ``skipped`` attribute is a truthy mock, still counts as completed."""
-    last = state.last_critique
-    return last is not None and getattr(last, "skipped", False) is not True
+    completed in the CURRENT (final) cycle.
+
+    Cycle-scoped: it reads ``state._critique_outcome`` (set only by
+    ``DeliberationRunner._critique`` and reset every cycle), never ``last_critique``,
+    so a report left over from an earlier cycle cannot vouch for the final draft. A
+    ``skipped`` critique counts as unverified here (the fast path was flagged by
+    ``quick_check``, so a positive risk signal existed). The ``MagicMock`` compatibility
+    (``skipped is True``) lives in ``_critique``."""
+    return state._critique_outcome == CRITIQUE_OUTCOME_COMPLETED
+
+
+def _deliberation_fail_closed_reason(outcome: str) -> str:
+    """Map a ``DeliberationState._critique_outcome`` to a fail-closed reason code.
+
+    ``""`` (no reason, deliver as decided) for ``completed`` and for ``skipped`` (a
+    skipped critique, i.e. zero retrieved principles, is accepted as covered: the
+    critic's own verdict that no principle applies). ``failed`` / ``timeout`` map to
+    their own codes; anything else, including ``""`` (critic never invoked in the
+    final cycle although the gate is open), is ``unverified``."""
+    if outcome in (CRITIQUE_OUTCOME_COMPLETED, CRITIQUE_OUTCOME_SKIPPED):
+        return ""
+    if outcome == CRITIQUE_OUTCOME_FAILED:
+        return DELIBERATION_CRITIQUE_FAILED
+    if outcome == CRITIQUE_OUTCOME_TIMEOUT:
+        return DELIBERATION_CRITIQUE_TIMEOUT
+    return DELIBERATION_CRITIQUE_UNVERIFIED
+
+
+def _decision_explanation_for_deliberation_fail_closed(
+    original: DecisionExplanation | None,
+    decision: Decision,
+    reason: str,
+) -> DecisionExplanation:
+    """Rebuild the ``DecisionExplanation`` passed to ``assemble`` when the deliberative
+    critique coverage check fails closed (the final-cycle critique did not complete).
+
+    Same rationale as ``_decision_explanation_for_fast_path_fail_closed``:
+    ``ResponseMetadata.from_decision`` prefers the explanation over the decision, so a
+    stale NORMAL_COMPLETE/SAFE_COMPLETE explanation would reproduce an audit
+    incoherence. The wording is specific to this path: the draft was not cleared by a
+    completed critique. Request properties (risk score/category, signals, overlay) are
+    carried over from ``original``.
+    """
+    base = original
+    return DecisionExplanation(
+        request_id=(base.request_id if base is not None else "") or "",
+        final_action="REFUSE",
+        risk_score=(base.risk_score if base is not None else 0.0),
+        risk_category=(base.risk_category if base is not None else ""),
+        activated_signals=(list(base.activated_signals) if base is not None else []),
+        overlay_applied=((base.overlay_applied if base is not None else "") or ""),
+        winning_rule=DELIBERATION_FAIL_CLOSED_SOURCE,
+        reason_codes=list(decision.reason_codes),
+        why_not_refuse=f"REFUSE chosen: the deliberative draft was not cleared by a completed critique ({reason}).",
+        why_not_safe_complete=(
+            f"SAFE_COMPLETE not selected: the deliberative critique could not be completed ({reason}); "
+            "an unverified draft is never delivered."
+        ),
+        why_not_normal_complete=(
+            f"NORMAL_COMPLETE not selected: the deliberative draft was not verified by the critic ({reason})."
+        ),
+    )
 
 
 def _neutral_refusal_risk_estimation(risk_estimation: RiskEstimationProtocol) -> RiskEstimationProtocol:
@@ -1156,6 +1239,68 @@ class DeliberationRunner:
         except Exception as e:
             raise GenerationError(f"Generation failed: {e}")
 
+    def enforce_verified_draft_delivery(
+        self,
+        request: ProcessedRequest,
+        state: DeliberationState,
+        decision: Decision,
+        *,
+        constitution: Any | None,
+        decision_explanation: DecisionExplanation | None,
+    ) -> tuple[Decision, DecisionExplanation | None, str, str]:
+        """F5 fail-closed delivery check (PROJECT_SPEC §5.3/§5.7), called once from the
+        controller's ``_route_deliberative`` after every decision rewrite (override,
+        CYCLES_EXHAUSTED fallback, SAFE_COMPLETE gating) and before ``assemble``.
+
+        A deliberative draft is delivered only if the critic, when it is configured to
+        check, completed in the cycle that produced it. Reads only the structured
+        ``state._critique_outcome`` (set by ``_critique``) and the critic gate, never the
+        response text. ``failed`` / ``timeout`` / ``""`` (critic never invoked in the
+        final cycle although the gate is open) flip the decision to REFUSE with
+        ``deliberation_critique_failed`` / ``..._timeout`` / ``..._unverified``,
+        preserving ``hard_violations``. ``completed`` and ``skipped`` (zero retrieved
+        principles: the critic's own verdict that no principle applies, accepted with a
+        WARNING) deliver as decided. A closed gate (no critic, or no constitution
+        source) is the by-design skip and is unchanged.
+
+        Returns ``(decision, explanation, original_final_action, flip_reason)``; the
+        last two are ``""`` unless this call flipped the decision. A best-effort FINAL
+        decision trace row is appended on a flip (never on the no-op branch).
+        """
+        if decision.final_action == "REFUSE" or not self._critique_gate_open(constitution):
+            return decision, decision_explanation, "", ""
+        outcome = state._critique_outcome
+        reason = _deliberation_fail_closed_reason(outcome)
+        if not reason:
+            if outcome == CRITIQUE_OUTCOME_SKIPPED:
+                _LOG.warning(
+                    "deliberation critique skipped, delivered under S2 request_id=%s cycle=%s skip_reason=%s",
+                    request.request_id or "",
+                    state.cycle,
+                    getattr(state.last_critique, "skip_reason", ""),
+                )
+            return decision, decision_explanation, "", ""
+        flipped = _decision_as_refuse(decision, reason)
+        explanation = _decision_explanation_for_deliberation_fail_closed(decision_explanation, flipped, reason)
+        _LOG.warning(
+            "deliberation fail-closed request_id=%s cycle=%s critique_outcome=%s reason=%s",
+            request.request_id or "",
+            state.cycle,
+            outcome or "not_invoked",
+            reason,
+        )
+        _append_hard_violation_flip_final_trace(
+            request_id=request.request_id or "",
+            decision=flipped,
+            original_final_action=decision.final_action,
+            flip_reason=reason,
+            decision_explanation=explanation,
+            source=DELIBERATION_FAIL_CLOSED_SOURCE,
+            actor="deliberation_fail_closed",
+            extra_payload={"critique_outcome": outcome or "not_invoked", "cycle": str(state.cycle)},
+        )
+        return flipped, explanation, decision.final_action, reason
+
     def enforce_no_rejected_draft_delivery(
         self,
         request: ProcessedRequest,
@@ -1190,12 +1335,14 @@ class DeliberationRunner:
         violated principle ids as user-side guidance only -- never critic
         rationale), then re-validates exactly once with a DIRECT
         ``self.critic.critique(...)`` call. Deliberately NOT the ``_critique``
-        wrapper: it swallows every exception (:3101-3113-ish, see
-        ``DeliberationRunner._critique``) -- a re-validation that cannot fail
-        is not a validation -- and it enforces a 90%-of-``timeout_ms`` guard
-        (see ``DeliberationRunner._critique``) that would fire routinely this
-        late in a full deliberation and silently turn "regenerate and
-        deliver" into "refuse" for reasons unrelated to the content itself.
+        wrapper: it never raises (a critic failure is recorded as
+        ``state._critique_outcome`` and ``state.errors`` instead) -- a
+        re-validation whose failure is not visible to the caller is not a
+        validation -- and it enforces a 90%-of-``timeout_ms`` guard (outcome
+        ``timeout``, see ``DeliberationRunner._critique``) that would fire
+        routinely this late in a full deliberation and silently turn
+        "regenerate and deliver" into "refuse" for reasons unrelated to the
+        content itself.
         Delivers the regenerated text as SAFE_COMPLETE if the critic clears
         it; fails closed to REFUSE otherwise (regeneration empty, regeneration
         raises, the critic still reports a hard violation, the critic itself
@@ -1759,7 +1906,12 @@ class DeliberationRunner:
         ``request_analysis``: threaded from ``run_fast_path`` (in scope at its
         caller, ``:1049`` area) so the hard-violation delivery guard below can
         mirror the precomputed-principles critique form; this route never had
-        it before this guard."""
+        it before this guard.
+
+        Its single caller (the fast-path escalation in ``run_fast_path``) is already
+        gated by the cycle-scoped ``_escalation_has_completed_critique``, so the
+        deliberative critique coverage check (``enforce_verified_draft_delivery``) is
+        not repeated here."""
         from moralstack.orchestration.decision_service import decide_action
 
         decision1, explanation1 = decide_action(
@@ -2240,6 +2392,7 @@ class DeliberationRunner:
         state._simulator_ran_this_cycle = None
         state._simulator_gate_reason_codes = []
         state._simulator_carry_forward = False
+        state._critique_outcome = ""
         state_info = (
             f"Ciclo #{state.cycle}\nDraft response length: "
             f"{len(state.draft_response)} chars\nCritiques: {len(state.critiques)}\n"
@@ -3243,6 +3396,11 @@ class DeliberationRunner:
         # back explicitly (fork() alone only copies it at fork time, before
         # the critic runs).
         state._request_analysis_reuse_targets = list(sc._request_analysis_reuse_targets)
+        # The per-cycle critique outcome is also set on the `sc` fork. It belongs to the
+        # critic merge (before the hard-violation early return below), never to the
+        # sim/persp merge: a critique that completed with a hard violation must keep
+        # "completed" so the guard, not the coverage check, handles it.
+        state._critique_outcome = sc._critique_outcome
         state.errors = list(state.errors) + list(sc.errors[n_errors_before:])
 
         # Propagate critic signals into delib_context (matches sequential path)
@@ -3674,46 +3832,22 @@ class DeliberationRunner:
             )
         return critique
 
-    def _critique(
+    def _record_critique_call(
         self,
         state: DeliberationState,
         request: ProcessedRequest,
+        critique: Any,
         *,
-        delib_context: DelibContext | None = None,
-        constitution: Any | None = None,
-        request_analysis: RequestAnalysisContext | None = None,
-        start_time: float | None = None,
-    ) -> DeliberationState:
-        """Run one critique pass and append the report to ``state.critiques``.
+        prompt_text: str,
+        response_text: str,
+        start: float,
+        elapsed: float,
+    ) -> None:
+        """Best-effort telemetry of a critique that already completed (PROJECT_SPEC §5.6).
 
-        * Gate: returns ``state`` untouched when no critic or no constitution source exists.
-        * 90% gate: when ``start_time`` is given and more than 90% of ``timeout_ms`` is spent,
-          the critique is not attempted.
-        * Any error (including the 90% gate) is recorded in ``state.errors`` as
-          ``Critique error: ...`` plus a diagnostic ``critique (ERROR)`` row. Known gaps: that
-          diagnostic write is not itself wrapped (a raising diagnostics logger can escape), and
-          the append happens after the success-path telemetry, so a telemetry failure drops a
-          completed critique. A later phase addresses both.
-        * On success the critic report is appended to ``state.critiques``.
-        Otherwise returns ``state``.
+        A telemetry failure here never changes the critique outcome or drops the report.
         """
-        if not self._critique_gate_open(constitution):
-            return state
         try:
-            deadline_error = self._critique_deadline_error(start_time)
-            if deadline_error is not None:
-                raise deadline_error
-            start = time.time()
-            prompt_text = f"CRITIQUE\nPrompt: {request.prompt}\nResponse: {state.draft_response}"
-            critique = self._invoke_critic(
-                state,
-                request,
-                delib_context=delib_context,
-                constitution=constitution,
-                request_analysis=request_analysis,
-            )
-            elapsed = (time.time() - start) * 1000
-            response_text = _critic_report_summary(critique)
             is_skipped = bool(getattr(critique, "skipped", False))
             skip_reason = getattr(critique, "skip_reason", "") or ""
             if is_skipped:
@@ -3768,7 +3902,124 @@ class DeliberationRunner:
                 },
             )
             _emit_context_shape(request, "critic", state.cycle)
-            state.critiques.append(critique)
+        except Exception:
+            _LOG.warning("critique telemetry failed (the critique itself is kept)", exc_info=True)
+
+    def _record_critique_failure(
+        self,
+        state: DeliberationState,
+        request: ProcessedRequest,
+        error: Exception,
+        *,
+        outcome: str | None,
+    ) -> DeliberationState:
+        """Record a critique that did not complete (or whose post-processing failed).
+
+        Appends ``Critique error: ...`` to ``state.errors``, sets the per-cycle outcome
+        when one is given, emits a WARNING (type plus a 200-char excerpt: provider
+        exceptions can embed response bodies) and writes the diagnostic-only
+        ``critique (ERROR)`` row. Never raises; the delivery site fails closed on the
+        recorded outcome (``enforce_verified_draft_delivery``).
+        """
+        state.errors.append(f"Critique error: {error}")
+        if outcome is not None:
+            state._critique_outcome = outcome
+        _LOG.warning(
+            "deliberation critique did not complete request_id=%s cycle=%s outcome=%s error_type=%s error=%s",
+            request.request_id or "",
+            state.cycle,
+            outcome,
+            type(error).__name__,
+            str(error)[:200],
+        )
+        try:
+            record_llm_call(
+                self.logger,
+                {
+                    "module": "critic",
+                    "action": "critique (ERROR)",
+                    "prompt": f"Prompt: {request.prompt}",
+                    "response": f"ERROR: {error}",
+                    "duration_ms": 0.0,
+                },
+                None,
+            )
+        except Exception:
+            _LOG.debug("critique (ERROR) diagnostic write failed", exc_info=True)
+        return state
+
+    def _critique(
+        self,
+        state: DeliberationState,
+        request: ProcessedRequest,
+        *,
+        delib_context: DelibContext | None = None,
+        constitution: Any | None = None,
+        request_analysis: RequestAnalysisContext | None = None,
+        start_time: float | None = None,
+    ) -> DeliberationState:
+        """Run one critique pass, append the report to ``state.critiques`` and record
+        the per-cycle outcome in ``state._critique_outcome``.
+
+        * Gate: returns ``state`` untouched (outcome stays ``""``) when no critic or no
+          constitution source exists. This is the by-design skip, not a failure.
+        * 90% gate: when ``start_time`` is given and more than 90% of ``timeout_ms`` is
+          spent, the critique is not attempted: outcome ``timeout``.
+        * A deadline that cannot be evaluated (e.g. ``timeout_ms <= 0``), a critic
+          exception, or a non-conforming report (``None``, no ``violations`` /
+          ``revision_guidance``): outcome ``failed``. Both are recorded in
+          ``state.errors`` as ``Critique error: ...`` plus a WARNING and a diagnostic
+          ``critique (ERROR)`` row. They are governance, not telemetry: the delivery site
+          (``enforce_verified_draft_delivery``) turns them into a governed REFUSE.
+        * On success the report is appended and the outcome is ``skipped`` (report with
+          ``skipped is True``) or ``completed``. ``is True`` on purpose: a ``MagicMock``
+          report has a truthy mock ``skipped`` and counts as ``completed``.
+        * Telemetry runs after the append and is best-effort: a telemetry failure never
+          drops a completed critique. A failure while propagating the critic signals into
+          ``delib_context`` is recorded as an error but keeps the critique and its outcome.
+
+        Never raises (``BaseException`` aside). Always returns ``state``.
+        """
+        if not self._critique_gate_open(constitution):
+            return state
+        try:
+            deadline_error = self._critique_deadline_error(start_time)
+        except Exception as e:
+            # E.g. ZeroDivisionError on timeout_ms <= 0: the deadline could not be
+            # evaluated, so the critique is not attempted and the cycle fails closed.
+            return self._record_critique_failure(state, request, e, outcome=CRITIQUE_OUTCOME_FAILED)
+        if deadline_error is not None:
+            return self._record_critique_failure(state, request, deadline_error, outcome=CRITIQUE_OUTCOME_TIMEOUT)
+        start = time.time()
+        prompt_text = f"CRITIQUE\nPrompt: {request.prompt}\nResponse: {state.draft_response}"
+        try:
+            critique = self._invoke_critic(
+                state,
+                request,
+                delib_context=delib_context,
+                constitution=constitution,
+                request_analysis=request_analysis,
+            )
+            response_text = _critic_report_summary(critique)
+        except Exception as e:
+            # Governance, not telemetry (§5.6/§5.7): an incomplete critique is recorded as
+            # such and fails closed at the delivery site; it is never "no violation".
+            return self._record_critique_failure(state, request, e, outcome=CRITIQUE_OUTCOME_FAILED)
+        elapsed = (time.time() - start) * 1000
+        state.critiques.append(critique)
+        state._critique_outcome = (
+            CRITIQUE_OUTCOME_SKIPPED if getattr(critique, "skipped", False) is True else CRITIQUE_OUTCOME_COMPLETED
+        )
+        self._record_critique_call(
+            state,
+            request,
+            critique,
+            prompt_text=prompt_text,
+            response_text=response_text,
+            start=start,
+            elapsed=elapsed,
+        )
+        try:
             # Propagate critic signals into DelibContext for downstream modules
             if delib_context is not None:
                 delib_context.critic_decision = getattr(critique, "decision", "") or ""
@@ -3778,18 +4029,7 @@ class DeliberationRunner:
                         f"{v.principle_id}:{getattr(v, 'severity', 0)}" for v in critique.violations[:5]
                     )
         except Exception as e:
-            state.errors.append(f"Critique error: {e}")
-            record_llm_call(
-                self.logger,
-                {
-                    "module": "critic",
-                    "action": "critique (ERROR)",
-                    "prompt": f"Prompt: {request.prompt}",
-                    "response": f"ERROR: {e}",
-                    "duration_ms": 0.0,
-                },
-                None,
-            )
+            self._record_critique_failure(state, request, e, outcome=None)
         return state
 
     def _simulate(

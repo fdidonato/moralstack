@@ -407,6 +407,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Deliberative route fails closed when the critique did not complete.** Client-visible effect: where a
+  deliberative draft used to be delivered on the risk signal alone because the critic failed, timed out
+  (the 90% gate of `timeout_ms`) or was never invoked in the final cycle, the request is now answered with a
+  governed REFUSE (`content_filter`) carrying `hard_violation_flip_reason` `deliberation_critique_failed` /
+  `deliberation_critique_timeout` / `deliberation_critique_unverified` and a FINAL trace row
+  (`hard_violation_source=deliberation_fail_closed`). `DeliberationRunner._critique` now records a per-cycle
+  outcome and never raises; after a failure in cycle N, a report from cycle N-1 can no longer vouch for the cycle N
+  draft. A critique that completes is unchanged; a `skipped` critique (zero retrieved principles) is still
+  accepted, with a WARNING; no critic or no constitution source is still skipped by design. Critique telemetry is
+  isolated, so a telemetry failure no longer drops a completed critique. The fast-path escalation predicate is
+  tightened the same way: it requires a critique that completed in the final cycle, not just a non-skipped last
+  report. Known gap: the soft-revision rewrite is not re-critiqued.
+
 - **Fast path fails closed when the HARD safety check cannot be completed.** Client-visible
   effect: where an unchecked draft used to be delivered as `NORMAL_COMPLETE`, the request is now
   escalated to deliberation, or answered with a governed REFUSE (`content_filter`), whenever the

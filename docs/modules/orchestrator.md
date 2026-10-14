@@ -188,8 +188,14 @@ quick-check-failed `run_deliberative_path` escalation, so FAST_PATH and its
 deliberative fallback also reuse the single wave (see
 `docs/modules/critic.md` and `docs/traces/governance_decision_flow.md` §3).
 `DeliberationRunner._critique` is split into `_critique_gate_open`,
-`_critique_deadline_error`, `_invoke_critic` and `_critic_report_summary`
-helpers (pure extraction, behavior unchanged).
+`_critique_deadline_error`, `_invoke_critic`, `_critic_report_summary`,
+`_record_critique_call` and `_record_critique_failure` helpers. Its contract is an
+outcome, not a swallow: it records `DeliberationState._critique_outcome`
+(`""` / `completed` / `skipped` / `failed` / `timeout`, reset every cycle) and never
+raises (`BaseException` aside); the delivery site
+(`DeliberationRunner.enforce_verified_draft_delivery`, called once from
+`_route_deliberative`) turns a non-completed final-cycle critique into a governed
+REFUSE (see Error Handling).
 
 ### Supporting modules (orchestration)
 
@@ -607,7 +613,8 @@ Modules: `moralstack.orchestration.convergence`, `moralstack.orchestration.safe_
 The Orchestrator implements a fail-safe system:
 
 - **Timeout**: If it exceeds `timeout_ms`, returns a safe default response
-- **Module errors**: Catches exceptions and continues with fallback values
+- **Module errors**: Catches exceptions and continues with fallback values, except where a missing result would fail open: a
+  critic that did not complete in the final cycle ends in a governed REFUSE (below)
 - **Parsing failures**: Automatic retries with reformulated prompts
 - **No `TypeError` retry on governed generation**: a `TypeError` (signature mismatch or a real internal error) from a governed
   `policy.generate` / `policy.rewrite` / speculative generator call is never retried with fewer arguments. Each site goes to its
@@ -630,15 +637,33 @@ The Orchestrator implements a fail-safe system:
   |---|---|
   | `quick_check` passes | fast draft delivered (unchanged) |
   | `quick_check` says `passed=False`, raises (no verdict, incl. a reply without `violated`), or a configured store returns no constitution | escalate to `run_deliberative_path` (`escalation_trigger` = `quick_check_violation` / `quick_check_error` / `constitution_unavailable`) |
-  | escalation returns a completed, non-skipped last critique | deliberative result (unchanged) |
+  | escalation returns a critique that completed in the final cycle (`_critique_outcome == "completed"`) | deliberative result (unchanged) |
   | escalation or result build raises (incl. `OrchestratorTimeoutError`) | governed REFUSE `fast_path_escalation_failed` |
-  | escalation returns no completed critique (none, skipped, or started between 90% and 100% of `timeout_ms`, where the `_critique` guard raises and is swallowed) | governed REFUSE `fast_path_escalation_unverified` |
+  | escalation returns no critique that completed in the final cycle (none, skipped, failed, or started between 90% and 100% of `timeout_ms`, where the `_critique` guard records outcome `timeout`) | governed REFUSE `fast_path_escalation_unverified` |
   | escalation starts past 100% of `timeout_ms` (the `while` guard in `run_deliberative_path` raises) | governed REFUSE `fast_path_escalation_failed` |
   | `critic is None`, or no constitution store configured | check skipped by design (unchanged) |
 
   The REFUSE goes through `assemble`'s REFUSE branch (`finalize_delivery`: REFUSE/`content_filter`), records
   `original_final_action="NORMAL_COMPLETE"` / `hard_violation_flip_reason` on the metadata and a FINAL trace row,
   and is not an error-handler path (those label the result NORMAL_COMPLETE, see the F6 gap in `docs/CODEBASE_FACTS.md`).
+- **Deliberative critique coverage fails closed** (`DeliberationRunner.enforce_verified_draft_delivery`, called once in
+  `OrchestrationController._route_deliberative` after the override, the CYCLES_EXHAUSTED fallback and the SAFE_COMPLETE
+  gating). A deliberative draft is delivered only if the critic, when configured to check, completed in the cycle that
+  produced it. Outcomes (critic gate open, decision not already REFUSE):
+
+  | `_critique` outcome of the final cycle | Outcome |
+  |---|---|
+  | `completed` | delivered as decided (unchanged, no new row) |
+  | `skipped` (zero retrieved principles) | delivered as decided, with a WARNING (D2 = S2) |
+  | `failed` (critic raised, or returned `None` / a non-conforming report) | governed REFUSE `deliberation_critique_failed` |
+  | `timeout` (the 90% gate of `timeout_ms`) | governed REFUSE `deliberation_critique_timeout` |
+  | `""` (critic never invoked in the final cycle although the gate is open) | governed REFUSE `deliberation_critique_unverified` |
+  | the check itself raises | governed REFUSE `deliberation_critique_unverified` (explanation `None`) |
+  | `critic is None`, or no store and no constitution | check skipped by design (unchanged) |
+
+  The REFUSE keeps `hard_violations`, goes through `assemble`'s REFUSE branch (`finalize_delivery`: REFUSE/`content_filter`),
+  records `original_final_action` / `hard_violation_flip_reason` and a FINAL trace row
+  (`hard_violation_source="deliberation_fail_closed"`). Known gap: the soft-revision rewrite is not re-critiqued.
 - **`_estimate_risk` is the only compatibility shim**: `RiskEstimatorProtocol` declares only `estimate(prompt)`, so the
   controller filters the context kwargs (`developer_contract_text`, `conversation_history`, `retrieval_query`, `retrieval_top_k`)
   by the estimator's signature (`_supported_estimate_kwargs`) before calling, and logs a warning when that drops a non-None

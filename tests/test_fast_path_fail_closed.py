@@ -162,6 +162,8 @@ def _request() -> ProcessedRequest:
 def _completed_state() -> DeliberationState:
     state = DeliberationState(cycle=1)
     state.critiques.append(SimpleNamespace(skipped=False, violations=[], revision_guidance=""))
+    # Completion is cycle-scoped and recorded by DeliberationRunner._critique (F5, D5).
+    state._critique_outcome = "completed"
     return state
 
 
@@ -258,11 +260,54 @@ def test_ru1_no_critique_after_escalation_is_unverified_refuse(persisted: Any) -
 def test_ru2_real_empty_skipped_critique_is_unverified_refuse(persisted: Any) -> None:
     state = DeliberationState(cycle=1)
     state.critiques.append(CriticReport.empty_skipped("no principles"))
+    state._critique_outcome = "skipped"
     assert state.last_critique.skipped is True
     runner = _runner(_DraftPolicy(), _critic(passed=False))
     with patch.object(runner, "run_deliberative_path", return_value=(state, 0.1, None)):
         result = _drive(runner)
     _assert_fail_closed(result, FAST_PATH_ESCALATION_UNVERIFIED)
+
+
+def _clean_report() -> SimpleNamespace:
+    return SimpleNamespace(skipped=False, violations=[], revision_guidance="")
+
+
+def test_f1_stale_critique_with_non_completed_outcome_is_unverified(persisted: Any) -> None:
+    """D5: a non-skipped report left over from another cycle does not vouch for the escalation."""
+    state = DeliberationState(cycle=2)
+    state.critiques.append(_clean_report())
+    state._critique_outcome = "failed"
+    runner = _runner(_DraftPolicy(), _critic(passed=False))
+    with (
+        patch.object(runner, "run_deliberative_path", return_value=(state, 0.1, None)),
+        patch.object(runner, "_build_deliberative_result") as build,
+    ):
+        result = _drive(runner)
+    build.assert_not_called()
+    _assert_fail_closed(result, FAST_PATH_ESCALATION_UNVERIFIED)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "builds"),
+    [("failed", False), ("timeout", False), ("skipped", False), ("", False), ("completed", True)],
+)
+def test_f2_escalation_outcome_matrix(persisted: Any, outcome: str, builds: bool) -> None:
+    state = DeliberationState(cycle=1)
+    state.critiques.append(CriticReport.empty_skipped("no principles") if outcome == "skipped" else _clean_report())
+    state._critique_outcome = outcome
+    runner = _runner(_DraftPolicy(), _critic(passed=False))
+    sentinel = object()
+    with (
+        patch.object(runner, "run_deliberative_path", return_value=(state, 0.1, None)),
+        patch.object(runner, "_build_deliberative_result", return_value=sentinel) as build,
+    ):
+        result = _drive(runner)
+    if builds:
+        assert result is sentinel
+        build.assert_called_once()
+    else:
+        build.assert_not_called()
+        _assert_fail_closed(result, FAST_PATH_ESCALATION_UNVERIFIED)
 
 
 # =============================================================================

@@ -283,15 +283,16 @@ triggers escalate to `run_deliberative_path` (`escalation_trigger` in the audit)
 provider error, unparseable reply, or a reply with no `violated` key -- see
 `docs/modules/critic.md`), and `constitution_unavailable` (F3: a store is configured
 but `get_constitution_safe` returned `None` after the retry). The escalation must end
-with a **completed, non-skipped last critique**
-(`_escalation_has_completed_critique`); then the deliberative result is returned as
+with a **critique that completed in the final cycle**
+(`_escalation_has_completed_critique`: `state._critique_outcome == "completed"`, cycle-scoped, a skipped
+critique does not count); then the deliberative result is returned as
 before. If it raises (any exception, `OrchestratorTimeoutError` included) the result is a
 governed REFUSE with reason `fast_path_escalation_failed`; if it returns without a
-completed critique (no critique, `CriticReport.empty_skipped`, or an escalation that
-starts between 90% and 100% of `timeout_ms`, where the `_critique` guard raises and is
-swallowed) the reason is `fast_path_escalation_unverified`; an escalation that starts past
+completed critique (no critique, `CriticReport.empty_skipped`, a failed critique, or an
+escalation that starts between 90% and 100% of `timeout_ms`, where the `_critique` guard
+records outcome `timeout`) the reason is `fast_path_escalation_unverified`; an escalation that starts past
 100% of `timeout_ms` is stopped earlier by the `while` guard in `run_deliberative_path`
-(`deliberation_runner.py:2130-2133`), which raises, so the reason is
+(`deliberation_runner.py:2289-2292`), which raises, so the reason is
 `fast_path_escalation_failed`. The REFUSE is built from structured signals only
 (`_decision_as_refuse` keeps `hard_violations`), a rebuilt `DecisionExplanation`
 (`winning_rule="fast_path_fail_closed"`), and the REFUSE branch of
@@ -304,9 +305,37 @@ controller-side FINAL row; readers take the last FINAL row) carries
 `ResponseMetadata.original_final_action` / `hard_violation_flip_reason` carry the
 same values, `internal_draft_reused` is `False` and an upstream-origin draft is not
 claimed (`draft_origin="internal"`). `path_taken="fast"` / `path="FAST_PATH"` /
-`total_cycles=0` are kept. Known gaps (see `docs/CODEBASE_FACTS.md`): the completed
-critique may predate a rewrite (F5 on the general route), and the ledger caches
-and reapplies the fail-closed REFUSE (D6).
+`total_cycles=0` are kept. Known gaps (see `docs/CODEBASE_FACTS.md`): the soft-revision rewrite is
+not re-critiqued (D9), and the ledger caches and reapplies the fail-closed REFUSE (D6).
+
+**Deliberative critique coverage fails closed (2026-10-14).** The general deliberative route
+(`OrchestrationController._route_deliberative`) applies the same discipline to the critic.
+`DeliberationRunner._critique` records what happened to the critique of the CURRENT cycle in
+`DeliberationState._critique_outcome`: `""` (critic not invoked this cycle), `completed`, `skipped`
+(report with `skipped is True`, i.e. zero retrieved principles), `failed` (the critic raised or
+returned a non-conforming report) or `timeout` (the 90% gate of `timeout_ms` fired). The field is
+reset at the start of every cycle and carried by `fork()` and the full-parallel critic merge.
+`DeliberationRunner.enforce_verified_draft_delivery` is called once, after the deliberation override,
+the CYCLES_EXHAUSTED fallback and the SAFE_COMPLETE gating, right before the hard-violation delivery
+guard and `assemble`. With the critic gate open (a critic is configured and a store or a constitution
+exists) and a non-REFUSE decision: `failed` -> governed REFUSE `deliberation_critique_failed`,
+`timeout` -> `deliberation_critique_timeout`, `""` -> `deliberation_critique_unverified`; `completed` is
+unchanged (no new row); `skipped` is accepted (D2) with a WARNING `deliberation critique skipped,
+delivered under S2`. A closed gate (`critic is None`, or no store and no constitution) is the by-design
+skip and is unchanged. The decision is flipped from the structured outcome only (never from response
+text) with `_decision_as_refuse` (keeps `hard_violations`), a rebuilt `DecisionExplanation`
+(`winning_rule="deliberation_fail_closed"`), the neutral refusal rationale, and a best-effort FINAL
+trace row (sequence 2) with `hard_violation_source="deliberation_fail_closed"` and `stage_payload`
+`{original_final_action, flip_reason, critique_outcome, cycle}` (`critique_outcome` is `not_invoked`
+for `""`). `ResponseMetadata.original_final_action` / `hard_violation_flip_reason` carry the same
+values; `finalize_delivery` reports REFUSE/`content_filter`. If the check itself raises, the controller
+falls back to REFUSE `deliberation_critique_unverified` (explanation `None`) so the draft is still never
+delivered. Critique telemetry is best-effort and isolated from the outcome. Note on the trace:
+`CYCLE_SUMMARY` can mark the critic as "executed" (a critique object exists) in the same cycle whose FINAL
+row reports `critique_outcome=failed`; these are two different notions of "executed", not a
+contradiction. Known gaps (see `docs/CODEBASE_FACTS.md`): the soft-revision rewrite after the final
+cycle is not re-critiqued (D9), and under S2 a degraded retriever that returns zero principles would
+deliver every deliberative draft with only the WARNING.
 
 ## 10. Final action → governed delivery (Plan 1)
 

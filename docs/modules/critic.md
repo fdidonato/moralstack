@@ -134,6 +134,11 @@ class CriticReport:
                                           # enumerated answer (see below)
 ```
 
+A report with `skipped=True` (`CriticReport.empty_skipped`, zero retrieved principles) is recorded by the
+runner as `_critique_outcome == "skipped"`: on the general deliberative route it is accepted as covered with a
+WARNING (D2 = S2); on the fast-path escalation it counts as unverified. A critic that raises, or returns
+`None` or a report without `violations` / `revision_guidance`, is `failed` and ends in a governed REFUSE.
+
 ### Violation
 
 ```python

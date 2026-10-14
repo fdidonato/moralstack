@@ -325,7 +325,11 @@ class ResponseMetadata:
     #    "hard_violation_still_violating";
     #  - the fast-path HARD check (DeliberationRunner.run_fast_path): the fast
     #    draft was not cleared, flip reason "fast_path_escalation_failed" /
-    #    "fast_path_escalation_unverified".
+    #    "fast_path_escalation_unverified";
+    #  - the deliberative critique coverage check
+    #    (DeliberationRunner.enforce_verified_draft_delivery): the final-cycle
+    #    critique did not complete, flip reason "deliberation_critique_failed" /
+    #    "deliberation_critique_timeout" / "deliberation_critique_unverified".
     # original_final_action records the pre-flip action (e.g. "SAFE_COMPLETE",
     # "NORMAL_COMPLETE"). The matching FINAL trace row carries the same values
     # in hard_violation_source / stage_payload. Additive audit only -- never
@@ -848,6 +852,11 @@ class DeliberationState:
     # critic's append (inside DeliberationRunner._critique) must survive the
     # explicit merge in DeliberationRunner._run_full_parallel_evaluation.
     _request_analysis_reuse_targets: list[str] = field(default_factory=list, repr=False)
+    # Per-cycle outcome of DeliberationRunner._critique (F5): "" (critic not invoked
+    # this cycle), "completed", "skipped", "failed", "timeout". Reset at the start of
+    # every cycle; read only by the fail-closed delivery checks, never by convergence.
+    # Must be listed in fork(): the critic runs on a fork in full_parallel mode.
+    _critique_outcome: str = field(default="", repr=False)
 
     @property
     def last_critique(self) -> CriticReportProtocol | None:
@@ -918,6 +927,7 @@ class DeliberationState:
             ),
             _draft_verbatim_reuse=self._draft_verbatim_reuse,
             _request_analysis_reuse_targets=list(self._request_analysis_reuse_targets),
+            _critique_outcome=self._critique_outcome,
         )
 
 
