@@ -154,6 +154,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Pipeline-error responses are now governed refusals (BREAKING, behaviour).** Proxy responses for
+  a pipeline error or timeout now carry `finish_reason="content_filter"`,
+  `X-Moralstack-Decision: REFUSE` and `X-Moralstack-Path: ERROR_PATH` (they were `stop`, `UNKNOWN`
+  and `DELIBERATIVE_PATH`), and the SDK reports `final_action="REFUSE"`. The persisted
+  `meta_json.path` is `ERROR_PATH`, and the persisted `conversation_states` / `conversation.state_updated`
+  payload records `final_action="REFUSE"` (was `""`) for error turns. Clients that matched on the old values must update.
+- **`MORALSTACK_ORCHESTRATOR_SAFE_RESPONSE_ON_ERROR=false` is now ignored (BREAKING, behaviour).**
+  Pipeline errors always deliver the fixed sentinel and never the exception text (previously
+  `Error: <exception>` / `Timeout: <exception>`). The flag stays in `OrchestratorConfig` and a
+  WARNING is logged when the config is loaded with it set to false.
+- **Side effects of the REFUSE label.** The realtoxicity probe now labels pipeline-error rows
+  REFUSE (they were NORMAL_COMPLETE), and `reports/model.py` renders them as "refused due to
+  policy" (known wording issue, follow-up).
+
 - **Public API default change (BREAKING): `create_orchestrator()` now defaults `timeout_ms` to 600000
   (was 5000)**, aligned with `OrchestratorConfig`. With the deliberative critique now failing
   closed on its 90% time budget, the old 5 s default would have refused most real
@@ -414,6 +428,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository settings. The workflows remain recoverable from git history.
 
 ### Fixed
+
+- **Pipeline errors now fail closed to a governed REFUSE (F6).** A `MoralStackError` or
+  `OrchestratorTimeoutError` caught in `process()` used to leave `final_action` empty, so
+  `finalize_delivery` relabelled the `[SYSTEM_ERROR]` / `[SYSTEM_TIMEOUT]` result NORMAL_COMPLETE
+  and the turn summary recorded NORMAL_COMPLETE. The handlers now return `final_action="REFUSE"`
+  with flip reason and reason code `system_error` / `system_timeout`, principle `SYSTEM.ERROR` /
+  `SYSTEM.TIMEOUT`, `path="ERROR_PATH"`, one WARNING (`pipeline failed closed ...`), and the
+  codes join `LEDGER_NON_CACHEABLE_FLIP_REASONS`, so they are never cached. No FINAL trace row is
+  written (the UI keeps recognizing `SYSTEM.ERROR`). `error` falls back to the exception class
+  name when `str(e)` is empty or raises.
 
 - **Benchmark: pipeline-failure rows stay system errors.** `scripts/benchmark_moralstack.py` now
   classifies rows whose MoralStack metadata carries `SYSTEM.ERROR` or `SYSTEM.TIMEOUT` as

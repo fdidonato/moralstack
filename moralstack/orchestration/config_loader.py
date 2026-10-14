@@ -7,12 +7,15 @@ to hardcoded defaults. Used when no explicit OrchestratorConfig is passed.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from moralstack.utils.env_helpers import get_env_bool, get_env_float, get_env_int, get_env_str
 
 if TYPE_CHECKING:
     from moralstack.orchestration.types import OrchestratorConfig
+
+_LOG = logging.getLogger(__name__)
 
 # Backward-compatible aliases for external consumers
 get_orchestrator_env_float = get_env_float
@@ -80,6 +83,15 @@ def load_orchestrator_config_from_env() -> OrchestratorConfig:
     enable_simulation = get_env_bool(ENV_ENABLE_SIMULATION, True)
     enable_hindsight = get_env_bool(ENV_ENABLE_HINDSIGHT, True)
     safe_response_on_error = get_env_bool(ENV_SAFE_RESPONSE_ON_ERROR, True)
+    if not safe_response_on_error:
+        # F6 (PROJECT_SPEC §5.7): the flag is a deprecated no-op; the field is kept for compatibility. Best-effort.
+        try:
+            _LOG.warning(
+                "%s=false is ignored: pipeline errors always deliver a fixed governed refusal (PROJECT_SPEC §5.7)",
+                ENV_SAFE_RESPONSE_ON_ERROR,
+            )
+        except Exception:
+            _LOG.debug("safe_response_on_error deprecation warning failed", exc_info=True)
     skip_optional_modules_threshold = get_env_float(ENV_SKIP_OPTIONAL_MODULES_THRESHOLD, 0.95, 0.0, 1.0)
     soft_timeout_threshold = get_env_float(ENV_SOFT_TIMEOUT_THRESHOLD, 0.90, 0.0, 1.0)
     parallel_module_calls = get_env_bool(ENV_PARALLEL_MODULE_CALLS, True)

@@ -1808,3 +1808,96 @@ def test_request_row_survives_observability_db_repointing(tmp_path, monkeypatch)
     assert len(runs) == 1, "the proxy run row must exist in the database actually written"
     assert runs[0]["run_type"] == "proxy"
     assert len(requests) == 3, "no request row may be dropped by a swallowed FK violation"
+
+
+# ---------------------------------------------------------------------------
+# F6: a pipeline error result is a governed fail-closed REFUSE on the wire
+# ---------------------------------------------------------------------------
+
+
+def _real_pipeline_error_result() -> OrchestratorResult:
+    """Real result produced by the controller's error handler (no MagicMock)."""
+    from moralstack.orchestration.controller import OrchestrationController
+    from moralstack.orchestration.null_persistence import NullPersistence
+    from moralstack.orchestration.types import GenerationError, OrchestratorConfig, ProcessedRequest
+    from moralstack.utils.output_protection import OutputProtector
+
+    ctrl = OrchestrationController(
+        config=OrchestratorConfig(enable_speculative_generation=False),
+        policy=MagicMock(),
+        risk_estimator=MagicMock(),
+        critic=None,
+        simulator=None,
+        hindsight=None,
+        perspectives=None,
+        constitution_store=None,
+        output_protector=OutputProtector(),
+        protected_system_prompt="system",
+        persistence=NullPersistence(),
+    )
+    try:
+        return ctrl._handle_error(
+            ProcessedRequest(prompt="hello", request_id="req-f6"),
+            GenerationError("Generation failed: provider said: secret-ish body"),
+            time.time(),
+        )
+    finally:
+        close = getattr(ctrl._runner, "close", None)
+        if close is not None:
+            close()
+
+
+def _pipeline_error_app() -> tuple[TestClient, Any]:
+    mock_orchestrator = MagicMock()
+    mock_orchestrator.process = MagicMock(return_value=_real_pipeline_error_result())
+    mock_openai = MagicMock()
+    mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion("upstream"))
+    app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+    return TestClient(app), mock_openai
+
+
+def test_proxy_sync_error_result():
+    client, mock_openai = _pipeline_error_app()
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+    )
+    assert response.status_code == 200
+    choice = response.json()["choices"][0]
+    assert choice["message"]["content"] == "[SYSTEM_ERROR]"
+    assert choice["finish_reason"] == "content_filter"
+    assert response.headers.get("X-Moralstack-Decision") == "REFUSE"
+    assert response.headers.get("X-Moralstack-Path") == "ERROR_PATH"
+    assert response.headers.get("X-Moralstack-Risk-Score") == "1.0000"
+    assert "secret-ish body" not in response.text
+    mock_openai.chat.completions.create.assert_not_called()
+
+
+def test_proxy_sse_error_result():
+    client, mock_openai = _pipeline_error_app()
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o", "stream": True, "messages": [{"role": "user", "content": "Q"}]},
+    )
+    assert response.status_code == 200
+    deltas: list[str] = []
+    finish_reasons: list[str] = []
+    for line in response.text.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[len("data:") :].strip()
+        if data == "[DONE]":
+            continue
+        choice = json.loads(data)["choices"][0]
+        piece = choice.get("delta", {}).get("content")
+        if piece:
+            deltas.append(piece)
+        if choice.get("finish_reason"):
+            finish_reasons.append(choice["finish_reason"])
+    assert "".join(deltas) == "[SYSTEM_ERROR]"
+    assert finish_reasons and finish_reasons[-1] == "content_filter"
+    assert response.headers.get("X-Moralstack-Decision") == "REFUSE"
+    assert response.headers.get("X-Moralstack-Path") == "ERROR_PATH"
+    assert "secret-ish body" not in response.text
+    mock_openai.chat.completions.create.assert_not_called()

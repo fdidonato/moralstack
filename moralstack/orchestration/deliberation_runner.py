@@ -54,6 +54,8 @@ from moralstack.orchestration.persistence_helpers import record_decision_trace, 
 from moralstack.orchestration.response_assembler import ResponseAssembler
 from moralstack.orchestration.system_prompt_resolver import effective_system_for_request
 from moralstack.orchestration.types import (
+    SYSTEM_ERROR_FAIL_CLOSED,
+    SYSTEM_TIMEOUT_FAIL_CLOSED,
     ConvergenceOutcome,
     CritiqueError,
     Decision,
@@ -447,11 +449,13 @@ DELIBERATION_CRITIQUE_TIMEOUT = "deliberation_critique_timeout"
 DELIBERATION_CRITIQUE_UNVERIFIED = "deliberation_critique_unverified"
 DELIBERATION_FAIL_CLOSED_SOURCE = "deliberation_fail_closed"
 
-# Transient fail-closed REFUSEs (critic/escalation outage, not an established
-# violation): never stored in the semantic ledger, so a later turn is re-governed
-# instead of replaying the refusal for the rest of the conversation (D6).
+# Transient fail-closed REFUSEs (critic/escalation outage or pipeline failure, not an
+# established violation): never stored in the semantic ledger, so a later turn is
+# re-governed instead of replaying the refusal for the rest of the conversation (D6).
 LEDGER_NON_CACHEABLE_FLIP_REASONS: frozenset[str] = frozenset(
     {
+        SYSTEM_ERROR_FAIL_CLOSED,
+        SYSTEM_TIMEOUT_FAIL_CLOSED,
         DELIBERATION_CRITIQUE_FAILED,
         DELIBERATION_CRITIQUE_TIMEOUT,
         DELIBERATION_CRITIQUE_UNVERIFIED,

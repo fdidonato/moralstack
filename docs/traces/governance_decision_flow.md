@@ -200,7 +200,8 @@ When a `SemanticDecisionLedger` is configured and `conversation_id` is set:
   with a gate reason and deliberation proceeds. There is no ledger-hit gate on the
   store: `_attach_trace_and_return` -> `_apply_conversation_metadata_to_result` calls
   `_maybe_store_in_ledger()` for every result, which skips transient fail-closed
-  REFUSEs (`hard_violation_flip_reason` in `LEDGER_NON_CACHEABLE_FLIP_REASONS`).
+  REFUSEs and pipeline failures (`hard_violation_flip_reason` in
+  `LEDGER_NON_CACHEABLE_FLIP_REASONS`, including `system_error` / `system_timeout`).
 - On a miss, the embedding computed during lookup is reused in `_maybe_store_in_ledger()`
   via `prompt_embedding=call_ctx.ledger_lookup.query_embedding`, avoiding a redundant
   `embed()` call. On `no_candidates` misses, `query_embedding` is None and `store()`
@@ -368,6 +369,17 @@ blank/whitespace (`final_action` downgraded to `REFUSE`,
 - **REFUSE**: SDK returns refusal text without calling the wrapped client
   (`wrapper.py:394-403`); proxy returns a synthetic `chat.completion` with
   `finish_reason="content_filter"` and **no upstream call**.
+- **Pipeline failure inside `process()`** (a `MoralStackError` or
+  `OrchestratorTimeoutError` caught by the controller): `_handle_error` /
+  `_handle_timeout` (via `_pipeline_failure_result`) return a governed REFUSE with
+  principle `SYSTEM.ERROR` / `SYSTEM.TIMEOUT`, `hard_violation_flip_reason` and
+  `reason_codes` = `system_error` / `system_timeout`, `path="ERROR_PATH"` /
+  `path_taken="error"`, and fixed sentinel content `[SYSTEM_ERROR]` /
+  `[SYSTEM_TIMEOUT]` (never the exception text, in any mode). No LLM call and no
+  FINAL decision-trace row (the UI detects the failure by `SYSTEM.ERROR` plus no
+  FINAL row); one WARNING `pipeline failed closed ...`. The codes are in
+  `LEDGER_NON_CACHEABLE_FLIP_REASONS`, so the ledger never stores them.
+  `finalize_delivery` then delivers REFUSE / `content_filter`.
 - **Streaming (`stream=True`)**: the governed text is replayed as OpenAI-compatible
   synthetic SSE (`GovernedSyntheticStream` in the SDK, `_build_synthetic_sse_response`
   in the proxy); live upstream tokens are never forwarded.

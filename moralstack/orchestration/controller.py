@@ -105,6 +105,8 @@ from moralstack.orchestration.trace_lifecycle import (
     log_trace_event,
 )
 from moralstack.orchestration.types import (
+    SYSTEM_ERROR_FAIL_CLOSED,
+    SYSTEM_TIMEOUT_FAIL_CLOSED,
     ConstitutionStoreProtocol,
     ConvergenceOutcome,
     Decision,
@@ -1680,45 +1682,87 @@ class OrchestrationController:
         except Exception:
             _LOG.debug("emit COMPLIANCE_LAYER decision trace failed", exc_info=True)
 
-    def _handle_timeout(self, request: ProcessedRequest, error_msg: str, start_time: float) -> OrchestratorResult:
-        processing_time = int((time.time() - start_time) * 1000)
-        response = FinalResponse(
-            content=("[SYSTEM_TIMEOUT]" if self.config.safe_response_on_error else f"Timeout: {error_msg}"),
-            response_type=ResponseType.FULL_REFUSAL,
-            metadata=ResponseMetadata.for_system_error(
-                processing_time, getattr(request, "request_id", "") or "", principle="SYSTEM.TIMEOUT"
-            ),
-        )
-        return OrchestratorResult(
-            response=response,
-            request_id=request.request_id,
-            path_taken="deliberative",
-            path="DELIBERATIVE_PATH",
-            total_cycles=0,
-            converged=False,
-            error=error_msg,
-            errors=[error_msg] if error_msg else None,
+    def _handle_timeout(
+        self, request: ProcessedRequest, error: OrchestratorTimeoutError, start_time: float
+    ) -> OrchestratorResult:
+        return self._pipeline_failure_result(
+            request,
+            error,
+            start_time,
+            sentinel="[SYSTEM_TIMEOUT]",
+            principle="SYSTEM.TIMEOUT",
+            reason=SYSTEM_TIMEOUT_FAIL_CLOSED,
         )
 
     def _handle_error(self, request: ProcessedRequest, error: MoralStackError, start_time: float) -> OrchestratorResult:
-        processing_time = int((time.time() - start_time) * 1000)
-        response = FinalResponse(
-            content=("[SYSTEM_ERROR]" if self.config.safe_response_on_error else f"Error: {str(error)}"),
-            response_type=ResponseType.FULL_REFUSAL,
-            metadata=ResponseMetadata.for_system_error(
-                processing_time, getattr(request, "request_id", "") or "", principle="SYSTEM.ERROR"
-            ),
+        return self._pipeline_failure_result(
+            request,
+            error,
+            start_time,
+            sentinel="[SYSTEM_ERROR]",
+            principle="SYSTEM.ERROR",
+            reason=SYSTEM_ERROR_FAIL_CLOSED,
         )
+
+    def _pipeline_failure_result(
+        self,
+        request: ProcessedRequest,
+        error: Exception,
+        start_time: float,
+        *,
+        sentinel: str,
+        principle: str,
+        reason: str,
+    ) -> OrchestratorResult:
+        """Governed fail-closed REFUSE for a pipeline failure caught in ``process()`` (F6, §5.7).
+
+        The label comes from the exception class, never from text. The delivered content is
+        always the fixed ``sentinel``, regardless of ``safe_response_on_error``: the exception
+        text stays in ``result.error`` and the truncated server-side WARNING, never in the
+        delivered answer. No LLM call and no FINAL decision-trace row: the UI recognizes a
+        pipeline failure by ``SYSTEM.ERROR`` plus the absence of a FINAL row
+        (``SYSTEM.TIMEOUT`` is not detected yet, follow-up).
+        """
+        processing_time = int((time.time() - start_time) * 1000)
+        self._log_pipeline_failure(request, reason, error)
+        try:
+            error_text = str(error) or type(error).__name__
+        except Exception:
+            error_text = type(error).__name__
+        request_id = getattr(request, "request_id", "") or ""
         return OrchestratorResult(
-            response=response,
+            response=FinalResponse(
+                content=sentinel,
+                response_type=ResponseType.FULL_REFUSAL,
+                metadata=ResponseMetadata.for_system_error(
+                    processing_time, request_id, principle=principle, fail_closed_reason=reason
+                ),
+            ),
             request_id=request.request_id,
-            path_taken="fast",
-            path="DELIBERATIVE_PATH",
+            path_taken="error",
+            path="ERROR_PATH",
             total_cycles=0,
             converged=False,
-            error=str(error),
-            errors=[str(error)],
+            error=error_text,
+            errors=[error_text],
         )
+
+    def _log_pipeline_failure(self, request: ProcessedRequest, reason: str, error: BaseException) -> None:
+        """Best-effort WARNING (§5.6): never raises, never changes the result."""
+        try:
+            try:
+                error_text = str(error)[:200]
+            except Exception:
+                error_text = type(error).__name__
+            _LOG.warning(
+                "pipeline failed closed request_id=%s reason=%s error_type=%s error=%s",
+                getattr(request, "request_id", "") or "",
+                reason,
+                type(error).__name__,
+                error_text,
+            )
+        except Exception:
+            _LOG.debug("pipeline failure log failed", exc_info=True)
 
     def _route_refuse(
         self,
@@ -3014,7 +3058,7 @@ class OrchestrationController:
             )
 
         except OrchestratorTimeoutError as e:
-            return self._attach_trace_and_return(self._handle_timeout(request, str(e), start_time), request, call_ctx)
+            return self._attach_trace_and_return(self._handle_timeout(request, e, start_time), request, call_ctx)
         except MoralStackError as e:
             return self._attach_trace_and_return(self._handle_error(request, e, start_time), request, call_ctx)
         except (AssertionError, Exception) as e:

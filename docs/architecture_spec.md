@@ -820,7 +820,7 @@ class ResponseMetadata:
 **Construction**: ResponseMetadata must be built via factory methods so all paths produce consistent metadata. Do not construct `ResponseMetadata` manually for request flows. Use:
 
 - `ResponseMetadata.from_decision(decision, request_id, risk_score, processing_time_ms, risk_category, ...)` for normal and deliberative paths (with optional `decision_explanation`, overrides).
-- `ResponseMetadata.for_system_error(processing_time_ms, request_id, principle)` for timeout or generic system error (e.g. `principle="SYSTEM.TIMEOUT"` or `"SYSTEM.ERROR"`).
+- `ResponseMetadata.for_system_error(processing_time_ms, request_id, principle)` for a pipeline failure caught in `process()` (e.g. `principle="SYSTEM.TIMEOUT"` or `"SYSTEM.ERROR"`, with `fail_closed_reason="system_timeout"` or `"system_error"`). It produces a governed REFUSE: `final_action="REFUSE"`, `path="ERROR_PATH"`, the reason as `reason_codes` and `hard_violation_flip_reason` (never cached in the ledger).
 - `ResponseMetadata.for_domain_excluded(processing_time_ms, request_id, excluded_domain)` for domain-excluded early exit.
 - `ResponseMetadata.for_fail_safe(processing_time_ms)` for FAIL_SAFE fallback (REFUSE).
 

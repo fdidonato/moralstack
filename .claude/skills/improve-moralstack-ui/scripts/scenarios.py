@@ -68,11 +68,12 @@ REQUEST_RULES: tuple[tuple[str, str, Callable[[Signals], bool]], ...] = (
         "Compliance match without final reuse",
         lambda s: vocab(s, r"(DCCL|COMPLIANCE).*(MATCH|DOWNGRAD|INVALID)") and not vocab(s, r"REUSE"),
     ),
-    # Degraded delivery. On main this is REACHABLE and mis-rendered: a swallowed
-    # pipeline error (controller._handle_error) is delivered as NORMAL_COMPLETE /
-    # finish_reason=stop with risk_score 1.0, because ResponseMetadata.for_system_error()
-    # never sets final_action. The other two arms (governed_pipeline_refusal,
-    # empty_governed_content) are the genuine fail-closed paths in delivery.py / proxy.py.
+    # Degraded delivery. A swallowed pipeline error (controller._handle_error) is a
+    # governed fail-closed REFUSE (F6): final_action=REFUSE, finish_reason=content_filter,
+    # path ERROR_PATH, flip reason system_error, sentinel content "[SYSTEM_ERROR]" and
+    # risk_score 1.0 (ResponseMetadata.for_system_error()). The other two arms
+    # (governed_pipeline_refusal, empty_governed_content) are the genuine fail-closed
+    # paths in delivery.py / proxy.py.
     (
         "S8",
         "Degraded or fail-closed delivery (pipeline could not produce a governed answer)",

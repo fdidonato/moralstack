@@ -72,11 +72,18 @@ class OrchestratorTimeoutError(MoralStackError):
 
 class FailSafeException(MoralStackError):
     """
-    Sollevata solo dai moduli safety-critical per richiedere FAIL_SAFE come ultima risorsa.
-    FAIL_SAFE è riservato a effettivo guasto di sistema.
+    Never raised anywhere in ``moralstack/``; kept for API compatibility only.
+    ``OrchestrationController.process()`` handles it like any other ``MoralStackError``.
     """
 
     pass
+
+
+# Fail-closed reasons for pipeline failures caught in OrchestrationController.process()
+# (F6, PROJECT_SPEC §5.7). Recorded on ResponseMetadata.hard_violation_flip_reason and
+# reason_codes; audit/ledger only -- never used to route. Never cached (ledger).
+SYSTEM_ERROR_FAIL_CLOSED = "system_error"
+SYSTEM_TIMEOUT_FAIL_CLOSED = "system_timeout"
 
 
 # =============================================================================
@@ -329,7 +336,11 @@ class ResponseMetadata:
     #  - the deliberative critique coverage check
     #    (DeliberationRunner.enforce_verified_draft_delivery): the final-cycle
     #    critique did not complete, flip reason "deliberation_critique_failed" /
-    #    "deliberation_critique_timeout" / "deliberation_critique_unverified".
+    #    "deliberation_critique_timeout" / "deliberation_critique_unverified";
+    #  - a pipeline failure caught in OrchestrationController.process()
+    #    (MoralStackError / OrchestratorTimeoutError): flip reason "system_error" /
+    #    "system_timeout", original_final_action "" (no decision was produced) and no
+    #    FINAL trace row.
     # original_final_action records the pre-flip action (e.g. "SAFE_COMPLETE",
     # "NORMAL_COMPLETE"). The matching FINAL trace row carries the same values
     # in hard_violation_source / stage_payload. Additive audit only -- never
@@ -418,13 +429,29 @@ class ResponseMetadata:
         processing_time_ms: int,
         request_id: str = "",
         principle: str = "SYSTEM.ERROR",
+        *,
+        fail_closed_reason: str | None = None,
     ) -> ResponseMetadata:
-        """Metadata for timeout or generic system error (REFUSE)."""
+        """Metadata for a pipeline failure caught in ``process()``: a governed REFUSE (F6).
+
+        Contract (PROJECT_SPEC §5.7): ``final_action="REFUSE"`` and ``path="ERROR_PATH"`` are set
+        from the exception class, never from text. ``fail_closed_reason`` (``system_error`` /
+        ``system_timeout``; by default derived from ``principle``: ``SYSTEM.TIMEOUT`` ->
+        ``system_timeout``, anything else -> ``system_error``) is stamped on ``reason_codes`` and
+        ``hard_violation_flip_reason`` so the failure stays distinguishable from a policy refusal and is never cached by the
+        ledger. ``original_final_action`` stays ``""``: no decision was produced.
+        """
+        if fail_closed_reason is None:
+            fail_closed_reason = SYSTEM_TIMEOUT_FAIL_CLOSED if principle == "SYSTEM.TIMEOUT" else SYSTEM_ERROR_FAIL_CLOSED
         return cls(
             risk_score=1.0,
             processing_time_ms=processing_time_ms,
             triggered_principles=[principle],
             decision_trace_id=request_id,
+            final_action="REFUSE",
+            path="ERROR_PATH",
+            reason_codes=[fail_closed_reason],
+            hard_violation_flip_reason=fail_closed_reason,
         )
 
     @classmethod

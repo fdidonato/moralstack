@@ -177,7 +177,8 @@ client's view.
 - **Ledger store skip for transient fail-closed REFUSEs.** `controller._maybe_store_in_ledger`
   does not store a result whose `metadata.hard_violation_flip_reason` is one of
   `LEDGER_NON_CACHEABLE_FLIP_REASONS` (`deliberation_critique_failed|timeout|unverified`,
-  `fast_path_escalation_failed|unverified`), so a critic outage is re-governed on the next turn instead
+  `fast_path_escalation_failed|unverified`, and the pipeline-failure codes
+  `system_error|system_timeout`), so a critic outage or a pipeline error is re-governed on the next turn instead
   of replaying the REFUSE. Lookup/reapply is unchanged; `hard_violation_*` guard refusals stay cached.
 - **Mitigation available**: send a unique `X-Moralstack-Conversation-Id` header
   (or `extra_body.moralstack_conversation_id`) per logical conversation to bypass
@@ -223,7 +224,11 @@ response: `X-Moralstack-Decision`, `-Risk-Score` (4dp), `-Posture` (default
 (`true`/`false`). Conditionally: `-Cached-From` (when a cached decision id is
 present), and `-Compliance-Decision` + `-Compliance-Rule` (when a DCCL verdict
 other than `NO_CONTRACT` is present). REFUSE responses also set
-`finish_reason="content_filter"`.
+`finish_reason="content_filter"`. A pipeline error or timeout (`process()` caught a
+`MoralStackError` / `OrchestratorTimeoutError`) is a governed REFUSE too:
+`X-Moralstack-Decision: REFUSE`, `X-Moralstack-Path: ERROR_PATH`,
+`finish_reason="content_filter"`, content `[SYSTEM_ERROR]` / `[SYSTEM_TIMEOUT]` (these were
+`UNKNOWN` / `DELIBERATIVE_PATH` / `stop` before the F6 fix).
 
 ### What is persisted (proxy)
 - `requests` row pre-inserted (`_ensure_request_row`, `proxy.py:584-621`) and

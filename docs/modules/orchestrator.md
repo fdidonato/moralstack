@@ -46,7 +46,8 @@ non-deliberative). Response text is never read from the ledger (DAF-4); only gov
 The patched `Decision` carries `cached_decision_reused` as its last reason code (`LEDGER_FAST_PATH_REUSE` once
 mapped), so a replayed decision is distinguishable from a deliberated one in `proxy_request_events.metadata_json`.
 Transient fail-closed REFUSEs (`metadata.hard_violation_flip_reason` in `LEDGER_NON_CACHEABLE_FLIP_REASONS`: the three
-`deliberation_critique_*` codes and the two `fast_path_escalation_*` codes) are never stored, so the next turn is re-governed;
+`deliberation_critique_*` codes, the two `fast_path_escalation_*` codes, and the pipeline-failure codes `system_error` /
+`system_timeout`) are never stored, so the next turn is re-governed;
 `hard_violation_*` guard refusals stay cached and lookup/reapply is unchanged.
 
 **Ledger scope.** `LedgerKey` is `(contract_hash, posture, domain)` and `InMemoryLedgerStorage` is process-local and internally
@@ -581,7 +582,7 @@ class ResponseMetadata:
     decision_correctness: dict[str, Any] | None  # optional DCF payload from diagnostics
 ```
 
-**Construction**: Always build metadata via factory methods for consistency across paths (fast, deliberative, safe_complete, domain_excluded, system error). Use `ResponseMetadata.from_decision(...)` for flows that have a `Decision` (and optional `DecisionExplanation`); use `ResponseMetadata.for_system_error(...)`, `for_domain_excluded(...)`, or `for_fail_safe(...)` for timeout, domain-excluded, and FAIL_SAFE fallback respectively. See `docs/architecture_spec.md` (ResponseMetadata Construction) for the full list.
+**Construction**: Always build metadata via factory methods for consistency across paths (fast, deliberative, safe_complete, domain_excluded, system error). Use `ResponseMetadata.from_decision(...)` for flows that have a `Decision` (and optional `DecisionExplanation`); use `ResponseMetadata.for_system_error(...)`, `for_domain_excluded(...)`, or `for_fail_safe(...)` for a timeout or any `MoralStackError` (governed REFUSE), domain-excluded, and FAIL_SAFE fallback respectively. See `docs/architecture_spec.md` (ResponseMetadata Construction) for the full list.
 
 ---
 
@@ -615,7 +616,16 @@ Modules: `moralstack.orchestration.convergence`, `moralstack.orchestration.safe_
 
 The Orchestrator implements a fail-safe system:
 
-- **Timeout**: If it exceeds `timeout_ms`, returns a safe default response
+- **Timeout**: If it exceeds `timeout_ms` (`OrchestratorTimeoutError` caught in `process()`), `_handle_timeout` returns a
+  governed fail-closed REFUSE: `final_action="REFUSE"`, `hard_violation_flip_reason` / `reason_codes` = `system_timeout`,
+  principle `SYSTEM.TIMEOUT`, `path="ERROR_PATH"` / `path_taken="error"`, fixed content `[SYSTEM_TIMEOUT]`, one WARNING
+  (`pipeline failed closed ...`), never cached in the ledger
+- **Pipeline errors**: a `MoralStackError` caught in `process()` (`RiskEstimationError`, `GenerationError`, ...) goes to
+  `_handle_error`, the same governed REFUSE with `system_error`, principle `SYSTEM.ERROR` and content `[SYSTEM_ERROR]`
+  (both handlers share `_pipeline_failure_result`). The content is the fixed sentinel in every mode: the exception text stays
+  in `result.error` and the truncated WARNING, never in the delivered answer. No LLM call and no FINAL trace row (the UI
+  recognizes a pipeline failure by `SYSTEM.ERROR` plus the absence of FINAL; `SYSTEM.TIMEOUT` is not detected yet). If
+  `str(error)` is empty or raises, `error` is the exception class name
 - **Module errors**: Catches exceptions and continues with fallback values, except where a missing result would fail open: a
   critic that did not complete in the final cycle ends in a governed REFUSE (below)
 - **Parsing failures**: Automatic retries with reformulated prompts
@@ -651,7 +661,7 @@ The Orchestrator implements a fail-safe system:
 
   The REFUSE goes through `assemble`'s REFUSE branch (`finalize_delivery`: REFUSE/`content_filter`), records
   `original_final_action="NORMAL_COMPLETE"` / `hard_violation_flip_reason` on the metadata and a FINAL trace row,
-  and is not an error-handler path (those label the result NORMAL_COMPLETE, see the F6 gap in `docs/CODEBASE_FACTS.md`).
+  and is distinct from the error-handler path above (which also ends in a governed REFUSE but writes no FINAL row).
 - **Deliberative critique coverage fails closed** (`DeliberationRunner.enforce_verified_draft_delivery`, called once in
   `OrchestrationController._route_deliberative` after the override, the CYCLES_EXHAUSTED fallback and the SAFE_COMPLETE
   gating). A deliberative draft is delivered only if the critic, when configured to check, completed in the cycle that
@@ -808,7 +818,9 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
 
 - **Default**: `true`
 - **Type**: bool
-- **Description**: When true, return a safe default response on error instead of raising.
+- **Description**: Deprecated no-op (F6). Pipeline errors caught in `process()` always deliver a fixed governed refusal (`[SYSTEM_ERROR]` /
+  `[SYSTEM_TIMEOUT]`); setting it to `false` is ignored and logs one WARNING when the config is
+  loaded. The field stays in `OrchestratorConfig` for compatibility.
 
 #### MORALSTACK_ORCHESTRATOR_BORDERLINE_REFUSE_UPPER
 

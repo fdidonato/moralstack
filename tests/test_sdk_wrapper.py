@@ -1048,3 +1048,56 @@ class TestRequestFinalizedEmission:
         assert calls[1]["proxy_summary"]["state_in"].get("active_domain") == "general"
         # posture_in is posture_of(state_in) = state.last_governance_posture.
         assert calls[1]["proxy_summary"]["posture_in"] == "NORMAL"
+
+
+# =============================================================================
+# F6: a pipeline error result is a governed fail-closed REFUSE in the SDK
+# =============================================================================
+
+
+def _real_pipeline_error_result() -> Any:
+    """Real result produced by the controller's error handler (no MagicMock)."""
+    import time
+
+    from moralstack.orchestration.controller import OrchestrationController
+    from moralstack.orchestration.null_persistence import NullPersistence
+    from moralstack.orchestration.types import GenerationError, OrchestratorConfig, ProcessedRequest
+    from moralstack.utils.output_protection import OutputProtector
+
+    ctrl = OrchestrationController(
+        config=OrchestratorConfig(enable_speculative_generation=False),
+        policy=MagicMock(),
+        risk_estimator=MagicMock(),
+        critic=None,
+        simulator=None,
+        hindsight=None,
+        perspectives=None,
+        constitution_store=None,
+        output_protector=OutputProtector(),
+        protected_system_prompt="system",
+        persistence=NullPersistence(),
+    )
+    try:
+        return ctrl._handle_error(
+            ProcessedRequest(prompt="hello", request_id="req-f6"),
+            GenerationError("Generation failed: provider said: secret-ish body"),
+            time.time(),
+        )
+    finally:
+        close = getattr(ctrl._runner, "close", None)
+        if close is not None:
+            close()
+
+
+def test_sdk_sync_error_result():
+    mock_openai = MagicMock()
+    orch = MagicMock()
+    orch.process.return_value = _real_pipeline_error_result()
+    client = GovernedClient(mock_openai, orch, GovernanceConfig())
+
+    resp = client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
+
+    mock_openai.chat.completions.create.assert_not_called()
+    assert isinstance(resp, GovernedResponse)
+    assert resp.content == "[SYSTEM_ERROR]"
+    assert resp.governance_metadata.final_action == "REFUSE"
