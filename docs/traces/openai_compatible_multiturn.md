@@ -63,9 +63,10 @@ client is not called to generate the delivered answer.
 Empty governed content fails closed to a governed refusal
 (`final_text_source="governed_pipeline_refusal"`), and so does a result without a valid
 decision label (F6 phase 5; ASCII case/whitespace variants of a valid label are normalized).
-`X-Moralstack-Decision` is still built from the raw metadata (the raw label, `UNKNOWN` when it
-is empty) while the body is the refusal and `finish_reason` is `content_filter`
-(follow-up). The stale compliance delivery
+`X-Moralstack-Decision` is built AFTER `finalize_delivery` from `delivery.final_action` (F6
+follow-up C2), so it always agrees with the body, `finish_reason`, `meta_json.final_action` and
+`PROXY_OUTPUT_FINALIZED.decision`: an unlabelled or blank-content result reports `REFUSE`
+(not `UNKNOWN` / `NORMAL_COMPLETE`) and a case variant of a valid label is canonical. The stale compliance delivery
 guard fields are retained as audit metadata, but they no longer route delivery to
 an upstream call. The SDK uses the same governed delivery invariant.
 
@@ -223,8 +224,10 @@ contents concatenate to the governed answer, followed by `data: [DONE]`. It does
 not forward live upstream tokens.
 
 ### Response headers (proxy)
-`build_governance_headers` (`server/headers.py:40-54`) attaches, on every
-response: `X-Moralstack-Decision`, `-Risk-Score` (4dp), `-Posture` (default
+`build_governance_headers` (`server/headers.py:48-62`) attaches, on every
+response: `X-Moralstack-Decision` (the delivered action: the proxy passes
+`final_action=delivery.final_action`; a caller that omits it keeps the legacy raw label /
+`UNKNOWN`), `-Risk-Score` (4dp), `-Posture` (default
 `NORMAL`), `-Path`, `-Conversation-Id`, `-Internal-Draft-Reused`
 (`true`/`false`). Conditionally: `-Cached-From` (when a cached decision id is
 present), and `-Compliance-Decision` + `-Compliance-Rule` (when a DCCL verdict

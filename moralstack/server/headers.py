@@ -14,6 +14,7 @@ def build_governance_headers(
     result: Any,
     *,
     conversation_id: str = "",
+    final_action: str | None = None,
 ) -> dict[str, str]:
     """
     Build X-Moralstack-* headers from an OrchestratorResult.
@@ -21,13 +22,20 @@ def build_governance_headers(
     Args:
         result: an OrchestratorResult instance (the output of controller.process).
         conversation_id: the resolved conversation_id (may be empty for single-turn).
+        final_action: the DELIVERED action (``GovernedDelivery.final_action``). When
+            given, it replaces the raw ``metadata.final_action`` so the header
+            reports what was actually delivered. When omitted (legacy callers) the
+            raw label is used, or ``UNKNOWN`` when empty.
 
     Returns:
         A dict {header_name: header_value} ready to be passed to FastAPI's
         Response(headers=...). All values are strings.
     """
     metadata = result.response.metadata
-    decision = str(getattr(metadata, "final_action", "") or "")
+    if final_action is not None:
+        decision = final_action
+    else:
+        decision = str(getattr(metadata, "final_action", "") or "")
     risk_score_raw = getattr(metadata, "risk_score", None)
     risk_score = f"{risk_score_raw:.4f}" if isinstance(risk_score_raw, (int, float)) else ""
     path = str(getattr(result, "path", "") or getattr(result, "path_taken", "") or "")

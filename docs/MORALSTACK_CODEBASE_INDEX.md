@@ -422,7 +422,8 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `max_entries` (default `DEFAULT_MAX_CORRELATION_ENTRIES=20_000`), `time_fn` (clock seam
   for tests). `create_app` wires `MORALSTACK_CORRELATION_TTL_SECONDS` /
   `MORALSTACK_CORRELATION_MAX_ENTRIES` (best-effort parse + range-validate, never raises).
-- `headers.py` — `build_governance_headers` (X-Moralstack-* response headers). Emits
+- `headers.py` — `build_governance_headers` (X-Moralstack-* response headers; keyword-only
+  `final_action=` carries the delivered action into `X-Moralstack-Decision`). Emits
   `X-Moralstack-Draft-Origin` / `X-Moralstack-Draft-Model` only when
   `metadata.draft_origin == "upstream"` (opt-in `generation="upstream_then_verify"`);
   internal mode never adds these headers.

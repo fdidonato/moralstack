@@ -19,7 +19,7 @@ Normative reference: multiturn design v1.3 section 4.
 
 | Header | Description |
 |--------|-------------|
-| `X-Moralstack-Decision` | `final_action` (`NORMAL_COMPLETE`, `SAFE_COMPLETE`, `REFUSE`, …) |
+| `X-Moralstack-Decision` | The **delivered** action (`GovernedDelivery.final_action`: `NORMAL_COMPLETE`, `SAFE_COMPLETE`, `REFUSE`), passed by the proxy as `final_action=`; the headers are built after `finalize_delivery`, and the audit copy carries the same value. Without the argument (legacy callers) the raw label, or `UNKNOWN` when empty |
 | `X-Moralstack-Risk-Score` | Normalized risk score |
 | `X-Moralstack-Posture` | Conversation governance posture |
 | `X-Moralstack-Path` | Processing path (includes `COMPLIANCE_FAST_PATH` on DCCL match) |

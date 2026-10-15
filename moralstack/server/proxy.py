@@ -455,14 +455,19 @@ def _handle_chat_completion_sync(
             if conversation_id and governance_state_out is not None:
                 store.put(conversation_id, governance_state_out)
 
-            governance_headers = build_governance_headers(result, conversation_id=conversation_id)
-            governance_headers_for_audit = dict(governance_headers) if governance_headers else None
-            domain_for_audit = getattr(result.response.metadata, "domain_overlay", None)
-
             # Governed delivery: the delivered text is ALWAYS the text produced
             # inside the MoralStack governed pipeline. The wrapped/upstream client
             # is never called to generate the delivered answer (Plan 1 invariant).
+            # Delivery runs BEFORE the headers so ``X-Moralstack-Decision`` (and the
+            # audit copy) carry the delivered action, not the raw result label.
             delivery = finalize_delivery(result, config=cfg)
+            governance_headers = build_governance_headers(
+                result,
+                conversation_id=conversation_id,
+                final_action=delivery.final_action,
+            )
+            governance_headers_for_audit = dict(governance_headers) if governance_headers else None
+            domain_for_audit = getattr(result.response.metadata, "domain_overlay", None)
             final_response_text = delivery.text
             final_text_source = delivery.final_text_source
             final_action_for_event = delivery.final_action

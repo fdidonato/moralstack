@@ -1949,3 +1949,120 @@ def test_proxy_unlabelled_result_is_refusal():
     assert finish_reasons and finish_reasons[-1] == "content_filter"
     assert "REAL ANSWER" not in sse.text
     mock_openai.chat.completions.create.assert_not_called()
+
+
+# ─── C2: X-Moralstack-Decision reports the delivered action (F6 follow-up D1a) ───
+
+_DECISION_HEADER_CASES = [
+    ("", "REAL ANSWER", "REFUSE"),
+    ("NORMAL_COMPLETE", "   ", "REFUSE"),
+    ("safe_complete", "ok", "SAFE_COMPLETE"),
+    ("refuse", "no", "REFUSE"),
+    ("ſafe_complete", "ok", "REFUSE"),
+    ("NORMAL_COMPLETE", "ok", "NORMAL_COMPLETE"),
+]
+
+
+def _decision_app(label: str, content: str) -> tuple[TestClient, Any]:
+    mock_orchestrator = MagicMock()
+    mock_orchestrator.process = MagicMock(return_value=_make_result(label, content=content))
+    mock_openai = MagicMock()
+    mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion("upstream"))
+    app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+    return TestClient(app), mock_openai
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["sync", "sse"])
+@pytest.mark.parametrize("label,content,expected", _DECISION_HEADER_CASES)
+def test_proxy_decision_header_is_delivered_action(label, content, expected, stream):
+    from moralstack.orchestration.delivery import finalize_delivery
+
+    client, mock_openai = _decision_app(label, content)
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o", "stream": stream, "messages": [{"role": "user", "content": "Q"}]},
+    )
+    # Explicit status check: a non-latin-1 label must never turn into a 500.
+    assert response.status_code == 200
+    assert response.headers.get("X-Moralstack-Decision") == expected
+    delivery = finalize_delivery(_make_result(label, content=content))
+    assert delivery.final_action == expected
+    assert "REAL ANSWER" not in response.text
+    mock_openai.chat.completions.create.assert_not_called()
+
+
+def test_build_governance_headers_final_action_override():
+    from moralstack.server.headers import build_governance_headers
+
+    result = _make_result("")
+    legacy = build_governance_headers(result, conversation_id="c1")
+    assert legacy["X-Moralstack-Decision"] == "UNKNOWN"
+
+    overridden = build_governance_headers(result, conversation_id="c1", final_action="REFUSE")
+    assert overridden["X-Moralstack-Decision"] == "REFUSE"
+    # The override beats a raw label too.
+    raw = _make_result("NORMAL_COMPLETE")
+    assert build_governance_headers(raw, final_action="SAFE_COMPLETE")["X-Moralstack-Decision"] == "SAFE_COMPLETE"
+    # Only the decision header differs.
+    assert {k: v for k, v in legacy.items() if k != "X-Moralstack-Decision"} == {
+        k: v for k, v in overridden.items() if k != "X-Moralstack-Decision"
+    }
+
+
+@pytest.mark.parametrize("label,content", [("", "REAL ANSWER"), ("NORMAL_COMPLETE", "   ")])
+def test_audit_headers_copy_matches_delivered_action(label, content, monkeypatch):
+    import moralstack.server.proxy as proxy_mod
+
+    captured: list[dict[str, Any]] = []
+    monkeypatch.setattr(proxy_mod, "_initialize_observability_run", lambda: "run-x2")
+    monkeypatch.setattr(proxy_mod, "_ensure_request_row", lambda **kw: None)
+    monkeypatch.setattr(proxy_mod, "_finalize_request", lambda **kw: captured.append(kw))
+    monkeypatch.setattr(proxy_mod, "persist_orchestration_event", lambda **kw: None)
+
+    client, _ = _decision_app(label, content)
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+    )
+    assert response.status_code == 200
+    assert len(captured) == 1
+    audit_headers = captured[0]["governance_headers"]
+    assert audit_headers["X-Moralstack-Decision"] == "REFUSE"
+    assert audit_headers["X-Moralstack-Decision"] == response.headers["X-Moralstack-Decision"]
+    assert captured[0]["final_action"] == "REFUSE"
+
+
+@pytest.mark.parametrize("label,content,expected", _DECISION_HEADER_CASES)
+def test_proxy_event_decision_equals_header(label, content, expected, monkeypatch):
+    import moralstack.server.proxy as proxy_mod
+
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(proxy_mod, "_initialize_observability_run", lambda: "run-x4")
+    monkeypatch.setattr(proxy_mod, "_ensure_request_row", lambda **kw: None)
+    monkeypatch.setattr(proxy_mod, "_finalize_request", lambda **kw: None)
+    monkeypatch.setattr(proxy_mod, "persist_orchestration_event", lambda **kw: events.append(kw))
+
+    client, _ = _decision_app(label, content)
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+    )
+    assert response.status_code == 200
+    finalized = [e for e in events if e.get("event_type") == "PROXY_OUTPUT_FINALIZED"]
+    assert len(finalized) == 1
+    assert finalized[0]["decision"] == response.headers["X-Moralstack-Decision"] == expected
+
+
+def test_proxy_error_path_headers_unchanged():
+    mock_orchestrator = MagicMock()
+    mock_orchestrator.process = MagicMock(side_effect=RuntimeError("boom"))
+    mock_openai = MagicMock()
+    app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+    )
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["finish_reason"] == "content_filter"
+    assert "X-Moralstack-Decision" not in response.headers
+    mock_openai.chat.completions.create.assert_not_called()

@@ -159,6 +159,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Proxy `X-Moralstack-Decision` now reports the delivered action (behaviour).** The proxy builds
+  the governance headers after `finalize_delivery` and passes `final_action=delivery.final_action`
+  to `build_governance_headers` (new keyword-only argument, default `None` keeps the legacy
+  behaviour). An unlabelled result now reports `REFUSE` (was `UNKNOWN`), blank content with a
+  `NORMAL_COMPLETE` label reports `REFUSE` (was `NORMAL_COMPLETE`), and case variants of a valid
+  label are canonical (were verbatim); a non-ASCII look-alike label no longer reaches the header
+  encoder. The audit copy of the headers carries the same value. Valid canonical labels, the body
+  and `finish_reason` are unchanged.
+
 - **Pipeline-error responses are now governed refusals (BREAKING, behaviour).** Proxy responses for
   a pipeline error or timeout now carry `finish_reason="content_filter"`,
   `X-Moralstack-Decision: REFUSE` and `X-Moralstack-Path: ERROR_PATH` (they were `stop`, `UNKNOWN`
