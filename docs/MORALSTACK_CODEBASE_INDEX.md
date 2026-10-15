@@ -745,7 +745,7 @@ See `docs/traces/openai_compatible_multiturn.md`.
   blank result counts as `REFUSE`). `REFUSE` yields a single synthetic chunk that
   replays `delivery.text` (`GovernedRefusalStream`, `wrapper.py:156-183`);
   otherwise the governed text is replayed word by word (`GovernedSyntheticStream`,
-  `wrapper.py:224-278`). No live upstream tokens are forwarded. Stream
+  `wrapper.py:225-279`). No live upstream tokens are forwarded. Stream
   `governance_metadata` reports the delivered action. `GovernedStreamResponse`
   (wrapper over an upstream stream) is retained but unused by `create()`.
 - **Production proxy**: supported as governed synthetic SSE replay. Governance

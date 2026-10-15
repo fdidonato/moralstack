@@ -493,7 +493,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an unlabelled, blank-content or non-canonical result takes the REFUSE branch like the proxy.
   A REFUSE stream replays `delivery.text` (a blank refusal used to stream an empty string) and
   stream `governance_metadata.final_action` is the delivered action, equal to the non-stream
-  value. Valid-label responses are unchanged; `finish_reason` is unchanged (follow-up).
+  value. Valid-label responses are unchanged; `finish_reason` is changed separately (see the SDK `finish_reason` entry under Changed).
 
 - **One normalization rule for the `final_action` label (F6 follow-up).** The
   `ensure_final_action_and_return` backfill now writes the canonical upper-case label
@@ -501,7 +501,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ESCALATED posture check and the `ensure` early return use the same `normalize_final_action` rule
   as `finalize_delivery` (an unknown label is recorded as REFUSE; delivery output is byte-identical).
   The ledger store is skip-only: only an exact canonical label is cached, anything else is logged
-  once at INFO and not stored.
+  once at INFO and not stored. Review follow-ups (dead conditional, shadowed parameter, hoisted UI
+  caption, narrower `try` in the CLI report): no behaviour change.
 
 - **`finalize_delivery` fails closed on a result without a valid decision label (F6, phase 5).** A
   result whose `final_action` is outside `NORMAL_COMPLETE` / `SAFE_COMPLETE` / `REFUSE` (empty,

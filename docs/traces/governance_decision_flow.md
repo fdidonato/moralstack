@@ -423,7 +423,7 @@ the `PROXY_OUTPUT_FINALIZED` envelope (`governed_delivery=True`,
 `GovernedResponse.from_*`). Fields: `final_action`, `risk_score`,
 `risk_category`, `path`, `reason_codes`, `triggered_principles`,
 `decision_reason`, `conversation_id`, `turn_index`. The proxy attaches these
-`X-Moralstack-*` headers via `build_governance_headers` (`server/headers.py:48-62`).
+`X-Moralstack-*` headers via `build_governance_headers` (`server/headers.py:49-64`).
 `Decision` is the delivered action: the proxy passes `final_action=delivery.final_action`,
 after `finalize_delivery`. The headers are:
 always `Decision`, `Risk-Score`, `Posture`, `Path`, `Conversation-Id`,

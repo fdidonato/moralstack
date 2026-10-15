@@ -553,11 +553,11 @@ def request_report_from_cli(trace: Any, call_logger: Any, result: Any, prompt: s
     cli_principle = None
     try:
         # Best-effort: a result without ``response.metadata.triggered_principles`` keeps the legacy status.
-        cli_principle = pipeline_failure_principle(
-            [], {"triggered_principles": list(result.response.metadata.triggered_principles or [])}
-        )
+        principles = list(result.response.metadata.triggered_principles or [])
     except (AttributeError, TypeError):
-        cli_principle = None
+        principles = None
+    if principles is not None:
+        cli_principle = pipeline_failure_principle([], {"triggered_principles": principles})
     if cli_principle is not None:
         status = _pipeline_failure_status(cli_principle)
     elif trace.response_type == "full_refusal":

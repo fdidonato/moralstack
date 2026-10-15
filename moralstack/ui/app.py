@@ -1378,11 +1378,11 @@ def _build_delivery_path_summary(
     proxy_output_info: dict[str, Any] | None,
     pipeline_failure: bool = False,
     final_response: str = "",
-    pipeline_failure_principle: str = "SYSTEM.ERROR",
+    failure_principle_label: str = "SYSTEM.ERROR",
 ) -> dict[str, Any]:
     """Build a reviewer-facing delivery timeline distinct from internal governance traces.
 
-    ``pipeline_failure_principle`` is the recorded ``SYSTEM.*`` principle named in the
+    ``failure_principle_label`` is the recorded ``SYSTEM.*`` principle named in the
     pipeline-failure explanation; it is only used when ``pipeline_failure`` is true.
     """
     final_trace = _last_final_trace_payload(traces)
@@ -1414,7 +1414,7 @@ def _build_delivery_path_summary(
         headline = f"Delivered {delivered_action} is a system-error placeholder, not a governed decision"
         explanation = (
             "The governance pipeline failed before reaching a governed FINAL decision — no FINAL decision-trace "
-            f"row was recorded, and meta_json.triggered_principles records {pipeline_failure_principle}. "
+            f"row was recorded, and meta_json.triggered_principles records {failure_principle_label}. "
             "The proxy still "
             f"finalized delivery as {delivered_action}, but that canonical code does not reflect a governed "
             f"outcome. {pre_delivery_decision_note}."
@@ -3957,7 +3957,7 @@ button:hover{opacity:0.9}
             proxy_output_info=proxy_output_info,
             pipeline_failure=pipeline_failure,
             final_response=req_data.get("final_response") or "",
-            pipeline_failure_principle=failure_principle,
+            failure_principle_label=failure_principle,
         )
         compliance_fast_path_panel = None
         # Gate on the derived path_badge (event-aware), not the raw trace path: the

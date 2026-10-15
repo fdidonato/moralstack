@@ -1987,6 +1987,21 @@ def test_proxy_decision_header_is_delivered_action(label, content, expected, str
     assert response.headers.get("X-Moralstack-Decision") == expected
     delivery = finalize_delivery(_make_result(label, content=content))
     assert delivery.final_action == expected
+    if stream:
+        finish_reasons = []
+        for line in response.text.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[len("data:") :].strip()
+            if data == "[DONE]":
+                continue
+            reason = json.loads(data)["choices"][0].get("finish_reason")
+            if reason:
+                finish_reasons.append(reason)
+        assert finish_reasons and finish_reasons[-1] == delivery.finish_reason
+    else:
+        assert response.json()["choices"][0]["finish_reason"] == delivery.finish_reason
     assert "REAL ANSWER" not in response.text
     mock_openai.chat.completions.create.assert_not_called()
 

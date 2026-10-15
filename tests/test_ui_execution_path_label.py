@@ -194,7 +194,7 @@ def test_build_delivery_path_summary_names_principle():
         proxy_output_info={"final_text_source": "governed", "final_action": "REFUSE"},
         pipeline_failure=True,
     )
-    named = _build_delivery_path_summary(**kwargs, pipeline_failure_principle="SYSTEM.TIMEOUT")
+    named = _build_delivery_path_summary(**kwargs, failure_principle_label="SYSTEM.TIMEOUT")
     assert named["status"] == "pipeline_failure"
     assert "records SYSTEM.TIMEOUT" in named["explanation"]
     assert "SYSTEM.ERROR" not in named["explanation"]

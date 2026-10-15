@@ -288,7 +288,7 @@ class DiagnosticsLayer:
             log_deliberation_inconsistency(
                 getattr(request, "request_id", "") or "",
                 res_path,
-                meta_fa if meta_fa is not None else final_action.name,
+                final_action.name,
                 return_point or "_ensure_final_action_and_return",
                 "none",
             )

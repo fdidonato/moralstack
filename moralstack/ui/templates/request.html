@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Request {{ req.request_id[:12] }} - MoralStack{% endblock %}
 {% block content %}
+{# Caption for a recorded pipeline failure; used by the Final Response card and the OUTPUT summary. #}
+{% set failure_caption = {"SYSTEM.ERROR": "SYSTEM ERROR", "SYSTEM.TIMEOUT": "SYSTEM TIMEOUT", "SYSTEM.FAIL_SAFE": "SYSTEM FAIL-SAFE"}.get(pipeline_failure_principle, "SYSTEM ERROR") %}
 {# Per-call token badge. Reads the numeric llm_calls columns present on every real
    call row (total_tokens/input_tokens/output_tokens/token_usage_estimated/
    token_usage_missing). Renders nothing for synthetic nodes (no total_tokens). #}
@@ -1155,7 +1157,6 @@
 {% if req.final_response %}
 <h2>Final Response</h2>
 {% if pipeline_failure %}
-{% set failure_caption = {"SYSTEM.ERROR": "SYSTEM ERROR", "SYSTEM.TIMEOUT": "SYSTEM TIMEOUT", "SYSTEM.FAIL_SAFE": "SYSTEM FAIL-SAFE"}.get(pipeline_failure_principle, "SYSTEM ERROR") %}
 <div class="card final-response-failure">
     <p class="final-response-failure-caption">
         <span class="badge badge-fail">{{ failure_caption }}</span>
@@ -1517,7 +1518,6 @@
                 {{ delivery_path_summary.delivered_action }}
             </span>
             {% if delivery_path_summary.status == 'pipeline_failure' %}
-            {% set failure_caption = {"SYSTEM.ERROR": "SYSTEM ERROR", "SYSTEM.TIMEOUT": "SYSTEM TIMEOUT", "SYSTEM.FAIL_SAFE": "SYSTEM FAIL-SAFE"}.get(pipeline_failure_principle, "SYSTEM ERROR") %}
             <span class="muted">&mdash; a system-error placeholder, not a governed decision. See &ldquo;Final Response&rdquo; below (marked {{ failure_caption }}).</span>
             {% else %}
             {# The authoritative delivered source is rendered once, labelled, in the

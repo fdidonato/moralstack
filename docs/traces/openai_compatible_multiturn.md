@@ -224,7 +224,7 @@ contents concatenate to the governed answer, followed by `data: [DONE]`. It does
 not forward live upstream tokens.
 
 ### Response headers (proxy)
-`build_governance_headers` (`server/headers.py:48-62`) attaches, on every
+`build_governance_headers` (`server/headers.py:49-64`) attaches, on every
 response: `X-Moralstack-Decision` (the delivered action: the proxy passes
 `final_action=delivery.final_action`; a caller that omits it keeps the legacy raw label /
 `UNKNOWN`), `-Risk-Score` (4dp), `-Posture` (default
