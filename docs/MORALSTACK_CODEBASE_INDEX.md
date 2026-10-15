@@ -31,6 +31,7 @@ moralstack/
                          #   detection (TRUE/FALSE etc.) used by the critic gate
   prompts/               # module prompt templates
   reports/               # markdown/conversation/benchmark export + UI data builders
+                         #   pipeline_failure.py: shared SYSTEM.* pipeline-failure predicate
   server/                # OpenAI-compatible FastAPI governance proxy
   ui/                    # FastAPI dashboard (moralstack-ui)
   cli/                   # `moralstack` CLI

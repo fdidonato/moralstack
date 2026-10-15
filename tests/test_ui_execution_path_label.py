@@ -182,3 +182,22 @@ def test_delivery_summary_byte_identical_for_plain_deliberative_request():
 
     assert summary["status"] == "delivered"
     assert summary["explanation"] == "The proxy finalization event is the authoritative delivered result."
+
+
+def test_build_delivery_path_summary_names_principle():
+    """U5: the pipeline-failure explanation names the recorded principle; default stays SYSTEM.ERROR."""
+    kwargs = dict(
+        orchestration_events=[],
+        traces=[],
+        llm_calls=[],
+        final_revalidation_info=None,
+        proxy_output_info={"final_text_source": "governed", "final_action": "REFUSE"},
+        pipeline_failure=True,
+    )
+    named = _build_delivery_path_summary(**kwargs, pipeline_failure_principle="SYSTEM.TIMEOUT")
+    assert named["status"] == "pipeline_failure"
+    assert "records SYSTEM.TIMEOUT" in named["explanation"]
+    assert "SYSTEM.ERROR" not in named["explanation"]
+
+    default = _build_delivery_path_summary(**kwargs)
+    assert "records SYSTEM.ERROR" in default["explanation"]

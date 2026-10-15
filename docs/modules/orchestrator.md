@@ -624,7 +624,9 @@ The Orchestrator implements a fail-safe system:
   `_handle_error`, the same governed REFUSE with `system_error`, principle `SYSTEM.ERROR` and content `[SYSTEM_ERROR]`
   (both handlers share `_pipeline_failure_result`). The content is the fixed sentinel in every mode: the exception text stays
   in `result.error` and the truncated WARNING, never in the delivered answer. No LLM call and no FINAL trace row (the UI
-  recognizes a pipeline failure by `SYSTEM.ERROR` plus the absence of FINAL; `SYSTEM.TIMEOUT` is not detected yet). If
+  recognizes a pipeline failure by a `SYSTEM.ERROR` / `SYSTEM.TIMEOUT` / `SYSTEM.FAIL_SAFE` principle plus the absence of
+  FINAL, through the shared predicate `pipeline_failure_principle` in `reports/pipeline_failure.py`, structured signals
+  only). If
   `str(error)` is empty or raises, `error` is the exception class name
 - **Decision label canonicalization**: `normalize_final_action` (`orchestration/types.py`) is the single rule
   (`.strip()`, ASCII-only `.upper()`, membership in `CANONICAL_FINAL_ACTIONS`; `None` when it has no canonical form). It

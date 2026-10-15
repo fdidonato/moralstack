@@ -394,8 +394,10 @@ one INFO line and is not stored (a stored non-canonical label would make a later
   `reason_codes` = `system_error` / `system_timeout`, `path="ERROR_PATH"` /
   `path_taken="error"`, and fixed sentinel content `[SYSTEM_ERROR]` /
   `[SYSTEM_TIMEOUT]` (never the exception text, in any mode). No LLM call and no
-  FINAL decision-trace row (the UI detects the failure by `SYSTEM.ERROR` plus no
-  FINAL row); one WARNING `pipeline failed closed ...`. The codes are in
+  FINAL decision-trace row (the UI detects the failure by a `SYSTEM.ERROR` /
+  `SYSTEM.TIMEOUT` / `SYSTEM.FAIL_SAFE` principle plus no FINAL row, through
+  `reports/pipeline_failure.py::pipeline_failure_principle`; the request page names
+  the recorded principle); one WARNING `pipeline failed closed ...`. The codes are in
   `LEDGER_NON_CACHEABLE_FLIP_REASONS`, so the ledger never stores them.
   `finalize_delivery` then delivers REFUSE / `content_filter`.
 - **Streaming (`stream=True`)**: the governed text is replayed as OpenAI-compatible

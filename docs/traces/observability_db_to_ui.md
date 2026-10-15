@@ -290,7 +290,13 @@ reconstructs:
   `activated_signals`, `hard_violation_codes`; the OUTPUT anchor renders both,
   in addition to the pre-existing `Semantic Harm` truthiness gate — see
   `docs/CODEBASE_FACTS.md`), relevant/triggered principles, and a DCCL/
-  compliance card.
+  compliance card. A **pipeline failure** (no FINAL decision-trace row plus a
+  `SYSTEM.ERROR` / `SYSTEM.TIMEOUT` / `SYSTEM.FAIL_SAFE` entry in
+  `meta_json.triggered_principles`) is detected by `_detect_pipeline_failure`, which
+  delegates to `moralstack/reports/pipeline_failure.py::pipeline_failure_principle`
+  (structured signals only, never the `[SYSTEM_*]` text). The request page and the
+  conversation timeline flag it, and `_build_delivery_path_summary` plus the
+  `request.html` caption name the recorded principle.
 - **Per conversation** (`/conversations/{conversation_id}`, `ui/app.py:3839`,
   route `conversation_detail`): full multi-turn timeline via
   `_build_conversation_timeline`; 404 if no requests. Since the

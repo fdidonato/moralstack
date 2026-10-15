@@ -523,8 +523,20 @@ def test_u1_ui_detector_accepts_new_error_shape(request: pytest.FixtureRequest, 
     timeout_meta = build_request_meta_from_result(
         _fail(_ctrl(request=request), monkeypatch, OrchestratorTimeoutError(TIMEOUT_TEXT))
     )
-    # Documented gap (follow-up): SYSTEM.TIMEOUT is not detected yet.
-    assert _detect_pipeline_failure([], timeout_meta) is False
+    # SYSTEM.TIMEOUT is detected since the shared predicate (F6 follow-up C5).
+    assert _detect_pipeline_failure([], timeout_meta) is True
+    assert _detect_pipeline_failure([{"stage": "FINAL"}], timeout_meta) is False
+
+
+def test_u2_ui_detector_accepts_fail_safe_shape(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("fastapi")
+    from moralstack.observability.governance_audit import build_request_meta_from_result
+    from moralstack.ui.app import _detect_pipeline_failure
+
+    meta = build_request_meta_from_result(_fail(_ctrl(request=request), monkeypatch, ValueError("x")))
+    assert "SYSTEM.FAIL_SAFE" in meta["triggered_principles"]
+    assert _detect_pipeline_failure([], meta) is True
+    assert _detect_pipeline_failure([{"stage": "FINAL"}], meta) is False
 
 
 # --- Integration: real Orchestrator facade ------------------------------------

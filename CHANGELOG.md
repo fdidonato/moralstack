@@ -450,6 +450,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **UI flags `SYSTEM.TIMEOUT` and `SYSTEM.FAIL_SAFE` pipeline failures (F6 follow-up).** A new
+  pure predicate, `moralstack/reports/pipeline_failure.py` (`PIPELINE_FAILURE_PRINCIPLES`,
+  `pipeline_failure_principle`), recognizes a pipeline failure from structured signals only: a
+  `SYSTEM.ERROR`, `SYSTEM.TIMEOUT` or `SYSTEM.FAIL_SAFE` entry in `meta_json.triggered_principles`
+  and no FINAL decision-trace row. `_detect_pipeline_failure` delegates to it, so the request page
+  and the conversation timeline now flag timeout and generic fail-safe turns (before, only
+  `SYSTEM.ERROR` was flagged). The delivery-path explanation and the Final Response caption name
+  the recorded principle (`SYSTEM ERROR` is unchanged for `SYSTEM.ERROR`). The benchmark keeps its
+  narrower {ERROR, TIMEOUT} set. The test that pinned the timeout gap
+  (`test_u1_ui_detector_accepts_new_error_shape`) now asserts detection.
+
 - **SDK routing and stream metadata follow the delivered action (F6 follow-up).**
   `GovernedCompletions.create` now routes on `delivery.final_action` instead of the raw label, so
   an unlabelled, blank-content or non-canonical result takes the REFUSE branch like the proxy.

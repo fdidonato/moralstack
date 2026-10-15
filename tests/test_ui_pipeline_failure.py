@@ -70,15 +70,21 @@ def ui_client(tmp_path, monkeypatch):
     return TestClient(create_app(), follow_redirects=False)
 
 
-def _seed_crashed_request(run_id: str, request_id: str) -> None:
+def _seed_crashed_request(
+    run_id: str,
+    request_id: str,
+    *,
+    principle: str = "SYSTEM.ERROR",
+    delivered: str = "NORMAL_COMPLETE",
+) -> None:
     """A request that crashed pre-FINAL: RISK_ASSESSMENT / PRE_POLICY / RELEVANT_PRINCIPLES,
-    no FINAL row, meta_json.triggered_principles == ["SYSTEM.ERROR"]."""
+    no FINAL row, meta_json.triggered_principles == [principle] (default "SYSTEM.ERROR")."""
     create_run(run_id, run_type="single", meta={})
     upsert_request(run_id, request_id, prompt="do something", domain="general")
     update_request_meta(
         run_id,
         request_id,
-        {"final_action": "NORMAL_COMPLETE", "risk_score": 1.0, "triggered_principles": ["SYSTEM.ERROR"]},
+        {"final_action": delivered, "risk_score": 1.0, "triggered_principles": [principle]},
     )
     update_request_response(run_id, request_id, "[SYSTEM_ERROR]")
     persist_decision_trace(
@@ -117,8 +123,8 @@ def _seed_crashed_request(run_id: str, request_id: str) -> None:
         stage="PROXY",
         component="proxy",
         event_type=PROXY_OUTPUT_FINALIZED,
-        decision="NORMAL_COMPLETE",
-        payload={"final_action": "NORMAL_COMPLETE", "final_text_source": "governed"},
+        decision=delivered,
+        payload={"final_action": delivered, "final_text_source": "governed"},
     )
     get_obs().flush()
 
@@ -614,3 +620,72 @@ def test_mixed_conversation_flags_only_the_failed_turn_action(ui_client):
     assert "NORMAL_COMPLETE: 2" in body
     # Qualifier reports the failed-turn count only, not the whole distribution.
     assert "includes 1 pipeline failure, not a governed outcome" in body
+
+
+@pytest.mark.parametrize(
+    "principle, caption",
+    [("SYSTEM.TIMEOUT", "SYSTEM TIMEOUT"), ("SYSTEM.FAIL_SAFE", "SYSTEM FAIL-SAFE")],
+)
+def test_timeout_and_fail_safe_requests_render_failure_state(ui_client, principle, caption):
+    run_id, request_id = f"run-crash-{principle}", f"req-crash-{principle}"
+    _seed_crashed_request(run_id, request_id, principle=principle, delivered="REFUSE")
+    token = _make_session_token(ui_client)
+    resp = ui_client.get(
+        f"/runs/{run_id}/requests/{request_id}",
+        cookies={"moralstack_session": token},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.text
+    assert "PIPELINE FAILURE" in body
+    assert f"records {principle}" in body
+    assert "records SYSTEM.ERROR" not in body
+    # Caption names the recorded principle (request.html mapping), not a hard-coded SYSTEM ERROR.
+    assert caption in body
+    assert "SYSTEM ERROR" not in body
+
+
+def test_conversation_flags_timeout_and_fail_safe_turns(ui_client):
+    run_id, conv_id = "run-conv-crash-tf", "conv-crash-tf"
+    create_run(run_id, run_type="single", meta={})
+    upsert_request(run_id, "req-tf-a", prompt="turn 0", domain="general", conversation_id=conv_id, turn_index=0)
+    upsert_request(
+        run_id,
+        "req-tf-b",
+        prompt="turn 1",
+        domain="general",
+        conversation_id=conv_id,
+        turn_index=1,
+        parent_request_id="req-tf-a",
+    )
+    update_request_meta(run_id, "req-tf-a", {"final_action": "NORMAL_COMPLETE", "risk_score": 0.1})
+    update_request_meta(
+        run_id,
+        "req-tf-b",
+        {"final_action": "REFUSE", "risk_score": 1.0, "triggered_principles": ["SYSTEM.TIMEOUT"]},
+    )
+    update_request_response(run_id, "req-tf-b", "[SYSTEM_TIMEOUT]")
+    persist_decision_trace(
+        run_id=run_id,
+        request_id="req-tf-a",
+        stage="FINAL",
+        sequence=2,
+        trace_json=json.dumps({"final_action": "NORMAL_COMPLETE", "path": "FAST_PATH", "winning_rule": "rule_x"}),
+    )
+    persist_decision_trace(
+        run_id=run_id,
+        request_id="req-tf-b",
+        stage="RISK_ASSESSMENT",
+        sequence=1,
+        trace_json=json.dumps({"risk_score": 1.0}),
+    )
+    get_obs().flush()
+
+    from moralstack.ui.app import _build_conversation_timeline
+
+    assert _build_conversation_timeline(conv_id)["pipeline_failure_count"] == 1
+
+    token = _make_session_token(ui_client)
+    resp = ui_client.get(f"/conversations/{conv_id}", cookies={"moralstack_session": token})
+    assert resp.status_code == 200, resp.text
+    assert "conv-spine-node--failure" in resp.text
+    assert "ended in a pipeline failure" in resp.text

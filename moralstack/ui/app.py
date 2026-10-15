@@ -64,6 +64,7 @@ from moralstack.reports.orchestrator_observability import (
     build_orchestrator_observability,
     orchestrator_observability_to_io_annotations,
 )
+from moralstack.reports.pipeline_failure import pipeline_failure_principle
 from moralstack.reports.runtime_decisions import (
     build_runtime_decision_observability,
     enrich_llm_call_for_ui,
@@ -216,11 +217,12 @@ def _detect_pipeline_failure(
     """
     Detect a governance pipeline failure from STRUCTURED signals only.
 
-    A pipeline failure is a request whose controller crashed (see
-    ``OrchestratorController._handle_error``) before the pipeline reached a
-    governed FINAL decision: no ``FINAL`` decision-trace row was ever written,
-    and ``meta_json.triggered_principles`` records the synthetic
-    ``"SYSTEM.ERROR"`` principle set by ``ResponseMetadata.for_system_error``.
+    A pipeline failure is a request whose controller failed closed (see
+    ``OrchestratorController._pipeline_failure_result``) before the pipeline
+    reached a governed FINAL decision: no ``FINAL`` decision-trace row was ever
+    written, and ``meta_json.triggered_principles`` records one of the synthetic
+    ``SYSTEM.ERROR`` / ``SYSTEM.TIMEOUT`` / ``SYSTEM.FAIL_SAFE`` principles.
+    Delegates to ``moralstack.reports.pipeline_failure.pipeline_failure_principle``.
 
     This must never be inferred from the delivered response text (e.g. the
     literal ``"[SYSTEM_ERROR]"`` placeholder) — ``final_action`` is only ever
@@ -228,13 +230,7 @@ def _detect_pipeline_failure(
     ``.claude/rules/decision-policy.md``). Both the request view and the
     conversation view use this single predicate.
     """
-    if not isinstance(meta_json, dict):
-        return False
-    triggered = meta_json.get("triggered_principles")
-    if not isinstance(triggered, list) or "SYSTEM.ERROR" not in triggered:
-        return False
-    has_final_trace = any((t.get("stage") or "").strip().upper() == "FINAL" for t in traces)
-    return not has_final_trace
+    return pipeline_failure_principle(traces, meta_json) is not None
 
 
 def _enrich_event_row(row: dict[str, Any], json_keys: tuple[str, ...]) -> dict[str, Any]:
@@ -1382,8 +1378,13 @@ def _build_delivery_path_summary(
     proxy_output_info: dict[str, Any] | None,
     pipeline_failure: bool = False,
     final_response: str = "",
+    pipeline_failure_principle: str = "SYSTEM.ERROR",
 ) -> dict[str, Any]:
-    """Build a reviewer-facing delivery timeline distinct from internal governance traces."""
+    """Build a reviewer-facing delivery timeline distinct from internal governance traces.
+
+    ``pipeline_failure_principle`` is the recorded ``SYSTEM.*`` principle named in the
+    pipeline-failure explanation; it is only used when ``pipeline_failure`` is true.
+    """
     final_trace = _last_final_trace_payload(traces)
     proxy_participated = _proxy_participated(orchestration_events)
     # DCCL fast-path bypass (COMPLIANCE_DRAFT_REUSED) never writes a PRE_POLICY/FINAL
@@ -1413,7 +1414,8 @@ def _build_delivery_path_summary(
         headline = f"Delivered {delivered_action} is a system-error placeholder, not a governed decision"
         explanation = (
             "The governance pipeline failed before reaching a governed FINAL decision — no FINAL decision-trace "
-            "row was recorded, and meta_json.triggered_principles records SYSTEM.ERROR. The proxy still "
+            f"row was recorded, and meta_json.triggered_principles records {pipeline_failure_principle}. "
+            "The proxy still "
             f"finalized delivery as {delivered_action}, but that canonical code does not reflect a governed "
             f"outcome. {pre_delivery_decision_note}."
         )
@@ -3775,6 +3777,7 @@ button:hover{opacity:0.9}
         orchestration_events = get_orchestration_events_for_request(run_id, request_id)
         req_meta_parsed = _parse_json_field(req_data.get("meta_json")) if isinstance(req_data, dict) else None
         pipeline_failure = _detect_pipeline_failure(traces, req_meta_parsed)
+        failure_principle = pipeline_failure_principle(traces, req_meta_parsed) or "SYSTEM.ERROR"
         runtime_decision_obs = build_runtime_decision_observability(
             traces=traces,
             orchestration_events=orchestration_events,
@@ -3954,6 +3957,7 @@ button:hover{opacity:0.9}
             proxy_output_info=proxy_output_info,
             pipeline_failure=pipeline_failure,
             final_response=req_data.get("final_response") or "",
+            pipeline_failure_principle=failure_principle,
         )
         compliance_fast_path_panel = None
         # Gate on the derived path_badge (event-aware), not the raw trace path: the
@@ -4002,6 +4006,7 @@ button:hover{opacity:0.9}
                     "token_usage": token_usage,
                     "domain_retrieval": domain_retrieval,
                     "pipeline_failure": pipeline_failure,
+                    "pipeline_failure_principle": failure_principle,
                 },
             )
         return HTMLResponse(f"<html><body><h1>Request {request_id}</h1></body></html>")

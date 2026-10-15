@@ -1155,9 +1155,10 @@
 {% if req.final_response %}
 <h2>Final Response</h2>
 {% if pipeline_failure %}
+{% set failure_caption = {"SYSTEM.ERROR": "SYSTEM ERROR", "SYSTEM.TIMEOUT": "SYSTEM TIMEOUT", "SYSTEM.FAIL_SAFE": "SYSTEM FAIL-SAFE"}.get(pipeline_failure_principle, "SYSTEM ERROR") %}
 <div class="card final-response-failure">
     <p class="final-response-failure-caption">
-        <span class="badge badge-fail">SYSTEM ERROR</span>
+        <span class="badge badge-fail">{{ failure_caption }}</span>
         The text below is a system-error placeholder recorded when the governance pipeline crashed before
         reaching a governed decision — it is not a governed answer.
     </p>
@@ -1516,7 +1517,8 @@
                 {{ delivery_path_summary.delivered_action }}
             </span>
             {% if delivery_path_summary.status == 'pipeline_failure' %}
-            <span class="muted">&mdash; a system-error placeholder, not a governed decision. See &ldquo;Final Response&rdquo; below (marked SYSTEM ERROR).</span>
+            {% set failure_caption = {"SYSTEM.ERROR": "SYSTEM ERROR", "SYSTEM.TIMEOUT": "SYSTEM TIMEOUT", "SYSTEM.FAIL_SAFE": "SYSTEM FAIL-SAFE"}.get(pipeline_failure_principle, "SYSTEM ERROR") %}
+            <span class="muted">&mdash; a system-error placeholder, not a governed decision. See &ldquo;Final Response&rdquo; below (marked {{ failure_caption }}).</span>
             {% else %}
             {# The authoritative delivered source is rendered once, labelled, in the
                "Authoritative delivery path" card above — not duplicated here (iteration 05). #}

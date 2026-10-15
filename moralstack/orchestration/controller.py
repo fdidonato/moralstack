@@ -1734,8 +1734,8 @@ class OrchestrationController:
         always the fixed ``sentinel``, regardless of ``safe_response_on_error``: the exception
         text stays in ``result.error`` and the truncated server-side WARNING, never in the
         delivered answer. No LLM call and no FINAL decision-trace row: the UI recognizes a
-        pipeline failure by ``SYSTEM.ERROR`` plus the absence of a FINAL row
-        (``SYSTEM.TIMEOUT`` is not detected yet, follow-up).
+        pipeline failure by a ``SYSTEM.*`` failure principle (ERROR / TIMEOUT / FAIL_SAFE)
+        plus the absence of a FINAL row (``moralstack.reports.pipeline_failure``).
         """
         processing_time = int((time.time() - start_time) * 1000)
         self._log_pipeline_failure(request, reason, error)
