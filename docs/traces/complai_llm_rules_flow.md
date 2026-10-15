@@ -37,7 +37,7 @@ The repo carries explicit accommodations for COMPL-AI:
   `conversation_correlation.py:1-12`).
 - `controller._estimate_risk` feeds the developer contract + history to the risk
   estimator, with a comment citing "compl-ai llm_rules-benign Q74"
-  (`controller.py:797-799`) — context-dependent prompts (e.g. a deployer-expected
+  (`controller.py:811-813`) — context-dependent prompts (e.g. a deployer-expected
   auth token) must not be mis-scored as obfuscated.
 - SDK and proxy attach a shared `ConversationContext` to `ProcessedRequest`.
   DCCL and speculative generation can see a role-serialized transcript rather
@@ -55,7 +55,7 @@ In MoralStack terms:
   message is the governed prompt; the full request-body transcript remains
   available as `conversation_context`.
 - Each turn resends the whole history (OpenAI convention), so the proxy derives
-  `turn_index = user_count - 1` statelessly (`proxy.py:526-541`).
+  `turn_index = user_count - 1` statelessly (`proxy.py:531-546`).
 
 ## 3. How a benchmark request flows through MoralStack
 
@@ -139,16 +139,16 @@ A client retry resends an identical body → identical history hash → same
 conversation_id and same stateless `turn_index`. `ProcessedRequest.request_id` is
 a fresh `uuid4` per instance (`types.py:196`) and the proxy builds a new
 `ProcessedRequest` per HTTP call, so a retry creates a **second** `requests` row
-at the same `(conversation_id, turn_index)` (`proxy.py:526-541`). Retries are not
+at the same `(conversation_id, turn_index)` (`proxy.py:531-546`). Retries are not
 deduplicated — duplicate turn rows can distort benchmark accounting.
 
 ### 4.4 Cache (ledger) reuse
 On a same-conversation hit, `ConversationalFastPathRunner.is_safe_to_apply` gates
 reuse: cached REFUSE always applied, ESCALATED never cached, `turn_index < 1`
-skipped (`controller.py:2194-2306`). A wrong collision (4.1) could cause reuse
+skipped (`controller.py:2246-2358`). A wrong collision (4.1) could cause reuse
 across logically distinct samples. The P0 hard-signal supremacy invariant still
 holds because `is_hard_signal_refuse` is re-evaluated after a cache patch
-(`controller.py:2209`).
+(`controller.py:2261`).
 
 ### 4.5 Endpoint selection
 COMPL-AI / IFBench runs should point at the production proxy launched via
@@ -180,7 +180,7 @@ requests unless the benchmark harness explicitly consumes SSE.
    `moralstack-ui` (file_only is invisible in the UI).
 6. **Generation model**: `OPENAI_MODEL` controls upstream generation; the
    `model` field in the request body is a client alias and is overridden
-   (`proxy.py:434,750-755`).
+   (`proxy.py:434,755-760`).
 7. **DCCL**: confirm DCCL is enabled for contract-driven `llm_rules` samples
    (`compliance/config.get_dccl_enabled`) — without it, deployer-authorized rule
    execution will not take the compliance fast-path.

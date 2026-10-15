@@ -19,7 +19,7 @@ Primary code: `moralstack/observability/*`, `moralstack/orchestration/default_pe
   persistent SQLite connection with `PRAGMA synchronous=NORMAL` scoped to that
   worker connection only (`service.py`, `write_queue.py`, `router.py`).
 - `obs.flush(timeout)` blocks until pending writes drain. The SDK wrapper
-  calls it at the request boundary (`wrapper.py:281`). **The proxy does not
+  calls it at the request boundary (`wrapper.py:306`). **The proxy does not
   flush per-request**: under burst load the queue grew faster than the
   single-writer drained it, so the bounded flush timed out on every call
   without delivering visibility while adding ~5s overhead per response.
@@ -273,9 +273,9 @@ shows those legacy rows where they were persisted.
 ## 6. What the UI displays (`moralstack/ui/app.py`)
 
 The dashboard reads **only** from SQLite (`get_db_path()` required;
-`_ReadStoreProxy` resolves the read store at call time, `ui/app.py:58-94`). It
+`_ReadStoreProxy` resolves the read store at call time, `ui/app.py:58-95`). It
 reconstructs:
-- **Per request** (`/runs/{run_id}/requests/{request_id}`, `ui/app.py:3559`,
+- **Per request** (`/runs/{run_id}/requests/{request_id}`, `ui/app.py:3561`,
   route `request_detail`): the deliberation timeline / "metro map" — calls
   grouped into visual tiers (`_group_calls_into_tiers_and_enrich`), risk
   mini-estimator breakdown, a synthetic calibration node
@@ -297,7 +297,7 @@ reconstructs:
   (structured signals only, never the `[SYSTEM_*]` text). The request page and the
   conversation timeline flag it, and `_build_delivery_path_summary` plus the
   `request.html` caption name the recorded principle.
-- **Per conversation** (`/conversations/{conversation_id}`, `ui/app.py:3839`,
+- **Per conversation** (`/conversations/{conversation_id}`, `ui/app.py:3842`,
   route `conversation_detail`): full multi-turn timeline via
   `_build_conversation_timeline`; 404 if no requests. Since the
   conversation-spine change, the per-turn loop inside
@@ -339,10 +339,10 @@ Yes, **when persistence is to the DB** (`db_only`/`dual`):
 
 - **`file_only` runs are invisible in the UI.** The dashboard reads SQLite only;
   JSONL-only runs produce no dashboard views (every route gates on
-  `get_db_path()`, e.g. `ui/app.py:3562-3563` in `request_detail`).
+  `get_db_path()`, e.g. `ui/app.py:3564-3565` in `request_detail`).
 - **Proxy assistant text vs. governed content.** For streaming SDK SAFE/NORMAL
   paths the audit `final_response` is recorded empty (the body is consumed by the
-  caller) (`wrapper.py:358-366,386-391`).
+  caller) (`wrapper.py:384-392,412-417`).
 - **Lineage-collided conversations merge in the DB.** If two samples share a
   lineage-derived conversation_id (see the multi-turn trace), their turns land
   under one conversation_id and cannot be separated after the fact.

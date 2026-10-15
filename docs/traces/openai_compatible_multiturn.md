@@ -21,10 +21,10 @@ The COMPL-AI `llm_rules` path uses the **production proxy** (per
 
 ### Endpoints
 `POST /v1/chat/completions`, `POST /chat/completions`, `GET /healthz`
-(`proxy.py:458-468`). The async route reads JSON, validates `messages` is a
+(`proxy.py:687-693`). The async route reads JSON, validates `messages` is a
 non-empty list, then dispatches `_handle_chat_completion_sync` via
 `run_in_threadpool` so blocking work doesn't stall the event loop
-(`proxy.py:463-518`).
+(`proxy.py:694-750`).
 
 ### How messages arrive
 The full OpenAI body is received. `messages` is the entire client-sent history
@@ -85,7 +85,7 @@ before this feature. Internal mode (default) is byte-identical: `body["model"]` 
 validated against an allowlist (documented, deferred security follow-up).
 
 ### conversation_id generation / propagation (`proxy.py:134-152`, resolver;
-`proxy.py:654-709`, route handler)
+`proxy.py:659-714`, route handler)
 Resolution precedence (principal keying only affects step 3):
 1. HTTP header `X-Moralstack-Conversation-Id` (highest).
 2. `extra_body.moralstack_conversation_id`.
@@ -100,7 +100,7 @@ Resolution precedence (principal keying only affects step 3):
   (a hostile client could forge the header unless the fronting layer strips
   client-supplied copies). Note this header starts with `x-` and therefore
   passes `_collect_safe_headers` (`proxy.py:164-175`) and appears in the
-  correlation debug line (`proxy.py:683-691`) — acceptable for an identifier,
+  correlation debug line (`proxy.py:688-696`) — acceptable for an identifier,
   not for a secret.
 - **(B)** HMAC-SHA256 of an `Authorization: Bearer <token>` value, keyed by
   `MORALSTACK_PRINCIPAL_HMAC_SECRET` (read **per-request** via `os.environ.get`,
@@ -141,7 +141,7 @@ Lineage correlation (`server/conversation_correlation.py`):
   (including the assistant reply) under `(principal, completed_hash)` so the next
   request's parent hash links back within the same principal
   (`:161-176`).
-- Env wiring (`create_app`, `proxy.py:544-574`, `608-611`):
+- Env wiring (`create_app`, `proxy.py:549-579`, `608-611`):
   `MORALSTACK_CORRELATION_TTL_SECONDS` / `MORALSTACK_CORRELATION_MAX_ENTRIES`.
   Best-effort parsed **and** range-validated (`ttl_seconds > 0`, `max_entries >= 1`);
   a missing var, a parse error, or an out-of-range value falls back to the
@@ -150,7 +150,7 @@ Lineage correlation (`server/conversation_correlation.py`):
   `SessionStore` TTL; if an operator overrides only one, a lineage entry can
   outlive (or expire before) its governance session state.
 
-### turn_index handling (`proxy.py:717-732`)
+### turn_index handling (`proxy.py:722-737`)
 Stateless: `turn_index = max(0, user_message_count - 1)`. Turn 0 = first request
 with one user message; turn 1 = two user messages, etc. Chosen so a server
 restart or multiple clients sharing a conversation_id don't desync from the
@@ -239,14 +239,14 @@ other than `NO_CONTRACT` is present). REFUSE responses also set
 `UNKNOWN` / `DELIBERATIVE_PATH` / `stop` before the F6 fix).
 
 ### What is persisted (proxy)
-- `requests` row pre-inserted (`_ensure_request_row`, `proxy.py:584-621`) and
+- `requests` row pre-inserted (`_ensure_request_row`, `proxy.py:589-626`) and
   finalized with `final_response`/domain/meta (`_finalize_request`,
-  `proxy.py:624-705`).
+  `proxy.py:629-710`).
 - `PROXY_OUTPUT_FINALIZED` orchestration event with `final_text_source`
   (`governed`, `governed_refusal`, or `governed_pipeline_refusal`) plus
   governed-delivery audit markers (`proxy.py:374-394`).
 - `proxy_request_events` row via `emit_proxy_request_finalized` (posture in/out,
-  cache hints, headers, response length) (`proxy.py:678-698`).
+  cache hints, headers, response length) (`proxy.py:683-703`).
 - `conversation_states` + `ledger_events` from the controller (multi-turn).
 - `session_store.put(conversation_id, governance_state_out)` after a successful
   turn (`proxy.py:303-304`).

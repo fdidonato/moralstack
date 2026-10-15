@@ -56,7 +56,7 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 |---|---|---|
 | `moralstack` | `moralstack.cli.run:main` | CLI runner |
 | `moralstack-ui` | `moralstack.ui.app:main` | dashboard |
-| `moralstack-server` | `moralstack.server.proxy:main` | **reserved** — `main()` raises `NotImplementedError`; use `create_app` instead (`server/proxy.py:777`) |
+| `moralstack-server` | `moralstack.server.proxy:main` | **reserved** — `main()` raises `NotImplementedError`; use `create_app` instead (`server/proxy.py:782`) |
 | `moralstack-validate-overlay` | `moralstack.cli.validate_overlay:main` | overlay validation |
 
 ---
@@ -447,14 +447,14 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 ## 3. Runtime governance flow (high level)
 
 `govern()` → `GovernedClient.chat.completions.create()` → `Orchestrator.process()`
-→ `OrchestrationController.process()` (`orchestration/controller.py:1885`).
+→ `OrchestrationController.process()` (`orchestration/controller.py:1937`).
 
 Inside `process()` (order verified in source):
 1. Normalize request; build `ProcessCallContext`; set session/turn context vars;
-   pre-insert the `requests` row (`controller.py:1900-1923`).
+   pre-insert the `requests` row (`controller.py:1952-1975`).
 2. **Risk estimation** — speculative overlap (risk + draft in parallel) when
    `enable_speculative_generation`, else direct `_estimate_risk`
-   (`controller.py:1928-1935`). `_speculative_generate` selects the draft generator:
+   (`controller.py:1980-1987`). `_speculative_generate` selects the draft generator:
    `request.upstream_draft_generator` (opt-in `generation="upstream_then_verify"` +
    client `model`, wired by the SDK/proxy) when present, else `self.policy` (default,
    byte-identical). An empty/whitespace upstream draft is treated as "no draft" →
@@ -466,7 +466,7 @@ Inside `process()` (order verified in source):
    reuse rows and `ResponseAssembler.assemble` — see `upstream_draft.py` above and
    `.claude/rules/governed-delivery.md`.
 3. **DCCL evaluation** on the (possibly non-blocking) speculative draft
-   (`_run_dccl_evaluation`, `controller.py:1936`). The LLM path receives a
+   (`_run_dccl_evaluation`, `controller.py:1988`). The LLM path receives a
    budgeted role-ordered transcript from `ConversationContext`; when the draft
    is about to be reused, the mismatch guard prevents a last-user-only draft from
    becoming final if governance saw broader prior context. **Hard-signal gate (P0
@@ -479,23 +479,23 @@ Inside `process()` (order verified in source):
    validated aligned draft (and no hard signal) → **compliance fast-path**
    (`_route_compliance_match`), skipping risk routing and deliberation.
 4. Apply overlay sensitivity risk floor (`apply_risk_floor_if_sensitive`),
-   normalize domain, domain-exclusion check (`controller.py:2062-2116`).
+   normalize domain, domain-exclusion check (`controller.py:2114-2168`).
 5. **Decision** — `decide_action(...)` then `apply_safe_complete_gating(...)`
-   (`controller.py:2118-2130`).
+   (`controller.py:2170-2182`).
 6. **Routing** — `get_route(...)` → one of `refuse | benign | safe_complete |
    fast_path | deliberative`; `is_hard_signal_refuse(...)`
-   (`controller.py:2143-2144`).
+   (`controller.py:2195-2196`).
 7. **Ledger lookup** (multi-turn) — when a ledger + conversation_id exist, a
    cache hit may patch the decision/route to skip deliberation
-   (`controller.py:2149-2306`). The patched decision carries
+   (`controller.py:2201-2358`). The patched decision carries
    `cached_decision_reused` as its last reason code, so a replayed decision is
    distinguishable from a deliberated one in the audit trail. Note that the
    ledger key is `(contract_hash, posture, domain)` and the storage is
    process-local: hits are **not** confined to the current conversation.
-8. Dispatch to the matching `_route_*` handler (`controller.py:2345-end`).
+8. Dispatch to the matching `_route_*` handler (`controller.py:2397-end`).
 9. `_apply_conversation_metadata_to_result` stamps conversation linkage, builds
    `conversation_governance_state_out`, emits conversation events, and stores the
-   decision in the ledger (`controller.py:423-525`), except transient fail-closed
+   decision in the ledger (`controller.py:425-527`), except transient fail-closed
    REFUSEs (`LEDGER_NON_CACHEABLE_FLIP_REASONS`: the `deliberation_critique_*` and
    `fast_path_escalation_*` codes, and the pipeline-failure codes `system_error` /
    `system_timeout`), which are never stored.
@@ -645,7 +645,7 @@ Verified by `tests/test_static_prefix_stability.py`.
   risk floor) and `sensitive_risk_floor`. Excluded domains short-circuit to a
   domain-exclusion response (`_route_domain_excluded`).
 - `core` is retrieval-only and never becomes a runtime overlay
-  (`_normalize_runtime_domain`, `controller.py:117-130`); `DomainPrefilter`
+  (`_normalize_runtime_domain`, `controller.py:118-132`); `DomainPrefilter`
   independently excludes `core` from `domains_to_check` (`retriever.py:447`),
   so `core` never appears in the prefilter's `AVAILABLE DOMAINS` section either
   (`ALWAYS_EVALUATE = {"core"}`, `retriever.py:279`).
@@ -705,7 +705,7 @@ The **Convergence Engine** decides the loop outcome (verified):
   cycle≥max ⇒ stop (`CYCLES_EXHAUSTED`); else continue while cycles remain.
 
 The controller emits a `DELIBERATION_AGGREGATE` decision trace
-(`controller.py:721-786`). Fast paths (`run_fast_path`, `run_benign_fast_path`)
+(`controller.py:735-800`). Fast paths (`run_fast_path`, `run_benign_fast_path`)
 skip the deliberative loop.
 
 ---
@@ -714,10 +714,10 @@ skip the deliberative loop.
 
 `GovernedClient` is a transparent proxy: only `chat.completions.create()` is
 intercepted; everything else passes through via `__getattr__`
-(`wrapper.py:606-608`). On construction it generates a session `run_id` and (for
+(`wrapper.py:632-634`). On construction it generates a session `run_id` and (for
 `db_only`/`dual`) ensures the DB schema + a `runs` row exist
-(`wrapper.py:578-604`). After each call it flushes observability synchronously
-(`wrapper.py:275-283`). Failure handling honors `config.failure_policy`
+(`wrapper.py:604-630`). After each call it flushes observability synchronously
+(`wrapper.py:300-308`). Failure handling honors `config.failure_policy`
 (`refuse` default, or `passthrough`).
 
 ---
@@ -759,17 +759,17 @@ See `docs/traces/openai_compatible_multiturn.md`.
 
 - **Identity**: `conversation_id` + `turn_index`. SDK uses a per-`SessionState`
   counter (`next_turn_index`, `session.py:77-84`). Proxy derives `turn_index`
-  statelessly as `user_message_count - 1` (`proxy.py:526-541`) and resolves
+  statelessly as `user_message_count - 1` (`proxy.py:531-546`) and resolves
   `conversation_id` via header/extra_body/lineage.
 - **State**: `ConversationGovernanceState` carries posture, last contract hash,
   hard constraints, and `turn_decisions_summary`. The controller extends it per
-  turn (`_extend_state_out_v04`, `controller.py:478-543`).
+  turn (`_extend_state_out_v04`, `controller.py:480-545`).
 - **Cache**: `SemanticDecisionLedger` can short-circuit deliberation on a
   same-conversation cache hit, gated by `ConversationalFastPathRunner.is_safe_to_apply`
   (cached REFUSE always applied; ESCALATED never cached; `turn_index < 1` skipped).
 - **Risk in context**: history + developer contract are passed into the risk
   estimator so context-dependent prompts are not mis-scored
-  (`controller.py:788-845`).
+  (`controller.py:802-859`).
 - **Request transcript**: SDK and proxy both attach `ConversationContext` to
   `ProcessedRequest`. DCCL and speculative generation can use a role-serialized
   transcript; risk/deliberative modules may use smaller declared windows.
@@ -847,7 +847,7 @@ dashboard (see fragile areas).
 (`get_db_path()`), and renders per-request and per-conversation views by reading
 the observability tables and rebuilding the deliberation timeline / metro map.
 
-Routes (`ui/app.py:1738-2185`): `/`, `/login`, `/logout`, `/auth-status`,
+Routes (`ui/app.py:1740-2187`): `/`, `/login`, `/logout`, `/auth-status`,
 `/runs`, `/runs/{run_id}`, `/runs/{run_id}/requests/{request_id}`,
 `/runs/{run_id}/requests/{request_id}/export.md`,
 `/runs/{run_id}/export_benchmark.md`, `/conversations`,
@@ -982,7 +982,7 @@ codebase contains targeted accommodations for it:
   `llm_rules` resends the full history with no stable `conversation_id`
   (module docstring).
 - `controller._estimate_risk` passes the developer contract + history to the
-  risk estimator citing "compl-ai llm_rules-benign Q74" (`controller.py:797-799`).
+  risk estimator citing "compl-ai llm_rules-benign Q74" (`controller.py:811-813`).
 - `examples/server_quickstart.py` documents the recommended COMPL-AI launch
   (uvicorn, single worker, port 8080).
 - `scripts/benchmark_moralstack.py` is MoralStack's **own** 84-question
