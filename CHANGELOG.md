@@ -443,6 +443,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **SDK routing and stream metadata follow the delivered action (F6 follow-up).**
+  `GovernedCompletions.create` now routes on `delivery.final_action` instead of the raw label, so
+  an unlabelled, blank-content or non-canonical result takes the REFUSE branch like the proxy.
+  A REFUSE stream replays `delivery.text` (a blank refusal used to stream an empty string) and
+  stream `governance_metadata.final_action` is the delivered action, equal to the non-stream
+  value. Valid-label responses are unchanged; `finish_reason` is unchanged (follow-up).
+
 - **One normalization rule for the `final_action` label (F6 follow-up).** The
   `ensure_final_action_and_return` backfill now writes the canonical upper-case label
   (`NORMAL_COMPLETE` / `SAFE_COMPLETE` / `REFUSE`; it wrote lowercase). The turn summary, the

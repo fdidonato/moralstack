@@ -368,3 +368,121 @@ def test_sdk_stream_unlabelled_result_is_refusal():
     text = _join_stream_text(resp)
     assert text == DEFAULT_POST_REVALIDATION_REFUSAL
     assert "REAL ANSWER" not in text
+
+
+# ---------------------------------------------------------------------------
+# C3: SDK routing and stream metadata follow the delivered action (D1a)
+# ---------------------------------------------------------------------------
+
+
+def _real_result(label: str, content: str) -> Any:
+    from moralstack.orchestration.types import FinalResponse, OrchestratorResult, ResponseMetadata, ResponseType
+
+    return OrchestratorResult(
+        response=FinalResponse(
+            content=content,
+            response_type=ResponseType.WITH_CAVEAT,
+            metadata=ResponseMetadata(final_action=label),
+        ),
+        request_id="req-c3",
+    )
+
+
+def _sdk_client_for(result: Any) -> tuple[Any, GovernedClient]:
+    from moralstack.sdk.config import GovernanceConfig
+
+    mock_openai = MagicMock()
+    orch = MagicMock()
+    orch.process.return_value = result
+    return mock_openai, GovernedClient(mock_openai, orch, GovernanceConfig())
+
+
+def _create(client: GovernedClient, *, stream: bool) -> Any:
+    return client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "Hello"}], stream=stream)
+
+
+def test_sdk_stream_unlabelled_is_refusal_stream():
+    from moralstack.orchestration.final_revalidation import DEFAULT_POST_REVALIDATION_REFUSAL
+
+    mock_openai, client = _sdk_client_for(_real_result("", "REAL ANSWER"))
+    resp = _create(client, stream=True)
+    mock_openai.chat.completions.create.assert_not_called()
+    assert isinstance(resp, GovernedRefusalStream)
+    assert _join_stream_text(resp) == DEFAULT_POST_REVALIDATION_REFUSAL
+    assert resp.governance_metadata.final_action == "REFUSE"
+
+
+def test_sdk_stream_blank_normal_is_refusal_stream():
+    from moralstack.orchestration.final_revalidation import DEFAULT_POST_REVALIDATION_REFUSAL
+
+    mock_openai, client = _sdk_client_for(_real_result("NORMAL_COMPLETE", "  "))
+    resp = _create(client, stream=True)
+    mock_openai.chat.completions.create.assert_not_called()
+    assert isinstance(resp, GovernedRefusalStream)
+    assert _join_stream_text(resp) == DEFAULT_POST_REVALIDATION_REFUSAL
+    assert resp.governance_metadata.final_action == "REFUSE"
+
+
+def test_sdk_stream_blank_refuse_streams_default_refusal():
+    from moralstack.orchestration.final_revalidation import DEFAULT_POST_REVALIDATION_REFUSAL
+
+    _, client = _sdk_client_for(_real_result("REFUSE", ""))
+    resp = _create(client, stream=True)
+    assert isinstance(resp, GovernedRefusalStream)
+    assert _join_stream_text(resp) == DEFAULT_POST_REVALIDATION_REFUSAL
+    assert resp.governance_metadata.final_action == "REFUSE"
+
+
+def test_sdk_stream_lowercase_safe_complete_metadata_canonical():
+    _, client = _sdk_client_for(_real_result("safe_complete", "Use caution."))
+    resp = _create(client, stream=True)
+    assert isinstance(resp, GovernedSyntheticStream)
+    assert _join_stream_text(resp) == "Use caution."
+    assert resp.governance_metadata.final_action == "SAFE_COMPLETE"
+
+
+def test_sdk_stream_lowercase_refuse_is_refusal_stream():
+    _, client = _sdk_client_for(_real_result(" refuse ", "No."))
+    resp = _create(client, stream=True)
+    assert isinstance(resp, GovernedRefusalStream)
+    assert _join_stream_text(resp) == "No."
+    assert resp.governance_metadata.final_action == "REFUSE"
+
+
+def test_sdk_stream_garbage_label_never_delivers_content():
+    from moralstack.orchestration.final_revalidation import DEFAULT_POST_REVALIDATION_REFUSAL
+
+    # U+017F (long s) look-alike: must not pass as SAFE_COMPLETE.
+    _, client = _sdk_client_for(_real_result("ſafe_complete", "SECRET CONTENT"))
+    resp = _create(client, stream=True)
+    text = _join_stream_text(resp)
+    assert text == DEFAULT_POST_REVALIDATION_REFUSAL
+    assert "SECRET CONTENT" not in text
+    assert resp.governance_metadata.final_action == "REFUSE"
+
+
+@pytest.mark.parametrize(
+    ("label", "content"),
+    [
+        ("", "REAL ANSWER"),
+        ("NORMAL_COMPLETE", "  "),
+        ("REFUSE", ""),
+        ("safe_complete", "Use caution."),
+        (" refuse ", "No."),
+        ("ſafe_complete", "SECRET CONTENT"),
+    ],
+)
+def test_sdk_nonstream_metadata_equals_stream_metadata(label: str, content: str):
+    _, stream_client = _sdk_client_for(_real_result(label, content))
+    stream_resp = _create(stream_client, stream=True)
+    _, plain_client = _sdk_client_for(_real_result(label, content))
+    plain_resp = _create(plain_client, stream=False)
+    assert stream_resp.governance_metadata.final_action == plain_resp.governance_metadata.final_action
+
+
+def test_refusal_stream_direct_construction_legacy():
+    result = _make_result("REFUSE")
+    result.response.content = "Legacy refusal."
+    refusal = GovernedRefusalStream(result)
+    assert refusal.governance_metadata.final_action == "REFUSE"
+    assert _join_stream_text(refusal) == "Legacy refusal."

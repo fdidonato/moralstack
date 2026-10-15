@@ -31,6 +31,7 @@ from moralstack.sdk.session import SessionState
 from moralstack.utils.env_loader import load_env
 
 if TYPE_CHECKING:
+    from moralstack.orchestration.delivery import GovernedDelivery
     from moralstack.runtime.orchestrator import Orchestrator
 
 
@@ -153,15 +154,26 @@ class GovernedStreamResponse:
 
 
 class GovernedRefusalStream:
-    """Synthetic stream for REFUSE when stream=True."""
+    """Synthetic stream for REFUSE when stream=True.
 
-    def __init__(self, result: Any) -> None:
+    With ``delivery`` (the production path), the stream replays ``delivery.text``
+    and the metadata carries the delivered action, so it agrees with the
+    non-stream response. Without it, behaviour is legacy: raw result content and
+    raw metadata.
+    """
+
+    def __init__(self, result: Any, *, delivery: GovernedDelivery | None = None) -> None:
         self._result = result
-        self.governance_metadata = GovernedResponse.from_refusal(result).governance_metadata
+        self._delivery = delivery
+        if delivery is not None:
+            self.governance_metadata = GovernedResponse.from_governed_text(result, delivery).governance_metadata
+        else:
+            self.governance_metadata = GovernedResponse.from_refusal(result).governance_metadata
 
     def __iter__(self) -> Iterator[Any]:
         # Yield a single synthetic chunk with refusal text
-        yield _SyntheticStreamChunk(self._result.response.content)
+        text = self._delivery.text if self._delivery is not None else self._result.response.content
+        yield _SyntheticStreamChunk(text)
 
     def __enter__(self) -> GovernedRefusalStream:
         return self
@@ -222,10 +234,22 @@ class GovernedSyntheticStream:
     intermediate generations.
     """
 
-    def __init__(self, text: str, result: Any, *, model: str | None = None) -> None:
+    def __init__(
+        self,
+        text: str,
+        result: Any,
+        *,
+        model: str | None = None,
+        delivery: GovernedDelivery | None = None,
+    ) -> None:
         self._text = text or ""
         self._result = result
-        self.governance_metadata = GovernedResponse.from_normal(None, result).governance_metadata
+        # With `delivery`, the metadata reports the delivered (canonical) action;
+        # without it, the legacy raw-result metadata is kept.
+        if delivery is not None:
+            self.governance_metadata = GovernedResponse.from_governed_text(result, delivery).governance_metadata
+        else:
+            self.governance_metadata = GovernedResponse.from_normal(None, result).governance_metadata
         # Opt-in generation="upstream_then_verify": `model` is the provenance-
         # derived delivery model (set by the caller only when the delivered
         # text is the verbatim upstream draft). Internal/governed streams keep
@@ -292,7 +316,8 @@ class GovernedCompletions:
     ) -> GovernedResponse | GovernedRefusalStream | GovernedSyntheticStream | GovernedErrorStream:
         """
         Deliberate on the prompt, then deliver the governed pipeline text:
-        - REFUSE: return GovernedResponse / GovernedRefusalStream (governed refusal text).
+        - REFUSE (the delivered action, so unlabelled or blank results count as
+          REFUSE): return GovernedResponse / GovernedRefusalStream (``delivery.text``).
         - SAFE_COMPLETE / NORMAL_COMPLETE: return the governed pipeline text via
           from_governed_text, or replay it as a GovernedSyntheticStream when streaming.
 
@@ -389,8 +414,6 @@ class GovernedCompletions:
 
         session.update_from_result(result)
 
-        final_action = result.response.metadata.final_action
-
         # Governed delivery (Plan 1 invariant): the delivered text is ALWAYS the
         # text produced inside the MoralStack governed pipeline (validated
         # speculative draft, compliance regeneration, policy generate/rewrite, or
@@ -426,9 +449,10 @@ class GovernedCompletions:
             final_action=delivery.final_action,
         )
 
-        if final_action == "REFUSE":
+        # Route on the delivered (canonical) action, never the raw label.
+        if delivery.final_action == "REFUSE":
             if is_stream:
-                return GovernedRefusalStream(result)
+                return GovernedRefusalStream(result, delivery=delivery)
             return GovernedResponse.from_governed_text(
                 result,
                 delivery,
@@ -437,13 +461,14 @@ class GovernedCompletions:
                 rewrite_model=rewrite_model,
             )
 
-        # NORMAL_COMPLETE / SAFE_COMPLETE (and blank-content fail-closed
-        # downgrades produced by finalize_delivery).
+        # NORMAL_COMPLETE / SAFE_COMPLETE only: blank-content and unlabelled
+        # downgrades are already REFUSE in `delivery.final_action` above.
         if is_stream:
             return GovernedSyntheticStream(
                 delivery.text,
                 result,
                 model=delivery_model if _upstream_verbatim else None,
+                delivery=delivery,
             )
         return GovernedResponse.from_governed_text(
             result,

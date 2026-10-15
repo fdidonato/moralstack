@@ -739,10 +739,14 @@ See `docs/traces/openai_compatible_multiturn.md`.
 
 ## 10. Streaming behavior
 
-- **SDK**: supported. Deliberation runs *before* streaming starts. `REFUSE`
-  yields a single synthetic chunk (`GovernedRefusalStream`); otherwise the
-  upstream stream is wrapped by `GovernedStreamResponse` with
-  `governance_metadata` attached (`wrapper.py:186-251`).
+- **SDK**: supported. Deliberation runs *before* streaming starts, and the
+  route follows the delivered action (`delivery.final_action`, so an unlabelled or
+  blank result counts as `REFUSE`). `REFUSE` yields a single synthetic chunk that
+  replays `delivery.text` (`GovernedRefusalStream`, `wrapper.py:156-183`);
+  otherwise the governed text is replayed word by word (`GovernedSyntheticStream`,
+  `wrapper.py:224-278`). No live upstream tokens are forwarded. Stream
+  `governance_metadata` reports the delivered action. `GovernedStreamResponse`
+  (wrapper over an upstream stream) is retained but unused by `create()`.
 - **Production proxy**: supported as governed synthetic SSE replay. Governance
   runs to completion first; `_build_synthetic_sse_response` replays the final
   governed answer as OpenAI-compatible `chat.completion.chunk` events without
