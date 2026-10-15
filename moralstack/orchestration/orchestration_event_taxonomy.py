@@ -72,6 +72,15 @@ turn proceeds with full deliberation. Payload includes ``from_turn``,
 ``similarity``, ``cached_action``, ``current_route``, ``gate_reason``.
 """
 
+# Pipeline failure (F6 follow-up): audit-only, best-effort
+PIPELINE_FAILED = "PIPELINE_FAILED"
+"""
+Emitted best-effort when ``process()`` fails closed (handler or generic except).
+Payload: ``fail_closed_reason``, ``triggered_principle``, ``error_type``, ``path``.
+Never the exception message. Audit only, never read for routing. Not a
+``decision_traces`` row: the UI detects a pipeline failure by the absence of FINAL.
+"""
+
 # Conversation (multi-turn foundation; emit only when context is explicitly provided)
 CONVERSATION_CONTEXT_ATTACHED = "CONVERSATION_CONTEXT_ATTACHED"
 CONVERSATION_STATE_UPDATED = "CONVERSATION_STATE_UPDATED"
@@ -187,6 +196,7 @@ ALL_EVENT_TYPES: frozenset[str] = frozenset(
         CONVERSATION_STATE_UPDATED,
         LEDGER_FAST_PATH_APPLIED,
         LEDGER_FAST_PATH_NOT_APPLIED,
+        PIPELINE_FAILED,
         PROXY_OUTPUT_FINALIZED,
         PROXY_FINAL_REVALIDATION_STARTED,
         PROXY_FINAL_REVALIDATION_PASSED,

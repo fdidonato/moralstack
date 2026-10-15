@@ -1739,6 +1739,7 @@ class OrchestrationController:
         """
         processing_time = int((time.time() - start_time) * 1000)
         self._log_pipeline_failure(request, reason, error)
+        self._emit_pipeline_failed_event(request, reason=reason, principle=principle, error=error)
         try:
             error_text = str(error) or type(error).__name__
         except Exception:
@@ -1760,6 +1761,43 @@ class OrchestrationController:
             error=error_text,
             errors=[error_text],
         )
+
+    def _emit_pipeline_failed_event(
+        self, request: ProcessedRequest, *, reason: str, principle: str, error: BaseException
+    ) -> None:
+        """Best-effort ``PIPELINE_FAILED`` orchestration event (§5.6): never raises, never changes the result.
+
+        Audit only: nothing reads it for routing, and it is not a ``decision_traces`` row, so the UI
+        still detects a failure by the absence of a FINAL row. The payload is exactly
+        ``{fail_closed_reason, triggered_principle, error_type, path}``: never the exception text
+        (provider error bodies must not reach the audit DB). Emitted for handler and generic-except
+        failures; the ``ensure`` fallback does not emit.
+
+        ``persist_orchestration_event`` is imported inside the function on purpose (same pattern as the
+        other emitters in this module): the tests patch ``moralstack.observability.emit_helpers``, and a
+        module-level import would bind the original function and silently defeat that patch.
+        """
+        try:
+            from moralstack.observability.emit_helpers import persist_orchestration_event
+            from moralstack.orchestration.orchestration_event_taxonomy import PIPELINE_FAILED
+
+            persist_orchestration_event(
+                request_id=getattr(request, "request_id", "") or "",
+                stage="orchestrator",
+                component="controller",
+                event_type=PIPELINE_FAILED,
+                decision="REFUSE",
+                status="error",
+                reason_codes=[reason],
+                payload={
+                    "fail_closed_reason": reason,
+                    "triggered_principle": principle,
+                    "error_type": type(error).__name__,
+                    "path": "ERROR_PATH",
+                },
+            )
+        except Exception:
+            _LOG.debug("emit PIPELINE_FAILED event failed", exc_info=True)
 
     def _log_pipeline_failure(self, request: ProcessedRequest, reason: str, error: BaseException) -> None:
         """Best-effort WARNING (§5.6): never raises, never changes the result."""
@@ -3077,6 +3115,7 @@ class OrchestrationController:
             return self._attach_trace_and_return(self._handle_error(request, e, start_time), request, call_ctx)
         except (AssertionError, Exception) as e:
             self._log_pipeline_failure(request, SYSTEM_ERROR_FAIL_CLOSED, e)
+            self._emit_pipeline_failed_event(request, reason=SYSTEM_ERROR_FAIL_CLOSED, principle="SYSTEM.FAIL_SAFE", error=e)
             orch_debug_log(
                 "orchestrator.py:process",
                 "early return Exception",

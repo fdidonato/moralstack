@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`PIPELINE_FAILED` orchestration event.** When `process()` fails closed (a `MoralStackError`,
+  an `OrchestratorTimeoutError` or an unexpected exception), the controller now writes one
+  best-effort `PIPELINE_FAILED` row to `orchestration_events`, with payload `fail_closed_reason`,
+  `triggered_principle`, `error_type` and `path` (never the exception text). Audit only: it is
+  not a `decision_traces` row, so UI detection (no FINAL row) is unchanged, and any emission
+  error is swallowed. The `ensure` fallback does not emit. `docs/CODEBASE_FACTS.md` also records
+  the three meanings of `hard_violation_flip_reason`, and two hypotheses (`hard_violation_*`
+  cacheability, and the remaining exception-text sinks in the SDK `from_pipeline_error` and the
+  generic-except debug log).
+
 - **Documented: truncated speculative draft gap.** `docs/CODEBASE_FACTS.md` records, as a
   hypothesis, that a speculative draft cut mid-list (benchmark questions Q25/Q60, 46
   completion tokens) was delivered incomplete. Its cause cannot be read from the audit trail,

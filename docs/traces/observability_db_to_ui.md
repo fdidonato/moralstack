@@ -66,7 +66,7 @@ Schema in `observability/sinks/sqlite_sink.py:48-489`; connection uses WAL +
 | `requests` | per request: prompt, domain, `final_response`, merged `meta_json`; PK `(run_id, request_id)` |
 | `llm_calls` | every LLM call: module, action, model, prompt, system_prompt, raw_response, parsed/summary JSON, token usage, cycle, sequence, call_kind/outcome, cache_status, `billable_provider_call` |
 | `request_token_usage` | synchronous best-effort per-request token summary (one row per `run_id`/`request_id`); not authoritative — see token accounting notes below |
-| `orchestration_events` | pipeline events (speculative, compliance, ledger fast-path, conversation, proxy output finalized) |
+| `orchestration_events` | pipeline events (speculative, compliance, ledger fast-path, conversation, proxy output finalized, `PIPELINE_FAILED` for handler / generic-except failures) |
 | `decision_traces` | stage snapshots (`RISK_ASSESSMENT`, `COMPLIANCE_LAYER`, `DELIBERATION_AGGREGATE`, `RELEVANT_PRINCIPLES`, `FINAL`, …) as `trace_json` (a blob, not typed columns — new trace fields are additive and need no migration, but old rows lack the key) |
 | `debug_events` | low-level diagnostic payloads |
 | `exports_cache` | cached markdown exports |

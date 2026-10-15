@@ -822,3 +822,225 @@ def test_g6_ensure_backfill_then_delivery_is_refuse(request: pytest.FixtureReque
     delivery = finalize_delivery(out)
     assert delivery.final_action == "REFUSE"
     assert delivery.finish_reason == "content_filter"
+
+
+# =============================================================================
+# F6 follow-up C7: best-effort PIPELINE_FAILED orchestration event
+# =============================================================================
+
+_SPY_TARGET = "moralstack.observability.emit_helpers.persist_orchestration_event"
+_PF_KEYS = {"fail_closed_reason", "triggered_principle", "error_type", "path"}
+_PF_CASES = [
+    pytest.param(lambda: GenerationError(f"Generation failed: {SECRET}"), "system_error", "SYSTEM.ERROR", id="error"),
+    pytest.param(
+        lambda: OrchestratorTimeoutError(f"{TIMEOUT_TEXT} {SECRET}"), "system_timeout", "SYSTEM.TIMEOUT", id="timeout"
+    ),
+    pytest.param(lambda: ValueError(f"unexpected {SECRET}"), "system_error", "SYSTEM.FAIL_SAFE", id="generic"),
+]
+
+
+class _EventSpy:
+    def __init__(self, *, raises: bool = False) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.raises = raises
+
+    def __call__(self, **kwargs: Any) -> None:
+        self.calls.append(kwargs)
+        if self.raises:
+            raise RuntimeError("event sink down")
+
+    def failed(self) -> list[dict[str, Any]]:
+        return [c for c in self.calls if c.get("event_type") == "PIPELINE_FAILED"]
+
+
+@pytest.mark.parametrize("conv", _CONVS)
+@pytest.mark.parametrize("make_exc,reason,principle", _PF_CASES)
+def test_pf1_pipeline_failed_event_emitted(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    make_exc: Any,
+    reason: str,
+    principle: str,
+    conv: Any,
+) -> None:
+    spy = _EventSpy()
+    monkeypatch.setattr(_SPY_TARGET, spy)
+    exc = make_exc()
+    _fail(_ctrl(request=request), monkeypatch, exc, conv=conv)
+    events = spy.failed()
+    assert len(events) == 1
+    event = events[0]
+    assert event["decision"] == "REFUSE"
+    assert event["status"] == "error"
+    assert event["reason_codes"] == [reason]
+    assert event["request_id"] == "req-f6"
+    assert set(event["payload"]) == _PF_KEYS
+    assert event["payload"] == {
+        "fail_closed_reason": reason,
+        "triggered_principle": principle,
+        "error_type": type(exc).__name__,
+        "path": "ERROR_PATH",
+    }
+
+
+@pytest.mark.parametrize("make_exc,reason,principle", _PF_CASES)
+def test_pf2_pipeline_failed_event_has_no_exception_text(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, make_exc: Any, reason: str, principle: str
+) -> None:
+    spy = _EventSpy()
+    monkeypatch.setattr(_SPY_TARGET, spy)
+    _fail(_ctrl(request=request), monkeypatch, make_exc())
+    events = spy.failed()
+    assert len(events) == 1
+    assert "secret-ish body" not in json.dumps(events[0], default=str)
+
+
+@pytest.mark.parametrize("make_exc,reason,principle", _PF_CASES)
+def test_pf3_event_failure_never_breaks_the_request(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, make_exc: Any, reason: str, principle: str
+) -> None:
+    spy = _EventSpy(raises=True)
+    monkeypatch.setattr(_SPY_TARGET, spy)
+    result = _fail(_ctrl(request=request), monkeypatch, make_exc())
+    assert len(spy.failed()) >= 1
+    meta = result.response.metadata
+    assert meta.final_action == "REFUSE"
+    assert meta.triggered_principles == [principle]
+    assert meta.hard_violation_flip_reason == reason
+    assert result.response.content == ("[SYSTEM_TIMEOUT]" if principle == "SYSTEM.TIMEOUT" else "[SYSTEM_ERROR]")
+    assert result.path == "ERROR_PATH"
+
+
+@pytest.mark.parametrize("make_exc,reason,principle", _PF_CASES)
+def test_pf3b_event_failure_does_not_swallow_the_warning(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    ctrl_log: _ListHandler,
+    make_exc: Any,
+    reason: str,
+    principle: str,
+) -> None:
+    monkeypatch.setattr(_SPY_TARGET, _EventSpy(raises=True))
+    _fail(_ctrl(request=request), monkeypatch, make_exc())
+    assert len(_failure_warnings(ctrl_log)) == 1
+
+
+def test_pf4_pipeline_failed_in_taxonomy() -> None:
+    from moralstack.orchestration import orchestration_event_taxonomy as tax
+
+    assert getattr(tax, "PIPELINE_FAILED", None) == "PIPELINE_FAILED"
+    assert "PIPELINE_FAILED" in tax.ALL_EVENT_TYPES
+
+
+def test_pf5_no_pipeline_failed_event_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    spy = _EventSpy()
+    monkeypatch.setattr(_SPY_TARGET, spy)
+    orch = create_orchestrator(
+        policy=MockPolicy(),
+        risk_estimator=MockRiskEstimator(),
+        critic=MockCritic(),
+        simulator=MockSimulator(),
+        hindsight=MockHindsight(),
+        perspectives=MockPerspectives(),
+        constitution_store=MockConstitutionStore(),
+        max_cycles=1,
+        timeout_ms=60_000,
+    )
+    result = orch.process(
+        ProcessedRequest(prompt="Tell me about depression medication", request_id="req-ok"),
+        conversation_id="c1",
+        turn_index=1,
+    )
+    assert result.response.metadata.final_action != "REFUSE"
+    assert spy.failed() == []
+
+
+def test_pf6_event_persists_and_does_not_leak_into_ui_detection(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pytest.importorskip("fastapi")
+    import sqlite3
+
+    from moralstack.observability.context import (
+        get_current_request_id,
+        get_current_run_id,
+        set_current_request_id,
+        set_current_run_id,
+    )
+    from moralstack.observability.governance_audit import build_request_meta_from_result
+    from moralstack.observability.service import get_obs
+    from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
+    from moralstack.ui.app import _detect_pipeline_failure
+    from tests.test_ui_conversation_views import (
+        _bind_observability_db,
+        _reinstall_observability_service_writes,
+        _reset_observability_singleton,
+    )
+
+    dbp = str(tmp_path / "pf6.db")
+    _reinstall_observability_service_writes()
+    _reset_observability_singleton()
+    _bind_observability_db(monkeypatch, dbp)
+    init_db(dbp)
+    prev_run, prev_req = get_current_run_id(), get_current_request_id()
+    try:
+        create_run("run-pf6", run_type="single", meta={})
+        upsert_request("run-pf6", "req-f6", prompt="hello", domain="general")
+        set_current_run_id("run-pf6")
+        set_current_request_id("req-f6")
+        result = _fail(_ctrl(request=request), monkeypatch, GenerationError("g"))
+        get_obs().flush(timeout=10.0)
+    finally:
+        set_current_run_id(prev_run)  # type: ignore[arg-type]
+        set_current_request_id(prev_req)  # type: ignore[arg-type]
+    conn = sqlite3.connect(dbp)
+    try:
+        failed = conn.execute(
+            "SELECT COUNT(*) FROM orchestration_events WHERE request_id = ? AND event_type = ?",
+            ("req-f6", "PIPELINE_FAILED"),
+        ).fetchone()[0]
+        final_rows = conn.execute(
+            "SELECT COUNT(*) FROM decision_traces WHERE request_id = ? AND UPPER(TRIM(stage)) = 'FINAL'", ("req-f6",)
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert failed == 1
+    assert final_rows == 0
+    assert _detect_pipeline_failure([], build_request_meta_from_result(result)) is True
+
+
+def test_pf7_ensure_fallback_emits_no_event(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    spy = _EventSpy()
+    monkeypatch.setattr(_SPY_TARGET, spy)
+    ctrl = _ctrl(request=request)
+    bad = FinalResponse(content="x", response_type=None, metadata=ResponseMetadata())  # type: ignore[arg-type]
+    out = ctrl._diagnostics.ensure_final_action_and_return(
+        OrchestratorResult(response=bad, execution_trace=MagicMock()),
+        ProcessedRequest(prompt="p", request_id="req-d"),
+        time.time(),
+        None,
+        attach_trace_fn=lambda res, _req: res,
+    )
+    assert out.error == "final_action_undefined"
+    assert spy.failed() == []
+
+
+def test_pf8_unprintable_exception_still_emits(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    spy = _EventSpy()
+    monkeypatch.setattr(_SPY_TARGET, spy)
+    result = _fail(_ctrl(request=request), monkeypatch, _UnprintableError("x"))
+    events = spy.failed()
+    assert len(events) == 1
+    assert events[0]["payload"]["error_type"] == "_UnprintableError"
+    assert result.response.metadata.final_action == "REFUSE"
+
+
+def test_pf9_handler_without_run_context_emits_nothing_and_refuses(request: pytest.FixtureRequest) -> None:
+    # Real persist_orchestration_event, no spy, no run_id in context: it returns None.
+    ctrl = _ctrl(request=request)
+    req = ProcessedRequest(prompt="hello", request_id="req-f6")
+    result = ctrl._handle_error(req, GenerationError("g"), time.time())
+    assert result.response.metadata.final_action == "REFUSE"
+    assert result.path == "ERROR_PATH"
+    timeout = ctrl._handle_timeout(req, OrchestratorTimeoutError(TIMEOUT_TEXT), time.time())
+    assert timeout.response.metadata.final_action == "REFUSE"

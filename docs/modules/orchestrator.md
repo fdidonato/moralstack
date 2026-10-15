@@ -627,7 +627,10 @@ The Orchestrator implements a fail-safe system:
   recognizes a pipeline failure by a `SYSTEM.ERROR` / `SYSTEM.TIMEOUT` / `SYSTEM.FAIL_SAFE` principle plus the absence of
   FINAL, through the shared predicate `pipeline_failure_principle` in `reports/pipeline_failure.py`, structured signals
   only). If
-  `str(error)` is empty or raises, `error` is the exception class name
+  `str(error)` is empty or raises, `error` is the exception class name. Both handlers and the generic `except` also call
+  `_emit_pipeline_failed_event`, a best-effort `PIPELINE_FAILED` orchestration event (payload `fail_closed_reason`,
+  `triggered_principle`, `error_type`, `path`, never the exception text; swallowed on any error; audit only, not a
+  `decision_traces` row). The `ensure` fallback does not emit
 - **Decision label canonicalization**: `normalize_final_action` (`orchestration/types.py`) is the single rule
   (`.strip()`, ASCII-only `.upper()`, membership in `CANONICAL_FINAL_ACTIONS`; `None` when it has no canonical form). It
   is used by `finalize_delivery`, the `ensure_final_action_and_return` early return, and the turn summary / posture

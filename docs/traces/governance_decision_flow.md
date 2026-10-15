@@ -399,7 +399,10 @@ one INFO line and is not stored (a stored non-canonical label would make a later
   `reports/pipeline_failure.py::pipeline_failure_principle`; the request page names
   the recorded principle); one WARNING `pipeline failed closed ...`. The codes are in
   `LEDGER_NON_CACHEABLE_FLIP_REASONS`, so the ledger never stores them.
-  `finalize_delivery` then delivers REFUSE / `content_filter`.
+  `finalize_delivery` then delivers REFUSE / `content_filter`. The handlers and the generic
+  `except` also emit one best-effort `PIPELINE_FAILED` orchestration event
+  (`_emit_pipeline_failed_event`: `fail_closed_reason`, `triggered_principle`, `error_type`,
+  `path`; never the exception text); the `ensure` fallback does not emit.
 - **Streaming (`stream=True`)**: the governed text is replayed as OpenAI-compatible
   synthetic SSE (`GovernedSyntheticStream` in the SDK, `_build_synthetic_sse_response`
   in the proxy); live upstream tokens are never forwarded.
