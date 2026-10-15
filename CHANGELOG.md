@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Documented: truncated speculative draft gap.** `docs/CODEBASE_FACTS.md` records, as a
+  hypothesis, that a speculative draft cut mid-list (benchmark questions Q25/Q60, 46
+  completion tokens) was delivered incomplete. Its cause cannot be read from the audit trail,
+  because `finish_reason` is not persisted on `llm_calls`. Not fixed. Docs only.
+
 - **Documented: constitution inspirational sources.** `docs/constitution.md` §9.1 now records
   the design history of the constitution and the five bodies of work it draws on
   (Constitutional AI/RLAIF, OpenAI Model Spec, HLEG guidelines and AI Act Art. 5, principlism,
