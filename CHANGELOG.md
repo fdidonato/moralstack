@@ -473,7 +473,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content at `e30c97a` against HEAD. The one anchor whose cited line was rewritten (the proxy
   endpoints, `proxy.py:458-468` in `docs/traces/openai_compatible_multiturn.md`) was re-anchored
   by content to the route definitions (`proxy.py:687-693`), and the async route anchor in the same
-  section to `chat_completions` (`proxy.py:694-750`). Other anchors that were already stale before
+  section to `chat_completions` (`proxy.py:694-750`). `docs/modules/decision_explanation.md` now
+  cites the `reason_codes` priority in `ResponseMetadata.from_decision` at `orchestration/types.py:409-413`. Other anchors that were already stale before
   the track are not changed (separate cleanup). Docs only.
 
 - **Request report status shows `PIPELINE FAILURE` (F6 follow-up).** `request_report_from_db` now
