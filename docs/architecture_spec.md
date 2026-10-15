@@ -917,6 +917,8 @@ The request (deliberation) report is built from persistence (`request_report_fro
 - **When `final_action` is REFUSE**: the report uses the first (most recent) LLM call whose `action` contains the substring `"refuse"` and uses its `raw_response` as the displayed content. If no such call exists, the report shows no content (empty string), so that a deliberative draft is never shown as the final response for a REFUSE.
 - **Otherwise**: the report uses the last LLM call with `"generate"` or `"rewrite"` in `action` and its `raw_response` as the final response text.
 
+The report **status** line comes from the FINAL trace row's `final_action`; when `meta_json.triggered_principles` records a pipeline-failure principle (`SYSTEM.ERROR`, `SYSTEM.TIMEOUT`, `SYSTEM.FAIL_SAFE`) and there is no FINAL row, it reads `PIPELINE FAILURE` plus the principle instead (`pipeline_failure_principle` in `moralstack/reports/pipeline_failure.py`, structured signals only; the CLI report applies the same rule to the result's `triggered_principles`).
+
 Refusal text is persisted as an LLM call with `action` containing `"refuse"` (e.g. `"refuse (fast_path)"`, `"refuse (deliberative)"`) by the controller (fast-path REFUSE) and by the deliberation runner after the response assembler produces a REFUSE.
 
 ---

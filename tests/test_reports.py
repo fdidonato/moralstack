@@ -367,3 +367,180 @@ class TestGetFinalResponseText:
         ]
         assert get_final_response_text(calls, "NORMAL_COMPLETE") == "Revised answer."
         assert get_final_response_text(calls, None) == "Revised answer."
+
+
+# -----------------------------------------------------------------------------
+# F6 follow-up C6: report status for pipeline failures (shared predicate)
+# -----------------------------------------------------------------------------
+
+_FAILURE_PRINCIPLES = ["SYSTEM.ERROR", "SYSTEM.TIMEOUT", "SYSTEM.FAIL_SAFE"]
+_PRE_FINAL_ROWS = {
+    "s1": [],
+    "s2": [
+        ("RISK_ASSESSMENT", {"risk_score": 0.6, "risk_category": "moderate"}),
+        ("PRE_POLICY", {"final_action": "SAFE_COMPLETE", "path": "DELIBERATIVE_PATH"}),
+    ],
+    "s3": [
+        ("RISK_ASSESSMENT", {"risk_score": 0.6, "risk_category": "moderate"}),
+        ("PRE_POLICY", {"final_action": "SAFE_COMPLETE", "path": "DELIBERATIVE_PATH"}),
+        ("RELEVANT_PRINCIPLES", {"relevant_principle_ids": ["p1", "p2"]}),
+    ],
+}
+_UNSET = object()
+
+
+def _seeded_report(tmp_path, monkeypatch, *, rows, meta, raw_meta=_UNSET):
+    """Seed one request (meta dict, or the raw meta_json text) plus decision-trace rows and build the DB report."""
+    import json
+    import sqlite3
+
+    from moralstack.observability import obs
+    from moralstack.observability.emit_helpers import persist_decision_trace
+    from moralstack.observability.sinks.sqlite_sink import (
+        create_run,
+        init_db,
+        update_request_meta,
+        update_request_response,
+        upsert_request,
+    )
+    from moralstack.reports.model import request_report_from_db
+
+    db_path = str(tmp_path / "report_status.db")
+    monkeypatch.setenv("MORALSTACK_DB_PATH", db_path)
+    monkeypatch.setenv("MORALSTACK_PERSIST_MODE", "db_only")
+    assert init_db(db_path)
+    run_id, request_id = "run-status", "req-status"
+    assert create_run(run_id, run_type="test", meta={})
+    assert upsert_request(run_id, request_id, prompt="do something", domain="general")
+    if meta is not None:
+        assert update_request_meta(run_id, request_id, meta)
+    assert update_request_response(run_id, request_id, "[SYSTEM_ERROR]")
+    for sequence, (stage, payload) in enumerate(rows, start=1):
+        assert persist_decision_trace(
+            run_id=run_id, request_id=request_id, stage=stage, sequence=sequence, trace_json=json.dumps(payload)
+        )
+    obs.flush(timeout=10.0)
+    if raw_meta is not _UNSET:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                "UPDATE requests SET meta_json = ? WHERE run_id = ? AND request_id = ?", (raw_meta, run_id, request_id)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    report = request_report_from_db(run_id, request_id)
+    assert report is not None
+    return report
+
+
+class TestPipelineFailureStatus:
+    """request_report_from_db flags a pipeline failure from structured signals only (never from text)."""
+
+    @pytest.mark.parametrize("principle", _FAILURE_PRINCIPLES)
+    @pytest.mark.parametrize("shape", ["s1", "s2", "s3"])
+    def test_status_flags_pipeline_failure(self, tmp_path, monkeypatch, shape, principle):
+        meta = {"final_action": "REFUSE", "triggered_principles": [principle]}
+        report = _seeded_report(tmp_path, monkeypatch, rows=_PRE_FINAL_ROWS[shape], meta=meta)
+
+        assert "PIPELINE FAILURE" in report.status
+        assert principle in report.status
+        assert "REFUSED" not in report.status
+        assert "APPROVED" not in report.status
+
+    @pytest.mark.parametrize(
+        "action,expected",
+        [
+            ("NORMAL_COMPLETE", "✅ **APPROVED** - Response delivered."),
+            ("SAFE_COMPLETE", "⚠ **APPROVED WITH CAVEATS** - Response includes disclaimers."),
+            ("REFUSE", "🛑 **REFUSED** - Request refused due to policy."),
+        ],
+    )
+    def test_status_unchanged_for_final_rows(self, tmp_path, monkeypatch, action, expected):
+        rows = [("FINAL", {"final_action": action, "path": "FAST_PATH"})]
+        report = _seeded_report(tmp_path, monkeypatch, rows=rows, meta={"final_action": action})
+
+        assert report.status == expected
+
+    def test_final_row_present_with_system_principle_unchanged(self, tmp_path, monkeypatch):
+        rows = [("FINAL", {"final_action": "NORMAL_COMPLETE", "path": "FAST_PATH"})]
+        meta = {"final_action": "NORMAL_COMPLETE", "triggered_principles": ["SYSTEM.ERROR"]}
+        report = _seeded_report(tmp_path, monkeypatch, rows=rows, meta=meta)
+
+        assert report.status == "✅ **APPROVED** - Response delivered."
+
+    def test_no_final_no_principle_unchanged(self, tmp_path, monkeypatch):
+        report = _seeded_report(tmp_path, monkeypatch, rows=[], meta={"final_action": "REFUSE"})
+
+        assert report.status == "📋 **COMPLETED** - Outcome from trace."
+
+    @pytest.mark.parametrize(
+        "raw_meta",
+        [None, "not json", "[]", "null", '{"triggered_principles":"SYSTEM.ERROR"}'],
+    )
+    def test_malformed_meta_json_never_raises(self, tmp_path, monkeypatch, raw_meta):
+        report = _seeded_report(tmp_path, monkeypatch, rows=[], meta=None, raw_meta=raw_meta)
+
+        assert report.status == "📋 **COMPLETED** - Outcome from trace."
+
+    def test_markdown_renders_failure_status(self, tmp_path, monkeypatch):
+        meta = {"final_action": "REFUSE", "triggered_principles": ["SYSTEM.TIMEOUT"]}
+        report = _seeded_report(tmp_path, monkeypatch, rows=[], meta=meta)
+
+        assert "PIPELINE FAILURE" in render_executive_summary(report)
+        assert "PIPELINE FAILURE" in render_request_report(report)
+
+
+class TestCliReportPipelineFailure:
+    """request_report_from_cli: a SYSTEM.* failure principle is not reported as a policy refusal."""
+
+    @staticmethod
+    def _cli_trace(response_type):
+        from moralstack.cli.models import DeliberationTrace
+
+        return DeliberationTrace(
+            request_id="cli-failure",
+            prompt="Hi",
+            path="fast",
+            risk_score=0.3,
+            risk_category="",
+            response_type=response_type,
+            total_cycles=0,
+            converged=False,
+            phases=[],
+        )
+
+    @pytest.mark.parametrize(
+        "exc_name,principle",
+        [
+            ("GenerationError", "SYSTEM.ERROR"),
+            ("OrchestratorTimeoutError", "SYSTEM.TIMEOUT"),
+            ("ValueError", "SYSTEM.FAIL_SAFE"),
+        ],
+    )
+    def test_cli_report_flags_pipeline_failure(self, request, monkeypatch, exc_name, principle):
+        from moralstack.orchestration import types as orch_types
+        from tests.test_pipeline_error_fail_closed import _ctrl, _fail
+
+        exc_cls = getattr(orch_types, exc_name, None) or ValueError
+        result = _fail(_ctrl(safe=True, request=request), monkeypatch, exc_cls("x"))
+        assert result.response.metadata.triggered_principles == [principle]
+
+        report = request_report_from_cli(self._cli_trace("full_refusal"), None, result, "Hi")
+
+        assert "PIPELINE FAILURE" in report.status
+        assert principle in report.status
+        assert "policy violations" not in report.status
+
+    def test_cli_report_policy_refusal_unchanged(self):
+        from types import SimpleNamespace
+
+        result = SimpleNamespace(
+            response=SimpleNamespace(content="No.", metadata=SimpleNamespace(triggered_principles=["SAFETY.HARM.1"])),
+            trace=None,
+        )
+        report = request_report_from_cli(self._cli_trace("full_refusal"), None, result, "Hi")
+
+        assert "REFUSED" in report.status
+        assert "policy violations" in report.status
+        assert "PIPELINE FAILURE" not in report.status

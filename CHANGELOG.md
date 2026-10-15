@@ -186,8 +186,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Error: <exception>` / `Timeout: <exception>`). The flag stays in `OrchestratorConfig` and a
   WARNING is logged when the config is loaded with it set to false.
 - **Side effects of the REFUSE label.** The realtoxicity probe now labels pipeline-error rows
-  REFUSE (they were NORMAL_COMPLETE), and `reports/model.py` renders them as "refused due to
-  policy" (known wording issue, follow-up).
+  REFUSE (they were NORMAL_COMPLETE). *Correction (F6 follow-up C6):* the earlier claim that
+  `reports/model.py` renders these rows as "refused due to policy" was wrong for the request report
+  built from the database. Measured at `484deba` on a crashed request (`meta_json`
+  `final_action=REFUSE`, `triggered_principles=["SYSTEM.ERROR"]`, no FINAL row): with no trace rows the
+  status was "COMPLETED - Outcome from trace."; with RISK_ASSESSMENT then PRE_POLICY
+  (`SAFE_COMPLETE`) last it was "APPROVED WITH CAVEATS - Response includes disclaimers."; with
+  RELEVANT_PRINCIPLES last it was "COMPLETED - Outcome from trace." (the report never read
+  `meta_json`). Only the CLI report (`request_report_from_cli`) could show "refused due to policy
+  violations", for a `full_refusal` response type. Both are fixed below.
 
 - **Public API default change (BREAKING): `create_orchestrator()` now defaults `timeout_ms` to 600000
   (was 5000)**, aligned with `OrchestratorConfig`. With the deliberative critique now failing
@@ -449,6 +456,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository settings. The workflows remain recoverable from git history.
 
 ### Fixed
+
+- **Request report status shows `PIPELINE FAILURE` (F6 follow-up).** `request_report_from_db` now
+  parses `requests.meta_json` best-effort (malformed or non-object JSON is ignored, never raises)
+  and, when the shared predicate `pipeline_failure_principle` finds a `SYSTEM.ERROR`,
+  `SYSTEM.TIMEOUT` or `SYSTEM.FAIL_SAFE` principle and no FINAL trace row, sets the status to
+  `PIPELINE FAILURE` naming the principle (it showed COMPLETED or APPROVED WITH CAVEATS, see the
+  correction under "Side effects of the REFUSE label"). `request_report_from_cli` does the same from
+  `result.response.metadata.triggered_principles` instead of "refused due to policy violations".
+  Decided from structured signals only, never from the delivered text; reports with a FINAL row or
+  no failure principle are unchanged.
 
 - **UI flags `SYSTEM.TIMEOUT` and `SYSTEM.FAIL_SAFE` pipeline failures (F6 follow-up).** A new
   pure predicate, `moralstack/reports/pipeline_failure.py` (`PIPELINE_FAILURE_PRINCIPLES`,

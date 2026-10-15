@@ -10,6 +10,31 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from moralstack.reports.pipeline_failure import pipeline_failure_principle
+
+
+def _pipeline_failure_status(principle: str) -> str:
+    """Status line for a request whose controller failed closed before a governed decision."""
+    return (
+        f"🛑 **PIPELINE FAILURE** - The governance pipeline failed before a governed decision ({principle}); "
+        "the delivered text is a fail-closed placeholder, not a policy decision."
+    )
+
+
+def _parse_meta_json(raw: Any) -> dict[str, Any] | None:
+    """Best-effort parse of ``requests.meta_json`` (dict or JSON text); never raises, ``None`` if unusable."""
+    import json
+
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, (str, bytes, bytearray)):
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
 
 @dataclass
 class PhaseInfo:
@@ -309,6 +334,11 @@ def request_report_from_db(run_id: str, request_id: str) -> "RequestReport | Non
             status = "**" + final_action + "**"
     else:
         status = "📋 **COMPLETED** - Outcome from trace."
+    # Structured signals only (never the delivered text): a recorded SYSTEM.* failure principle with
+    # no FINAL row is a pipeline failure, not a policy decision (shared predicate with the UI).
+    failure_principle = pipeline_failure_principle(traces, _parse_meta_json(req.get("meta_json")))
+    if failure_principle is not None:
+        status = _pipeline_failure_status(failure_principle)
 
     by_cycle: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for c in llm_calls:
@@ -520,7 +550,17 @@ def request_report_from_cli(trace: Any, call_logger: Any, result: Any, prompt: s
         fa = (getattr(orch_trace, "final_action", "") or "").strip()
         dp = (getattr(orch_trace, "decision_path", "") or "").strip()
         decision_reason = (fa + " (" + dp + ")") if fa else ""
-    if trace.response_type == "full_refusal":
+    cli_principle = None
+    try:
+        # Best-effort: a result without ``response.metadata.triggered_principles`` keeps the legacy status.
+        cli_principle = pipeline_failure_principle(
+            [], {"triggered_principles": list(result.response.metadata.triggered_principles or [])}
+        )
+    except (AttributeError, TypeError):
+        cli_principle = None
+    if cli_principle is not None:
+        status = _pipeline_failure_status(cli_principle)
+    elif trace.response_type == "full_refusal":
         status = "Ὢb **REFUSED** - Request was refused due to policy violations"
     elif trace.response_type == "with_caveat":
         status = "⚠ **APPROVED WITH CAVEATS** - Response includes disclaimers"
