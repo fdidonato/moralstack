@@ -173,7 +173,8 @@ class GovernedRefusalStream:
     def __iter__(self) -> Iterator[Any]:
         # Yield a single synthetic chunk with refusal text
         text = self._delivery.text if self._delivery is not None else self._result.response.content
-        yield _SyntheticStreamChunk(text)
+        finish_reason = self._delivery.finish_reason if self._delivery is not None else "content_filter"
+        yield _SyntheticStreamChunk(text, finish_reason=finish_reason)
 
     def __enter__(self) -> GovernedRefusalStream:
         return self
@@ -291,7 +292,7 @@ class GovernedErrorStream:
         self.governance_metadata = response.governance_metadata
 
     def __iter__(self) -> Iterator[Any]:
-        yield _SyntheticStreamChunk(self._text, model="moralstack-error")
+        yield _SyntheticStreamChunk(self._text, model="moralstack-error", finish_reason="content_filter")
 
     def __enter__(self) -> GovernedErrorStream:
         return self

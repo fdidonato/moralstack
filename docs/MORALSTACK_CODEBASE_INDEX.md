@@ -544,7 +544,7 @@ finalized by the pure `finalize_delivery` in
 |---|---|---|
 | `NORMAL_COMPLETE` | deliver governed text via `GovernedResponse.from_governed_text`; **client not called** | synthetic `chat.completion` from governed text (or synthetic SSE replay when `stream=True`); **upstream not called** |
 | `SAFE_COMPLETE` | deliver governed text via `from_governed_text`; **client not called** | synthetic `chat.completion` / SSE replay from governed text; **upstream not called** |
-| `REFUSE` | return governed refusal text; **client not called** | synthetic `chat.completion` (finish_reason `content_filter`); **upstream not called** |
+| `REFUSE` | return governed refusal text (`finish_reason` `content_filter` on the synthetic choice, the refusal stream chunk and the error stream; NORMAL/SAFE keep `stop`); **client not called** | synthetic `chat.completion` (finish_reason `content_filter`); **upstream not called** |
 
 Blank/invalid governed content fails closed to a deterministic governed refusal
 (`final_text_source="governed_pipeline_refusal"`). Pipeline failures also fail

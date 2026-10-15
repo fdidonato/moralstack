@@ -209,3 +209,64 @@ class TestSyntheticChoice:
         assert choice.message.role == "assistant"
         assert choice.finish_reason == "stop"
         assert choice.index == 0
+
+
+# ---------------------------------------------------------------------------
+# C4: SDK finish_reason follows the delivered decision (D3a)
+# ---------------------------------------------------------------------------
+
+
+def test_synthetic_choice_accepts_finish_reason():
+    assert _SyntheticChoice("x", "content_filter").finish_reason == "content_filter"
+    assert _SyntheticChoice("x").finish_reason == "stop"
+
+
+def _real_result(label: str, content: str):
+    from moralstack.orchestration.types import FinalResponse, OrchestratorResult, ResponseMetadata, ResponseType
+
+    return OrchestratorResult(
+        response=FinalResponse(
+            content=content,
+            response_type=ResponseType.WITH_CAVEAT,
+            metadata=ResponseMetadata(final_action=label),
+        ),
+        request_id="req-c4",
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "content", "expected"),
+    [
+        ("NORMAL_COMPLETE", "ok", "stop"),
+        ("SAFE_COMPLETE", "ok", "stop"),
+        ("REFUSE", "no", "content_filter"),
+        ("NORMAL_COMPLETE", "   ", "content_filter"),
+    ],
+)
+def test_governed_response_finish_reason_by_action(label: str, content: str, expected: str):
+    from moralstack.orchestration.delivery import finalize_delivery
+
+    result = _real_result(label, content)
+    delivery = finalize_delivery(result)
+    resp = GovernedResponse.from_governed_text(result, delivery)
+    assert resp.choices[0].finish_reason == expected
+
+
+def test_governed_response_finish_reason_other_factories():
+    assert GovernedResponse.from_pipeline_error(RuntimeError("x")).choices[0].finish_reason == "content_filter"
+    assert GovernedResponse.from_refusal(_make_result("REFUSE")).choices[0].finish_reason == "content_filter"
+    # No OpenAI response and a non-REFUSE label keeps the legacy "stop".
+    assert GovernedResponse.from_normal(None, _make_result("NORMAL_COMPLETE")).choices[0].finish_reason == "stop"
+
+
+@pytest.mark.parametrize(
+    ("label", "content"),
+    [("REFUSE", "no"), ("NORMAL_COMPLETE", "ok"), ("NORMAL_COMPLETE", "   "), ("SAFE_COMPLETE", "ok")],
+)
+def test_finish_reason_parity_with_proxy(label: str, content: str):
+    from moralstack.orchestration.delivery import finalize_delivery
+
+    result = _real_result(label, content)
+    delivery = finalize_delivery(result)
+    resp = GovernedResponse.from_governed_text(result, delivery)
+    assert resp.choices[0].finish_reason == delivery.finish_reason

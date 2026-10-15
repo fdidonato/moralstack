@@ -167,6 +167,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   label are canonical (were verbatim); a non-ASCII look-alike label no longer reaches the header
   encoder. The audit copy of the headers carries the same value. Valid canonical labels, the body
   and `finish_reason` are unchanged.
+- **SDK `finish_reason` is `content_filter` for governed refusals (BREAKING, behaviour).** Every
+  SDK-delivered REFUSE (non-stream `GovernedResponse.choices`, the `GovernedRefusalStream` chunk,
+  the `GovernedErrorStream` chunk, and `from_pipeline_error`) now carries
+  `finish_reason="content_filter"`, matching the proxy and `GovernedDelivery.finish_reason`; it
+  was always `stop`. NORMAL_COMPLETE and SAFE_COMPLETE keep `stop`. `_SyntheticChoice` accepts an
+  optional `finish_reason` (default `stop`). SDK clients that matched `stop` on refusals must
+  update.
 
 - **Pipeline-error responses are now governed refusals (BREAKING, behaviour).** Proxy responses for
   a pipeline error or timeout now carry `finish_reason="content_filter"`,

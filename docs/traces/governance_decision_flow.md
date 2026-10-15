@@ -371,7 +371,7 @@ ledger store is strict skip-only: only an exact canonical label is cached; anyth
 one INFO line and is not stored (a stored non-canonical label would make a later hit raise).
 
 - **NORMAL_COMPLETE / SAFE_COMPLETE**: the SDK returns the governed text via
-  `GovernedResponse.from_governed_text(...)` (`wrapper.py:453-478`); the proxy
+  `GovernedResponse.from_governed_text(...)` (`wrapper.py:454-480`); the proxy
   returns it as a synthetic `chat.completion` (`proxy.py:_handle_chat_completion_sync`).
   No wrapped-client / upstream call is made. SAFE_COMPLETE governance guidance is
   composed *inside* the governed pipeline (policy prompt), not appended to a
@@ -381,8 +381,12 @@ one INFO line and is not stored (a stored non-canonical label would make a later
 - **REFUSE**: the SDK routes on the delivered action (`delivery.final_action`, so
   unlabelled / blank results are REFUSE), returns `delivery.text` without calling the
   wrapped client, and streams it through `GovernedRefusalStream(result, delivery=delivery)`
-  with metadata reporting the delivered action (`wrapper.py:453-478`); proxy returns a synthetic `chat.completion` with
-  `finish_reason="content_filter"` and **no upstream call**.
+  with metadata reporting the delivered action (`wrapper.py:454-480`). Every SDK-delivered
+  REFUSE carries `finish_reason="content_filter"` (non-stream `GovernedResponse.choices`
+  derives it from `governance_metadata.final_action == "REFUSE"`; `GovernedRefusalStream` and
+  `GovernedErrorStream` chunks use it too), aligned with the proxy, which returns a synthetic
+  `chat.completion` with `finish_reason="content_filter"` and **no upstream call**. NORMAL /
+  SAFE keep `stop`.
 - **Pipeline failure inside `process()`** (a `MoralStackError` or
   `OrchestratorTimeoutError` caught by the controller): `_handle_error` /
   `_handle_timeout` (via `_pipeline_failure_result`) return a governed REFUSE with

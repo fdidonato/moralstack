@@ -196,9 +196,9 @@ class _SyntheticChoice:
     index: int = 0
     logprobs: Any = None
 
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, finish_reason: str = "stop") -> None:
         self.message = _SyntheticMessage(content=content)
-        self.finish_reason = "stop"
+        self.finish_reason = finish_reason
         self.index = 0
         self.logprobs = None
 
@@ -282,7 +282,10 @@ class GovernedResponse:
         """Compatibility with ChatCompletion.choices."""
         if self.openai_response is not None:
             return cast(list[Any], self.openai_response.choices)
-        return [_SyntheticChoice(self.governance_content or "")]
+        # Transport label derived from the structured decision (never from text);
+        # mirrors ``finalize_delivery``: content_filter iff the delivered action is REFUSE.
+        finish_reason = "content_filter" if self.governance_metadata.final_action == "REFUSE" else "stop"
+        return [_SyntheticChoice(self.governance_content or "", finish_reason)]
 
     @property
     def model(self) -> str | None:

@@ -486,3 +486,55 @@ def test_refusal_stream_direct_construction_legacy():
     refusal = GovernedRefusalStream(result)
     assert refusal.governance_metadata.final_action == "REFUSE"
     assert _join_stream_text(refusal) == "Legacy refusal."
+
+
+# ---------------------------------------------------------------------------
+# C4: stream finish_reason follows the delivered decision (D3a)
+# ---------------------------------------------------------------------------
+
+
+def test_refusal_stream_chunk_is_content_filter():
+    from moralstack.orchestration.delivery import finalize_delivery
+
+    # Via create(stream=True)
+    _, client = _sdk_client_for(_real_result("REFUSE", "No."))
+    resp = _create(client, stream=True)
+    assert isinstance(resp, GovernedRefusalStream)
+    assert [c.choices[0].finish_reason for c in resp] == ["content_filter"]
+
+    # Direct construction, without delivery (legacy)
+    legacy = GovernedRefusalStream(_make_result("REFUSE"))
+    assert [c.choices[0].finish_reason for c in legacy] == ["content_filter"]
+
+    # Direct construction, with delivery
+    real = _real_result("REFUSE", "No.")
+    with_delivery = GovernedRefusalStream(real, delivery=finalize_delivery(real))
+    assert [c.choices[0].finish_reason for c in with_delivery] == ["content_filter"]
+
+
+def test_error_stream_is_content_filter():
+    from moralstack.sdk.config import GovernanceConfig
+    from moralstack.sdk.wrapper import GovernedErrorStream
+
+    mock_openai = MagicMock()
+    orch = MagicMock()
+    orch.process.side_effect = RuntimeError("boom")
+    client = GovernedClient(mock_openai, orch, GovernanceConfig())
+
+    resp = _create(client, stream=True)
+
+    mock_openai.chat.completions.create.assert_not_called()
+    assert isinstance(resp, GovernedErrorStream)
+    chunks = list(resp)
+    assert [c.choices[0].finish_reason for c in chunks] == ["content_filter"]
+    assert chunks[0].model == "moralstack-error"
+
+
+@pytest.mark.parametrize("label", ["NORMAL_COMPLETE", "SAFE_COMPLETE"])
+def test_synthetic_stream_still_stop(label: str):
+    _, client = _sdk_client_for(_real_result(label, "one two three"))
+    resp = _create(client, stream=True)
+    assert isinstance(resp, GovernedSyntheticStream)
+    reasons = [c.choices[0].finish_reason for c in resp]
+    assert reasons[-1] == "stop"
+    assert all(r is None for r in reasons[:-1])
