@@ -23,8 +23,9 @@ fail-closed substitutions of a deterministic safe refusal: when the governed
 content is blank (an empty answer must never be delivered), and when the result
 carries no valid decision label (``final_action`` outside NORMAL_COMPLETE /
 SAFE_COMPLETE / REFUSE). A label differing only in ASCII case or surrounding
-whitespace is normalized, not refused. The label decides; the text is never
-inspected.
+whitespace is normalized, not refused (the rule is
+``moralstack.orchestration.types.normalize_final_action``, shared with the other
+consumers). The label decides; the text is never inspected.
 """
 
 from __future__ import annotations
@@ -33,13 +34,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from moralstack.orchestration.final_revalidation import DEFAULT_POST_REVALIDATION_REFUSAL
+from moralstack.orchestration.types import normalize_final_action
 
 # New delivery sources introduced by Plan 1.
 GOVERNED_TEXT_SOURCE = "governed"
 GOVERNED_REFUSAL_SOURCE = "governed_refusal"
 GOVERNED_PIPELINE_REFUSAL_SOURCE = "governed_pipeline_refusal"
-
-_DELIVERABLE_FINAL_ACTIONS = frozenset({"NORMAL_COMPLETE", "SAFE_COMPLETE", "REFUSE"})
 
 # Historical ``final_text_source`` values that pre-date Plan 1. They are no
 # longer produced by active delivery code, but historical UI rows, report
@@ -116,13 +116,9 @@ def finalize_delivery(result: Any, *, config: Any = None) -> GovernedDelivery:
             empty_governed_content=True,
         )
 
-    action = original_final_action.strip()
-    if action.isascii():
-        # Normalize only ASCII case: str.upper() maps non-ASCII look-alikes
-        # (e.g. U+017F "ſ" -> "S") onto a deliverable label.
-        action = action.upper()
+    action = normalize_final_action(original_final_action)
 
-    if action not in _DELIVERABLE_FINAL_ACTIONS:
+    if action is None:
         # Fail closed: the result has no valid decision label. Defense in depth
         # for the pipeline error contract; never deliver it as NORMAL_COMPLETE.
         return GovernedDelivery(

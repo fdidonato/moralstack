@@ -16,6 +16,7 @@ from moralstack.orchestration.types import (
     FinalResponse,
     OrchestratorResult,
     ProcessedRequest,
+    normalize_final_action,
     response_type_to_final_action,
 )
 from moralstack.runtime.decision_correctness import (
@@ -235,14 +236,18 @@ class DiagnosticsLayer:
         attach_trace_fn: Callable[[OrchestratorResult, ProcessedRequest], OrchestratorResult],
     ) -> OrchestratorResult:
         """
-        Asserts final_action is set and valid before returning.
-        FAIL_SAFE only for undefined or invalid final_action (last-resort).
+        Ensures final_action is set before returning.
+        A label that normalizes (``normalize_final_action``: whitespace / ASCII case) is
+        kept as is; consumers normalize it. An empty label is backfilled from
+        response_type with the canonical upper-case name. A non-empty label that does
+        not normalize is not rewritten here: delivery fails it closed.
+        FAIL_SAFE only when response_type cannot be mapped (last-resort).
         DCF: after ensuring final_action, evaluates correctness and saves to
         metadata.decision_correctness.
         attach_trace_fn(result, request) must return OrchestratorResult with trace attached.
         """
-        meta_fa = (result.response.metadata.final_action or "").strip().upper()
-        if meta_fa in ("REFUSE", "SAFE_COMPLETE", "NORMAL_COMPLETE"):
+        meta_fa = normalize_final_action(str(result.response.metadata.final_action or ""))
+        if meta_fa is not None:
             res_path = getattr(result, "path", "") or ""
             res_cycles = getattr(result, "total_cycles", 0)
             if res_path == "DELIBERATIVE_PATH" and res_cycles == 0:
@@ -276,20 +281,14 @@ class DiagnosticsLayer:
                 request,
             )
         if not result.response.metadata.final_action and final_action is not None:
-            result.response.metadata.final_action = (
-                final_action.value if hasattr(final_action, "value") else str(final_action)
-            )
+            result.response.metadata.final_action = final_action.name
         res_path = getattr(result, "path", "") or ""
         res_cycles = getattr(result, "total_cycles", 0)
         if res_path == "DELIBERATIVE_PATH" and res_cycles == 0:
             log_deliberation_inconsistency(
                 getattr(request, "request_id", "") or "",
                 res_path,
-                (
-                    meta_fa
-                    if meta_fa in ("REFUSE", "SAFE_COMPLETE", "NORMAL_COMPLETE")
-                    else (final_action.value if hasattr(final_action, "value") else str(final_action))
-                ),
+                meta_fa if meta_fa is not None else final_action.name,
                 return_point or "_ensure_final_action_and_return",
                 "none",
             )

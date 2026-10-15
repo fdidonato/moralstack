@@ -105,6 +105,7 @@ from moralstack.orchestration.trace_lifecycle import (
     log_trace_event,
 )
 from moralstack.orchestration.types import (
+    CANONICAL_FINAL_ACTIONS,
     SYSTEM_ERROR_FAIL_CLOSED,
     SYSTEM_TIMEOUT_FAIL_CLOSED,
     ConstitutionStoreProtocol,
@@ -125,6 +126,7 @@ from moralstack.orchestration.types import (
     ResponseType,
     RiskEstimationError,
     RiskEstimationProtocol,
+    normalize_final_action,
     risk_category_str,
 )
 from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace, normalize_trace_fields
@@ -612,7 +614,9 @@ class OrchestrationController:
         risk_score = 0.0
         metadata = getattr(getattr(result, "response", None), "metadata", None)
         if metadata is not None:
-            final_action = getattr(metadata, "final_action", "") or ""
+            # One normalization rule shared with the delivery guard: an empty or
+            # unknown label is recorded as REFUSE (fail closed), never raw.
+            final_action = normalize_final_action(str(getattr(metadata, "final_action", "") or "")) or "REFUSE"
             risk_score = float(getattr(metadata, "risk_score", 0.0) or 0.0)
 
         # Step 14.8: derive posture from the SAME signal the lookup uses, namely
@@ -642,7 +646,7 @@ class OrchestrationController:
         turn_idx_for_summary = state.turn_index if isinstance(state.turn_index, int) else 0
         new_summary = TurnDecisionSummary(
             turn_index=turn_idx_for_summary,
-            final_action=final_action or "REFUSE",  # empty label => REFUSE, as in the delivery guard
+            final_action=final_action or "REFUSE",  # no metadata => REFUSE, as in the delivery guard
             risk_score=risk_score,
             winning_rule=winning_rule,
             was_cached=was_cached,
@@ -700,6 +704,16 @@ class OrchestrationController:
 
         if not final_action:
             # No decision produced (early failure); skip.
+            return
+
+        if not isinstance(final_action, str) or final_action not in CANONICAL_FINAL_ACTIONS:
+            # Strict skip-only: only an exact canonical label is ever cached. A
+            # non-canonical label would make a later hit raise in apply_cached_decision.
+            _LOG.info(
+                "ledger store skipped for non-canonical final_action request_id=%s final_action=%r",
+                request.request_id,
+                final_action,
+            )
             return
 
         flip_reason = str(getattr(metadata, "hard_violation_flip_reason", "") or "") if metadata is not None else ""

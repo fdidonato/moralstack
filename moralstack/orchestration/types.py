@@ -171,6 +171,27 @@ def response_type_to_final_action(response_type: ResponseType) -> FinalAction | 
 # =============================================================================
 
 FinalActionStr = Literal["REFUSE", "SAFE_COMPLETE", "NORMAL_COMPLETE"]
+
+CANONICAL_FINAL_ACTIONS: frozenset[str] = frozenset({"NORMAL_COMPLETE", "SAFE_COMPLETE", "REFUSE"})
+
+
+def normalize_final_action(label: str) -> str | None:
+    """Return the canonical ``final_action`` for ``label``, or ``None`` if it has none.
+
+    The single normalization rule shared by ``finalize_delivery``, the ``ensure``
+    early return, the turn summary / posture and the ledger store check. Surrounding
+    whitespace is stripped and ASCII case is folded; anything else (including an empty
+    label) yields ``None``. Case is folded only for ASCII input: ``str.upper()`` maps
+    non-ASCII look-alikes (e.g. U+017F "ſ" -> "S") onto a deliverable label, which
+    must never happen. Callers pass ``str(raw or "")``; the label is structured data,
+    the response text is never inspected.
+    """
+    action = label.strip()
+    if action.isascii():
+        action = action.upper()
+    return action if action in CANONICAL_FINAL_ACTIONS else None
+
+
 PathStr = Literal["FAST_PATH", "DELIBERATIVE_PATH", "COMPLIANCE_FAST_PATH"]
 AxisStr = Literal["LOW", "MEDIUM", "HIGH"]
 

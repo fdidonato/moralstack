@@ -140,7 +140,10 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `OrchestratorResult` into the text to deliver (sources `governed`,
   `governed_refusal`, fail-closed `governed_pipeline_refusal` for blank content and,
   since F6 phase 5, for a result whose `final_action` is outside the closed set; an
-  ASCII case/whitespace label variant is normalized). No model call, no wrapped/upstream client, no observability writes. Used by SDK
+  ASCII case/whitespace label variant is normalized through
+  `types.normalize_final_action`, the single label rule also used by the `ensure`
+  early return, the turn summary/posture and the ledger store check; the ledger
+  caches only an exact `CANONICAL_FINAL_ACTIONS` label). No model call, no wrapped/upstream client, no observability writes. Used by SDK
   and proxy so the delivered answer is always the governed pipeline text.
 - `decision_service.py` — `decide_action(request, risk_proto, …)` →
   `(Decision, DecisionExplanation)`.

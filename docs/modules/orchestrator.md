@@ -626,6 +626,12 @@ The Orchestrator implements a fail-safe system:
   in `result.error` and the truncated WARNING, never in the delivered answer. No LLM call and no FINAL trace row (the UI
   recognizes a pipeline failure by `SYSTEM.ERROR` plus the absence of FINAL; `SYSTEM.TIMEOUT` is not detected yet). If
   `str(error)` is empty or raises, `error` is the exception class name
+- **Decision label canonicalization**: `normalize_final_action` (`orchestration/types.py`) is the single rule
+  (`.strip()`, ASCII-only `.upper()`, membership in `CANONICAL_FINAL_ACTIONS`; `None` when it has no canonical form). It
+  is used by `finalize_delivery`, the `ensure_final_action_and_return` early return, and the turn summary / posture
+  (`_extend_state_out_v04`: an unknown label is recorded as `REFUSE`). The `ensure` backfill of an empty label writes
+  `FinalAction.name` (upper case). `_maybe_store_in_ledger` is strict skip-only: it stores a label only on exact
+  membership in `CANONICAL_FINAL_ACTIONS` (unchanged), otherwise it logs one INFO line and does not store
 - **Unexpected exceptions** (generic `except (AssertionError, Exception)` in `process()`, and the `ensure_final_action_and_return`
   fallback): `FinalResponse.safe_default` -> `ResponseMetadata.for_fail_safe`, a REFUSE with principle `SYSTEM.FAIL_SAFE`,
   `metadata.path="DELIBERATIVE_PATH"`, content `[SYSTEM_ERROR]`. Result `path` per producer: generic except `ERROR_PATH`; `ensure` fallback `DELIBERATIVE_PATH`. It also carries

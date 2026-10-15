@@ -434,6 +434,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **One normalization rule for the `final_action` label (F6 follow-up).** The
+  `ensure_final_action_and_return` backfill now writes the canonical upper-case label
+  (`NORMAL_COMPLETE` / `SAFE_COMPLETE` / `REFUSE`; it wrote lowercase). The turn summary, the
+  ESCALATED posture check and the `ensure` early return use the same `normalize_final_action` rule
+  as `finalize_delivery` (an unknown label is recorded as REFUSE; delivery output is byte-identical).
+  The ledger store is skip-only: only an exact canonical label is cached, anything else is logged
+  once at INFO and not stored.
+
 - **`finalize_delivery` fails closed on a result without a valid decision label (F6, phase 5).** A
   result whose `final_action` is outside `NORMAL_COMPLETE` / `SAFE_COMPLETE` / `REFUSE` (empty,
   unknown, garbage) is now delivered as the deterministic governed refusal (`governed_pipeline_refusal`,

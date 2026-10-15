@@ -362,8 +362,13 @@ no valid decision label (`final_action` outside `NORMAL_COMPLETE` / `SAFE_COMPLE
 `NORMAL_COMPLETE`, any other label verbatim). A label differing only in ASCII case or
 surrounding whitespace is normalized to the canonical form; a non-ASCII look-alike is
 refused (`original_final_action` keeps the raw label). The label decides, the text is never
-inspected. The conversation turn summary defaults an empty label to `REFUSE`; it does not
-normalize case (a lowercase label is recorded raw).
+inspected. The rule is one shared helper, `normalize_final_action` (`orchestration/types.py`),
+also used by the `ensure_final_action_and_return` early return, the conversation turn summary
+and posture (an empty or unknown label is recorded as `REFUSE`; a lowercase `refuse` counts
+for the ESCALATED check), and the ledger store check. The `ensure` backfill of an empty label
+writes the canonical upper-case name (`NORMAL_COMPLETE` / `SAFE_COMPLETE` / `REFUSE`). The
+ledger store is strict skip-only: only an exact canonical label is cached; anything else logs
+one INFO line and is not stored (a stored non-canonical label would make a later hit raise).
 
 - **NORMAL_COMPLETE / SAFE_COMPLETE**: the SDK returns the governed text via
   `GovernedResponse.from_governed_text(...)` (`wrapper.py:372-415`); the proxy
