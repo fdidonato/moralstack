@@ -93,7 +93,12 @@ invariant now holds for FAST_PATH too, not only the deliberative path. If the
 filtered shared list has zero HARD principles, it still falls back to the
 constitution's own top HARD constraints (never silently skips the check). When
 `pre_retrieved_principles` is `None` (no risk-owned context available —
-fail-safe), `quick_check` self-retrieves exactly as before.
+fail-safe), `quick_check` self-retrieves exactly as before. If that
+self-retrieval raises, `quick_check` logs one WARNING (`quick_check self-retrieval
+failed error_type=<class>; falling back to the constitution HARD principles`; the
+exception itself only in `exc_info`) and still falls back to the constitution's HARD
+principles, so the check is never skipped; before 2026-10-19 the failure was swallowed
+silently.
 
 **Error contract (fail closed, 2026-10-13).** `quick_check` returns
 `passed=True` only after a *parsed, falsy* `violated`, or on the unchanged
@@ -101,7 +106,7 @@ early pass when no HARD principle is available at all. Every other outcome is
 "no verdict" and **raises**: a provider/transport error from `policy.generate`
 propagates unchanged, and an unparseable reply, a non-object reply (e.g. `[]`) or
 a JSON object **without the `violated` key** raise `JSONParseError`
-(`critic_module.py:715-716`). Before this change the whole call sat in
+(`critic_module.py:719-720`). Before this change the whole call sat in
 `except (JSONParseError, Exception): return QuickCheckResult(passed=True)` and
 a missing key defaulted to "not violated", so any provider blip passed an
 unchecked draft on the fast path, where no full critique runs afterwards. The

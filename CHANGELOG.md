@@ -467,6 +467,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`quick_check` logs a failed self-retrieval instead of swallowing it silently.** When no shared
+  principle list is supplied and `store.get_relevant_principles` raises, the critic now emits one
+  WARNING (`quick_check self-retrieval failed error_type=<class>; falling back to the constitution
+  HARD principles`, exception text only in `exc_info`). Behaviour is unchanged: the check still falls
+  back to the constitution's HARD principles and the verdict is not affected.
 - **Generic `except` in `process()` stays fail-closed for unprintable or empty-message exceptions.**
   `OrchestratorResult.error` is now built with a guarded `str(e) or type(e).__name__`; before, an
   exception whose `__str__` raised escaped `process()` instead of returning the `SYSTEM.FAIL_SAFE`

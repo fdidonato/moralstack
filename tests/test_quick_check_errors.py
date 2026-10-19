@@ -109,3 +109,91 @@ def test_c5_no_hard_principles_is_unchanged_pass_without_llm_call() -> None:
     result = _check(policy, constitution=_constitution(level="soft"))
     assert result.passed is True
     assert policy.calls == []
+
+
+# --- D3: a failed self-retrieval is logged (class name only), the fallback is kept ---
+
+_SECRET = "SECRET-retrieval-detail"
+
+
+class _ListHandler:
+    """Minimal logging handler collecting records (``level`` attr needed by Logger)."""
+
+    def __init__(self) -> None:
+        import logging
+
+        self.level = logging.DEBUG
+        self.records: list[Any] = []
+
+    def handle(self, record: Any) -> None:
+        self.records.append(record)
+
+
+class _Store:
+    def __init__(self, principles: list[Any] | None = None, exc: Exception | None = None) -> None:
+        self.calls = 0
+        self._principles = principles or []
+        self._exc = exc
+
+    def get_relevant_principles(self, *, query: str, top_k: int, domain: Any) -> list[Any]:
+        self.calls += 1
+        if self._exc is not None:
+            raise self._exc
+        return self._principles
+
+
+def _capture_critic_logger(monkeypatch: pytest.MonkeyPatch, name: str) -> _ListHandler:
+    import logging
+
+    lg = logging.getLogger(f"d3.{name}")
+    lg.handlers.clear()
+    lg.propagate = False
+    lg.setLevel(logging.DEBUG)
+    handler = _ListHandler()
+    lg.addHandler(handler)  # type: ignore[arg-type]
+    monkeypatch.setattr("moralstack.runtime.modules.critic_module.logger", lg)
+    return handler
+
+
+def test_r1_self_retrieval_failure_logs_one_warning_and_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import logging
+
+    handler = _capture_critic_logger(monkeypatch, "r1")
+    policy = _Policy()
+    store = _Store(exc=RuntimeError(_SECRET))
+    critic = LLMConstitutionalCritic(policy=policy, store=store)
+    result = critic.quick_check("prompt", "response", _constitution(), None)
+
+    warnings = [r for r in handler.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    msg = warnings[0].getMessage()
+    assert "quick_check self-retrieval failed" in msg
+    assert "error_type=RuntimeError" in msg
+    assert _SECRET not in msg
+    assert warnings[0].exc_info is not None
+    assert isinstance(warnings[0].exc_info[1], RuntimeError)
+    assert store.calls == 1
+    # Fallback kept: the constitution HARD principles are still checked.
+    assert len(policy.calls) == 1
+    assert result.passed is True
+
+
+def test_r2_self_retrieval_success_logs_no_warning_and_no_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import logging
+
+    handler = _capture_critic_logger(monkeypatch, "r2")
+    policy = _Policy()
+    store = _Store(principles=[_Principle("STORE.HARD.1")])
+    critic = LLMConstitutionalCritic(policy=policy, store=store)
+    result = critic.quick_check("prompt", "response", _constitution(level="soft"), None)
+
+    assert [r for r in handler.records if r.levelno == logging.WARNING] == []
+    assert store.calls == 1
+    # Store HARD principle used: a check ran even though the constitution has no HARD.
+    assert len(policy.calls) == 1
+    assert "STORE.HARD.1" in policy.calls[0]["prompt"]
+    assert result.passed is True

@@ -671,8 +671,12 @@ class LLMConstitutionalCritic:
                 relevant = self.store.get_relevant_principles(query=request, top_k=10, domain=None)
                 # Filtra solo hard constraints rilevanti
                 hard_constraints = [p for p in relevant if p.level == "hard"][:10]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "quick_check self-retrieval failed error_type=%s; falling back to the constitution HARD principles",
+                    type(e).__name__,
+                    exc_info=e,
+                )
 
         # Fallback: usa top hard constraints per priorità (never skip the check,
         # even when the shared/self-retrieved list has zero HARD principles).
