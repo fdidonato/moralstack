@@ -39,7 +39,7 @@ Session/turn (SDK): `conv_id = session.conversation_id`,
 Proxy equivalent: `conversation_id` resolution + stateless `turn_index`
 (`proxy.py:218-256`), `conv_state = store.get(conversation_id)`.
 
-## 2. Controller setup (`controller.py:1952-1977`)
+## 2. Controller setup (`controller.py:1961-1986`)
 
 - Coerce `str` → `ProcessedRequest`; build `ProcessCallContext`.
 - Set context vars: `set_current_session_id`, `set_current_turn_number`.
@@ -49,12 +49,12 @@ Proxy equivalent: `conversation_id` resolution + stateless `turn_index`
   once per DB path (`_db_initialized_for`): a changed `get_db_path()` triggers a new `init_db`.
 - `trace = self._trace_lifecycle.start_trace(request_id)`.
 
-## 3. Risk estimation (`controller.py:1980-1987`)
+## 3. Risk estimation (`controller.py:1989-1996`)
 
 - If `enable_speculative_generation` and a policy is set: `_run_speculative_overlap`
   runs **risk estimation and a speculative draft in parallel** (two-worker
   `ThreadPoolExecutor`, contextvars copied). The method blocks only for risk;
-  the draft continues in the background (`controller.py:920-978`). The
+  the draft continues in the background (`controller.py:929-987`). The
   speculative draft calls the internal **policy LLM** (`self.policy.generate`),
   not the wrapped/upstream client. This means an internal LLM call may already
   be in-flight before any routing decision — including on paths that will
@@ -120,12 +120,12 @@ and emit the event itself — controller-emit and runner-emit are mutually
 exclusive per request. `COMPLIANCE_FAST_PATH` (§4) consumes no principles and
 adds no retrieval.
 
-## 4. DCCL (developer-contract) evaluation (`controller.py:1988-2092`)
+## 4. DCCL (developer-contract) evaluation (`controller.py:1997-2101`)
 
 - `speculative_draft_for_dccl = self._nonblocking_speculative_draft(spec_handle)`
   (only if the background draft already finished).
 - `_run_dccl_evaluation(...)` → `call_ctx.compliance_verdict`
-  (`controller.py:994-1076`). Emits `COMPLIANCE_LAYER_STARTED` and a verdict event.
+  (`controller.py:1003-1085`). Emits `COMPLIANCE_LAYER_STARTED` and a verdict event.
 - The DCCL LLM prompt includes a budgeted role-ordered transcript from
   `ConversationContext`, not only the final user request. If budget trimming
   occurs, the prompt explicitly says not to claim prior turns are absent.
@@ -153,21 +153,21 @@ adds no retrieval.
 - The compliance fast-path produces `NORMAL_COMPLETE` with path
   `COMPLIANCE_FAST_PATH`, skipping risk routing, critic, simulator, perspectives,
   hindsight; emits `MODULE_DEFERRED_TO_COMPLIANCE` per skipped module
-  (`controller.py:1219-1311`).
+  (`controller.py:1228-1320`).
 
-## 5. Domain overlay & risk floor (`controller.py:2094-2168`)
+## 5. Domain overlay & risk floor (`controller.py:2103-2177`)
 
 - Extract risk score / category / op_risk; record on `trace`.
 - Persist domain (`update_request_domain`) after `_normalize_runtime_domain`
   (drops `core`).
 - Domain-exclusion check: if the active overlay excludes the detected domain →
-  `_route_domain_excluded` (`controller.py:2126-2133`).
+  `_route_domain_excluded` (`controller.py:2135-2142`).
 - `overlay_sensitive = is_overlay_sensitive(...)`; if sensitive, raise the score
   via `apply_risk_floor_if_sensitive` (per-overlay floor or
   `OVERLAY_SENSITIVE_RISK_FLOOR`). The floored score is propagated into a
-  replaced `risk_proto` (`controller.py:2162-2168`).
+  replaced `risk_proto` (`controller.py:2171-2177`).
 
-## 6. Decision (`controller.py:2169-2193`)
+## 6. Decision (`controller.py:2178-2202`)
 
 - `_emit_risk_assessment_trace(...)` — **side effect**: `RISK_ASSESSMENT`
   decision trace.
@@ -177,14 +177,14 @@ adds no retrieval.
 - The decision encodes `final_action` and `path` derived from
   `safe_complete_policy.compute_action_bounds` / `decide_final_action`.
 
-## 7. Route resolution (`controller.py:2195-2196`)
+## 7. Route resolution (`controller.py:2204-2205`)
 
 - `route, borderline_refuse, risk_policy_action = get_route(decision, risk_proto,
   risk_score, config, op_risk)` — route ∈ `{refuse, benign, safe_complete,
   fast_path, deliberative}`.
 - `hard_signal_refuse = is_hard_signal_refuse(decision, risk_proto, op_risk)`.
 
-## 8. Ledger lookup (multi-turn only) (`controller.py:2201-2358`)
+## 8. Ledger lookup (multi-turn only) (`controller.py:2210-2367`)
 
 When a `SemanticDecisionLedger` is configured and `conversation_id` is set:
 - Compute posture (`_compute_governance_posture`: ESCALATED if hard-signal REFUSE,
@@ -212,7 +212,7 @@ the implementation (`"local"` default → `LocalEmbedder` with fastembed or
 `HashingEmbedder` fallback; `"openai"` → `OpenAIEmbedder`). `OPENAI_API_KEY` is not
 required for the embedder when `embedder_provider="local"`.
 
-## 9. Dispatch (`controller.py:2397-end`)
+## 9. Dispatch (`controller.py:2406-end`)
 
 | route | handler | speculative draft |
 |---|---|---|
@@ -402,7 +402,11 @@ one INFO line and is not stored (a stored non-canonical label would make a later
   `finalize_delivery` then delivers REFUSE / `content_filter`. The handlers and the generic
   `except` also emit one best-effort `PIPELINE_FAILED` orchestration event
   (`_emit_pipeline_failed_event`: `fail_closed_reason`, `triggered_principle`, `error_type`,
-  `path`; never the exception text); the `ensure` fallback does not emit.
+  `path`; never the exception text); the `ensure` fallback does not emit. The generic
+  `except` also writes a `debug_events` row (`H-except`) whose payload carries `error_type`
+  only, not the exception text (the text stays in the WARNING). A ledger store failure
+  (`_maybe_store_in_ledger`, non-fatal) likewise logs a guarded WARNING with the text in
+  `exc_info` and writes `H-ledger-store-fail` with `error_type` only.
 - **Streaming (`stream=True`)**: the governed text is replayed as OpenAI-compatible
   synthetic SSE (`GovernedSyntheticStream` in the SDK, `_build_synthetic_sse_response`
   in the proxy); live upstream tokens are never forwarded.

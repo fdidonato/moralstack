@@ -68,7 +68,7 @@ Schema in `observability/sinks/sqlite_sink.py:48-489`; connection uses WAL +
 | `request_token_usage` | synchronous best-effort per-request token summary (one row per `run_id`/`request_id`); not authoritative — see token accounting notes below |
 | `orchestration_events` | pipeline events (speculative, compliance, ledger fast-path, conversation, proxy output finalized, `PIPELINE_FAILED` for handler / generic-except failures) |
 | `decision_traces` | stage snapshots (`RISK_ASSESSMENT`, `COMPLIANCE_LAYER`, `DELIBERATION_AGGREGATE`, `RELEVANT_PRINCIPLES`, `FINAL`, …) as `trace_json` (a blob, not typed columns — new trace fields are additive and need no migration, but old rows lack the key) |
-| `debug_events` | low-level diagnostic payloads |
+| `debug_events` | low-level diagnostic payloads (the generic-`except` `H-except` and ledger-store-failure `H-ledger-store-fail` rows carry `error_type` only, never exception text; other debug rows may still carry text, and rows written before A1 keep the old text) |
 | `exports_cache` | cached markdown exports |
 | `conversation_states` | per-turn governance state in/out, posture, final_action, risk, was_cached |
 | `ledger_events` | ledger lookup/store ops: operation, outcome, similarity, from_turn, posture, intent_clarity |

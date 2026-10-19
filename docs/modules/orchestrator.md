@@ -630,7 +630,12 @@ The Orchestrator implements a fail-safe system:
   `str(error)` is empty or raises, `error` is the exception class name. Both handlers and the generic `except` also call
   `_emit_pipeline_failed_event`, a best-effort `PIPELINE_FAILED` orchestration event (payload `fail_closed_reason`,
   `triggered_principle`, `error_type`, `path`, never the exception text; swallowed on any error; audit only, not a
-  `decision_traces` row). The `ensure` fallback does not emit
+  `decision_traces` row). The `ensure` fallback does not emit. The generic `except` also writes one `debug_events` row
+  (`orch_debug_log`, hypothesis id `H-except`) whose payload carries `error_type` (the exception class name) and never the
+  exception text; the text stays in the truncated WARNING and in `result.error`. A ledger store failure in
+  `_maybe_store_in_ledger` (non-fatal, the response is unaffected) is logged the same way: one guarded controller WARNING
+  `ledger store failed (non-fatal) error_type=...` with the text and traceback in `exc_info`, and a `debug_events` row
+  (`H-ledger-store-fail`) carrying `error_type` only. Rows written before this change keep their old text
 - **Decision label canonicalization**: `normalize_final_action` (`orchestration/types.py`) is the single rule
   (`.strip()`, ASCII-only `.upper()`, membership in `CANONICAL_FINAL_ACTIONS`; `None` when it has no canonical form). It
   is used by `finalize_delivery`, the `ensure_final_action_and_return` early return, and the turn summary / posture

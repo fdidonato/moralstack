@@ -449,14 +449,14 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 ## 3. Runtime governance flow (high level)
 
 `govern()` → `GovernedClient.chat.completions.create()` → `Orchestrator.process()`
-→ `OrchestrationController.process()` (`orchestration/controller.py:1937`).
+→ `OrchestrationController.process()` (`orchestration/controller.py:1946`).
 
 Inside `process()` (order verified in source):
 1. Normalize request; build `ProcessCallContext`; set session/turn context vars;
-   pre-insert the `requests` row (`controller.py:1952-1975`).
+   pre-insert the `requests` row (`controller.py:1961-1984`).
 2. **Risk estimation** — speculative overlap (risk + draft in parallel) when
    `enable_speculative_generation`, else direct `_estimate_risk`
-   (`controller.py:1980-1987`). `_speculative_generate` selects the draft generator:
+   (`controller.py:1989-1996`). `_speculative_generate` selects the draft generator:
    `request.upstream_draft_generator` (opt-in `generation="upstream_then_verify"` +
    client `model`, wired by the SDK/proxy) when present, else `self.policy` (default,
    byte-identical). An empty/whitespace upstream draft is treated as "no draft" →
@@ -468,7 +468,7 @@ Inside `process()` (order verified in source):
    reuse rows and `ResponseAssembler.assemble` — see `upstream_draft.py` above and
    `.claude/rules/governed-delivery.md`.
 3. **DCCL evaluation** on the (possibly non-blocking) speculative draft
-   (`_run_dccl_evaluation`, `controller.py:1988`). The LLM path receives a
+   (`_run_dccl_evaluation`, `controller.py:1997`). The LLM path receives a
    budgeted role-ordered transcript from `ConversationContext`; when the draft
    is about to be reused, the mismatch guard prevents a last-user-only draft from
    becoming final if governance saw broader prior context. **Hard-signal gate (P0
@@ -481,20 +481,20 @@ Inside `process()` (order verified in source):
    validated aligned draft (and no hard signal) → **compliance fast-path**
    (`_route_compliance_match`), skipping risk routing and deliberation.
 4. Apply overlay sensitivity risk floor (`apply_risk_floor_if_sensitive`),
-   normalize domain, domain-exclusion check (`controller.py:2114-2168`).
+   normalize domain, domain-exclusion check (`controller.py:2123-2177`).
 5. **Decision** — `decide_action(...)` then `apply_safe_complete_gating(...)`
-   (`controller.py:2170-2182`).
+   (`controller.py:2179-2191`).
 6. **Routing** — `get_route(...)` → one of `refuse | benign | safe_complete |
    fast_path | deliberative`; `is_hard_signal_refuse(...)`
-   (`controller.py:2195-2196`).
+   (`controller.py:2204-2205`).
 7. **Ledger lookup** (multi-turn) — when a ledger + conversation_id exist, a
    cache hit may patch the decision/route to skip deliberation
-   (`controller.py:2201-2358`). The patched decision carries
+   (`controller.py:2210-2367`). The patched decision carries
    `cached_decision_reused` as its last reason code, so a replayed decision is
    distinguishable from a deliberated one in the audit trail. Note that the
    ledger key is `(contract_hash, posture, domain)` and the storage is
    process-local: hits are **not** confined to the current conversation.
-8. Dispatch to the matching `_route_*` handler (`controller.py:2397-end`).
+8. Dispatch to the matching `_route_*` handler (`controller.py:2406-end`).
 9. `_apply_conversation_metadata_to_result` stamps conversation linkage, builds
    `conversation_governance_state_out`, emits conversation events, and stores the
    decision in the ledger (`controller.py:425-527`), except transient fail-closed

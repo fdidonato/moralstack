@@ -1044,3 +1044,182 @@ def test_pf9_handler_without_run_context_emits_nothing_and_refuses(request: pyte
     assert result.path == "ERROR_PATH"
     timeout = ctrl._handle_timeout(req, OrchestratorTimeoutError(TIMEOUT_TEXT), time.time())
     assert timeout.response.metadata.final_action == "REFUSE"
+
+
+# =============================================================================
+# A1 C2/C2b: no exception text in debug_events payloads
+# =============================================================================
+
+_A1_FRAGMENT = "secret-ish body"
+
+
+def _debug_spy(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    mdebug = MagicMock()
+    monkeypatch.setattr("moralstack.orchestration.controller.orch_debug_log", mdebug)
+    return mdebug
+
+
+def _calls_text(spy: MagicMock) -> str:
+    return json.dumps([[list(c.args), dict(c.kwargs)] for c in spy.call_args_list], default=str)
+
+
+def _hyp_calls(spy: MagicMock, hypothesis_id: str) -> list[Any]:
+    return [c for c in spy.call_args_list if len(c.args) >= 4 and c.args[3] == hypothesis_id]
+
+
+def _a1_chained() -> BaseException:
+    try:
+        try:
+            raise ValueError(SECRET)
+        except ValueError as inner:
+            raise RuntimeError("outer") from inner
+    except RuntimeError as outer:
+        return outer
+
+
+@pytest.mark.parametrize("exc_cls", GENERIC_EXC)
+def test_a1_generic_except_debug_event_has_no_exception_text(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, exc_cls: type
+) -> None:
+    mdebug = _debug_spy(monkeypatch)
+    _fail(_ctrl(request=request), monkeypatch, exc_cls(f"unexpected {SECRET}"))
+    calls = _hyp_calls(mdebug, "H-except")
+    assert len(calls) == 1
+    assert calls[0].args[2] == {"path": "DELIBERATIVE_PATH", "deliberation_cycles": 0, "error_type": exc_cls.__name__}
+    assert calls[0].kwargs["request_id"] == "req-f6"
+    assert _A1_FRAGMENT not in _calls_text(mdebug)
+
+
+@pytest.mark.parametrize(
+    "make_exc,label",
+    [
+        pytest.param(lambda: ValueError("X" * 10_000 + SECRET), "ValueError", id="long"),
+        pytest.param(_a1_chained, "RuntimeError", id="chained"),
+    ],
+)
+def test_a1_generic_except_debug_event_long_and_chained(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, make_exc: Any, label: str
+) -> None:
+    mdebug = _debug_spy(monkeypatch)
+    _fail(_ctrl(request=request), monkeypatch, make_exc())
+    calls = _hyp_calls(mdebug, "H-except")
+    assert len(calls) == 1
+    assert calls[0].args[2]["error_type"] == label
+    assert len(_calls_text(mdebug)) < 1000
+    assert _A1_FRAGMENT not in _calls_text(mdebug)
+
+
+def test_a1_generic_except_warning_keeps_text_server_side(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, ctrl_log: _ListHandler
+) -> None:
+    _debug_spy(monkeypatch)
+    _fail(_ctrl(request=request), monkeypatch, ValueError(f"unexpected {SECRET}"))
+    warnings = _failure_warnings(ctrl_log)
+    assert len(warnings) == 1
+    assert "secret-ish" in warnings[0].getMessage()
+
+
+def test_a1_generic_failure_no_text_in_persisted_debug_events(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pytest.importorskip("fastapi")
+    import sqlite3
+
+    from moralstack.observability.context import (
+        get_current_request_id,
+        get_current_run_id,
+        set_current_request_id,
+        set_current_run_id,
+    )
+    from moralstack.observability.service import get_obs
+    from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
+    from tests.test_ui_conversation_views import (
+        _bind_observability_db,
+        _reinstall_observability_service_writes,
+        _reset_observability_singleton,
+    )
+
+    dbp = str(tmp_path / "a1d3.db")
+    _reinstall_observability_service_writes()
+    _reset_observability_singleton()
+    _bind_observability_db(monkeypatch, dbp)
+    init_db(dbp)
+    prev_run, prev_req = get_current_run_id(), get_current_request_id()
+    try:
+        create_run("run-a1", run_type="single", meta={})
+        upsert_request("run-a1", "req-f6", prompt="hello", domain="general")
+        set_current_run_id("run-a1")
+        set_current_request_id("req-f6")
+        _fail(_ctrl(request=request), monkeypatch, ValueError(f"unexpected {SECRET}"))
+        get_obs().flush(timeout=10.0)
+    finally:
+        set_current_run_id(prev_run)  # type: ignore[arg-type]
+        set_current_request_id(prev_req)  # type: ignore[arg-type]
+    conn = sqlite3.connect(dbp)
+    try:
+        rows = [
+            r[0]
+            for r in conn.execute(
+                "SELECT payload_json FROM debug_events WHERE run_id = ? AND request_id = ?", ("run-a1", "req-f6")
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+    except_rows = [r for r in rows if "H-except" in r]
+    assert len(except_rows) == 1
+    assert '"error_type": "ValueError"' in except_rows[0] or '"error_type":"ValueError"' in except_rows[0]
+    assert all(_A1_FRAGMENT not in r for r in rows)
+
+
+class _FailingLedger:
+    def store(self, **_kwargs: Any) -> None:
+        raise RuntimeError(f"ledger down {SECRET} 100%s {{}}")
+
+
+def _a1_store_failing(request: pytest.FixtureRequest) -> OrchestrationController:
+    ctrl = _ctrl(request=request)
+    ctrl._ledger = _FailingLedger()
+    return ctrl
+
+
+def _a1_run_store(ctrl: OrchestrationController) -> None:
+    ctrl._maybe_store_in_ledger(
+        request=ProcessedRequest(prompt="p", request_id="req-c"),
+        result=_ledger_result(""),
+        call_ctx=ProcessCallContext(conversation_id="c1", turn_index=1),
+    )
+
+
+def test_a1_ledger_store_failure_debug_event_has_no_exception_text(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, ctrl_log: _ListHandler
+) -> None:
+    mdebug = _debug_spy(monkeypatch)
+    _a1_run_store(_a1_store_failing(request))  # non-fatal: must not raise
+    calls = _hyp_calls(mdebug, "H-ledger-store-fail")
+    assert len(calls) == 1
+    assert calls[0].args[2] == {"error_type": "RuntimeError"}
+    assert calls[0].kwargs["request_id"] == "req-c"
+    assert _A1_FRAGMENT not in _calls_text(mdebug)
+    warnings = [r for r in ctrl_log.records if r.levelno == logging.WARNING and "ledger store failed" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "error_type=RuntimeError" in warnings[0].getMessage()
+    assert _A1_FRAGMENT not in warnings[0].getMessage()
+    assert warnings[0].exc_info is not None
+    assert _A1_FRAGMENT in logging.Formatter().format(warnings[0])
+
+
+def test_a1_ledger_store_failure_logging_failure_never_breaks_the_request(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, ctrl_log: _ListHandler
+) -> None:
+    mdebug = _debug_spy(monkeypatch)
+
+    attempts: list[int] = []
+
+    def _boom(*_a: Any, **_k: Any) -> None:
+        attempts.append(1)
+        raise RuntimeError("logging down")
+
+    monkeypatch.setattr(logging.getLogger("f6." + request.node.name), "warning", _boom)
+    _a1_run_store(_a1_store_failing(request))  # must not raise
+    assert attempts == [1]
+    assert len(_hyp_calls(mdebug, "H-ledger-store-fail")) == 1

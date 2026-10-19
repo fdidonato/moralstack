@@ -145,10 +145,10 @@ deduplicated — duplicate turn rows can distort benchmark accounting.
 ### 4.4 Cache (ledger) reuse
 On a same-conversation hit, `ConversationalFastPathRunner.is_safe_to_apply` gates
 reuse: cached REFUSE always applied, ESCALATED never cached, `turn_index < 1`
-skipped (`controller.py:2246-2358`). A wrong collision (4.1) could cause reuse
+skipped (`controller.py:2255-2367`). A wrong collision (4.1) could cause reuse
 across logically distinct samples. The P0 hard-signal supremacy invariant still
 holds because `is_hard_signal_refuse` is re-evaluated after a cache patch
-(`controller.py:2261`).
+(`controller.py:2270`).
 
 ### 4.5 Endpoint selection
 COMPL-AI / IFBench runs should point at the production proxy launched via

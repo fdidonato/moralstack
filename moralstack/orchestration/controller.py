@@ -802,10 +802,19 @@ class OrchestrationController:
             )
         except Exception as e:
             # The ledger is best-effort; a store failure must never break the response flow.
+            # Exception text goes to the server-side log only, never into debug_events.
+            try:
+                _LOG.warning(
+                    "ledger store failed (non-fatal) error_type=%s",
+                    type(e).__name__,
+                    exc_info=e,
+                )
+            except Exception:
+                _LOG.debug("ledger store failure log failed", exc_info=True)
             orch_debug_log(
                 "orchestrator.py:_maybe_store_in_ledger",
                 "ledger store failed (non-fatal)",
-                {"error": str(e)},
+                {"error_type": type(e).__name__},
                 "H-ledger-store-fail",
                 request_id=getattr(request, "request_id", "") or "",
             )
@@ -3119,7 +3128,7 @@ class OrchestrationController:
             orch_debug_log(
                 "orchestrator.py:process",
                 "early return Exception",
-                {"path": "DELIBERATIVE_PATH", "deliberation_cycles": 0, "error": str(e)[:200]},
+                {"path": "DELIBERATIVE_PATH", "deliberation_cycles": 0, "error_type": type(e).__name__},
                 "H-except",
                 request_id=request_id,
             )
