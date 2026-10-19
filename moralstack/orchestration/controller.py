@@ -3139,6 +3139,10 @@ class OrchestrationController:
                 "exception",
                 "none",
             )
+            try:
+                error_text = str(e) or type(e).__name__
+            except Exception:
+                error_text = type(e).__name__
             processing_time = int((time.time() - start_time) * 1000)
             return self._attach_trace_and_return(
                 OrchestratorResult(
@@ -3148,7 +3152,7 @@ class OrchestrationController:
                     path="ERROR_PATH",
                     total_cycles=0,
                     converged=False,
-                    error=str(e) if e else "unknown",
+                    error=error_text,
                 ),
                 request,
                 call_ctx,

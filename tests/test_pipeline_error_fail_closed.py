@@ -1223,3 +1223,44 @@ def test_a1_ledger_store_failure_logging_failure_never_breaks_the_request(
     _a1_run_store(_a1_store_failing(request))  # must not raise
     assert attempts == [1]
     assert len(_hyp_calls(mdebug, "H-ledger-store-fail")) == 1
+
+
+# =============================================================================
+# A1 C3: generic except stays fail-closed for unprintable / empty-message errors
+# =============================================================================
+
+
+class _UnprintableGeneric(ValueError):
+    """Not a MoralStackError: lands in the generic ``except`` of ``process()``."""
+
+    def __str__(self) -> str:
+        raise RuntimeError("no str for you")
+
+
+@pytest.mark.parametrize("safe", [True, False])
+def test_a1_generic_except_unprintable_exception_refuses(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, ctrl_log: _ListHandler, safe: bool
+) -> None:
+    spy = _EventSpy()
+    monkeypatch.setattr(_SPY_TARGET, spy)
+    mdebug = _debug_spy(monkeypatch)
+    result = _fail(_ctrl(safe=safe, request=request), monkeypatch, _UnprintableGeneric("x"))  # must not raise
+    assert result.response.metadata.final_action == "REFUSE"
+    assert result.response.metadata.triggered_principles == ["SYSTEM.FAIL_SAFE"]
+    assert result.response.content == "[SYSTEM_ERROR]"
+    assert result.error == "_UnprintableGeneric"
+    assert len(spy.failed()) == 1
+    calls = _hyp_calls(mdebug, "H-except")
+    assert len(calls) == 1
+    assert calls[0].args[2]["error_type"] == "_UnprintableGeneric"
+    warnings = _failure_warnings(ctrl_log)
+    assert len(warnings) == 1
+    assert "error_type=_UnprintableGeneric error=_UnprintableGeneric" in warnings[0].getMessage()
+
+
+def test_a1_generic_except_empty_message_falls_back_to_class_name(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _fail(_ctrl(request=request), monkeypatch, ValueError(""))
+    assert result.response.metadata.final_action == "REFUSE"
+    assert result.error == "ValueError"

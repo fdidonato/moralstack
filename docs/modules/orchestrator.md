@@ -627,7 +627,8 @@ The Orchestrator implements a fail-safe system:
   recognizes a pipeline failure by a `SYSTEM.ERROR` / `SYSTEM.TIMEOUT` / `SYSTEM.FAIL_SAFE` principle plus the absence of
   FINAL, through the shared predicate `pipeline_failure_principle` in `reports/pipeline_failure.py`, structured signals
   only). If
-  `str(error)` is empty or raises, `error` is the exception class name. Both handlers and the generic `except` also call
+  `str(error)` is empty or raises, `error` is the exception class name; this holds for the generic `except` too (an
+  exception whose `__str__` raises no longer escapes `process()`, it still returns the `SYSTEM.FAIL_SAFE` REFUSE). Both handlers and the generic `except` also call
   `_emit_pipeline_failed_event`, a best-effort `PIPELINE_FAILED` orchestration event (payload `fail_closed_reason`,
   `triggered_principle`, `error_type`, `path`, never the exception text; swallowed on any error; audit only, not a
   `decision_traces` row). The `ensure` fallback does not emit. The generic `except` also writes one `debug_events` row

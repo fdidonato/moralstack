@@ -467,6 +467,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Generic `except` in `process()` stays fail-closed for unprintable or empty-message exceptions.**
+  `OrchestratorResult.error` is now built with a guarded `str(e) or type(e).__name__`; before, an
+  exception whose `__str__` raised escaped `process()` instead of returning the `SYSTEM.FAIL_SAFE`
+  REFUSE. Visible side effect: an empty-message generic exception (for example a bare `assert`)
+  now sets `error` to the class name, so the CLI prints `Error: <ClassName>` where it printed nothing.
+  Delivered text, `final_action` and reason codes are unchanged.
 - **Docs: line anchors shifted by the F6 follow-ups.** The F6 follow-up commits shifted lines in
   `controller.py`, `sdk/wrapper.py`, `server/proxy.py`, `server/headers.py`, `ui/app.py` and
   `orchestration/types.py`; 141 documentation anchors were re-mapped by matching the cited line's
