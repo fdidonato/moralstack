@@ -679,7 +679,7 @@ The Orchestrator implements a fail-safe system:
   | Situation | Outcome |
   |---|---|
   | `quick_check` passes | fast draft delivered (unchanged) |
-  | `quick_check` says `passed=False`, raises (no verdict, incl. a reply without `violated`), or a configured store returns no constitution | escalate to `run_deliberative_path` (`escalation_trigger` = `quick_check_violation` / `quick_check_error` / `constitution_unavailable`) |
+  | `quick_check` says `passed=False`, raises (no verdict, incl. a reply without `violated` or zero HARD principles), or a configured store returns no constitution | escalate to `run_deliberative_path` (`escalation_trigger` = `quick_check_violation` / `quick_check_error` / `no_hard_principles` / `constitution_unavailable`) |
   | escalation returns a critique that completed in the final cycle (`_critique_outcome == "completed"`) | deliberative result (unchanged) |
   | escalation or result build raises (incl. `OrchestratorTimeoutError`) | governed REFUSE `fast_path_escalation_failed` |
   | escalation returns no critique that completed in the final cycle (none, skipped, failed, or started between 90% and 100% of `timeout_ms`, where the `_critique` guard records outcome `timeout`) | governed REFUSE `fast_path_escalation_unverified` |

@@ -776,7 +776,7 @@ See `docs/traces/openai_compatible_multiturn.md`.
   hard-signal evidence or a hard-signal REFUSE).
 - **Risk in context**: history + developer contract are passed into the risk
   estimator so context-dependent prompts are not mis-scored
-  (`controller.py:803-860`).
+  (`controller.py:944-1057`).
 - **Request transcript**: SDK and proxy both attach `ConversationContext` to
   `ProcessedRequest`. DCCL and speculative generation can use a role-serialized
   transcript; risk/deliberative modules may use smaller declared windows.
@@ -989,7 +989,7 @@ codebase contains targeted accommodations for it:
   `llm_rules` resends the full history with no stable `conversation_id`
   (module docstring).
 - `controller._estimate_risk` passes the developer contract + history to the
-  risk estimator citing "compl-ai llm_rules-benign Q74" (`controller.py:812-814`).
+  risk estimator citing "compl-ai llm_rules-benign Q74" (`controller.py:950-954`).
 - `examples/server_quickstart.py` documents the recommended COMPL-AI launch
   (uvicorn, single worker, port 8080).
 - `scripts/benchmark_moralstack.py` is MoralStack's **own** 84-question

@@ -73,10 +73,10 @@ Proxy equivalent: `conversation_id` resolution + stateless `turn_index`
     `(None, None)` and the route regenerates internally.
     See `moralstack/orchestration/upstream_draft.py` and
     `.claude/rules/governed-delivery.md`.
-- Else: `risk_estimation = self._estimate_risk(request)` (`controller.py:803`).
+- Else: `risk_estimation = self._estimate_risk(request)` (`controller.py:2531`).
 
 `_estimate_risk` forwards the developer-contract text and conversation history to
-the estimator (`controller.py:812-838`) and emits `CONTEXT_SHAPE_RECORDED`. The
+the estimator (`controller.py:950-968`) and emits `CONTEXT_SHAPE_RECORDED`. The
 risk estimator declares its reduced history mode as `role_serialized_truncated`
 when only the last-3 window is used. The estimator runs three parallel
 mini-estimators (intent / signals q1–q17 / operational) and calibrates them into

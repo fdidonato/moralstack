@@ -37,7 +37,7 @@ The repo carries explicit accommodations for COMPL-AI:
   `conversation_correlation.py:1-12`).
 - `controller._estimate_risk` feeds the developer contract + history to the risk
   estimator, with a comment citing "compl-ai llm_rules-benign Q74"
-  (`controller.py:812-814`) — context-dependent prompts (e.g. a deployer-expected
+  (`controller.py:950-954`) — context-dependent prompts (e.g. a deployer-expected
   auth token) must not be mis-scored as obfuscated.
 - SDK and proxy attach a shared `ConversationContext` to `ProcessedRequest`.
   DCCL and speculative generation can see a role-serialized transcript rather

@@ -472,9 +472,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LLMConstitutionalCritic.quick_check` now raises the new `NoHardPrinciplesError` without an LLM call;
   it used to return `passed=True`, so `run_fast_path` delivered an unchecked draft. `run_fast_path`
   escalates with the dedicated `escalation_trigger = "no_hard_principles"` (WARNING with the class name
-  only) and fails closed per the existing contract. (behaviour, operator constitutions with no HARD
-  principle) the fast path escalates every request instead of delivering an unchecked draft; the shipped
-  constitution (15 HARD principles in `core`) is unaffected. `test_c5_*` is changed from the pass-pin to
+  only) and fails closed per the existing contract. Behaviour change for operator constitutions with no
+  HARD principle: the fast path now escalates every request instead of delivering an unchecked draft; the
+  shipped constitution (15 HARD principles in `core`) is unaffected. `test_c5_*` is changed from the pass-pin to
   the raise.
 - **`quick_check` logs a failed self-retrieval instead of swallowing it silently.** When no shared
   principle list is supplied and `store.get_relevant_principles` raises, the critic now emits one
