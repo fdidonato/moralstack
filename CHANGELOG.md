@@ -837,6 +837,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **SDK pipeline-error `decision_reason` no longer carries exception text (BREAKING, behaviour).** On the SDK path where an exception escapes `process()`, `GovernanceMetadata.decision_reason` is now the fixed string `Pipeline error` (was `Pipeline error: <exception text>`), for `create()`, `stream=True` (`GovernedErrorStream`) and the deprecated `from_passthrough`; `from_pipeline_error` can no longer raise on an exception whose `__str__` raises. `final_action`, `reason_codes`, `winning_rule`, `finish_reason` and the delivered text are unchanged. The text is now emitted as one ERROR record on the `moralstack.sdk.wrapper` logger (message line carries the exception class name only; the text and traceback travel via `exc_info`), which reaches the host's logging, and stderr via `logging.lastResort` when logging is not configured. SDK clients that parsed the reason text must read the log instead.
+
 - **Four constitution principles re-levelled or split so a missing disclaimer can no
   longer cause a refusal.** Measured false positives drove this: questions about the
   Holocaust, about the general process for terminating a contract, and about coping with

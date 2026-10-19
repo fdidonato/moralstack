@@ -407,7 +407,14 @@ class GovernedResponse:
     def from_pipeline_error(cls, error: Exception) -> GovernedResponse:
         """
         Build an error response (pipeline failed, failure_policy='refuse').
+
+        ``decision_reason`` is the fixed string ``"Pipeline error"``: the exception
+        is never rendered, so no exception text reaches public governance metadata
+        and an exception whose ``__str__`` raises cannot make this constructor raise.
         """
+        # Never rendered: exception text must not reach public governance metadata;
+        # the SDK wrapper logs it server-side.
+        del error
         sentinel_meta = GovernanceMetadata(
             final_action="REFUSE",
             risk_score=1.0,
@@ -416,7 +423,7 @@ class GovernedResponse:
             domain_overlay=None,
             reason_codes=["PIPELINE_ERROR"],
             winning_rule="pipeline_error",
-            decision_reason=f"Pipeline error: {error}",
+            decision_reason="Pipeline error",
             processing_time_ms=0,
             deliberation_cycles=0,
             triggered_principles=[],

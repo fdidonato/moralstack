@@ -270,3 +270,65 @@ def test_finish_reason_parity_with_proxy(label: str, content: str):
     delivery = finalize_delivery(result)
     resp = GovernedResponse.from_governed_text(result, delivery)
     assert resp.choices[0].finish_reason == delivery.finish_reason
+
+
+# ---------------------------------------------------------------------------
+# A1: exception text must not reach public governance metadata (D1a)
+# ---------------------------------------------------------------------------
+
+_A1_SECRET = "provider said: secret-ish body"
+
+
+class _A1Unprintable(Exception):
+    def __str__(self) -> str:
+        raise RuntimeError("no str for you")
+
+
+def _a1_chained() -> Exception:
+    try:
+        try:
+            raise ValueError(_A1_SECRET)
+        except ValueError as inner:
+            raise RuntimeError("outer") from inner
+    except RuntimeError as outer:
+        return outer
+
+
+def _a1_assert_fixed_refusal(resp: GovernedResponse) -> None:
+    import dataclasses
+    import json
+
+    meta = resp.governance_metadata
+    assert meta.decision_reason == "Pipeline error"
+    blob = json.dumps(dataclasses.asdict(meta), default=str) + resp.content
+    assert "secret-ish body" not in blob
+    assert meta.final_action == "REFUSE"
+    assert meta.reason_codes == ["PIPELINE_ERROR"]
+    assert meta.winning_rule == "pipeline_error"
+    assert meta.path == "NONE"
+    assert resp.choices[0].finish_reason == "content_filter"
+
+
+@pytest.mark.parametrize(
+    "make_error",
+    [
+        lambda: RuntimeError(_A1_SECRET),
+        lambda: ValueError(""),
+        lambda: ValueError("X" * 10_000 + _A1_SECRET),
+        _a1_chained,
+    ],
+    ids=["plain", "empty", "long", "chained"],
+)
+def test_from_pipeline_error_decision_reason_has_no_exception_text(make_error: Any):
+    _a1_assert_fixed_refusal(GovernedResponse.from_pipeline_error(make_error()))
+
+
+def test_from_passthrough_decision_reason_has_no_exception_text():
+    with pytest.warns(DeprecationWarning):
+        resp = GovernedResponse.from_passthrough(MagicMock(), RuntimeError(_A1_SECRET))
+    _a1_assert_fixed_refusal(resp)
+
+
+def test_from_pipeline_error_unprintable_exception_does_not_raise():
+    resp = GovernedResponse.from_pipeline_error(_A1Unprintable("x"))
+    _a1_assert_fixed_refusal(resp)

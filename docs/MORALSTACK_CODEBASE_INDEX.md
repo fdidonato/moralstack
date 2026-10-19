@@ -91,7 +91,9 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   plus governed-delivery model attribution (`requested_model`, `generation_model`,
   `rewrite_model` — `generation_model`/`GovernedResponse.model` report the client draft
   model on an unrevised upstream-origin delivery). Constructors:
-  `from_governed_text` (Plan 1 primary), `from_refusal`, `from_pipeline_error`,
+  `from_governed_text` (Plan 1 primary), `from_refusal`, `from_pipeline_error`
+  (fixed `decision_reason="Pipeline error"`, never renders the exception; the wrapper
+  logs text + traceback to `moralstack.sdk.wrapper` at ERROR),
   and the deprecated `from_normal` / `from_safe` / `from_governed_draft`;
   `from_passthrough` is a deprecated fail-closed alias (never passthrough).
   `is_passthrough` is always `False`.

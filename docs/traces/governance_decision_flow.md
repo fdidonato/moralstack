@@ -408,6 +408,10 @@ one INFO line and is not stored (a stored non-canonical label would make a later
   in the proxy); live upstream tokens are never forwarded.
 - **Pipeline failure** fails closed to a governed refusal — there is no
   passthrough to the wrapped/upstream client (`wrapper.py:_handle_pipeline_failure`).
+  On the SDK exception-escape path `GovernedResponse.from_pipeline_error` sets the fixed
+  `decision_reason="Pipeline error"` (the exception is never rendered into public
+  metadata); the exception text and traceback go only to one ERROR record on the
+  `moralstack.sdk.wrapper` logger (`exc_info`; message line = `error_type` only).
 
 Internal MoralStack LLM calls are still the allowed generation sources: risk
 mini-estimators, the speculative draft (which may already be running or complete,

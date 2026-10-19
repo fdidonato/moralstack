@@ -11,6 +11,7 @@ GovernedSyntheticStream -- replay a validated final text as a synthetic stream
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 import uuid
@@ -33,6 +34,8 @@ from moralstack.utils.env_loader import load_env
 if TYPE_CHECKING:
     from moralstack.orchestration.delivery import GovernedDelivery
     from moralstack.runtime.orchestrator import Orchestrator
+
+_LOG = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -623,8 +626,19 @@ class GovernedCompletions:
         routes to passthrough delivery (it is mapped to ``refuse`` at config
         construction). A deterministic governed refusal is returned; for streaming
         requests it is replayed as a synthetic stream.
+
+        The exception text and traceback go to the ``moralstack.sdk.wrapper``
+        logger only, never into the returned metadata.
         """
         del kwargs
+        try:
+            _LOG.error(
+                "governance pipeline failed closed (sdk) error_type=%s",
+                type(error).__name__,
+                exc_info=error,
+            )
+        except Exception:
+            _LOG.debug("sdk pipeline failure log failed", exc_info=True)
         refusal = GovernedResponse.from_pipeline_error(error)
         if is_stream:
             return GovernedErrorStream(refusal)

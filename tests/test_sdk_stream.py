@@ -538,3 +538,28 @@ def test_synthetic_stream_still_stop(label: str):
     reasons = [c.choices[0].finish_reason for c in resp]
     assert reasons[-1] == "stop"
     assert all(r is None for r in reasons[:-1])
+
+
+def test_error_stream_has_no_exception_text():
+    import dataclasses
+    import json
+
+    from moralstack.sdk.config import GovernanceConfig
+    from moralstack.sdk.wrapper import GovernedErrorStream
+
+    mock_openai = MagicMock()
+    orch = MagicMock()
+    orch.process.side_effect = RuntimeError("provider said: secret-ish body")
+    client = GovernedClient(mock_openai, orch, GovernanceConfig())
+
+    resp = _create(client, stream=True)
+
+    mock_openai.chat.completions.create.assert_not_called()
+    assert isinstance(resp, GovernedErrorStream)
+    chunks = list(resp)
+    blob = json.dumps(dataclasses.asdict(resp.governance_metadata), default=str)
+    blob += "".join(c.choices[0].delta.content or "" for c in chunks)
+    assert "secret-ish body" not in blob
+    assert resp.governance_metadata.decision_reason == "Pipeline error"
+    assert [c.choices[0].finish_reason for c in chunks] == ["content_filter"]
+    assert chunks[0].model == "moralstack-error"

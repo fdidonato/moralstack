@@ -1131,3 +1131,121 @@ def test_sdk_sync_unlabelled_result_is_refusal():
     assert resp.content == DEFAULT_POST_REVALIDATION_REFUSAL
     assert "REAL ANSWER" not in resp.content
     assert resp.governance_metadata.final_action == "REFUSE"
+
+
+# =============================================================================
+# A1: exception text kept out of metadata, kept in the server-side log (D1a, D4a)
+# =============================================================================
+
+_A1_SECRET = "provider said: secret-ish body"
+
+
+class _A1Unprintable(Exception):
+    def __str__(self) -> str:
+        raise RuntimeError("no str for you")
+
+
+def _a1_capture_wrapper_log(monkeypatch: pytest.MonkeyPatch, name: str) -> list[Any]:
+    import logging
+
+    records: list[logging.LogRecord] = []
+
+    class _Handler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    lg = logging.getLogger(f"a1.sdk.{name}")
+    lg.handlers.clear()
+    lg.propagate = False
+    lg.setLevel(logging.DEBUG)
+    lg.addHandler(_Handler(logging.DEBUG))
+    monkeypatch.setattr("moralstack.sdk.wrapper._LOG", lg)
+    return records
+
+
+def _a1_failing_client(exc: Exception) -> tuple[Any, GovernedClient]:
+    mock_openai = MagicMock()
+    orch = _make_orchestrator()
+    orch.process.side_effect = exc
+    return mock_openai, GovernedClient(mock_openai, orch, GovernanceConfig(failure_policy="refuse"))
+
+
+def _a1_create(client: GovernedClient, stream: bool) -> Any:
+    return client.chat.completions.create(model="gpt-4o", messages=MESSAGES, stream=stream)
+
+
+@pytest.mark.parametrize("policy", ["refuse", "passthrough"])
+def test_pipeline_failure_metadata_has_no_exception_text(policy: str):
+    import dataclasses
+    import json
+
+    mock_openai = MagicMock()
+    orch = _make_orchestrator()
+    orch.process.side_effect = RuntimeError(_A1_SECRET)
+    if policy == "passthrough":
+        with pytest.warns(DeprecationWarning):
+            config = GovernanceConfig(failure_policy="passthrough")
+    else:
+        config = GovernanceConfig(failure_policy="refuse")
+    client = GovernedClient(mock_openai, orch, config)
+
+    resp = client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
+
+    mock_openai.chat.completions.create.assert_not_called()
+    assert resp.governance_metadata.decision_reason == "Pipeline error"
+    blob = json.dumps(dataclasses.asdict(resp.governance_metadata), default=str) + resp.content
+    assert "secret-ish body" not in blob
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("message", [_A1_SECRET, "100%s {} %d boom " + _A1_SECRET], ids=["plain", "formatchars"])
+def test_pipeline_failure_full_text_goes_to_server_side_log(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, stream: bool, message: str
+):
+    import logging
+
+    records = _a1_capture_wrapper_log(monkeypatch, request.node.name)
+    exc = RuntimeError(message)
+    _, client = _a1_failing_client(exc)
+
+    _a1_create(client, stream)
+
+    errors = [r for r in records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    rec = errors[0]
+    assert "error_type=RuntimeError" in rec.getMessage()
+    assert "secret-ish body" not in rec.getMessage()
+    assert rec.exc_info is not None and rec.exc_info[1] is exc
+    assert "secret-ish body" in logging.Formatter().format(rec)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_pipeline_failure_unprintable_exception_returns_refusal(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, stream: bool
+):
+    import logging
+
+    records = _a1_capture_wrapper_log(monkeypatch, request.node.name)
+    mock_openai, client = _a1_failing_client(_A1Unprintable("x"))
+
+    resp = _a1_create(client, stream)
+
+    mock_openai.chat.completions.create.assert_not_called()
+    assert resp.governance_metadata.final_action == "REFUSE"
+    assert len(records) == 1
+    logging.Formatter().format(records[0])  # must not raise (A5)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_pipeline_failure_logging_failure_never_breaks_refusal(monkeypatch: pytest.MonkeyPatch, stream: bool):
+    mock_openai, client = _a1_failing_client(RuntimeError(_A1_SECRET))
+
+    broken = MagicMock()
+    broken.error.side_effect = OSError("log sink down")
+    monkeypatch.setattr("moralstack.sdk.wrapper._LOG", broken)
+
+    resp = _a1_create(client, stream)
+
+    mock_openai.chat.completions.create.assert_not_called()
+    assert resp.governance_metadata.final_action == "REFUSE"
+    broken.error.assert_called_once()
