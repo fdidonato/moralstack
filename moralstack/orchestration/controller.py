@@ -39,6 +39,7 @@ from moralstack.orchestration.conversation_state import ConversationGovernanceSt
 from moralstack.orchestration.conversational_fast_path import (
     ConversationalFastPathRunner,
     decision_explanation_for_ledger_reuse,
+    ledger_hard_signal_block_reason,
 )
 from moralstack.orchestration.decision_logger import log_decision_explanation
 from moralstack.orchestration.decision_service import decide_action
@@ -2872,11 +2873,25 @@ class OrchestrationController:
                     cached_action = (
                         _cached_lookup.cached_decision.final_action if _cached_lookup.cached_decision else "unknown"
                     )
-                    if self._fast_path_runner.is_safe_to_apply(
+                    _gate_ok = self._fast_path_runner.is_safe_to_apply(
                         ledger_result=_cached_lookup,
                         current_decision=decision,
                         current_route=route,
-                    ):
+                    )
+                    # PROJECT_SPEC §5.3: the gate above is risk-blind, so on its own it is
+                    # not the hard-signal guarantee. A cached non-REFUSE decision is never
+                    # reused for a request with hard-signal evidence; the request then
+                    # continues exactly as on a cache miss (fast_path -> quick_check).
+                    _hard_block_reason = (
+                        ledger_hard_signal_block_reason(
+                            cached_action=cached_action,
+                            risk_estimation=risk_proto,
+                            hard_signal_refuse=hard_signal_refuse,
+                        )
+                        if _gate_ok
+                        else None
+                    )
+                    if _gate_ok and _hard_block_reason is None:
                         decision, route = self._fast_path_runner.apply_cached_decision(
                             ledger_result=_cached_lookup,
                             current_decision=decision,
@@ -2941,15 +2956,15 @@ class OrchestrationController:
                     else:
                         # Step 14.4 — emit the gate-rejected variant so the audit
                         # trail explains why deliberation ran even though the
-                        # ledger had a candidate hit. ``gate_reason`` is derived
-                        # from the documented contract of is_safe_to_apply:
-                        # - cached REFUSE is always applied (we never reach
-                        #   this branch when cached_action == "REFUSE");
-                        # - non-deliberative routes are always applied
-                        #   (we never reach this branch in that case);
-                        # - otherwise the current run is in deliberation and
-                        #   the cached non-REFUSE decision is rejected.
-                        gate_reason = (
+                        # ledger had a candidate hit. ``gate_reason`` is:
+                        # - the hard-signal guard reason when the gate would have
+                        #   applied the hit but the request carries hard-signal
+                        #   evidence (a cached REFUSE is never blocked);
+                        # - otherwise derived from the contract of is_safe_to_apply:
+                        #   a cached REFUSE or a non-deliberative route is always
+                        #   applied, so the current run is in deliberation and the
+                        #   cached non-REFUSE decision is rejected.
+                        gate_reason = _hard_block_reason or (
                             "current_route_requires_deliberation"
                             if route in ("deliberative", "deliberative_loop")
                             else "unknown_gate_rejection"

@@ -42,7 +42,12 @@ When `OrchestrationController` is constructed with a non-`None` `SemanticDecisio
 is used, the controller consults the ledger after `decide_action` and initial routing. On a semantic cache hit,
 `ConversationalFastPathRunner` (`moralstack/orchestration/conversational_fast_path.py`) may patch `Decision` and the
 string route to skip deliberation only when a conservative gate allows (cached `REFUSE`, or current route already
-non-deliberative). Response text is never read from the ledger (DAF-4); only governance metadata is reused.
+non-deliberative) **and never on hard-signal evidence**: `ledger_hard_signal_block_reason` (PROJECT_SPEC §5.3) blocks a
+cached non-REFUSE decision when the current request carries hard-signal evidence (`has_hard_signal_evidence`) or is a
+hard-signal REFUSE; the request then continues on its current route as on a cache miss (on `fast_path` that means
+`quick_check` runs), and `LEDGER_FAST_PATH_NOT_APPLIED` records `gate_reason` `hard_signal_evidence` /
+`hard_signal_refuse`. A cached `REFUSE` is never blocked. `is_safe_to_apply` alone is risk-blind and is not the §5.3
+guarantee. Response text is never read from the ledger (DAF-4); only governance metadata is reused.
 The patched `Decision` carries `cached_decision_reused` as its last reason code (`LEDGER_FAST_PATH_REUSE` once
 mapped), so a replayed decision is distinguishable from a deliberated one in `proxy_request_events.metadata_json`.
 Transient fail-closed REFUSEs (`metadata.hard_violation_flip_reason` in `LEDGER_NON_CACHEABLE_FLIP_REASONS`: the three

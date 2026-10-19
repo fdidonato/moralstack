@@ -497,7 +497,7 @@ relevant to multi-turn observability:
 | `CONVERSATION_CONTEXT_ATTACHED` | orchestration | conversation | Conversation context was attached to the request (session id, turn index, parent request). |
 | `CONVERSATION_STATE_UPDATED` | orchestration | conversation | The ConversationGovernanceState was advanced after this turn. |
 | `LEDGER_FAST_PATH_APPLIED` | fast_path | ledger_fast_path_runner | The SemanticDecisionLedger returned a hit AND the safety gate accepted it; deliberation was skipped. Payload: `from_turn`, `similarity`, `cached_action`, `forced_route`, `modules_skipped`. |
-| `LEDGER_FAST_PATH_NOT_APPLIED` | fast_path | ledger_fast_path_runner | The SemanticDecisionLedger returned a hit but the safety gate refused to apply it (typically because the current route requires deliberation and the cached decision is not REFUSE). Payload: `from_turn`, `similarity`, `cached_action`, `current_route`, `gate_reason`. |
+| `LEDGER_FAST_PATH_NOT_APPLIED` | fast_path | ledger_fast_path_runner | The SemanticDecisionLedger returned a hit but it was not applied: either the safety gate refused it (the current route requires deliberation and the cached decision is not REFUSE: `gate_reason` `current_route_requires_deliberation`) or the hard-signal guard did (the request carries hard-signal evidence, `gate_reason` `hard_signal_evidence`, or is a hard-signal REFUSE, `hard_signal_refuse`). The turn continues on its current route as on a cache miss. Payload: `from_turn`, `similarity`, `cached_action`, `current_route`, `gate_reason`. |
 
 ### Fast-path safety gate
 
@@ -520,6 +520,15 @@ weaken safety relative to the current run.
    current turn has a risk profile that triggers full deliberation. Reusing
    the cached (less strict) decision would downgrade safety — the gate
    refuses and the deliberation runs in full.
+4. **Non-REFUSE with hard-signal evidence → REJECTED (any route).** The gate
+   above is risk-blind, so the controller applies a second rule
+   (``ledger_hard_signal_block_reason``, PROJECT_SPEC §5.3): a cached NORMAL/SAFE
+   decision is never reused when ``has_hard_signal_evidence`` holds for the
+   current risk estimation (``hard_signal_evidence``) or the current decision is
+   a hard-signal REFUSE (``hard_signal_refuse``, defense in depth for a ledger
+   that ignores the ESCALATED posture). A cached REFUSE is never blocked. The
+   request continues exactly as on a cache miss; on ``fast_path`` that means the
+   HARD ``quick_check`` of the fresh draft still runs.
 
 **Observability:**
 
@@ -527,7 +536,8 @@ weaken safety relative to the current run.
   ``event_type='LEDGER_FAST_PATH_APPLIED'`` is emitted.
 - When the gate **rejects** the hit, an ``orchestration.event`` with
   ``event_type='LEDGER_FAST_PATH_NOT_APPLIED'`` is emitted, with
-  ``reason_codes=['current_route_requires_deliberation']`` and
+  ``reason_codes=['current_route_requires_deliberation']`` (or
+  ``['hard_signal_evidence']`` / ``['hard_signal_refuse']`` for rule 4) and
   ``payload.gate_reason`` indicating the rejection cause.
 
 **Demo:** ``examples/multiturn_quickstart_gate_rejected.py`` reproduces a

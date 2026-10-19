@@ -2567,7 +2567,8 @@ def _synthetic_ledger_fast_path_node(
             "was applied, so critic / simulator / perspectives / hindsight did not run for this turn."
             if applied
             else "A ledger cache hit was found but the safety gate refused to apply it; the turn "
-            "proceeds with full deliberation."
+            "proceeds on its current route (full deliberation when that route requires it); "
+            "gate_reason says why."
         ),
         "system_prompt": "[orchestration] LEDGER_FAST_PATH decision (structured governance step, not an LLM call)",
         "raw_response": json.dumps(payload, indent=2, ensure_ascii=False),

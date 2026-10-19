@@ -67,9 +67,11 @@ perspectives / hindsight are NOT executed for this turn. Payload includes
 LEDGER_FAST_PATH_NOT_APPLIED = "LEDGER_FAST_PATH_NOT_APPLIED"
 """
 Emitted when a SemanticDecisionLedger cache hit is FOUND but the safety gate
-(``ConversationalFastPathRunner.is_safe_to_apply``) refused to apply it. The
-turn proceeds with full deliberation. Payload includes ``from_turn``,
-``similarity``, ``cached_action``, ``current_route``, ``gate_reason``.
+(``ConversationalFastPathRunner.is_safe_to_apply``) or the hard-signal guard
+(``ledger_hard_signal_block_reason``) refused to apply it. The turn proceeds on
+its current route (full deliberation when that route requires it);
+``gate_reason`` says why. Payload includes ``from_turn``, ``similarity``,
+``cached_action``, ``current_route``, ``gate_reason``.
 """
 
 # Pipeline failure (F6 follow-up): audit-only, best-effort

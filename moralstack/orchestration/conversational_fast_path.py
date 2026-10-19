@@ -23,7 +23,8 @@ from typing import Literal, cast
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.reason_codes import policy_reason_codes_to_reason_codes
 from moralstack.orchestration.ledger import LedgerResult
-from moralstack.orchestration.types import Decision, FinalActionStr
+from moralstack.orchestration.path_router import has_hard_signal_evidence
+from moralstack.orchestration.types import Decision, FinalActionStr, RiskEstimationProtocol
 
 _LOG = logging.getLogger(__name__)
 
@@ -164,6 +165,28 @@ class ConversationalFastPathRunner:
         if current_route in ("benign", "safe_complete", "refuse", "fast_path"):
             return True
         return False
+
+
+def ledger_hard_signal_block_reason(
+    *,
+    cached_action: str,
+    risk_estimation: RiskEstimationProtocol,
+    hard_signal_refuse: bool,
+) -> str | None:
+    """PROJECT_SPEC §5.3: reason to refuse reusing a cached decision, or None.
+
+    A cached REFUSE is never blocked (it errs safe). A cached non-REFUSE is blocked
+    when the current request has hard-signal evidence ("hard_signal_evidence") or is a
+    hard-signal REFUSE ("hard_signal_refuse" — unreachable with SemanticDecisionLedger,
+    whose ESCALATED posture misses; defense in depth for a posture-ignoring ledger).
+    """
+    if cached_action == "REFUSE":
+        return None
+    if has_hard_signal_evidence(risk_estimation):
+        return "hard_signal_evidence"
+    if hard_signal_refuse:
+        return "hard_signal_refuse"
+    return None
 
 
 def decision_explanation_for_ledger_reuse(
