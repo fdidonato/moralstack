@@ -147,6 +147,11 @@ class QuickCheckResult:
     check_time_ms: float = 0.0
 
 
+class NoHardPrinciplesError(Exception):
+    """quick_check found no HARD principle to check against (shared list,
+    self-retrieval and constitution fallback all empty): no verdict, never a pass."""
+
+
 # =============================================================================
 # Protocols
 # =============================================================================
@@ -652,7 +657,10 @@ class LLMConstitutionalCritic:
             Exception: any provider/transport error from ``policy.generate``
                 propagates unchanged. The caller must treat every raise as "no
                 verdict", never as a pass (``passed=True`` is returned only after
-                a parsed, falsy ``violated``, or when there are no HARD principles).
+                a parsed, falsy ``violated``).
+            NoHardPrinciplesError: no HARD principle to check against (shared list,
+                self-retrieval and constitution fallback all without HARD). No LLM
+                call is made; this is "no verdict", never a pass.
         """
         import time
 
@@ -686,7 +694,7 @@ class LLMConstitutionalCritic:
             ]  # Aumentato da 5 a 10 per maggiore copertura
 
         if not hard_constraints:
-            return QuickCheckResult(passed=True)
+            raise NoHardPrinciplesError("quick_check found no HARD principle to check against")
 
         # Formatta hard constraints (formato compatto per ridurre token)
         constraints_text = format_principles_compact(hard_constraints, max_rule_len=self.config.max_rule_len)

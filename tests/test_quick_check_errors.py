@@ -9,8 +9,9 @@ Contract pinned here:
 
 * provider / transport errors, unparseable text, non-dict replies and a reply
   without the ``violated`` key all RAISE (the caller treats that as "no verdict");
-* ``passed=True`` only after a parsed, falsy ``violated`` or on the unchanged
-  zero-HARD-principles early pass.
+* ``passed=True`` only after a parsed, falsy ``violated``; a request with no HARD
+  principle to check against (shared list, self-retrieval and constitution all
+  without HARD) RAISES ``NoHardPrinciplesError`` without any LLM call (D10).
 
 Offline: the policy is a double, no network. The prompt bytes are pinned elsewhere
 (``tests/test_static_prefix_stability.py``).
@@ -104,10 +105,31 @@ def test_c4_parsed_falsy_violated_passes() -> None:
     assert result.passed is True
 
 
-def test_c5_no_hard_principles_is_unchanged_pass_without_llm_call() -> None:
+def test_c5_no_hard_principles_raises_without_llm_call() -> None:
+    from moralstack.runtime.modules.critic_module import NoHardPrinciplesError
+
     policy = _Policy(exc=RuntimeError("must not be called"))
-    result = _check(policy, constitution=_constitution(level="soft"))
+    with pytest.raises(NoHardPrinciplesError):
+        _check(policy, constitution=_constitution(level="soft"))
+    assert policy.calls == []
+
+
+def test_c5b_hard_in_constitution_but_soft_only_shared_list_still_checks() -> None:
+    policy = _Policy()
+    critic = LLMConstitutionalCritic(policy=policy, store=None)
+    result = critic.quick_check("prompt", "response", _constitution("hard"), [_Principle("S", level="soft")])
+    assert len(policy.calls) == 1
     assert result.passed is True
+
+
+@pytest.mark.parametrize("shared", [[_Principle("S", level="soft")], []])
+def test_q2_soft_only_shared_list_and_soft_only_constitution_raises_without_llm_call(shared: list[Any]) -> None:
+    from moralstack.runtime.modules.critic_module import NoHardPrinciplesError
+
+    policy = _Policy(exc=RuntimeError("must not be called"))
+    critic = LLMConstitutionalCritic(policy=policy, store=None)
+    with pytest.raises(NoHardPrinciplesError):
+        critic.quick_check("prompt", "response", _constitution("soft"), shared)
     assert policy.calls == []
 
 

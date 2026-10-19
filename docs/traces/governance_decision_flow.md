@@ -287,11 +287,14 @@ them, see `docs/traces/observability_db_to_ui.md`).
 
 **Fast-path HARD check fails closed (2026-10-13).** `DeliberationRunner.run_fast_path`
 delivers the fast draft only if `critic.quick_check` ran and passed, or the check is
-skipped by design (`critic is None`, or no constitution store configured). Three
+skipped by design (`critic is None`, or no constitution store configured). Four
 triggers escalate to `run_deliberative_path` (`escalation_trigger` in the audit):
 `quick_check_violation` (`passed=False`), `quick_check_error` (`quick_check` raised:
 provider error, unparseable reply, or a reply with no `violated` key -- see
-`docs/modules/critic.md`), and `constitution_unavailable` (F3: a store is configured
+`docs/modules/critic.md`), `no_hard_principles` (`quick_check` raised
+`NoHardPrinciplesError`: no HARD principle to check against, no LLM call; D10, a
+dedicated trigger so operators can tell a misconfigured constitution from a provider
+error), and `constitution_unavailable` (F3: a store is configured
 but `get_constitution_safe` returned `None` after the retry). The escalation must end
 with a **critique that completed in the final cycle**
 (`_escalation_has_completed_critique`: `state._critique_outcome == "completed"`, cycle-scoped, a skipped

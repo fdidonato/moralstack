@@ -719,3 +719,95 @@ def test_i4_upstream_draft_is_not_delivered_when_escalation_raises() -> None:
     assert upstream not in _metadata_blob(result)
     assert meta.draft_origin == "internal"
     assert meta.internal_draft_reused is False
+
+
+# =============================================================================
+# D10 / D2b: a zero-HARD constitution is "no verdict" (real critic, no LLM call)
+# =============================================================================
+
+
+class _CallRecordingPolicy:
+    model = "critic-policy"
+
+    def __init__(self, text: str | None = None, exc: Exception | None = None) -> None:
+        self.calls: list[Any] = []
+        self._text = text
+        self._exc = exc
+
+    def generate(self, *args: Any, **kw: Any) -> Any:
+        self.calls.append((args, kw))
+        if self._exc is not None:
+            raise self._exc
+        return SimpleNamespace(text=self._text)
+
+
+def _zero_hard_real_critic() -> tuple[LLMConstitutionalCritic, _CallRecordingPolicy]:
+    policy = _CallRecordingPolicy(exc=RuntimeError("must not be called"))
+    return LLMConstitutionalCritic(policy=policy, store=None), policy
+
+
+def _soft_only_constitution() -> Any:
+    return SimpleNamespace(principles=[_Principle("S.1", level="soft")])
+
+
+def test_q4_zero_hard_completed_escalation_returns_deliberative_result_not_draft(persisted: Any) -> None:
+    critic, real_policy = _zero_hard_real_critic()
+    runner = _runner(_DraftPolicy(), critic)
+    sentinel = object()
+    with (
+        patch.object(runner, "run_deliberative_path", return_value=(_completed_state(), 0.1, None)) as esc,
+        patch.object(runner, "_build_deliberative_result", return_value=sentinel),
+    ):
+        result = _drive(runner, constitution=_soft_only_constitution())
+    esc.assert_called_once()
+    assert result is sentinel
+    assert real_policy.calls == []
+
+
+def test_q4_zero_hard_empty_escalation_is_unverified_refuse_with_dedicated_trigger(
+    persisted: Any, final_traces: list[Any]
+) -> None:
+    import logging
+
+    class _Handler:
+        level = logging.DEBUG
+
+        def __init__(self) -> None:
+            self.records: list[Any] = []
+
+        def handle(self, record: Any) -> None:
+            self.records.append(record)
+
+    lg = logging.getLogger(f"{_RUNNER_MOD}.q4")
+    lg.handlers.clear()
+    lg.propagate = False
+    lg.setLevel(logging.DEBUG)
+    handler = _Handler()
+    lg.addHandler(handler)  # type: ignore[arg-type]
+
+    critic, real_policy = _zero_hard_real_critic()
+    runner = _runner(_DraftPolicy(), critic)
+    with (
+        patch(f"{_RUNNER_MOD}._LOG", lg),
+        patch.object(runner, "run_deliberative_path", return_value=(DeliberationState(cycle=1), 0.1, None)),
+    ):
+        result = _drive(runner, constitution=_soft_only_constitution())
+    _assert_fail_closed(result, FAST_PATH_ESCALATION_UNVERIFIED)
+    assert final_traces[-1].stage_payload["escalation_trigger"] == "no_hard_principles"
+    assert real_policy.calls == []
+    warnings = [r for r in handler.records if r.levelno == logging.WARNING and "quick_check raised" in r.getMessage()]
+    assert len(warnings) == 1
+    msg = warnings[0].getMessage()
+    assert "error_type=NoHardPrinciplesError" in msg
+    assert "no HARD principle" not in msg
+
+
+def test_q5_hard_constitution_real_critic_passes_without_escalation(persisted: Any) -> None:
+    policy = _CallRecordingPolicy(text='{"violated": false}')
+    critic = LLMConstitutionalCritic(policy=policy, store=None)
+    runner = _runner(_DraftPolicy(), critic)
+    with patch.object(runner, "run_deliberative_path") as esc:
+        result = _drive(runner, constitution=SimpleNamespace(principles=[_Principle("HARD.1", level="hard")]))
+    esc.assert_not_called()
+    assert len(policy.calls) == 1
+    assert result.response.content == DRAFT

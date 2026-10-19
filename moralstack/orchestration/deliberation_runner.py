@@ -1597,8 +1597,9 @@ class DeliberationRunner:
         HARD ``quick_check`` ran and passed, or the check is skipped by design (no
         critic, or no constitution store configured). Otherwise the request is
         escalated to ``run_deliberative_path`` -- ``quick_check`` said ``passed=False``,
-        raised (no verdict), or the store is configured but the constitution could not
-        be loaded (F3) -- and the escalation must end with a completed, non-skipped
+        raised (no verdict, including a constitution with zero HARD principles:
+        ``NoHardPrinciplesError``), or the store is configured but the constitution
+        could not be loaded (F3) -- and the escalation must end with a completed, non-skipped
         critique. If it raises (``fast_path_escalation_failed``) or ends with no such
         critique (``fast_path_escalation_unverified``) the result is a governed REFUSE
         assembled through the REFUSE branch; the draft is never delivered.
@@ -1606,7 +1607,8 @@ class DeliberationRunner:
         ``request_analysis``: risk-owned retrieval context (single upstream wave).
         When supplied, ``quick_check`` filters the shared principles to HARD
         instead of self-retrieving (still falls back to the constitution's own
-        HARD constraints if the filtered shared list has zero HARD principles);
+        HARD constraints if the filtered shared list has zero HARD principles; with
+        none at all ``quick_check`` raises (no verdict));
         forwarded unchanged to the quick-check-failed ``run_deliberative_path``
         escalation so the fallback path does not retrieve a second time either.
 
@@ -1616,6 +1618,7 @@ class DeliberationRunner:
         every persisted row byte-identical to today.
         """
         from moralstack.orchestration.diagnostics import orch_debug_log
+        from moralstack.runtime.modules.critic_module import NoHardPrinciplesError
 
         orch_debug_log(
             "orchestrator.py:_fast_path",
@@ -1774,6 +1777,15 @@ class DeliberationRunner:
                 )
                 if not quick_result.passed:
                     escalation_trigger = "quick_check_violation"
+            except NoHardPrinciplesError as e:
+                # Zero HARD principles to check against: no verdict, never a pass.
+                # Dedicated trigger; class name only on the message line.
+                escalation_trigger = "no_hard_principles"
+                _LOG.warning(
+                    "run_fast_path quick_check raised request_id=%s error_type=%s; escalating",
+                    rid,
+                    type(e).__name__,
+                )
             except Exception as e:
                 # Governance, not telemetry (§5.6): "no verdict" is never a pass.
                 escalation_trigger = "quick_check_error"

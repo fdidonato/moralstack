@@ -100,13 +100,25 @@ exception itself only in `exc_info`) and still falls back to the constitution's 
 principles, so the check is never skipped; before 2026-10-19 the failure was swallowed
 silently.
 
+**Zero HARD principles is "no verdict" (D10, 2026-10-19).** If the shared list, the
+self-retrieval and the constitution fallback all leave no HARD principle,
+`quick_check` raises `NoHardPrinciplesError` (defined next to `QuickCheckResult`)
+**without any LLM call**; it used to return `QuickCheckResult(passed=True)`, which
+delivered an unchecked fast-path draft. A constitution with a HARD principle in the
+fallback still runs the check even when the shared list is soft-only. `run_fast_path`
+catches this class before its generic handler and escalates with
+`escalation_trigger = "no_hard_principles"` (WARNING with the class name only), so
+the draft is delivered only from a completed deliberative critique, else a governed
+REFUSE (`docs/traces/governance_decision_flow.md` §9). The shipped constitution is
+unaffected (`core.yaml` carries 15 HARD principles); the case is reachable only with
+an operator `constitution_dir` that has no HARD principle.
+
 **Error contract (fail closed, 2026-10-13).** `quick_check` returns
-`passed=True` only after a *parsed, falsy* `violated`, or on the unchanged
-early pass when no HARD principle is available at all. Every other outcome is
+`passed=True` only after a *parsed, falsy* `violated`. Every other outcome is
 "no verdict" and **raises**: a provider/transport error from `policy.generate`
 propagates unchanged, and an unparseable reply, a non-object reply (e.g. `[]`) or
 a JSON object **without the `violated` key** raise `JSONParseError`
-(`critic_module.py:719-720`). Before this change the whole call sat in
+(`critic_module.py:727-728`). Before this change the whole call sat in
 `except (JSONParseError, Exception): return QuickCheckResult(passed=True)` and
 a missing key defaulted to "not violated", so any provider blip passed an
 unchecked draft on the fast path, where no full critique runs afterwards. The

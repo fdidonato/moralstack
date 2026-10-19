@@ -176,7 +176,8 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   shared principles to `critic.quick_check(..., pre_retrieved_principles)`
   (filtered to HARD there) and to the quick-check-failed `run_deliberative_path`
   fallback call, so FAST_PATH never re-retrieves either. **FAST_PATH fails
-  closed (2026-10-13):** a `quick_check` that fails, raises or has no verdict, or
+  closed (2026-10-13):** a `quick_check` that fails, raises or has no verdict (including
+  zero HARD principles: `NoHardPrinciplesError`, trigger `no_hard_principles`), or
   a configured store with no loadable constitution, escalates to the deliberative
   path; an escalation that raises or ends without a critique that completed in
   the final cycle (cycle-scoped `_critique_outcome == "completed"`) becomes a governed REFUSE (`fast_path_escalation_failed` /
@@ -688,7 +689,8 @@ modules can also be absent, disabled, or skipped by timeout or gating:
   the check); self-retrieves as before when no shared list is supplied
   (fail-safe). **Raises** on any provider error, unparseable or non-object reply,
   or reply without the `violated` key (no verdict is never a pass); `passed=True`
-  only after a parsed falsy `violated` or when no HARD principle exists.
+  only after a parsed falsy `violated`; with no HARD principle at all it raises
+  `NoHardPrinciplesError` without an LLM call (D10, 2026-10-19).
 - **Consequence Simulator** (`LLMConsequenceSimulator`) — projected harm /
   expected valence. Runs in parallel with perspectives.
 - **Perspectives Ensemble** — multi-stakeholder approval scores.
@@ -822,7 +824,7 @@ See `docs/traces/openai_compatible_multiturn.md`.
   early return; `_log_final_trace` copies it onto the FINAL row. **It is NOT a
   "did the module execute" flag:** a full-parallel simulation runs but is
   discarded on a critic hard violation without merging `state.simulations`
-  (`deliberation_runner._run_full_parallel_evaluation:3251-3259`), so the
+  (`deliberation_runner._run_full_parallel_evaluation:3263-3271`), so the
   simulator can have executed while this reads `False` — correct, because those
   FINAL metrics are then defaults. A carried-forward result counts as measured.
   Never read it as a plain bool.
