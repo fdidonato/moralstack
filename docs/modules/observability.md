@@ -630,6 +630,56 @@ row; `conversation.state_updated` appends one row per envelope. There is no
   It identifies the set, not the per-call `when` variant (per-call identity comes with A4b's wire hash).
 - Override texts are persisted verbatim in both channels: never put secrets in prompts.
 
+### Wire record (Phase A, step A4b)
+
+The `llm_calls` columns (`prompt`, `system_prompt`) do not always hold what the model actually received: the
+module context preface, the developer-contract and history messages, the retry suffix and the legacy `generate()`
+branch are not in them, and several calls share one row. The **wire record** closes that without changing the
+meaning of any existing field: it describes the exact `messages` list sent, storing only what the columns lack, plus a
+`sha256` of the whole list.
+
+- **Where.** `parsed_summary_json["wire"]` for a row that records one call. A row that aggregates several calls
+  (perspectives, the seeded simulator, the refusal's two attempts) uses `parsed_summary_json["wire_calls"]` (records in
+  call order) and `parsed_summary_json["wire_strings"]` (one string table shared by all of them, so a system prompt common
+  to every call is stored once). A cache hit makes no call and carries no wire. The record travels in the same
+  `llm.call` envelope to SQLite and to `llm.call.jsonl`.
+- **Record v1.**
+
+  ```json
+  {"v": 1, "branch": "messages|generate", "sha256": "...", "n": 4,
+   "messages": [{"role": "system", "ref": "system_prompt"},
+                {"role": "developer", "s": 0},
+                {"role": "user", "s": 1},
+                {"role": "user", "ref": "prompt", "prefix": "<preface>", "suffix": ""}],
+   "strings": ["<contract as sent>", "<history turn as sent, truncated>"]}
+  ```
+
+  Each message content is `ref` (byte-equal to the row's `system_prompt` or `prompt` column), `ref` with
+  `prefix`/`suffix` (the column occurs exactly once inside the content: the preface and the retry suffix wrap the persisted
+  prompt), or `s` (an index into the string table, which deduplicates identical contents). `branch` is `messages` when
+  the call went through `generate_messages` and `generate` for the legacy `generate()` call. `sha256` is the digest of
+  `json.dumps([{"role", "content"}, ...], ensure_ascii=False, separators=(",", ":"))`, encoded as UTF-8 with
+  `errors="surrogatepass"` (a lone surrogate hashes instead of raising). A verifier must call `wire_sha256` rather than
+  re-implement the digest. `decode_wire` raises `ValueError` (and only `ValueError`) on any malformed record, including a
+  missing key or an out-of-range string index.
+- **Codec.** `moralstack/observability/wire.py` is pure (no I/O): `generate_messages_for(prompt, system)` mirrors
+  `OpenAIPolicy.generate` (the system message is omitted when empty), `encode_wire`, `encode_wire_calls`,
+  `decode_wire` and `wire_sha256`. `decode_wire(encode_wire(m, ...)) == m` and the digest of the decoded messages
+  equals the record's `sha256` (`tests/test_wire_codec.py`, including `{`, `{{`, CRLF, NBSP and empty strings). Building a
+  record is telemetry: it is built at the call site from the exact arguments passed to the policy, wrapped like every other
+  emit, and a failure never reaches the module call.
+- **`message_sections` keeps its meaning.** It is the request's context (developer messages, history, final user
+  message) stored in full, in the row's summary or in the module's `CONTEXT_SHAPE_RECORDED` event. `wire` holds the bytes
+  actually sent (windowed, truncated, with the preface). Both are kept.
+- **Not changed, on purpose.** `prompt` does not start to include the preface, `message_sections` is not truncated to
+  the window sent, the `"Retry reason: ..."` prompt of retry-failed rows stays (the failed attempt's wire is added next
+  to it, with its system prompt inlined because those rows have no `system_prompt`), and aggregated rows are not split.
+- **Status.** The codec is in place; no row carries a `wire` record yet. Each A4b step adds it to one group of rows and
+  removes its entries from `KNOWN_GAPS` in `tests/test_persistence_fidelity.py`. That test drives every module and path
+  with recording fake policies against a real SQLite DB in `dual` mode, reconstructs each call from its row and from
+  `llm.call.jsonl`, and asserts the gap report equals `KNOWN_GAPS`: a new gap fails it, and so does a fixed gap that is
+  still listed.
+
 ### Worked example: `request.meta_updated`
 
 A single request goes through five state transitions, producing five envelopes

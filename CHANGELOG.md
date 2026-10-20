@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Persistence fidelity: characterization and wire codec (prompt externalization, step A4b, batch 1).**
+  New `moralstack/observability/wire.py` (pure codec for the record that will describe the exact messages sent by a
+  call: `generate_messages_for`, `encode_wire`, `encode_wire_calls`, `decode_wire`, `wire_sha256`) and two test files:
+  `tests/test_wire_codec.py` (round trip, `sha256` and client-boundary parity against a recording fake OpenAI client) and
+  `tests/test_persistence_fidelity.py`, which drives every module and path on a real `dual`-mode DB, reconstructs each
+  call from its `llm_calls` row and from `llm.call.jsonl`, and asserts the gap report equals the checked-in
+  `KNOWN_GAPS`. No production code writes the record yet and no persisted field changes; `docs/modules/observability.md`
+  documents the format.
+
 - **Run audit of the prompt set on DB, file and per request (prompt externalization, step A4).** Every entry
   point (SDK, proxy, CLI, benchmark, and the `DefaultPersistence` session fallback) adds
   `prompt_config` (`PromptSet.audit_summary()`) to the meta of its existing `create_run` call, and in
