@@ -22,6 +22,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 import logging
+import threading
 from typing import Any, Mapping
 
 from moralstack.observability.context import get_current_request_id, get_current_run_id
@@ -31,11 +32,12 @@ from moralstack.observability.events import (
     EVENT_LEDGER_STORE,
     EVENT_PROXY_REQUEST_FINALIZED,
     EVENT_REQUEST_META_UPDATED,
+    EVENT_RUN_STARTED,
     EVENT_SESSION_STORE_GET,
     EVENT_SESSION_STORE_PUT,
     make_envelope,
 )
-from moralstack.observability.router import RouteResult
+from moralstack.observability.router import RouteResult, route_jsonl
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +121,46 @@ def _emit_safe(envelope: Any) -> None:
 # ---------------------------------------------------------------------------
 # Public helpers
 # ---------------------------------------------------------------------------
+
+
+_RUN_STARTED_CAPACITY = 4096
+_run_started_written: dict[str, None] = {}
+_run_started_lock = threading.Lock()
+
+
+def _claim_run_started(run_id: str) -> bool:
+    """True iff ``run_id`` was not yet recorded (first writer wins). Bounded, insertion-ordered, lock-guarded."""
+    with _run_started_lock:
+        if run_id in _run_started_written:
+            return False
+        _run_started_written[run_id] = None
+        while len(_run_started_written) > _RUN_STARTED_CAPACITY:
+            del _run_started_written[next(iter(_run_started_written))]
+        return True
+
+
+def emit_run_started_file_record(run_id: str | None, run_type: str, meta: dict[str, Any] | None) -> None:
+    """
+    Write the canonical ``run.started`` envelope to the JSONL sink only (``file_only``/``dual``).
+
+    The SQLite row is created by the caller's direct ``create_run`` call; routing this event through
+    SQLite as well would create the run twice. Once per run id, process-wide (mirrors the DB's
+    ``INSERT OR IGNORE`` first-writer semantics). Best-effort: never raises.
+    """
+    try:
+        if not run_id:
+            return
+        if not _claim_run_started(run_id):
+            return
+        safe_meta = _json_safe(meta if meta is not None else {})
+        envelope = make_envelope(
+            EVENT_RUN_STARTED,
+            run_id=run_id,
+            payload={"run_type": run_type, "meta": safe_meta},
+        )
+        route_jsonl(envelope)
+    except Exception:
+        logger.debug("emit_run_started_file_record failed", exc_info=True)
 
 
 def emit_request_meta_updated(

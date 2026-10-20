@@ -30,7 +30,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from moralstack.models.base import GenerationOverrides
-from moralstack.observability.conversation_events import finalize_audit_sync
+from moralstack.observability.conversation_events import emit_run_started_file_record, finalize_audit_sync
 from moralstack.observability.emit_helpers import persist_orchestration_event
 from moralstack.observability.governance_audit import (
     finalize_governance_audit,
@@ -50,6 +50,7 @@ from moralstack.orchestration.final_revalidation import (
 from moralstack.orchestration.orchestration_event_taxonomy import PROXY_OUTPUT_FINALIZED
 from moralstack.orchestration.types import ProcessedRequest
 from moralstack.orchestration.upstream_draft import UpstreamDraftGenerator
+from moralstack.prompts.catalog import prompt_run_meta
 from moralstack.sdk.bootstrap import _resolve_generation_mode, _resolve_model
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.session_store import InMemorySessionStore, SessionStoreProtocol
@@ -328,6 +329,7 @@ def _handle_chat_completion_sync(
     cfg: GovernanceConfig,
     principal: str = "",
     generation_mode: str = "internal",
+    run_meta: dict[str, Any] | None = None,
 ) -> Response:
     """
     Synchronous request handler: governance, session store, upstream OpenAI call.
@@ -411,6 +413,7 @@ def _handle_chat_completion_sync(
             prompt=user_prompt,
             conversation_id=conversation_id or None,
             turn_index=turn_index,
+            run_meta=run_meta,
         )
 
         is_stream = bool(body.get("stream", False))
@@ -650,7 +653,11 @@ def create_app(
     # are persisted to DB / JSONL per MORALSTACK_OBSERVABILITY_* env vars.
     # Pattern parallels cli/shell.py: init_db + create_run + set_current_run_id.
     # Each HTTP request then sets its own request_id in the context var.
-    proxy_run_id = _initialize_observability_run()
+    run_meta: dict[str, Any] = {
+        "source": "moralstack-server",
+        **prompt_run_meta(getattr(orchestrator, "prompt_set", None)),
+    }
+    proxy_run_id = _initialize_observability_run(run_meta)
     if proxy_run_id:
         logger.info("MoralStack proxy observability run initialized: run_id=%s", proxy_run_id)
     else:
@@ -747,6 +754,7 @@ def create_app(
             cfg=cfg,
             principal=principal,
             generation_mode=generation_mode,
+            run_meta=run_meta,
         )
 
     return app
@@ -773,7 +781,7 @@ def _resolve_turn_index(messages: list[dict[str, Any]]) -> int:
     return max(0, user_count - 1)
 
 
-def _initialize_observability_run() -> str:
+def _initialize_observability_run(run_meta: dict[str, Any] | None = None) -> str:
     """
     Initialize the observability stack for the proxy lifetime.
 
@@ -782,6 +790,9 @@ def _initialize_observability_run() -> str:
     the run_id in the observability context var. All subsequent governance
     events (LLM calls, decision traces, orchestration events) emitted by the
     pipeline will then be persisted under this run_id.
+
+    ``run_meta`` is the run meta (``source`` plus the ``prompt_config`` audit record); it is also
+    written once to ``run.started.jsonl`` in file_only/dual.
 
     Returns the run_id string when observability is configured, or "" when
     persistence is disabled (no DB path set and not in file_only mode).
@@ -797,9 +808,10 @@ def _initialize_observability_run() -> str:
         # In file_only mode there is no DB to initialize but we still set a run_id
         # so JSONL envelopes carry a stable identifier across proxy requests.
         run_id = str(uuid.uuid4())
+        meta = run_meta if run_meta is not None else {"source": "moralstack-server"}
         if db_path and mode in ("db_only", "dual"):
             init_db(db_path)
-            create_run(run_id=run_id, run_type="proxy", meta={"source": "moralstack-server"})
+            create_run(run_id=run_id, run_type="proxy", meta=meta)
         elif mode == "file_only":
             # JSONL-only: nothing to init in DB.
             pass
@@ -807,6 +819,7 @@ def _initialize_observability_run() -> str:
             # No persistence configured.
             return ""
         set_current_run_id(run_id)
+        emit_run_started_file_record(run_id, "proxy", meta)
         return run_id
     except Exception as exc:
         logger.warning("Failed to initialize observability run for proxy: %s", exc)
@@ -821,7 +834,7 @@ _run_row_ensured_for: tuple[str, str] | None = None
 _run_row_lock = threading.Lock()
 
 
-def _ensure_run_row(db_path: str, run_id: str) -> None:
+def _ensure_run_row(db_path: str, run_id: str, run_meta: dict[str, Any] | None = None) -> None:
     """Create the schema and the parent `runs` row once per DB. Never raises."""
     global _run_row_ensured_for
     key = (db_path, run_id)
@@ -835,7 +848,11 @@ def _ensure_run_row(db_path: str, run_id: str) -> None:
         if not init_db(db_path):
             return
         # INSERT OR IGNORE: a no-op when the run row is already there.
-        if create_run(run_id=run_id, run_type="proxy", meta={"source": "moralstack-server"}):
+        if create_run(
+            run_id=run_id,
+            run_type="proxy",
+            meta=run_meta if run_meta is not None else {"source": "moralstack-server"},
+        ):
             _run_row_ensured_for = key
 
 
@@ -846,6 +863,7 @@ def _ensure_request_row(
     prompt: str,
     conversation_id: str | None,
     turn_index: int,
+    run_meta: dict[str, Any] | None = None,
 ) -> None:
     """
     Pre-insert the requests row before the pipeline runs.
@@ -879,7 +897,7 @@ def _ensure_request_row(
 
         db_path = get_db_path()
         if db_path:
-            _ensure_run_row(db_path, proxy_run_id)
+            _ensure_run_row(db_path, proxy_run_id, run_meta)
         upsert_request(
             run_id=proxy_run_id,
             request_id=request_id,

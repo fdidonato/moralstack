@@ -413,14 +413,21 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   drains queued writes for read-after-write tests and short-lived SDK callers.
 - `router.py` — synchronous dispatch by mode (`db_only` → SQLite,
   `file_only` → JSONL, `dual` → both). `route_window` is counted for the worker;
-  `route_audit_sync` is counted and synchronous for finalization.
+  `route_audit_sync` is counted and synchronous for finalization. `route_jsonl`
+  writes one envelope to the JSONL sink only (`file_only`/`dual`; used for
+  `run.started`, whose DB row comes from the entry point's direct `create_run`).
 - `sinks/sqlite_sink.py` — schema + writers (`init_db`, `create_run`,
   `upsert_request`, `update_request_*`, `delete_*`) plus FK-ordered
   `write_window` with per-envelope isolation. Tables in §8.
 - `sinks/jsonl_sink.py` — JSONL envelope writer with counted `write_window`.
 - `read_store.py` — `SqliteReadStore` (read contract used by UI & exports).
 - `conversation_events.py` — `emit_conversation_state_updated`,
-  `emit_proxy_request_finalized`, `finalize_audit_sync`.
+  `emit_proxy_request_finalized`, `finalize_audit_sync`,
+  `emit_run_started_file_record` (prompt-set audit, A4: one `run.started.jsonl`
+  line per run id, process-wide first-writer guard, carries
+  `meta.prompt_config`). The controller adds a per-request link
+  `requests.meta_json.prompt_set = {ps, is_default}` via
+  `emit_request_meta_updated` right after the request upsert.
 - `governance_audit.py` — `finalize_governance_audit`, `posture_of`,
   `state_summary_or_none`.
 - `context.py` — contextvars (`set_current_run_id`, `set_current_request_id`,

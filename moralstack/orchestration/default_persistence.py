@@ -8,9 +8,11 @@ Does not raise; logs on failure.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from moralstack.observability.config import get_db_path
 from moralstack.observability.context import get_current_run_id, set_current_request_id
+from moralstack.observability.conversation_events import emit_run_started_file_record
 from moralstack.observability.sinks.sqlite_sink import create_run, init_db, update_request_domain, upsert_request
 
 logger = logging.getLogger(__name__)
@@ -25,7 +27,9 @@ class DefaultPersistence:
     only when get_db_path() changes. A failed init_db is retried on the next call.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, run_meta: dict[str, Any] | None = None) -> None:
+        # Meta of the fallback ``session`` run (e.g. the ``prompt_config`` audit record).
+        self._run_meta: dict[str, Any] = dict(run_meta) if run_meta else {}
         self._db_initialized_for: str | None = None
 
     def _ensure_db_initialized(self) -> bool:
@@ -60,13 +64,18 @@ class DefaultPersistence:
         run_id = get_current_run_id()
         if not run_id:
             return
+        # File record first (JSONL-only, once per run id): library callers in file_only have no DB path.
+        try:
+            emit_run_started_file_record(run_id, "session", self._run_meta)
+        except Exception as e:
+            logger.debug("persistence: run.started file record failed: %s", e)
         if not get_db_path():
             return
         try:
             self._ensure_db_initialized()
             # Ensure parent row in runs exists to satisfy FKs; INSERT OR IGNORE preserves
             # existing run and its cascade-linked data.
-            create_run(run_id=run_id, run_type="session", meta={})
+            create_run(run_id=run_id, run_type="session", meta=dict(self._run_meta))
             upsert_request(
                 run_id=run_id,
                 request_id=request_id,

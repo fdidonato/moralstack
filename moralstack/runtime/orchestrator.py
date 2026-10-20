@@ -45,7 +45,7 @@ from moralstack.orchestration.types import (
     RiskEstimationError,
     RiskThresholds,
 )
-from moralstack.prompts.catalog import PromptSet, default_prompt_set
+from moralstack.prompts.catalog import PromptSet, default_prompt_set, prompt_run_meta
 from moralstack.utils.output_protection import create_protector
 
 __all__ = [
@@ -188,7 +188,7 @@ class Orchestrator:
             output_protector=output_protector,
             protected_system_prompt=protected_system_prompt,
             logger=self.logger,
-            persistence=DefaultPersistence(),
+            persistence=DefaultPersistence(run_meta=prompt_run_meta(self._prompt_set)),
             event_emitter=DefaultEventEmitter(),
             ledger=ledger,
             prompt_set=self._prompt_set,

@@ -19,11 +19,13 @@ from typing import TYPE_CHECKING, Any, Iterator
 
 from moralstack.core.types import Turn, UserContext
 from moralstack.models.base import GenerationOverrides
+from moralstack.observability.conversation_events import emit_run_started_file_record
 from moralstack.observability.phase0_timing import emit_phase0_timing, phase0_timing_enabled
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.orchestration.conversation_context import build_conversation_context, context_to_turns
 from moralstack.orchestration.delivery import finalize_delivery
 from moralstack.orchestration.types import ProcessedRequest
+from moralstack.prompts.catalog import prompt_run_meta
 from moralstack.sdk.bootstrap import _bootstrap_pipeline, _resolve_generation_mode, _resolve_model
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.errors import GovernancePipelineError
@@ -675,16 +677,18 @@ class GovernedClient:
         self._orchestrator = orchestrator
         self._config = config
         self._session = SessionState(config)
-        self._run_id: str = self._init_run_context()
+        self._run_id: str = self._init_run_context(prompt_run_meta(getattr(orchestrator, "prompt_set", None)))
         self.chat = GovernedChat(self)
 
     @staticmethod
-    def _init_run_context() -> str:
+    def _init_run_context(run_meta: dict[str, Any] | None = None) -> str:
         """
         Generate a session-scoped run_id and register it in the observability context.
 
         For db_only/dual modes also ensures the DB schema exists and inserts the run
         row so FK constraints on subsequent request/event inserts are satisfied.
+        ``run_meta`` (e.g. the ``prompt_config`` audit record) is stored as the run meta
+        and, in file_only/dual, written once to ``run.started.jsonl``.
         Does not raise: observability failures are best-effort.
         """
         from moralstack.observability.config import get_db_path, get_observability_mode
@@ -693,6 +697,7 @@ class GovernedClient:
 
         run_id = str(uuid.uuid4())
         set_current_run_id(run_id)
+        meta = dict(run_meta) if run_meta else {}
 
         mode = get_observability_mode()
         if mode in ("db_only", "dual"):
@@ -700,9 +705,10 @@ class GovernedClient:
             if db_path:
                 try:
                     init_db(db_path)
-                    create_run(run_id, "sdk_session", {})
+                    create_run(run_id, "sdk_session", meta)
                 except Exception:
                     pass
+        emit_run_started_file_record(run_id, "sdk_session", meta)
 
         return run_id
 

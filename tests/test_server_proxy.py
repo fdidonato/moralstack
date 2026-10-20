@@ -2029,7 +2029,7 @@ def test_audit_headers_copy_matches_delivered_action(label, content, monkeypatch
     import moralstack.server.proxy as proxy_mod
 
     captured: list[dict[str, Any]] = []
-    monkeypatch.setattr(proxy_mod, "_initialize_observability_run", lambda: "run-x2")
+    monkeypatch.setattr(proxy_mod, "_initialize_observability_run", lambda *a, **kw: "run-x2")
     monkeypatch.setattr(proxy_mod, "_ensure_request_row", lambda **kw: None)
     monkeypatch.setattr(proxy_mod, "_finalize_request", lambda **kw: captured.append(kw))
     monkeypatch.setattr(proxy_mod, "persist_orchestration_event", lambda **kw: None)
@@ -2052,7 +2052,7 @@ def test_proxy_event_decision_equals_header(label, content, expected, monkeypatc
     import moralstack.server.proxy as proxy_mod
 
     events: list[dict[str, Any]] = []
-    monkeypatch.setattr(proxy_mod, "_initialize_observability_run", lambda: "run-x4")
+    monkeypatch.setattr(proxy_mod, "_initialize_observability_run", lambda *a, **kw: "run-x4")
     monkeypatch.setattr(proxy_mod, "_ensure_request_row", lambda **kw: None)
     monkeypatch.setattr(proxy_mod, "_finalize_request", lambda **kw: None)
     monkeypatch.setattr(proxy_mod, "persist_orchestration_event", lambda **kw: events.append(kw))

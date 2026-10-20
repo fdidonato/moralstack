@@ -24,7 +24,7 @@ fragment, plus the listed `policy.*` safety instructions and `retrieval.prefilte
 deployer controls; it is not a developer-contract, overlay or cache vector. Each
 overridden safety fragment is logged as one WARNING at load and listed under
 `safety_fragments_overridden` in the set's audit summary (`PromptSet.audit_summary()`), the
-`prompt_config` record that the run audit persists (step A4). It changes what the models are told, never
+`prompt_config` record that the run audit persists. It changes what the models are told, never
 the code-level gates, which no prompt, contract, overlay or cache can override:
 `path_router.is_hard_signal_refuse`, the DCCL safety-override category check, the
 code-owned response schemas/formats, and the ledger hard-signal guard.

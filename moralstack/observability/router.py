@@ -73,6 +73,19 @@ def route(envelope: EventEnvelope) -> None:
         _get_jsonl_sink().write_envelope(envelope)
 
 
+def route_jsonl(envelope: EventEnvelope) -> None:
+    """Write one envelope to the JSONL sink only, and only in ``file_only``/``dual``. Synchronous; never raises.
+
+    Used for records whose SQLite counterpart is written by a direct call (e.g. ``run.started``
+    is created by ``create_run``; routing it through SQLite too would create the run twice).
+    """
+    try:
+        if get_observability_mode() in ("file_only", "dual"):
+            _get_jsonl_sink().write_envelope(envelope)
+    except Exception as exc:
+        logger.debug("observability: route_jsonl failed: %s", exc)
+
+
 def route_batch(envelopes: Sequence[EventEnvelope]) -> None:
     """Dispatch a batch of envelopes to the active sinks. Does not raise."""
     if not envelopes:

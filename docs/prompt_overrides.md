@@ -170,7 +170,7 @@ overridden.
 ## Audit
 
 The catalog builds a deterministic summary (`PromptSet.audit_summary()`), stored in `runs.meta_json.prompt_config`
-and in the `run.started` JSONL record from A4: set and default fingerprints, `ps` (first 16 hex of the
+and in the `run.started.jsonl` file record (one line per run in `file_only`/`dual`), written by every entry point (SDK, proxy, CLI, benchmark; library callers through the session fallback): set and default fingerprints, `ps` (first 16 hex of the
 fingerprint), per-fragment `sha256` / `when` / `origin`, the override files with their own `sha256`, the
 overridden text of every overridden fragment, and `safety_fragments_overridden`.
 
@@ -181,7 +181,8 @@ overridden text of every overridden fragment, and `safety_fragments_overridden`.
   fragment and lists it in `safety_fragments_overridden`.
 - A `policy.canary_instruction` override that omits `{canary}` additionally logs a specific WARNING ("system-prompt leak detection (canary) is DISABLED by this override").
 - **Never put secrets in a prompt.** Override texts are persisted verbatim in the audit record (`runs.meta_json`
-  and the `run.started.jsonl` file record, from step A4), and exported JSONL keeps the configured `prompts_dir` path.
+  and the `run.started.jsonl` file record), and exported JSONL keeps the configured `prompts_dir` path. Every request
+  also carries a `prompt_set` link (`ps`, `is_default`) in `requests.meta_json` / `request.meta_updated.jsonl`.
 - The audit identifies the **set**, not the per-call `when` variant: which of the four contexts a call used is
   recoverable from the wire record that step A4b adds.
 - Overrides change the static prompt prefixes, so the first requests miss the provider's prompt cache, and a

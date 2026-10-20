@@ -295,16 +295,25 @@ class MoralStackCLI:
         try:
             import uuid
 
-            from moralstack.observability.config import get_db_path
+            from moralstack.observability.config import get_db_path, get_observability_mode
             from moralstack.observability.context import set_current_run_id
+            from moralstack.observability.conversation_events import emit_run_started_file_record
             from moralstack.observability.sinks.sqlite_sink import create_run, init_db
+            from moralstack.prompts.catalog import prompt_run_meta
 
             db_path = get_db_path()
-            if db_path:
+            # A run id is also set without a DB in file_only so the JSONL telemetry is keyed by run.
+            if db_path or get_observability_mode() == "file_only":
                 run_id = str(uuid.uuid4())
-                init_db(db_path)
-                create_run(run_id, "single", {"prompt_preview": prompt[:100]})
+                run_meta = {
+                    "prompt_preview": prompt[:100],
+                    **prompt_run_meta(getattr(getattr(self, "orchestrator", None), "prompt_set", None)),
+                }
+                if db_path:
+                    init_db(db_path)
+                    create_run(run_id, "single", run_meta)
                 set_current_run_id(run_id)
+                emit_run_started_file_record(run_id, "single", run_meta)
         except Exception:
             pass
 

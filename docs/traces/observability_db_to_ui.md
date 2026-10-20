@@ -62,8 +62,8 @@ Schema in `observability/sinks/sqlite_sink.py:48-489`; connection uses WAL +
 
 | Table | Holds |
 |---|---|
-| `runs` | one row per run (`run_type`: sdk_session / proxy / single / benchmark…) |
-| `requests` | per request: prompt, domain, `final_response`, merged `meta_json`; PK `(run_id, request_id)` |
+| `runs` | one row per run (`run_type`: sdk_session / proxy / single / benchmark / session…); `meta_json.prompt_config` holds the prompt-set audit summary (A4); in `file_only`/`dual` the same meta is also one line of `run.started.jsonl` |
+| `requests` | per request: prompt, domain, `final_response`, merged `meta_json` (incl. the `prompt_set` link `{ps, is_default}` added by the controller right after the upsert); PK `(run_id, request_id)` |
 | `llm_calls` | every LLM call: module, action, model, prompt, system_prompt, raw_response, parsed/summary JSON, token usage, cycle, sequence, call_kind/outcome, cache_status, `billable_provider_call` |
 | `request_token_usage` | synchronous best-effort per-request token summary (one row per `run_id`/`request_id`); not authoritative — see token accounting notes below |
 | `orchestration_events` | pipeline events (speculative, compliance, ledger fast-path, conversation, proxy output finalized, `PIPELINE_FAILED` for handler / generic-except failures) |

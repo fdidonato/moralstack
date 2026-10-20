@@ -583,7 +583,7 @@ self-contained snapshots, otherwise they will misinterpret the data.
 |---|---|---|---|
 | **Atomic insert** | `llm.call`, `orchestration.event`, `decision.trace`, `debug.event`, `ledger.lookup`, `ledger.store`, `session_store.get`, `session_store.put`, `proxy.request_finalized` | one independent record per envelope; never merged with previous entries | one new row per envelope (`INSERT INTO ...`) |
 | **Merge-update** | `request.meta_updated`, `request.domain_updated`, `request.response_updated` | a **delta**: the envelope's `payload.meta` (or `domain`, or `final_response`) is a partial update, not the final state | the existing row is updated with a JSON merge (`update_request_meta(merge=True)`); the SQLite column always holds the consolidated state |
-| **Upsert** | `request.upserted`, `conversation.state_updated`, `run.started`, `run.ended` | a complete snapshot of the entity at envelope time; later snapshots override earlier ones | `INSERT OR REPLACE` keyed by `(run_id, request_id)` or equivalent |
+| **Snapshot (first-writer or append)** | `request.upserted`, `conversation.state_updated`, `run.started`, `run.ended` | a complete snapshot of the entity at envelope time | per type (code wins, `sqlite_sink.py`): `run.started` is `INSERT OR IGNORE` (first writer wins, `:878`); `request.upserted` is `INSERT OR IGNORE` (`:957`); `run.ended` is an `UPDATE` of the run row (`:911-913`); `conversation.state_updated` is a plain `INSERT` (`:1175-1176`, one row per envelope) |
 
 ### Concrete consequence for offline consumers
 
@@ -599,9 +599,36 @@ reconstruct the consolidated state from the JSONL alone, you must:
 Atomic-insert events do not have this problem: every envelope is already
 self-contained.
 
-Upsert events follow the same accumulation pattern as merge-update, but the
-merge unit is the entire payload (last snapshot wins) rather than a per-key
-JSON merge.
+Snapshot events are whole-payload records, not per-key deltas. In SQLite the
+strategy depends on the type (see the table): for `run.started` and
+`request.upserted` the **first** writer wins; `run.ended` updates the existing run
+row; `conversation.state_updated` appends one row per envelope. There is no
+`INSERT OR REPLACE`.
+
+### Prompt-set audit (Phase A, step A4)
+
+- **Run level.** `runs.meta_json.prompt_config` carries `PromptSet.audit_summary()` (schema 1: set and default
+  fingerprints, `ps`, `is_default`, `prompts_dir` as configured, `override_files` with their own `sha256`,
+  `safety_fragments_overridden`, per-fragment `sha256`/`when`/`origin`, overridden `text`, `missing_placeholders`).
+  The key is added to the existing meta of every entry point (SDK `sdk_session`, proxy `proxy`, CLI `single`,
+  benchmark `benchmark`) and to the session fallback (`DefaultPersistence(run_meta=...)`, `session`). Roughly 21 KB
+  for the default set, plus override texts. Nothing is added when the orchestrator is not a real `PromptSet` holder
+  (mocks) or when the summary cannot be built or JSON-serialized (`prompt_run_meta` returns `{}`, DEBUG log).
+- **File record.** `conversation_events.emit_run_started_file_record(run_id, run_type, meta)` writes ONE canonical
+  `run.started` envelope (`payload={"run_type", "meta"}`) to `run.started.jsonl` through `router.route_jsonl`
+  (JSONL sink only, `file_only`/`dual` only, synchronous, never raises). It is JSONL-only because the DB row is
+  created by the entry point's direct `create_run`; routing `run.started` through SQLite too would create the run
+  twice. A process-wide, lock-guarded, bounded (4096, insertion-ordered) once-per-run-id guard mirrors the DB's
+  first-writer semantics: an entry point's `sdk_session` line is never followed by a `session` line for the same
+  run id. `DefaultPersistence.ensure_run_and_upsert_request` emits it before its no-DB early return, so library
+  callers in `file_only` get the record too. The CLI and the benchmark now also set a run id when the mode is `file_only`
+  (with a DB path they already did; `dual` without a DB path still sets none). In `file_only` the benchmark also writes its
+  `benchmark_<run_id>.json` report, which the UI cannot reach (no `runs` row).
+- **Request link.** `OrchestrationController.process` emits `request.meta_updated` with
+  `meta={"prompt_set": {"ps", "is_default"}}` right after the request upsert (merge into `requests.meta_json`; a
+  delta line in `request.meta_updated.jsonl`; no-op without a run id; a missing row is a counted window failure).
+  It identifies the set, not the per-call `when` variant (per-call identity comes with A4b's wire hash).
+- Override texts are persisted verbatim in both channels: never put secrets in prompts.
 
 ### Worked example: `request.meta_updated`
 

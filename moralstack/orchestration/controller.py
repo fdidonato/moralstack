@@ -2540,6 +2540,18 @@ class OrchestrationController:
             turn_index=turn_index,
             parent_request_id=parent_request_id,
         )
+        # Per-request prompt-set link (merged into requests.meta_json / request.meta_updated.jsonl).
+        # Best-effort telemetry (observability invariant): never raises into the request.
+        try:
+            from moralstack.observability.conversation_events import emit_request_meta_updated
+
+            emit_request_meta_updated(
+                run_id=None,
+                request_id=request_id,
+                meta={"prompt_set": self._prompt_set.request_link()},
+            )
+        except Exception:
+            _LOG.debug("prompt_set request link emit failed", exc_info=True)
 
         trace = self._trace_lifecycle.start_trace(request_id)
 

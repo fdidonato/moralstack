@@ -2495,15 +2495,25 @@ class BenchmarkRunner:
 
         run_id = str(uuid.uuid4())
         try:
-            from moralstack.observability.config import get_db_path
+            from moralstack.observability.config import get_db_path, get_observability_mode
             from moralstack.observability.context import set_current_run_id
+            from moralstack.observability.conversation_events import emit_run_started_file_record
             from moralstack.observability.sinks.sqlite_sink import create_run, end_run, init_db
+            from moralstack.prompts.catalog import prompt_run_meta
 
             db_path = get_db_path()
-            if db_path:
-                init_db(db_path)
-                create_run(run_id, "benchmark", {"model": self.model, "total_questions": len(questions)})
+            # A run id is also set without a DB in file_only so the JSONL telemetry is keyed by run.
+            if db_path or get_observability_mode() == "file_only":
+                run_meta = {
+                    "model": self.model,
+                    "total_questions": len(questions),
+                    **prompt_run_meta(getattr(self, "prompt_set", None)),
+                }
+                if db_path:
+                    init_db(db_path)
+                    create_run(run_id, "benchmark", run_meta)
                 set_current_run_id(run_id)
+                emit_run_started_file_record(run_id, "benchmark", run_meta)
                 self._persistence_run_id = run_id
             else:
                 self._persistence_run_id = None

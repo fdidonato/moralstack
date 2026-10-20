@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Run audit of the prompt set on DB, file and per request (prompt externalization, step A4).** Every entry
+  point (SDK, proxy, CLI, benchmark, and the `DefaultPersistence` session fallback) adds
+  `prompt_config` (`PromptSet.audit_summary()`) to the meta of its existing `create_run` call, and in
+  `file_only`/`dual` writes one canonical `run.started` line (`run.started.jsonl`, new `router.route_jsonl` plus
+  `conversation_events.emit_run_started_file_record`, once per run id). The CLI and the benchmark now also set a run id in
+  `file_only` (a run id is set only when a DB path is configured or the mode is `file_only`), so with no DB configured they
+  now write JSONL telemetry under `logs/observability/` that they silently dropped before (R18). `OrchestrationController.process` links each request to its set with
+  `requests.meta_json.prompt_set = {ps, is_default}`. All additive and best-effort (no schema change, a failure
+  never reaches the request). `docs/modules/observability.md` "Upsert" row corrected to the real per-type
+  strategies. New `tests/test_prompt_audit.py`.
+
 - **Deployer prompt overrides are now effective (prompt externalization, step A3).**
   `GovernanceConfig.prompts_dir` and `MORALSTACK_PROMPTS_DIR` (registered as an optional env var; precedence config,
   then env, then the packaged defaults; a blank value is unset) point to a directory of override `*.yaml` files.

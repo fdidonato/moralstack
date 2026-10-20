@@ -239,6 +239,11 @@ other than `NO_CONTRACT` is present). REFUSE responses also set
 `UNKNOWN` / `DELIBERATIVE_PATH` / `stop` before the F6 fix).
 
 ### What is persisted (proxy)
+- The proxy `runs` row (`run_type="proxy"`) is created once per process in `create_app` with
+  `meta_json = {"source": "moralstack-server", "prompt_config": <PromptSet.audit_summary()>}` (A4; no
+  `prompt_config` key for a mock orchestrator), also re-asserted by the lazy `_ensure_run_row`; in
+  `file_only`/`dual` the same meta is one `run.started.jsonl` line. Every request additionally gets
+  `meta_json.prompt_set = {ps, is_default}` from the controller.
 - `requests` row pre-inserted (`_ensure_request_row`, `proxy.py:589-626`) and
   finalized with `final_response`/domain/meta (`_finalize_request`,
   `proxy.py:629-710`).

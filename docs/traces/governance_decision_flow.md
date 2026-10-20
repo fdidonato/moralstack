@@ -461,7 +461,9 @@ always `Decision`, `Risk-Score`, `Posture`, `Path`, `Conversation-Id`,
 
 Emitted across the flow (DB rows + JSONL envelopes per observability mode):
 - `requests` row pre-insert (step 2) and finalize (step 12) with
-  `final_response`, `domain`, merged `meta_json`.
+  `final_response`, `domain`, merged `meta_json`. Right after the controller's
+  `ensure_run_and_upsert_request`, a best-effort `request.meta_updated` adds
+  `meta_json.prompt_set = {ps, is_default}` (swallowing try/except; no-op without a run id).
 - `RISK_ASSESSMENT`, `COMPLIANCE_LAYER`, `DELIBERATION_AGGREGATE`, `FINAL`
   decision traces. The `FINAL` trace's `sim_*` fields are populated by
   `_populate_trace_from_sim` / copied in `_log_final_trace`

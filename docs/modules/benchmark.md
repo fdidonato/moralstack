@@ -110,7 +110,8 @@ export and the UI display these models clearly in the report header and on the r
 **UI and export requirement**: The file `benchmark_{run_id}.json` in `MORALSTACK_BENCHMARK_OUTPUTS` is **required** for
 the moralstack-ui to display the full benchmark summary (Executive Summary, FP/FN, per-question baseline/moralstack
 responses, judge evaluations). When the file is missing, the run detail page shows a minimal view and the Export
-Benchmark returns an explicit error. Run the benchmark from CLI to generate the report. Relative paths in
+Benchmark returns an explicit error. Run the benchmark from CLI to generate the report. In `file_only` mode (no DB) the report file is still written, but
+the UI cannot reach it because there is no `runs` row for the run. Relative paths in
 `MORALSTACK_BENCHMARK_OUTPUTS` are resolved against the project root so the UI finds reports regardless of the current
 working directory.
 

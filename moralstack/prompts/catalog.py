@@ -847,10 +847,15 @@ def resolve_prompts_dir(explicit: str | os.PathLike[str] | None) -> str | None:
 
 
 def prompt_run_meta(obj: object) -> dict[str, Any]:
-    """``{"prompt_config": <audit summary>}`` iff ``obj`` is a ``PromptSet``; ``{}`` otherwise. Never raises."""
+    """``{"prompt_config": <audit summary>}`` iff ``obj`` is a ``PromptSet`` with a JSON-serializable summary.
+
+    ``{}`` otherwise. Never raises.
+    """
     try:
         if isinstance(obj, PromptSet):
-            return {"prompt_config": obj.audit_summary()}
+            summary = obj.audit_summary()
+            json.dumps(summary)  # the DB writes meta with json.dumps: an unserializable summary must not lose the run row
+            return {"prompt_config": summary}
     except Exception:  # noqa: BLE001 - audit metadata is best effort and must never break a run
         logger.debug("prompt_run_meta failed", exc_info=True)
     return {}
