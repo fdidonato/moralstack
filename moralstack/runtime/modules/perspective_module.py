@@ -10,6 +10,8 @@ FIX PERFORMANCE: Aggiunto caching per evitare ricalcolo su input identici.
 
 from __future__ import annotations
 
+import contextvars
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -552,7 +554,10 @@ class LLMPerspectiveEnsemble:
 
         with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
             future_to_perspective = {
+                # One context copy per worker: the observability ContextVars (run/request/cycle) must reach the
+                # retry-failed rows written from inside the worker (NEW-1).
                 executor.submit(
+                    contextvars.copy_context().run,
                     self._evaluate_single_perspective,
                     shared_system,
                     perspective,
@@ -784,6 +789,11 @@ class LLMPerspectiveEnsemble:
                             call_outcome="retry_failed",
                             billable_provider_call=True,
                             token_usage_json=attempt_token_usage.to_json(),
+                            # Additive: WHO failed (the UI names the perspective on the node).
+                            parsed_summary_json=json.dumps(
+                                {"perspective_id": perspective.id, "perspective_name": perspective.name},
+                                ensure_ascii=False,
+                            ),
                         )
                     except Exception:
                         pass

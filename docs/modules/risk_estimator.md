@@ -400,6 +400,13 @@ trace in the DB: the module that decides routing and the hard signals was the on
 audit trail for its own failures. Measured impact was small (7 retries in 50,346 campaign
 calls) but unobservable by construction, which is the point.
 
+The retry rows are written from the mini-estimator pool's worker threads. Until the NEW-1 fix the pool
+used a bare `ThreadPoolExecutor`, the workers carried no observability context and
+`async_persist_llm_call` dropped every one of these rows (so the rows above were never actually written, since
+`27843f3`). Each worker now runs under `contextvars.copy_context().run`, and the row carries the mini rows'
+coordinates (`cycle=0`, `sequence_in_cycle=-9`, so the UI shows it in the same tier, before the success row).
+From that commit the request token totals and `llm_call_count` include the failed attempts.
+
 **Output schemas are enforced by the provider.** Each of the three mini-estimators
 declares its own strict `json_schema` (`intent_response_format()`,
 `operational_response_format()`, `harm_signal_response_format(registry)`), so key names

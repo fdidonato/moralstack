@@ -250,6 +250,16 @@ on the success path (zeros on fail-closed paths with no generation). Since the 2
 fix these totals (and the SDK `GovernanceMetadata` token fields and `llm_call_count`)
 include the risk mini-estimators: values rise, shapes are unchanged.
 
+**Rows written from worker threads (NEW-1, fixed).** `async_persist_llm_call` drops a row when the run/request id
+is not in the calling thread's ContextVars. A worker started with a bare `ThreadPoolExecutor.submit` does not
+inherit them, so the retry-failed rows of the risk mini-estimators and of the parallel perspectives were silently
+dropped. Every pool that persists from a worker must submit `contextvars.copy_context().run` (one copy per
+task): the estimator pool and `_evaluate_parallel` now do, like the deliberation modules, the retriever and the
+speculative overlap. **Comparability regime:** from the commit that fixed it, `llm_call_count`, `request_token_usage`,
+the SDK/proxy `usage` and the SQL reconstruction include those failed attempts; earlier runs under-count them.
+The in-process accumulator and the SQL reconstruction stay in parity by construction (the same emitted row feeds
+both).
+
 `billable_provider_call` on `llm_calls` excludes diagnostic/synthetic rows (speculative
 reuse, cache hits, skipped modules, leakage-only rows, and the risk estimator's synthetic
 `calibration_guard` row) from totals and breakdown queries. Every real provider call must
@@ -262,6 +272,14 @@ rows that are **not** provider calls (module skip/gate/disable/error/timeout mar
 output-protection leakage rows) intentionally leave `model` empty and are already
 `billable_provider_call=False`.
 
+**Fast-path `quick_check` row (NEW-2, fixed).** The critic's HARD quick check is a provider call and is persisted
+as `module="critic"`, `action="quick_check"`, `phase="critic"`, cycle 0, `sequence_in_cycle=2` (after the fast
+draft, `SEQ_POLICY=1`), `billable_provider_call=True`, with the prompt/system prompt sent, the raw reply, the verdict
+`{passed, violated, principle_id}` in `parsed_summary_json` and the billed tokens. A paid reply without a verdict is
+persisted with `error` set (`passed: null`) and the call still raises; a provider error bills nothing and writes
+nothing. **Comparability regime:** from that commit one more billable call per fast-path request is counted in
+`llm_call_count` and in the request tokens.
+
 Constitution domain-agent calls (`module="constitution_retriever"`,
 `action` ∈ `domain_prefilter`/`enhanced_domain_agent`/`legacy_domain_agent`) are
 billable and counted like any other provider call. The per-domain agents run in a
@@ -269,6 +287,11 @@ billable and counted like any other provider call. The per-domain agents run in 
 context into each worker via `contextvars.copy_context().run`, otherwise
 `persist_llm_call` would short-circuit on the empty run/request id and drop the
 row entirely (so their tokens would be missing from every scope).
+
+**Who failed (additive keys).** The `retry_failed` rows carry `parsed_summary_json` keys naming the failed unit: `mini_estimator` (+`estimation_mode`) on the estimator rows, `perspective_id`/`perspective_name` on the perspectives rows, `scenario_id` on the hindsight single-path rows; a `quick_check` row without a verdict has `{passed: null, error, error_type}`. Existing fields keep their meaning.
+
+**Hindsight single-path retry row (NEW-3, fixed).** `evaluate_scenario` writes the same `retry_failed` row as the
+batch path (`phase="hindsight_retry"`, prompt `Scenario <id> retry reason: ...`); same comparability regime.
 
 `TokenUsage.from_openai_usage` marks a call `source="exact"` only when the provider
 returns separate `prompt_tokens` and `completion_tokens`. When only `total_tokens` is

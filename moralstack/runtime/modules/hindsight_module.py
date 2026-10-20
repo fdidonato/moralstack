@@ -11,6 +11,8 @@ FIX PERFORMANCE: Aggiunto caching per evitare ricalcolo su input identici.
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
@@ -38,6 +40,8 @@ from moralstack.utils.structured_output import (
     parse_and_validate_hindsight_batch_output,
     parse_and_validate_hindsight_single_output,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _build_context_block(
@@ -556,6 +560,8 @@ class LLMHindsightEvaluator:
 
         for attempt in range(self.config.max_retries):
             parse_attempts = attempt + 1
+            attempt_token_usage: TokenUsage | None = None
+            raw_response = ""
 
             try:
                 if attempt == 0:
@@ -574,6 +580,7 @@ class LLMHindsightEvaluator:
                     )
 
                 raw_response = result.text
+                attempt_token_usage = TokenUsage.from_generation_result(result)
 
                 # Parse JSON
                 evaluation = parse_hindsight_response(
@@ -591,11 +598,11 @@ class LLMHindsightEvaluator:
 
                 return evaluation
 
-            except JSONParseError as e:
+            except Exception as e:  # JSONParseError included: every failed attempt is handled the same way
                 last_error = str(e)
-                continue
-            except Exception as e:
-                last_error = str(e)
+                self._persist_single_retry_failed(
+                    consequence, parse_attempts, e, raw_response=raw_response, token_usage=attempt_token_usage
+                )
                 continue
 
         # Tutti i retry falliti - ritorna valutazione pessimistica
@@ -612,6 +619,43 @@ class LLMHindsightEvaluator:
             confidence=0.5,
             rationale=f"Evaluation failed after {parse_attempts} attempts: {last_error}",
         )
+
+    def _persist_single_retry_failed(
+        self,
+        consequence: Consequence,
+        attempt_no: int,
+        error: Exception,
+        *,
+        raw_response: str,
+        token_usage: TokenUsage | None,
+    ) -> None:
+        """Record a paid-for single-path attempt whose output could not be parsed.
+
+        Same shape as the batch path's retry-failed row (``call_outcome="retry_failed"``). A failure before the
+        provider answered (no token usage) bills nothing and records nothing. Best-effort: never raises.
+        """
+        if token_usage is None:
+            return
+        try:
+            from moralstack.observability.emit_helpers import async_persist_llm_call
+
+            async_persist_llm_call(
+                phase="hindsight_retry",
+                module="hindsight",
+                action=f"retry_failed_attempt_{attempt_no}",
+                model=getattr(self.policy, "model", None) or "",
+                prompt=f"Scenario {consequence.scenario_id} retry reason: {str(error)[:200]}",
+                raw_response=raw_response or "",
+                duration_ms=0.0,
+                attempts=attempt_no,
+                call_outcome="retry_failed",
+                billable_provider_call=True,
+                token_usage_json=token_usage.to_json(),
+                # Additive: WHICH consequence failed (the UI names it on the node).
+                parsed_summary_json=json.dumps({"scenario_id": consequence.scenario_id}, ensure_ascii=False),
+            )
+        except Exception:
+            logger.debug("persist hindsight single retry-failed llm call failed", exc_info=True)
 
     def evaluate(
         self,

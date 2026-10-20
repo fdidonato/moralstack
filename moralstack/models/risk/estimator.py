@@ -4,6 +4,8 @@ LLMBasedRiskEstimator - Classificazione rischio etico per MoralStack.
 
 from __future__ import annotations
 
+import contextvars
+import json
 import logging
 import threading
 import time
@@ -899,6 +901,14 @@ class LLMBasedRiskEstimator:
                         call_outcome="retry_failed",
                         billable_provider_call=True,
                         token_usage_json=tu,
+                        # Additive: WHO failed (the UI names the mini on the node).
+                        parsed_summary_json=json.dumps(
+                            {"mini_estimator": mini_name, "estimation_mode": "parallel"}, ensure_ascii=False
+                        ),
+                        # Same coordinates as the mini-estimator rows (cycle 0, seq -9): no deliberation cycle is
+                        # active here, so without them the row would land in a NULL-cycle group in the UI.
+                        cycle=0,
+                        sequence_in_cycle=-9,
                     )
                 except Exception:
                     _RISK_LOG.debug("persist risk retry-failed llm call failed", exc_info=True)
@@ -966,9 +976,25 @@ class LLMBasedRiskEstimator:
             raise RiskEstimationError(f"Mini estimator [{mini_name}] failed after {self.config.max_retries} attempts")
 
         with ThreadPoolExecutor(max_workers=3) as executor:
-            fut1 = executor.submit(_call_and_track, intent_system_prompt, intent_prompt, "estimate_intent")
-            fut2 = executor.submit(_call_and_track, harm_signal_system_prompt, signal_prompt, "estimate_signals")
-            fut3 = executor.submit(_call_and_track, operational_system_prompt, operational_prompt, "estimate_operational")
+            # One context copy per worker (a Context cannot be entered by two threads): the workers must inherit the
+            # observability ContextVars (run/request/cycle) or their retry-failed rows are dropped by the emit gate.
+            fut1 = executor.submit(
+                contextvars.copy_context().run, _call_and_track, intent_system_prompt, intent_prompt, "estimate_intent"
+            )
+            fut2 = executor.submit(
+                contextvars.copy_context().run,
+                _call_and_track,
+                harm_signal_system_prompt,
+                signal_prompt,
+                "estimate_signals",
+            )
+            fut3 = executor.submit(
+                contextvars.copy_context().run,
+                _call_and_track,
+                operational_system_prompt,
+                operational_prompt,
+                "estimate_operational",
+            )
             intent_data, intent_raw, intent_ms, intent_attempts, intent_started, intent_pc, intent_tu, intent_m_obs = (
                 fut1.result()
             )

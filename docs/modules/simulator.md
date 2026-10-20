@@ -375,6 +375,8 @@ configurations on the same suite.
 
 Simulator generation uses OpenAI's `json_object` response format (`response_format={"type": "json_object"}` on `GenerationConfig`), which guarantees valid JSON and greatly reduces retries caused by malformed JSON.
 
+Each failed parse attempt is persisted as a billable `simulator_retry` / `retry_failed_attempt_N` row (prompt `"Retry reason: …"`). Since 2026-10-20 the row's `parsed_summary_json` names the path: `{"simulator_path": "batch"}` or `{"simulator_path": "seeded", "seed": <seed>}` (additive keys), which the UI request page shows as `failed: simulator batch` / `failed: simulator seed <s>`. Simulator retry rows stay in the parallel simulator+perspectives tier of the graph, because the simulator runs concurrently with the perspectives.
+
 #### MORALSTACK_SIMULATOR_MAX_TOKENS
 
 - **Default**: `384`

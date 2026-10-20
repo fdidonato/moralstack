@@ -611,6 +611,56 @@ class LLMConstitutionalCritic:
         except Exception:
             logger.debug("enumerated_output_gate emit failed (non-fatal)", exc_info=True)
 
+    def _persist_quick_check(
+        self,
+        result: Any,
+        *,
+        prompt: str,
+        system_prompt: str,
+        started_at_ms: int,
+        duration_ms: float,
+        summary: dict[str, Any] | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        """Persist the fast-path quick-check call as an ``llm_calls`` row (cycle 0, after the fast draft).
+
+        The row carries what was sent (``prompt`` / ``system_prompt``) and what the provider billed. Best-effort
+        observability: it never raises and never changes the verdict (PROJECT_SPEC invariant 6).
+        """
+        try:
+            import json
+
+            from moralstack.observability.emit_helpers import async_persist_llm_call
+
+            error_text: str | None = None
+            if error is not None:
+                # Built here, inside the swallowing helper: formatting the error must never raise into the request.
+                error_text = str(error)[:200]
+                summary = {"passed": None, "error": error_text, "error_type": type(error).__name__}
+
+            async_persist_llm_call(
+                phase="critic",
+                module="critic",
+                action="quick_check",
+                model=getattr(self.policy, "model", None) or "",
+                started_at=started_at_ms,
+                duration_ms=duration_ms,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                raw_response=getattr(result, "text", "") or "",
+                parsed_summary_json=json.dumps(summary or {}, ensure_ascii=False),
+                token_usage_json=TokenUsage.from_generation_result(result).to_json(),
+                attempts=1,
+                error=error_text,
+                # The fast path runs in cycle 0 (no deliberation cycle is active); seq 2 = SEQ_CRITIC, i.e. right
+                # after the fast draft (SEQ_POLICY=1) in the same cycle.
+                cycle=0,
+                sequence_in_cycle=2,
+                billable_provider_call=True,
+            )
+        except Exception:
+            logger.debug("persist critic quick_check llm call failed", exc_info=True)
+
     def quick_check(
         self,
         request: str,
@@ -704,18 +754,44 @@ class LLMConstitutionalCritic:
         # reply or a reply without the ``violated`` key is "no verdict" and must
         # propagate. Swallowing it as ``passed=True`` would fail OPEN on the fast
         # path, where no full critique runs afterwards.
+        quick_system = self._prompt_set.text("critic.quick.system")
+        started_at_ms = int(time.time() * 1000)
         result = self.policy.generate(
             prompt=prompt,
-            system=self._prompt_set.text("critic.quick.system"),
+            system=quick_system,
             config=quick_config,
         )
 
-        data = extract_json(result.text)
-        if not isinstance(data, dict) or "violated" not in data:
-            raise JSONParseError("quick_check reply carries no 'violated' verdict")
+        try:
+            data = extract_json(result.text)
+            if not isinstance(data, dict) or "violated" not in data:
+                raise JSONParseError("quick_check reply carries no 'violated' verdict")
+        except Exception as e:
+            # The call was paid for but yields no verdict: record it, then propagate unchanged (fail closed).
+            self._persist_quick_check(
+                result,
+                prompt=prompt,
+                system_prompt=quick_system,
+                started_at_ms=started_at_ms,
+                duration_ms=(time.perf_counter() - start) * 1000,
+                error=e,
+            )
+            raise
         violated = data["violated"]
 
         elapsed_ms = (time.perf_counter() - start) * 1000
+        self._persist_quick_check(
+            result,
+            prompt=prompt,
+            system_prompt=quick_system,
+            started_at_ms=started_at_ms,
+            duration_ms=elapsed_ms,
+            summary={
+                "passed": not violated,
+                "violated": bool(violated),
+                "principle_id": str(data.get("principle_id", "")) if violated else "",
+            },
+        )
 
         if violated:
             principle_id = str(data.get("principle_id", "UNKNOWN"))

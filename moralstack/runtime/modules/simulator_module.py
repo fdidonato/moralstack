@@ -9,6 +9,7 @@ FIX PERFORMANCE: Aggiunto caching per evitare ricalcolo su input identici.
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -482,6 +483,8 @@ class LLMConsequenceSimulator:
                             call_outcome="retry_failed",
                             billable_provider_call=True,
                             token_usage_json=attempt_token_usage.to_json(),
+                            # Additive: WHICH simulator call failed (the UI names it on the node).
+                            parsed_summary_json=json.dumps({"simulator_path": "batch"}),
                         )
                     except Exception:
                         pass
@@ -606,6 +609,9 @@ class LLMConsequenceSimulator:
                                 call_outcome="retry_failed",
                                 billable_provider_call=True,
                                 token_usage_json=attempt_token_usage.to_json(),
+                                parsed_summary_json=json.dumps(
+                                    {"simulator_path": "seeded", "seed": str(seed)[:60]}, ensure_ascii=False
+                                ),
                             )
                         except Exception:
                             pass

@@ -557,6 +557,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Retry-failed rows written from pool workers now reach `llm_calls` (NEW-1).** The risk mini-estimator pool
+  and the perspective ensemble (`parallel_evaluation=True`, the production default) submitted their work to a bare
+  `ThreadPoolExecutor`; the workers did not inherit the observability ContextVars, so
+  `async_persist_llm_call` found no run/request id and silently dropped every failed-attempt row (estimator since
+  `27843f3`, perspectives since `742e0d4`). Each worker now runs under its own `contextvars.copy_context().run`
+  (the pattern of the deliberation modules, the retriever and the speculative overlap), and the estimator's row
+  carries the mini rows' coordinates (cycle 0, sequence -9) so the UI groups it with them. No decision input
+  changes. **Comparability: from this commit `llm_call_count` and the per-request tokens (`request_token_usage`,
+  SDK/proxy `usage`, the SQL reconstruction over `llm_calls`) include the failed estimator and parallel-perspective
+  attempts; earlier runs are not directly comparable.** Tests: `tests/test_llm_call_persistence_gaps.py`,
+  `tests/test_ui_llm_call_visibility.py`.
+
 - **Zero-HARD `quick_check` fails closed instead of passing.** When no HARD principle is available to
   check against (shared list, self-retrieval and constitution fallback all without HARD),
   `LLMConstitutionalCritic.quick_check` now raises the new `NoHardPrinciplesError` without an LLM call;
@@ -566,11 +578,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   HARD principle: the fast path now escalates every request instead of delivering an unchecked draft; the
   shipped constitution (15 HARD principles in `core`) is unaffected. `test_c5_*` is changed from the pass-pin to
   the raise.
+- **The fast-path `quick_check` call is now an `llm_calls` row (NEW-2).** `LLMConstitutionalCritic.quick_check`
+  persists `module="critic"`, `action="quick_check"` (cycle 0, sequence 2, i.e. right after the fast draft) with the
+  prompt and system prompt sent, the raw reply, the verdict in `parsed_summary_json` and the billed tokens; a reply
+  without a verdict is persisted with its `error` and still raises (the fast path still fails closed). The UI
+  places the node after the fast draft (`_CYCLE0_SEQ_TO_VISUAL_TIER[2] = 9`) and prints the verdict. **Comparability:
+  from this commit `llm_call_count` and the per-request tokens include one `quick_check` call per fast-path request
+  (and the CLI/markdown per-module breakdown a `critic` row in cycle 0); earlier runs are not directly
+  comparable.** Tests: `tests/test_llm_call_persistence_quick_check.py`,
+  `tests/test_ui_llm_call_visibility_quick_check.py`.
+
 - **`quick_check` logs a failed self-retrieval instead of swallowing it silently.** When no shared
   principle list is supplied and `store.get_relevant_principles` raises, the critic now emits one
   WARNING (`quick_check self-retrieval failed error_type=<class>; falling back to the constitution
   HARD principles`, exception text only in `exc_info`). Behaviour is unchanged: the check still falls
   back to the constitution's HARD principles and the verdict is not affected.
+- **The hindsight single-consequence path now persists its retry-failed rows (NEW-3).** `evaluate_scenario`
+  (used when batch evaluation is off or there is one consequence) left no row for a paid-for attempt whose output could
+  not be parsed, unlike the batch path. It now writes the same `call_outcome="retry_failed"` row
+  (`phase="hindsight_retry"`, the failed attempt's billed tokens); the pessimistic fallback is unchanged.
+  **Comparability: from this commit `llm_call_count` and the per-request tokens include those failed attempts;
+  earlier runs are not directly comparable.** Tests: `tests/test_llm_call_persistence_hindsight_single.py`,
+  `tests/test_ui_llm_call_visibility_hindsight_single.py`.
+
 - **Generic `except` in `process()` stays fail-closed for unprintable or empty-message exceptions.**
   `OrchestratorResult.error` is now built with a guarded `str(e) or type(e).__name__`; before, an
   exception whose `__str__` raised escaped `process()` instead of returning the `SYSTEM.FAIL_SAFE`

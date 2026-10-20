@@ -130,6 +130,15 @@ model reply of `violated: true`; a truthy non-boolean such as `"false"` also yie
 `passed=False` (a false *escalation*, never a false pass). The prompt bytes are
 unchanged (pinned by `tests/test_static_prefix_stability.py`).
 
+**The quick-check call is persisted (NEW-2, fixed).** `quick_check` is a paid provider call, so it writes an
+`llm_calls` row (`module="critic"`, `action="quick_check"`, `phase="critic"`, cycle 0, `sequence_in_cycle=2`: after the
+fast draft, `SEQ_POLICY=1`). The row holds the prompt and system prompt actually sent, the raw reply, the verdict
+(`parsed_summary_json = {passed, violated, principle_id}`) and the billed tokens (`billable_provider_call=True`).
+A reply that is paid for but carries no verdict is persisted with `error` set and `passed: null`, then still raises
+`JSONParseError` (the fail-closed contract above is unchanged); a provider error bills nothing and writes nothing.
+The write is best-effort and never changes the verdict. The request page draws the node after the fast draft with
+the pipe label `draft` and prints `quick check passed` (`ui/app.py` `_CYCLE0_SEQ_TO_VISUAL_TIER[2] = 9`).
+
 ---
 
 ## Prompt set (prompt externalization, A2b)

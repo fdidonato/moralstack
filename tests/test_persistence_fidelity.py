@@ -785,6 +785,8 @@ def _row_family(row: dict[str, Any]) -> tuple[str, str] | None:
         }.get(action)
     if module in ("policy", "upstream_speculative"):
         return ("policy*", "")
+    if module == "critic" and action == "quick_check":
+        return ("critic_quick", "")
     if module in ("critic", "simulator", "hindsight", "perspectives"):
         return (module, "retry" if retry_failed else "")
     if module == "orchestration" and action.startswith("refuse"):
@@ -1292,7 +1294,6 @@ _KNOWN_GAP_TABLE: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], 
     ("G3", "critic", "history_content_mismatch", ("native/first", "native/retry"), _CTX_HISTORY),
     ("G3", "critic", "missing_preface", ("native/first", "native/retry"), _CTX_ANY),
     ("G4", "critic", "retry_row_without_prompt", ("legacy/retry", "native/retry"), CONTEXTS),
-    ("NEW-2", "critic_quick", "unpersisted_call", ("fast_path/native/first",), CONTEXTS),
     ("G6", "dccl", "missing_developer", ("llm_fallback/native",), _CTX_CONTRACT),
     (
         "G6",
@@ -1302,10 +1303,10 @@ _KNOWN_GAP_TABLE: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], 
         _CTX_CONTRACT,
     ),
     ("G8", "domain_exclusion", "unpersisted_call", ("domain_excluded",), CONTEXTS),
+    ("G4", "estimator", "retry_row_without_prompt", ("legacy/retry", "native/retry"), CONTEXTS),
     ("G7", "estimator", "branch_unrecorded", ("legacy/first", "legacy/retry"), _CTX_ANY),
     ("G2", "estimator", "history_content_mismatch", ("native/first", "native/retry"), _CTX_HISTORY),
     ("G2", "estimator", "missing_preface", ("native/first", "native/retry"), _CTX_ANY),
-    ("NEW-1", "estimator", "unpersisted_call", ("legacy/retry", "native/retry"), CONTEXTS),
     ("G1", "g13", "system_mismatch", ("legacy/first", "legacy/retry", "native/first", "native/retry"), _CTX_CONTRACT),
     (
         "G7",
@@ -1317,8 +1318,7 @@ _KNOWN_GAP_TABLE: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], 
     ("G3", "hindsight", "history_content_mismatch", ("native/first", "native/retry"), _CTX_HISTORY),
     ("G3", "hindsight", "missing_preface", ("native/first", "native/retry"), _CTX_ANY),
     ("G3", "hindsight", "missing_retry_suffix", ("single/native/retry",), CONTEXTS),
-    ("G4", "hindsight", "retry_row_without_prompt", ("legacy/retry", "native/retry"), CONTEXTS),
-    ("NEW-3", "hindsight", "unpersisted_call", ("single/native/retry",), CONTEXTS),
+    ("G4", "hindsight", "retry_row_without_prompt", ("legacy/retry", "native/retry", "single/native/retry"), CONTEXTS),
     (
         "G5",
         "perspectives",
@@ -1357,8 +1357,13 @@ _KNOWN_GAP_TABLE: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], 
         _CTX_ANY,
     ),
     ("G4", "perspectives", "retry_row_without_prompt", ("evaluate_single/retry",), _CTX_NONE),
-    ("G4", "perspectives", "retry_row_without_prompt", ("legacy/retry", "native/retry"), CONTEXTS),
-    ("NEW-1", "perspectives", "unpersisted_call", ("legacy/retry/parallel", "native/retry/parallel"), CONTEXTS),
+    (
+        "G4",
+        "perspectives",
+        "retry_row_without_prompt",
+        ("legacy/retry", "legacy/retry/parallel", "native/retry", "native/retry/parallel"),
+        CONTEXTS,
+    ),
     ("G9", "refusal", "unpersisted_call", ("refuse/leak_retry",), CONTEXTS),
     ("G8", "safety_classifier", "unpersisted_call", ("validate_contract",), _CTX_CONTRACT),
     (

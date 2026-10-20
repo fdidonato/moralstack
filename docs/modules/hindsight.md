@@ -289,6 +289,13 @@ hindsight configuration is the single source of configuration — no CLI or code
 - **Type**: int (>= 1)
 - **Description**: Number of parse attempts for the hindsight JSON response before raising an error.
 
+**Failed attempts are persisted on both paths (NEW-3, fixed).** The batch path (`_evaluate_batch`) and the
+single-consequence path (`evaluate_scenario`, used when batch evaluation is off or there is one consequence) each
+write a `call_outcome="retry_failed"` row (`phase="hindsight_retry"`, the failed attempt's billed tokens) for a
+paid-for attempt that could not be parsed. Until the fix the single path wrote none, so those attempts were
+invisible in `llm_calls`, in `llm_call_count` and in the request tokens. A failure before the provider answered
+bills nothing and writes nothing; the pessimistic fallback evaluation is unchanged.
+
 Hindsight evaluation uses OpenAI's `json_object` response format (`response_format={"type": "json_object"}` on `GenerationConfig`), which guarantees valid JSON and greatly reduces retries caused by malformed JSON.
 
 #### MORALSTACK_HINDSIGHT_MAX_TOKENS

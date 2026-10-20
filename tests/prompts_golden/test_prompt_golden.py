@@ -229,12 +229,28 @@ def _mismatch(key: str, expected: Any, live: str) -> str | None:
     return f"{key}: expected len={len(expected)}, live len={len(live)}, first differing offset={_first_diff(expected, live)}"
 
 
+# Live keys absent from the frozen snapshot that are approved. ONLY ``*/persisted/*`` keys (the audit rows a call writes
+# to ``llm_calls``, never a prompt-wire byte) can be listed; each entry needs a reason. The snapshot itself stays frozen.
+_NEW2_REASON = "NEW-2 fix 2026-10-20: critic quick_check call now persisted; not a prompt-byte change"
+_NEW3_REASON = "NEW-3 fix 2026-10-20: hindsight single-path retry-failed row now persisted; not a prompt-byte change"
+APPROVED_LIVE_ADDITIONS: dict[str, str] = {
+    "wire/e2e/fast_path_single_turn_nocontract/persisted/critic.quick_check#0/prompt": _NEW2_REASON,
+    "wire/e2e/fast_path_single_turn_nocontract/persisted/critic.quick_check#0/system_prompt": _NEW2_REASON,
+    "wire/e2e/fast_path_multi_turn_contract_history/persisted/critic.quick_check#0/prompt": _NEW2_REASON,
+    "wire/e2e/fast_path_multi_turn_contract_history/persisted/critic.quick_check#0/system_prompt": _NEW2_REASON,
+    "wire/hindsight/single_retry/persisted/hindsight.retry_failed_attempt_1#0/prompt": _NEW3_REASON,
+    "wire/hindsight/single_retry/persisted/hindsight.retry_failed_attempt_1#0/system_prompt": _NEW3_REASON,
+}
+
+
 def _compare_section(name: str, live: dict[str, str]) -> list[str]:
     expected_keys = {k for k in _TABLE["keys"] if capture.section_of(k) == name}
     problems: list[str] = []
     for key in sorted(expected_keys - live.keys()):
         problems.append(f"{key}: in the snapshot but no longer captured")
     for key in sorted(live.keys() - expected_keys):
+        if key in APPROVED_LIVE_ADDITIONS:
+            continue
         problems.append(f"{key}: captured now but absent from the snapshot")
     for key in sorted(expected_keys & live.keys()):
         problem = _mismatch(key, _expected(key), live[key])
@@ -369,6 +385,22 @@ def test_orchestrator_e2e_wire_matches_snapshot(live_e2e: dict[str, str]) -> Non
     _assert_section("e2e", live_e2e)
 
 
+def test_approved_live_additions_are_persisted_row_keys_with_a_reason() -> None:
+    for key, reason in APPROVED_LIVE_ADDITIONS.items():
+        assert "/persisted/" in key, f"{key}: only persisted-row keys may be allowlisted, never a prompt wire"
+        assert reason.strip(), key
+        assert key not in _TABLE["keys"], f"{key}: already in the snapshot, drop it from the allowlist"
+
+
+def test_approved_live_additions_are_all_still_produced_live(
+    live_module_wires: dict[str, str], live_e2e: dict[str, str]
+) -> None:
+    """Stale-entry check: an allowlisted key that is no longer captured must be removed from the allowlist."""
+    live_keys = live_module_wires.keys() | live_e2e.keys()
+    stale = sorted(set(APPROVED_LIVE_ADDITIONS) - live_keys)
+    assert not stale, f"allowlisted but no longer captured: {stale}"
+
+
 def test_snapshot_matches_live(
     live_constants: dict[str, str],
     live_builders: dict[str, str],
@@ -476,7 +508,9 @@ def test_one_byte_change_in_a_module_system_prompt_surfaces_as_a_key_mismatch(
     assert all("critic" in p for p in problems), problems[:3]
     assert any("critic.full#0/m0/content" in p and "first differing offset=" in p for p in problems), problems[:3]
     # the section is complete: same key set as the pinned one, only values differ
-    assert live.keys() == {k for k in _TABLE["keys"] if capture.section_of(k) == "module_wires"}
+    assert live.keys() - APPROVED_LIVE_ADDITIONS.keys() == {
+        k for k in _TABLE["keys"] if capture.section_of(k) == "module_wires"
+    }
 
 
 # --------------------------------------------------------------------------------------

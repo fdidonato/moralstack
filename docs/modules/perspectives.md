@@ -201,6 +201,11 @@ Perspective evaluation uses a **strict Structured Outputs schema** (`perspective
 - **Type**: bool (1/0, true/false, yes/no)
 - **Meaning**: When true, perspectives are evaluated in parallel (thread pool); when false, sequentially.
 
+Parallel mode submits each perspective with its own `contextvars.copy_context().run`, so the worker inherits the
+observability run/request/cycle ids. Without it (NEW-1, fixed) a failed attempt's `retry_failed` row, written from
+inside the worker, was silently dropped by `async_persist_llm_call`, and its billed tokens were missing from
+`llm_call_count` and the request totals.
+
 #### MORALSTACK_PERSPECTIVES_MAX_WORKERS
 
 - **Default**: `3`

@@ -490,6 +490,18 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
         if summary.get("reason"):
             outputs.append({"label": "reason", "value": summary["reason"]})
     elif "critic" in module:
+        if action == "quick_check":
+            if isinstance(summary.get("passed"), bool):
+                outputs.append({"label": "quick check passed", "value": summary["passed"]})
+                if summary.get("principle_id"):
+                    outputs.append({"label": "violated principle", "value": summary["principle_id"]})
+            elif summary.get("error"):
+                outputs.append(
+                    {
+                        "label": "quick check",
+                        "value": f"no verdict ({summary.get('error_type') or 'error'}): {summary['error']}",
+                    }
+                )
         if "violations" in summary:
             outputs.append({"label": "violations", "value": summary["violations"]})
         if "decision" in summary:
@@ -570,6 +582,15 @@ _CYCLE0_SEQ_TO_VISUAL_TIER: dict[int, int] = {
     0: 1,  # speculative policy (parallel with risk)
     1: 8,  # fast-path SAFE_COMPLETE / compliance-regenerate policy
 }
+
+# The fast-path HARD quick check is persisted in cycle 0 with SEQ_CRITIC (2): after the fast draft (tier 8). Keyed on the
+# action, NOT on the sequence alone, because other cycle-0 rows legitimately carry seq 2 (the synthetic "critic deferred
+# to compliance" marker) and keep their own tier.
+_QUICK_CHECK_ACTION = "quick_check"
+_QUICK_CHECK_VISUAL_TIER = 9
+_RETRY_FAILED_OUTCOME = "retry_failed"
+_SEQUENTIAL_RETRY_MODULES = frozenset({"critic", "hindsight"})
+_RETRY_AFTER_FAILED_LABEL = "retry after failed attempt"
 _SEQ_SYNTHETIC_CALIBRATION = -7
 _SEQ_SYNTHETIC_PATH_ROUTING = -2
 
@@ -592,10 +613,50 @@ def _visual_tier_for_call(call: dict[str, Any]) -> int:
     seq = int(seq_raw)
     cycle = int(call.get("cycle") or 0)
     if cycle == 0:
+        if seq == 2 and (call.get("action") or "").strip().lower() == _QUICK_CHECK_ACTION:
+            return _QUICK_CHECK_VISUAL_TIER
         vt = _CYCLE0_SEQ_TO_VISUAL_TIER.get(seq)
         return vt if vt is not None else seq
     vt = _SEQ_TO_VISUAL_TIER.get(seq)
     return vt if vt is not None else seq
+
+
+def _retry_subject(call: dict[str, Any]) -> str:
+    """WHO a ``retry_failed`` row belongs to (mini-estimator, perspective, consequence), from the additive keys of its
+    ``parsed_summary_json``; empty for rows persisted before those keys existed or for other modules."""
+    if not _is_retry_failed(call):
+        return ""
+    summary = call.get("parsed_summary_json")
+    if isinstance(summary, str):
+        try:
+            summary = json.loads(summary)
+        except ValueError:
+            return ""
+    if not isinstance(summary, dict):
+        return ""
+    if summary.get("mini_estimator"):
+        return f"failed: {summary['mini_estimator']}"
+    if summary.get("perspective_name") or summary.get("perspective_id"):
+        return f"failed: perspective {summary.get('perspective_name') or summary.get('perspective_id')}"
+    if summary.get("scenario_id"):
+        return f"failed: scenario {summary['scenario_id']}"
+    if summary.get("simulator_path") == "seeded":
+        return f"failed: simulator seed {summary.get('seed') or '?'}"
+    if summary.get("simulator_path") == "batch":
+        return "failed: simulator batch"
+    return ""
+
+
+def _is_retry_failed(call: dict[str, Any]) -> bool:
+    return (call.get("call_outcome") or "").strip().lower() == _RETRY_FAILED_OUTCOME
+
+
+def _is_own_tier_retry(call: dict[str, Any]) -> bool:
+    """A failed attempt of a module that runs ALONE in its tier (critic, hindsight): it ran BEFORE the call it retried, so
+    it is drawn as its own sequential tier before it. Modules that run concurrently with siblings (the risk
+    mini-estimators; simulator and perspectives, which share one tier) keep their failed attempts in the shared tier:
+    those attempts ran concurrently with the siblings, so a chain would be a causal falsehood."""
+    return _is_retry_failed(call) and (call.get("module") or "").strip().lower() in _SEQUENTIAL_RETRY_MODULES
 
 
 def _call_tier_sort_key(call: dict[str, Any]) -> tuple[Any, ...]:
@@ -640,16 +701,21 @@ def _group_calls_into_tiers_and_enrich(calls: list[dict[str, Any]]) -> list[list
     unsequenced = [c for c in calls if c.get("sequence_in_cycle") is None]
 
     by_vtier: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    retry_tiers: list[tuple[int, dict[str, Any]]] = []
     for c in sequenced:
-        by_vtier[_visual_tier_for_call(c)].append(c)
+        if _is_own_tier_retry(c):
+            retry_tiers.append((_visual_tier_for_call(c), c))
+        else:
+            by_vtier[_visual_tier_for_call(c)].append(c)
 
-    merged_seq_tiers: list[list[dict[str, Any]]] = []
-    for vtier in sorted(by_vtier.keys()):
-        tier_calls = sorted(
-            by_vtier[vtier],
-            key=lambda c: (c.get("id") or 0, c.get("started_at") or 0),
-        )
-        merged_seq_tiers.append(tier_calls)
+    # (visual tier, 0 = failed attempts before the tier's call, 1 = the tier itself, id): every failed attempt gets its
+    # own sequential tier directly before the tier of the call it retried.
+    keyed: list[tuple[tuple[int, int, int], list[dict[str, Any]]]] = []
+    for vtier, tier_calls in by_vtier.items():
+        keyed.append(((vtier, 1, 0), sorted(tier_calls, key=lambda c: (c.get("id") or 0, c.get("started_at") or 0))))
+    for vtier, c in retry_tiers:
+        keyed.append(((vtier, 0, c.get("id") or 0), [c]))
+    merged_seq_tiers: list[list[dict[str, Any]]] = [tier for _, tier in sorted(keyed, key=lambda kv: kv[0])]
 
     # Rare fallback: legacy rows without sequence_in_cycle.
     unsorted = sorted(unsequenced, key=lambda c: (c.get("started_at") or 0, c.get("id") or 0))
@@ -699,7 +765,12 @@ def _group_calls_into_tiers_and_enrich(calls: list[dict[str, Any]]) -> list[list
 def _tier_started_after(src: list[dict[str, Any]], dst: list[dict[str, Any]]) -> bool:
     """True when every call of ``dst`` started after the last call of ``src``
     ended (i.e. ``dst`` waited for ``src``); missing timestamps count as
-    sequential, which keeps legacy rows on the historical label."""
+    sequential, which keeps legacy rows on the historical label.
+
+    ``retry_failed`` rows are left out of both sides: their ``started_at`` is the moment the row was emitted (zero
+    duration), not when the call started, so they must not decide whether the real calls waited for each other."""
+    src = [c for c in src if not _is_retry_failed(c)] or src
+    dst = [c for c in dst if not _is_retry_failed(c)] or dst
     src_end = max(((c.get("started_at") or 0) + (c.get("duration_ms") or 0)) for c in src)
     dst_start = min((c.get("started_at") or 0) for c in dst)
     return dst_start >= src_end
@@ -712,6 +783,9 @@ def _compute_connector_labels(tiers: list[list[dict[str, Any]]]) -> list[str | N
     """
     labels: list[str | None] = []
     for i in range(len(tiers) - 1):
+        if all(_is_own_tier_retry(c) for c in tiers[i]):
+            labels.append(_RETRY_AFTER_FAILED_LABEL)
+            continue
         src_modules = {(c.get("module") or "").lower() for c in tiers[i]}
         dst_modules = {(c.get("module") or "").lower() for c in tiers[i + 1]}
         dst_actions = {(c.get("action") or "").lower() for c in tiers[i + 1]}
@@ -3800,6 +3874,7 @@ button:hover{opacity:0.9}
         rehomed_guard_calls = _rehome_legacy_hard_violation_guard_calls(llm_calls)
         for call in llm_calls:
             call["io_annotations"] = _build_module_io_annotations(call)
+            call["retry_subject"] = _retry_subject(call)
             enriched = enrich_llm_call_for_ui(call)
             call["semantic_badges"] = enriched.get("semantic_badges") or []
         for call in rehomed_guard_calls:

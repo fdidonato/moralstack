@@ -270,6 +270,24 @@ memory by `_rehome_legacy_hard_violation_guard_calls` on the request page only â
 the markdown export (`reports/model.py`) still sorts cycle 0 by wall-clock and
 shows those legacy rows where they were persisted.
 
+Rows that are written from outside a deliberation cycle must carry their own coordinates, or they land in a
+NULL-cycle group of the graph. The risk estimator's `retry_failed` rows carry `cycle=0` / `sequence_in_cycle=-9`
+(the mini rows' tier), and the fast-path `quick_check` row carries `cycle=0` / `sequence_in_cycle=2`, which
+`_CYCLE0_SEQ_TO_VISUAL_TIER` maps to tier 9 (after the fast draft at tier 8; unmapped, seq 2 would collapse into the
+calibration-guard tier and sort before the draft). The perspectives and hindsight `retry_failed` rows are written
+inside a deliberation cycle with the cycle ContextVar and no sequence, so the request page infers their tier from
+the module. A failed attempt of a module that runs ALONE in its tier (critic, hindsight) is NOT drawn as a "parallel"
+sibling of the call it retried: `_group_calls_into_tiers_and_enrich` gives each one its own sequential tier directly before
+the retried call's tier and the pipe into the retried call reads `retry after failed attempt`. Modules that ran concurrently
+with siblings keep their failed attempts in the shared tier (the risk minis; simulator and perspectives, which share tier 3):
+drawing those as a chain would be a causal falsehood. In every case the `retry_failed` badge uses the failure style
+(`badge-fail`) and the node names who failed (`failed: <mini>` / `failed: perspective <name>` / `failed: scenario <id>` /
+`failed: simulator seed <s>` / `failed: simulator batch`, from the additive `parsed_summary_json` keys). `retry_failed` rows are
+ignored by `_tier_started_after` (their `started_at` is the emit time, zero duration), so they cannot hide the real
+`gate: proceed` label of the next tier. The `quick_check` tier (9) is keyed on the row's action, not on cycle 0 / seq 2 alone, because
+the synthetic "critic deferred to compliance" marker also sits at cycle 0 / seq 2 and keeps its own tier. A `quick_check` with
+no verdict renders `quick check: no verdict (<error type>)`. Tests: `tests/test_ui_llm_call_visibility*.py`.
+
 ## 6. What the UI displays (`moralstack/ui/app.py`)
 
 The dashboard reads **only** from SQLite (`get_db_path()` required;

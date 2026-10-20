@@ -1382,8 +1382,11 @@
                                     {% if call.model %}
                                     <span class="badge">{{ call.model }}</span>
                                     {% endif %}
+                                    {% if call.retry_subject %}
+                                    <span class="badge retry-subject" title="Which call failed">{{ call.retry_subject }}</span>
+                                    {% endif %}
                                     {% if call.call_outcome %}
-                                    <span class="badge badge-semantic" title="call_outcome">{{ call.call_outcome }}</span>
+                                    <span class="badge {{ 'badge-fail' if call.call_outcome == 'retry_failed' else 'badge-semantic' }}" title="call_outcome">{{ call.call_outcome }}</span>
                                     {% endif %}
                                     {% if call.semantic_badges %}
                                     {% for b in call.semantic_badges %}
@@ -1713,8 +1716,11 @@
             {% if call.model %}
             <span class="badge">{{ call.model }}</span>
             {% endif %}
+            {% if call.retry_subject %}
+            <span class="badge retry-subject" title="Which call failed">{{ call.retry_subject }}</span>
+            {% endif %}
             {% if call.call_outcome %}
-            <span class="badge badge-semantic" title="call_outcome">{{ call.call_outcome }}</span>
+            <span class="badge {{ 'badge-fail' if call.call_outcome == 'retry_failed' else 'badge-semantic' }}" title="call_outcome">{{ call.call_outcome }}</span>
             {% endif %}
             {% if call.semantic_badges %}
             {% for b in call.semantic_badges %}
