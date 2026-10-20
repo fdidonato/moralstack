@@ -32,33 +32,28 @@ from moralstack.observability.sinks.sqlite_sink import (  # noqa: E402
     upsert_request,
 )
 
+# The real implementations, captured at collection time (before any test runs and patches the
+# class). Re-installing these, instead of simplified copies, keeps the token-usage accumulator
+# feed of ``emit``/``emit_batch``: the old simplified copies dropped it for every later test in
+# the same process (the 8 serial-only token-accounting failures recorded in CODEBASE_FACTS).
+_REAL_EMIT = ObservabilityService.__dict__["emit"]
+_REAL_EMIT_BATCH = ObservabilityService.__dict__["emit_batch"]
+_REAL_FLUSH = ObservabilityService.__dict__["flush"]
+
 
 def _reinstall_observability_service_writes() -> None:
     """
-    Re-bind ObservabilityService emit/emit_batch/flush to the real queue+router
-    behaviour.
+    Re-bind ObservabilityService emit/emit_batch/flush to the real implementations.
 
     SDK tests monkeypatch these methods on the class; pytest restores them to
     whatever was current when those tests *started*, which can leave no-op
     implementations in place if import/collection order or hook ordering leaves
-    the class in a patched state. Re-applying the original logic here is
-    independent of ObservabilityService.__dict__ contents at import time.
+    the class in a patched state. Re-applying the implementations captured at
+    collection time restores the real queue + router + token-accumulator behaviour.
     """
-
-    def emit(self: ObservabilityService, envelope):  # type: ignore[no-untyped-def]
-        self._queue.submit_envelope(envelope)
-
-    def emit_batch(self: ObservabilityService, envelopes):  # type: ignore[no-untyped-def]
-        if not envelopes:
-            return
-        self._queue.submit_batch(list(envelopes))
-
-    def flush(self: ObservabilityService, timeout: float = 30.0) -> None:
-        self._queue.flush(timeout=timeout)
-
-    ObservabilityService.emit = emit  # type: ignore[method-assign]
-    ObservabilityService.emit_batch = emit_batch  # type: ignore[method-assign]
-    ObservabilityService.flush = flush  # type: ignore[method-assign]
+    ObservabilityService.emit = _REAL_EMIT  # type: ignore[method-assign]
+    ObservabilityService.emit_batch = _REAL_EMIT_BATCH  # type: ignore[method-assign]
+    ObservabilityService.flush = _REAL_FLUSH  # type: ignore[method-assign]
 
 
 def _bind_observability_db(monkeypatch: pytest.MonkeyPatch, dbp: str) -> None:
