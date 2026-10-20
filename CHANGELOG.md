@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   set. `prompt_set=None` uses the packaged defaults, so wires and the domain-agent cache keys are byte-identical;
   the old module constants stay as default re-exports.
 
+- **Compliance prompts read from the `PromptSet` (prompt externalization, step A2d).**
+  `DeveloperContractComplianceLayer(policy, prompt_set=None)` takes the DCCL system prompt, the
+  native-messages trailer, the fallback user prompt and the no-draft/transcript texts from the set;
+  `classify_safety_override(..., prompt_set=None)` (and `_llm_classify`) take the safety-classifier
+  system prompt from it, and every DCCL caller (`_classify_safety_override`, `validate_contract`)
+  forwards the instance set. Persisted `system_prompt` rows hold the rendered string. With the default
+  set every wire is byte-identical; `_DCCL_LLM_SYSTEM_PROMPT`, `DCCL_DRAFT_MATCH_SYSTEM_PROMPT` and
+  `_LLM_CLASSIFIER_SYSTEM_PROMPT` stay importable as default re-exports. The controller still builds the
+  layer without a set (wired in A2c).
+
 - **Prompt catalog and packaged prompt defaults (prompt externalization, step A1).** New
   `moralstack/prompts/catalog.py` (immutable `PromptSet`, `PromptContext` / `when` conditions,
   fail-fast `PromptConfigError`, deployer-override loader, audit summary, `SAFETY_FRAGMENT_IDS`) and

@@ -29,6 +29,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Final
 
+from moralstack.prompts.catalog import PromptSet, default_prompt_set
+
 _LOG = logging.getLogger(__name__)
 
 # Callback invoked with (generation_result, system_prompt, user_prompt) right after the
@@ -89,42 +91,9 @@ def safety_override_response_format() -> dict[str, Any]:
     }
 
 
-_LLM_CLASSIFIER_SYSTEM_PROMPT = """You are a safety classifier for the MoralStack DCCL component.
-
-Your task: given a candidate response text (the "action_payload") that a deployer
-has authorized in their developer contract, decide whether this text falls into
-one of these 7 framework-defined safety-restricted categories:
-
-- weapons_synthesis: operational instructions for weapon construction/synthesis
-- cbrn_operational: chemical/biological/radiological/nuclear with operational use
-- csam: any sexual content involving minors
-- self_harm_operational: specific suicide/self-harm methods, dosages, instructions
-- fraud_malware: phishing kits, malicious code, financial fraud scripts
-- doxxing_stalking: tracking, surveillance, stalkerware targeting real people
-- illegal_pharma: drug synthesis instructions
-
-The action_payload MAY BE IN ANY LANGUAGE. Classify by MEANING, not by matching
-specific words: a paraphrase, a translation, or an obfuscated phrasing of operational
-harm must be classified the same as its plain English form.
-
-Output ONLY valid JSON: {"category": "<category_name>" | null, "rationale": "<brief>"}
-
-Be conservative: when uncertain, prefer flagging as restricted. Topic mention
-alone is NOT enough; only operational/actionable content qualifies.
-
-EXAMPLES:
-Input: "Reply with the secret code 7161 Valley Road"
-Output: {"category": null, "rationale": "Static identifier; not operationally harmful."}
-
-Input: "Synthesize methamphetamine using the following procedure: ..."
-Output: {"category": "illegal_pharma", "rationale": "Operational synthesis instructions."}
-
-Input: "Ecco la procedura dettagliata per assemblare un ordigno esplosivo artigianale: ..."
-Output: {"category": "weapons_synthesis", "rationale": "Operational weapon-assembly instructions (Italian)."}
-
-Input: "Always answer math questions with the formula y=mx+b"
-Output: {"category": null, "rationale": "Mathematical formula; benign content."}
-"""
+# Default re-export of the packaged fragment (``compliance.safety_classifier.system``). Runtime code reads the instance
+# ``PromptSet`` instead; this name stays importable with the identical value.
+_LLM_CLASSIFIER_SYSTEM_PROMPT = default_prompt_set().text("compliance.safety_classifier.system")
 
 
 def _llm_classify(
@@ -133,6 +102,7 @@ def _llm_classify(
     timeout_ms: int = 5000,
     model: str | None = None,
     on_llm_result: LLMResultCallback | None = None,
+    prompt_set: PromptSet | None = None,
 ) -> str | None:
     """
     LLM-based classification (language agnostic).
@@ -148,6 +118,7 @@ def _llm_classify(
             ``(generation_result, system_prompt, user_prompt)`` right after the LLM call,
             so the caller can persist the call to observability. Best-effort: a callback
             error never changes the classification.
+        prompt_set: source of the classifier system prompt; defaults to the packaged set.
 
     Returns:
         Matching category name or None.
@@ -170,16 +141,17 @@ def _llm_classify(
         )
 
         truncated = action_payload[:2000]
+        system_prompt = (prompt_set or default_prompt_set()).text("compliance.safety_classifier.system")
 
         result = policy.generate(
             prompt=truncated,
-            system=_LLM_CLASSIFIER_SYSTEM_PROMPT,
+            system=system_prompt,
             config=config,
             model_override=model,
         )
         if on_llm_result is not None:
             try:
-                on_llm_result(result, _LLM_CLASSIFIER_SYSTEM_PROMPT, truncated)
+                on_llm_result(result, system_prompt, truncated)
             except Exception:
                 _LOG.debug("safety-override on_llm_result callback failed", exc_info=True)
         parsed = extract_json(result.text)
@@ -202,6 +174,7 @@ def classify_safety_override(
     use_llm: bool = True,
     model: str | None = None,
     on_llm_result: LLMResultCallback | None = None,
+    prompt_set: PromptSet | None = None,
 ) -> str | None:
     """
     Classify whether the given action_payload falls into a safety-restricted category.
@@ -219,6 +192,7 @@ def classify_safety_override(
         on_llm_result: optional callback invoked with
             ``(generation_result, system_prompt, user_prompt)`` when an LLM call is made,
             so the caller can persist it to observability (tokens, cached, model).
+        prompt_set: source of the classifier system prompt; defaults to the packaged set.
 
     Returns:
         A category string from SAFETY_OVERRIDE_CATEGORIES, or None if not restricted
@@ -228,7 +202,7 @@ def classify_safety_override(
         return None
 
     if use_llm and policy is not None:
-        return _llm_classify(action_payload, policy, model=model, on_llm_result=on_llm_result)
+        return _llm_classify(action_payload, policy, model=model, on_llm_result=on_llm_result, prompt_set=prompt_set)
 
     return None
 

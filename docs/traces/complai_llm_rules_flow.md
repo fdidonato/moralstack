@@ -78,6 +78,10 @@ In MoralStack terms:
    English keyword pre-filter was removed) and runs on a small model
    (`MORALSTACK_DCCL_SAFETY_OVERRIDE_MODEL`, default `gpt-4o-mini`); its call is
    persisted to `llm_calls` (`module=compliance_layer`, `action=safety_override`).
+   The classifier and DCCL system prompts are read from the layer's `PromptSet`
+   (`compliance.safety_classifier.system`, `compliance.dccl.system`), threaded through
+   `classify_safety_override(..., prompt_set=)`; the default set gives the same bytes as
+   before (prompt externalization, A2d).
    Its reply is schema-enforced (`safety_override_response_format()`), with the enum
    derived from `SAFETY_OVERRIDE_CATEGORIES` and `category` nullable because "no
    restricted category" is the normal answer. This matters because an out-of-enum

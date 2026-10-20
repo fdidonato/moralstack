@@ -1241,7 +1241,6 @@ def test_default_roundtrip_matches_live_constants(snapshot_table: dict[str, Any]
 
 def _live_standalone() -> dict[str, tuple[str, str]]:
     """fragment id -> (kind, live value) for fragments that equal an existing module constant."""
-    from moralstack.compliance import dccl, safety_override
     from moralstack.models.risk import prompts as rp
     from moralstack.orchestration import _policy_helpers as ph
     from moralstack.orchestration import domain_exclusion
@@ -1289,9 +1288,6 @@ def _live_standalone() -> dict[str, tuple[str, str]]:
         "policy.anti_leak_rules": ("text", OutputProtector.ANTI_LEAK_RULES),
         "policy.safe_complete_instruction": ("text", ph.SAFE_COMPLETE_GENERATION_INSTRUCTION),
         "policy.constrained_instruction": ("text", ph.CONSTRAINED_GENERATION_INSTRUCTION),
-        "compliance.dccl.system": ("text", dccl._DCCL_LLM_SYSTEM_PROMPT),
-        "compliance.draft_match.system": ("text", dccl.DCCL_DRAFT_MATCH_SYSTEM_PROMPT),
-        "compliance.safety_classifier.system": ("text", safety_override._LLM_CLASSIFIER_SYSTEM_PROMPT),
         "refusal.system": ("text", srg._build_system_message()),
         "exclusion.system": ("text", domain_exclusion._build_system_message()),
     }
@@ -1639,66 +1635,6 @@ def test_policy_rewrite_contract_regeneration_and_draft_match_fragments_match_th
         assert got == _snapshot_value(snapshot_table, f"wire/draft_match/{case}/call#0/prompt"), case
 
 
-def test_dccl_fragments_reproduce_the_live_builders() -> None:
-    from moralstack.compliance.dccl import DeveloperContractComplianceLayer
-    from moralstack.orchestration.conversation_context import build_conversation_context
-    from tests.prompts_golden import capture
-
-    ds = default_prompt_set()
-    layer = DeveloperContractComplianceLayer(policy=None)
-    raw = capture.CONTRACT_TEXT
-    ctx_native = build_conversation_context(
-        [
-            {"role": "system", "content": raw},
-            {"role": "user", "content": "first question"},
-            {"role": "assistant", "content": "first answer"},
-            {"role": "user", "content": "final request"},
-        ]
-    )
-    ctx_big = build_conversation_context(
-        [
-            {"role": "system", "content": raw},
-            {"role": "user", "content": "a" * 4000},
-            {"role": "assistant", "content": "b" * 4000},
-            {"role": "user", "content": "final request"},
-        ]
-    )
-
-    def user_prompt(raw_text: str, draft: str, ctx: Any) -> str:
-        truncated_draft = draft[:1000] if draft else ds.text("compliance.dccl.no_draft")
-        transcript, truncated = ctx.role_serialized_transcript(budget=5000) if ctx is not None else ("", False)
-        if not transcript:
-            transcript = ds.format("compliance.dccl.transcript_fallback", user_prompt="final request")
-        note = ds.text(
-            "compliance.dccl.transcript_truncated_note" if truncated else "compliance.dccl.transcript_complete_note"
-        )
-        return ds.format(
-            "compliance.dccl.fallback_user",
-            contract=raw_text[:3000],
-            transcript=transcript,
-            truncation_note=note,
-            user_prompt="final request",
-            draft=truncated_draft,
-        )
-
-    cases = [
-        (raw, "Draft text.", None),
-        (raw, "", None),
-        (raw, "Draft text.", ctx_native),
-        (raw, "d" * 1500, ctx_big),
-        ("c" * 3500, "Draft text.", None),
-    ]
-    for raw_text, draft, ctx in cases:
-        live = layer._build_llm_user_prompt(raw_text, "final request", draft, ctx)
-        assert user_prompt(raw_text, draft, ctx) == live
-        trailer = layer._build_llm_messages(raw_text, "final request", draft, ctx)[-1]["content"]
-        expected = ds.format(
-            "compliance.dccl.native_trailer",
-            draft=draft[:1000] if draft else ds.text("compliance.dccl.no_draft"),
-        )
-        assert expected == trailer
-
-
 def test_risk_head_fragments_end_at_the_existing_partition_markers() -> None:
     """Independent oracle for the DC cut boundaries (deleted in A2a with the rest of the guard).
 
@@ -1775,6 +1711,12 @@ def test_every_packaged_fragment_is_covered_by_the_duplication_guard() -> None:
             "refusal.request_context_block",
             "refusal.leak_avoidance_block",
             "refusal.category_hints.fallback",
+            # A2d: the module constants are default re-exports now. Bytes: the A0 snapshot pins
+            # (test_standalone_constants_equal_the_a0_snapshot, builder/dccl_* golden keys); threading:
+            # tests/test_prompt_set_threading_compliance.py
+            "compliance.dccl.system",
+            "compliance.draft_match.system",
+            "compliance.safety_classifier.system",
             "compliance.dccl.native_trailer",
             "compliance.dccl.no_draft",
             "compliance.dccl.fallback_user",

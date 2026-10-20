@@ -67,6 +67,11 @@ layer = DeveloperContractComplianceLayer(policy=...)
 verdict = layer.evaluate(request, speculative_draft, risk_estimation)
 ```
 
+The constructor also takes `prompt_set: PromptSet | None = None` (default: the packaged
+`default_prompt_set()`). Every prompt text the layer sends comes from that set (see
+"LLM prompt design"); the controller does not pass a set yet (wired in step A2c of the
+prompt externalization).
+
 ### `ComplianceVerdict`
 
 The output of `evaluate()`. Frozen dataclass with:
@@ -194,7 +199,19 @@ When `MORALSTACK_DCCL_SAFETY_OVERRIDE_STRICT=true` (default), rules whose
 
 ## LLM prompt design
 
-The LLM path uses a fixed system prompt (`_DCCL_LLM_SYSTEM_PROMPT` in `dccl.py`)
+The prompt texts are catalog fragments read from the layer's `PromptSet`
+(`self._prompt_set`): `compliance.dccl.system`, `compliance.dccl.native_trailer`,
+`compliance.dccl.fallback_user`, `compliance.dccl.no_draft` and the transcript
+note/fallback fragments, plus `compliance.safety_classifier.system` for the safety
+classifier. The classifier text is a safety fragment (`SAFETY_FRAGMENT_IDS`): an override
+is recorded in the audit summary. All DCCL call sites (`_classify_safety_override`,
+`validate_contract`) forward the same set to `classify_safety_override(..., prompt_set=)`;
+this changes only where the text comes from, never a decision path. The persisted
+`llm_calls.system_prompt` is the rendered string. `_DCCL_LLM_SYSTEM_PROMPT`,
+`DCCL_DRAFT_MATCH_SYSTEM_PROMPT` and `_LLM_CLASSIFIER_SYSTEM_PROMPT` remain importable as
+default re-exports (identical values).
+
+The LLM path uses a system prompt (the default is `_DCCL_LLM_SYSTEM_PROMPT` in `dccl.py`)
 that instructs the model to:
 
 - Identify literal rule invocation (not topical similarity)
