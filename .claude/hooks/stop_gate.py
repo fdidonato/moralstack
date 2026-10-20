@@ -78,7 +78,7 @@ _DOCS_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("moralstack/server/", ("docs/traces/openai_compatible_multiturn.md", "docs/traces/observability_db_to_ui.md")),
     ("moralstack/constitution/", ("docs/modules/constitution_store.md", "docs/constitution.md")),
     ("moralstack/compliance/", ("docs/traces/complai_llm_rules_flow.md",)),
-    ("moralstack/prompts/", ("docs/decision_policy.md",)),
+    ("moralstack/prompts/", ("docs/decision_policy.md", "docs/prompt_overrides.md")),
     ("moralstack/runtime/decision/", ("docs/decision_policy.md",)),
 )
 _DOCS_ALWAYS = ("docs/MORALSTACK_CODEBASE_INDEX.md", "docs/CODEBASE_FACTS.md")

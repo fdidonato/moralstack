@@ -1,0 +1,13 @@
+# Packaged default prompt fragments (moralstack/prompts/catalog.py loads every *.yaml in this folder).
+# Byte-identical to the pre-externalization prompt constants. Block scalars are literal: do not re-indent
+# or reflow, and do not leave trailing whitespace (trailing newlines are controlled by |, |- and |+).
+
+version: 1
+fragments:
+  common.output_json_only:
+    text: |-
+      Output ONLY valid JSON.
+  retry.prefix:
+    text: |-
+      Your previous response was not valid JSON. Please return ONLY valid JSON with no additional text.
+compositions: {}

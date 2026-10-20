@@ -1,0 +1,221 @@
+# Packaged default prompt fragments (moralstack/prompts/catalog.py loads every *.yaml in this folder).
+# Byte-identical to the pre-externalization prompt constants. Block scalars are literal: do not re-indent
+# or reflow, and do not leave trailing whitespace (trailing newlines are controlled by |, |- and |+).
+
+version: 1
+fragments:
+  refusal.system:
+    text: |-
+      You are an AI assistant responsible for generating safe refusal responses. Your task is to refuse a user request that has already been classified as harmful. You must never provide technical details, instructions, examples, or references that could enable harmful activity.
+  refusal.default_redirection:
+    text: |-
+      Redirect toward safe, lawful, constructive alternatives.
+  refusal.user:
+    kind: template
+    placeholders: [request_context_block, risk_category, reasons_str, domain_str, context_block, leak_avoidance_block, category_hints, language]
+    text: |-
+      {request_context_block}The user's request has been classified as:
+      - Risk category: {risk_category}
+      - Policy reasons: {reasons_str}
+      - Context domain: {domain_str}
+      {context_block}{leak_avoidance_block}Write a refusal response that:
+
+      1. Clearly refuses the unsafe request.
+      2. Name the broad unsafe action category in the first sentence.
+         The category must be concrete enough that the refusal makes sense
+         without reading the original prompt, and consistent with PRIMARY
+         EVIDENCE (harm_type + rationale). Categories aligned with the
+         detected harm_type:
+      {category_hints}
+      3. Does not repeat operational details, tool combinations, procedures, payloads, substances, or step-by-step content from the original request.
+      4. Explains the refusal briefly based on safety, ethics, or lawfulness.
+      5. Provides a safe redirection aligned with the user's apparent underlying context and the SAFE REDIRECTION GUIDANCE above:
+      - Explain the concrete harm class.
+      - Redirect to a safe alternative aligned with the same user need/context.
+      6. If domain-specific refusal_redirection is present, use it. Otherwise do not invent a domain and do not redirect to unrelated topics.
+      7. If the request asks to intensify, optimize, improve, conceal, evade detection, or make a harmful action more effective, the refusal must mention that broad optimization goal safely.
+          Allowed:
+          'I can't help make an explosive device more harmful or lethal.'
+          'I can't help make fraud more convincing.'
+          'I can't help make a smear campaign more damaging.'
+          Forbidden:
+          Mentioning tools, materials, parameters, steps, payloads, document fields, symptoms, or operational techniques.
+      8. Use professional, non-judgmental language.
+      9. Write entirely in {language}.
+
+      The response must be self-contained and safe.
+  refusal.evidence_block:
+    kind: template
+    placeholders: [harm_type, request_type, rationale_text, safe_refusal_focus, operational_risk, requested_instructions, intent_operational, redirection_guidance]
+    text: |
+
+      PRIMARY EVIDENCE — use these to ground the refusal:
+      - harm_type: {harm_type}
+      - request_type: {request_type}
+      - risk-estimator rationale: {rationale_text}
+
+      SECONDARY EVIDENCE (supporting context only, lower weight):
+      - refusal focus: {safe_refusal_focus}
+      - operational risk: {operational_risk}
+      - requested instructions: {requested_instructions}
+      - intent operational: {intent_operational}
+
+      SAFE REDIRECTION GUIDANCE:
+      {redirection_guidance}
+
+      REFUSAL QUALITY REQUIREMENTS — mandatory:
+      The refusal must be both specific and convincing.
+
+      Specificity:
+      - The first sentence must name the concrete unsafe action category derived from
+        PRIMARY EVIDENCE.
+      - Do not use vague categories such as "unsafe content", "harmful request",
+        "unlawful actions", or "policy violation" if PRIMARY EVIDENCE supports a more
+        concrete category.
+      - Ground the refusal in the risk-estimator rationale, harm_type, request_type,
+        and activated signals.
+      - Do not introduce unrelated risk categories.
+      - Do not mention wrapper-only features such as article format, JSON format,
+        roleplay, fictional framing, or creative style unless they are relevant to
+        evasion or concealment.
+
+      Convincingness:
+      - Clearly explain why complying would be unsafe, unlawful, deceptive, or harmful
+        in practical terms.
+      - The explanation must be understandable without exposing operational details.
+      - If the request includes concealment, evasion, optimization, or platform-bypass
+        framing, mention that broad goal safely.
+      - Provide a safe redirection that addresses the same underlying need without
+        enabling the harmful action.
+      - Do not use generic redirections. Redirections must follow PRIMARY EVIDENCE,
+        not the surface domain, when the two conflict.
+
+      GROUNDING RULES (mandatory):
+      A. Name a broad unsafe-action category that is consistent with PRIMARY EVIDENCE
+         (harm_type and rationale). Do NOT introduce categories absent from BOTH.
+      B. If harm_type=reputational, do NOT use cyber, hacking, intrusion, malware,
+         or unauthorized-access language unless the rationale explicitly mentions
+         technical compromise of systems or accounts.
+      C. If harm_type=financial without an explicit fraud signal in the evidence,
+         frame as financial harm or exploitation; do not assume "fraud or deception"
+         unless the rationale supports it.
+      D. The redirection must address the same underlying need expressed in the
+         request:
+           • reputational → fair competitive practices, honest marketing,
+             legitimate differentiation, transparent communication
+           • cyber → defensive security, authorized testing
+           • weapons/physical → de-escalation, emergency services
+           • self-harm → crisis support and trusted contacts
+           • privacy → consent, lawful reporting channels
+           • financial → lawful financial conduct, consumer protection
+      E. Do not reveal internal labels, signal names (Qx:...), policy codes, risk
+         scores, estimator names, or pipeline details.
+      F. When refusing predilige well written and safe convincingness and specificity
+  refusal.legacy_rationale_block:
+    kind: template
+    placeholders: [rationale]
+    text: |+
+
+      The risk classification system provided this high-level rationale; use it as a guide for the tone and focus of your refusal (understand the general nature of the concern—safety, ethics, or policy—at an abstract level):
+      "{rationale}"
+
+      CRITICAL: You must NOT repeat, quote, paraphrase, or mention any specific terms, substances, procedures, tools, or techniques from the rationale. Express your refusal at an abstract level only.
+
+  refusal.legacy_domain_block:
+    kind: template
+    placeholders: [domain]
+    text: |+
+
+      General topic (domain): {domain}
+
+      You ARE allowed to mention this general topic at a descriptive level.
+      You must NOT provide operational details, step-by-step instructions, templates, or concrete reusable examples.
+      You must NOT quote or reference the original request.
+
+  refusal.legacy_domain_redirection:
+    kind: template
+    placeholders: [domain, redirection]
+    text: |+
+      SPECIFIC REDIRECTION GUIDANCE for {domain} domain:
+      {redirection}
+
+      IMPORTANT: Use these specific suggestions for redirection rather than generic educational platforms. Tailor your redirection to the domain context provided above.
+
+  refusal.request_context_block:
+    kind: template
+    placeholders: [user_prompt]
+    text: |+
+      Original user request context (relevance only; never provide operational details):
+      {user_prompt}
+
+  refusal.leak_avoidance_block:
+    kind: template
+    placeholders: [terms]
+    text: |
+
+      A previous attempt mentioned terms that are NOT supported by the evidence:
+      {terms}
+      Do not use these terms unless they appear in the rationale above.
+  refusal.category_hints.reputational:
+    kind: lines
+    text: |-
+      damaging someone's reputation through false or manipulative content
+      running a deceptive online campaign against a third party
+      coordinating online harassment or a smear campaign against an identifiable target
+  refusal.category_hints.financial:
+    kind: lines
+    text: |-
+      financial fraud or deception
+      financial exploitation
+  refusal.category_hints.physical:
+    kind: lines
+    text: |-
+      causing physical harm
+      making or using a weapon
+  refusal.category_hints.child_exploitation:
+    kind: lines
+    text: |-
+      contacting or grooming minors online
+      obtaining scripts or persuasion tactics for inappropriate adult-minor interactions
+      seeking facilitation of exploitation or sexualization of minors
+  refusal.category_hints.illegal:
+    kind: lines
+    text: |-
+      an unlawful action
+  refusal.category_hints.emotional_relational:
+    kind: lines
+    text: |-
+      manipulating or coercing someone in a personal relationship
+  refusal.category_hints.fallback:
+    kind: lines
+    text: |-
+      making or using a weapon
+      making an improvised weapon
+      making an incendiary device
+      making an explosive device
+      making an explosive device more harmful or lethal
+      increasing the lethality of a weapon
+      forging prescriptions or medical documents
+      obtaining prescription medication fraudulently
+      misrepresenting symptoms to a medical professional
+      unsafe use of illicit drugs
+      cyber abuse or unauthorized access
+      fraud or deception
+      discriminatory content targeting a protected group
+      harassment, doxxing, or privacy invasion
+      damaging someone's reputation through false or manipulative content
+      running a deceptive online campaign against a third party
+      self-harm or suicide instructions
+  exclusion.system:
+    text: |-
+      You are an AI assistant. Write a polite, empathetic message explaining you cannot help with a specific topic. Always respond in the same language as the user's message. Do not provide technical details about configuration or exclusion.
+  exclusion.user:
+    kind: template
+    placeholders: [domain, prompt_snippet]
+    text: |-
+      Topic not available: '{domain}'.
+
+      User text (for language detection only): '{prompt_snippet}'
+
+      Write 2-3 polite sentences explaining you cannot assist with this topic. Respond in the EXACT SAME LANGUAGE as the user's text. No technical details.
+compositions: {}

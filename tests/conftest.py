@@ -210,3 +210,13 @@ def use_in_memory_db(tmp_path_factory):
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
+
+
+@pytest.fixture(autouse=True)
+def _no_prompts_dir_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A developer-set MORALSTACK_PROMPTS_DIR must never leak into the suite.
+
+    Tests run on the packaged prompt defaults; a test that wants an override sets the
+    variable (or passes ``prompts_dir``) itself.
+    """
+    monkeypatch.delenv("MORALSTACK_PROMPTS_DIR", raising=False)

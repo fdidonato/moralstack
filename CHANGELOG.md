@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Prompt catalog and packaged prompt defaults (prompt externalization, step A1).** New
+  `moralstack/prompts/catalog.py` (immutable `PromptSet`, `PromptContext` / `when` conditions,
+  fail-fast `PromptConfigError`, deployer-override loader, audit summary, `SAFETY_FRAGMENT_IDS`) and
+  `moralstack/prompts/data/*.yaml`: the fragments and compositions that rebuild every LLM-facing
+  prompt byte for byte (verified against the live constants and the A0 golden snapshot). Not consumed
+  yet: no prompt constant, module or entry point reads the catalog, so runtime behavior is unchanged;
+  `prompts_dir` / `MORALSTACK_PROMPTS_DIR` take effect from step A3. Also: `pyproject.toml` package-data
+  entry for the YAML, `docs/prompt_overrides.md` (skeleton), and the memory-guard / stop-gate maps now
+  accept `docs/prompt_overrides.md` for changes under `moralstack/prompts/`.
+
 - **`PIPELINE_FAILED` orchestration event.** When `process()` fails closed (a `MoralStackError`,
   an `OrchestratorTimeoutError` or an unexpected exception), the controller now writes one
   best-effort `PIPELINE_FAILED` row to `orchestration_events`, with payload `fail_closed_reason`,

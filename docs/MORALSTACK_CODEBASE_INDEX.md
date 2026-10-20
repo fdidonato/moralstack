@@ -30,6 +30,8 @@ moralstack/
                          #   output_contract.py: Tier-1 enumerated-output
                          #   detection (TRUE/FALSE etc.) used by the critic gate
   prompts/               # module prompt templates
+    catalog.py           # prompt catalog: fragments, compositions, `when`, overrides, audit (A1: not yet consumed)
+    data/*.yaml          # 11 packaged default prompt-fragment files (byte-identical to the module constants)
   reports/               # markdown/conversation/benchmark export + UI data builders
                          #   pipeline_failure.py: shared SYSTEM.* pipeline-failure predicate
   server/                # OpenAI-compatible FastAPI governance proxy
@@ -335,6 +337,31 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   POTENTIALLY_HARMFUL, CLEARLY_HARMFUL), `OperationalRisk`.
 - `config/signals.yaml` — signal catalog; `prompts.py` — mini-estimator prompts.
 - `schema.py` — `RiskEstimation`.
+
+### Prompts — `moralstack/prompts/`
+- `catalog.py` — prompt catalog (prompt externalization, Phase A, step A1; **not yet wired into
+  any module** — the prompt constants in `models/risk/prompts.py`, `prompts/*_prompt.py`, `retry.py`,
+  the runtime modules and the orchestration/compliance/retrieval code still hold the live text, and
+  A2x re-exports them from the catalog). `load_prompt_set(dir)` / `default_prompt_set()` return an
+  immutable `PromptSet`: named fragments (`text` / `template` / `lines`) plus compositions
+  (ordered parts with `sep`, `end`, an optional `double_braces` transform and a `context_aware`
+  flag), validated at load (`PromptConfigError`, fail fast, never at request time) and pre-rendered for
+  the four `PromptContext(contract_present, history_present)` values. A deployer override
+  (`prompts_dir`, from A3) may change only the `text` / `when` of existing fragments; `when` is a
+  closed vocabulary (`always`, `never`, `contract_present`, `contract_absent`, `history_present`,
+  `history_absent`) and a non-`always` condition is legal only on fragments used solely by
+  context-aware compositions. `SAFETY_FRAGMENT_IDS` (code-owned, served lazily by a module `__getattr__`; importing
+  `catalog` neither imports ruamel nor loads the default set) marks the safety-relevant fragments;
+  overriding one logs a WARNING and is listed in `audit_summary()["safety_fragments_overridden"]`.
+  `catalog.py` imports nothing from `moralstack.*`. Deployer reference: `docs/prompt_overrides.md`.
+- `data/*.yaml` — `common`, `risk`, `critic`, `perspectives`, `simulator`, `hindsight`, `context`,
+  `policy`, `refusal`, `compliance`, `retrieval` (the live ID lists are
+  `default_prompt_set().fragment_ids()` / `.composition_ids()`; the five `guidance.*` fragments of
+  `guidance_builder.py` are added in A2c, in `policy.yaml`). Literal block
+  scalars, so trailing whitespace is a byte change (`tests/test_prompt_packaging.py` pins that the
+  whitespace hooks cannot alter them). Declared in `pyproject.toml` package-data. The A0 golden
+  snapshot (`tests/prompts_golden/`) and the temporary duplication guard in
+  `tests/test_prompt_catalog.py` prove the defaults equal the pre-externalization bytes.
 
 ### Constitution — `moralstack/constitution/`
 - `store.py` — `ConstitutionStore` (optional LLM-based principle matching).

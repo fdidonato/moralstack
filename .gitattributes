@@ -1,0 +1,2 @@
+# Packaged prompt defaults: byte-exact block scalars, identical on every platform.
+moralstack/prompts/data/*.yaml text eol=lf

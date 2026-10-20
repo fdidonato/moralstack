@@ -31,7 +31,7 @@ BEHAVIOR_DOC_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
         "moralstack/orchestration/",
         ("docs/modules/orchestrator.md", "docs/traces/governance_decision_flow.md"),
     ),
-    ("moralstack/prompts/", ("docs/decision_policy.md",)),
+    ("moralstack/prompts/", ("docs/decision_policy.md", "docs/prompt_overrides.md")),
     (
         "moralstack/observability/",
         ("docs/modules/observability.md", "docs/traces/observability_db_to_ui.md"),

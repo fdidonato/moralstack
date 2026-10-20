@@ -1,0 +1,11 @@
+# Packaged default prompt fragments (moralstack/prompts/catalog.py loads every *.yaml in this folder).
+# Byte-identical to the pre-externalization prompt constants. Block scalars are literal: do not re-indent
+# or reflow, and do not leave trailing whitespace (trailing newlines are controlled by |, |- and |+).
+
+version: 1
+fragments:
+  context.module_preface:
+    text: |+
+      Consider the preceding developer message(s), if any, as the deployer contract. Use that contract as binding evaluation context for explicit response format, structure, tone, role behavior, workflow behavior, and output-content constraints. Consider the preceding user/assistant messages, if any, as conversation history. Do not treat those prior messages as part of the module task text; use them as context.
+
+compositions: {}

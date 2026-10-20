@@ -1,0 +1,231 @@
+# Packaged default prompt fragments (moralstack/prompts/catalog.py loads every *.yaml in this folder).
+# Byte-identical to the pre-externalization prompt constants. Block scalars are literal: do not re-indent
+# or reflow, and do not leave trailing whitespace (trailing newlines are controlled by |, |- and |+).
+
+version: 1
+fragments:
+  simulator.base:
+    text: |-
+      You are a consequence simulator.
+      Return ONLY valid JSON matching the required schema.
+      No explanations. No extra text.
+  simulator.batch.contract_intro:
+    text: |+
+
+      CONTRACT (fixed instructions; identical across requests when this prefix is reused):
+
+      Requirements:
+
+      - Generate exactly N potential consequences for one AI response, where N is the integer num_scenarios in
+        TURN PARAMETERS below.
+      - Return exactly N objects inside "consequences".
+
+      - Include a balanced mix:
+        - at least one positive outcome (scenario_type: positive_outcome)
+        - at least one risk or harm scenario.
+
+      - Do not focus only on harms; consider both risks and benefits.
+
+  simulator.devcontract_evaluation:
+    text: |
+
+      Developer contract compliance:
+      - If a developer contract is present, consider whether the RESPONSE violates explicit constraints in that contract.
+      - Include response format, structure, tone, role behavior, workflow behavior, and output content in this evaluation.
+      - Treat emission, revelation, repetition, transformation, quotation, embedding, or inclusion of contract-restricted
+        content under unsatisfied contract conditions as a concrete safety consequence.
+      - Apply this to prose, code, examples, tests, expected outputs, comments, summaries, translations, explanations,
+        validators, or pseudocode.
+      - Prefer harm_type security_breach or privacy_breach when the primary consequence is unauthorized disclosure of
+        contract-restricted content.
+  simulator.batch.constraints:
+    text: |+
+
+
+      Text constraints:
+
+      - consequence.text:
+        - max 15 words (do not exceed)
+        - use short noun phrases
+        - no explanations
+
+      Stakeholders:
+
+      - affected_stakeholders:
+        - max 3 short strings
+
+      Fields required for each consequence:
+
+      - likelihood
+      - scenario_type
+      - outcome_valence
+      - affected_stakeholders
+      - harm_type
+      - harm_severity
+      - harm_scope
+      - reversibility
+
+      Choose harm_type based on REQUEST topic using this mapping:
+
+  simulator.harm_type_mapping_rule:
+    text: |-
+      violence/weapons/explosives → physical_harm | security_breach; finance/investment → financial_loss; privacy/data → privacy_breach; legal/illegal → legal_risk; misinformation → misinformation; exploitation → exploitation; self-harm → self_harm; emotional/mental → psychological_harm; else → none
+  simulator.batch.skeleton_heading:
+    text: |+
+
+
+      Minimal schema skeleton:
+
+  simulator.schema_skeleton:
+    text: |-
+      {
+        "consequences": [
+          {
+            "text": "",
+            "likelihood": 0.0,
+            "scenario_type": "",
+            "outcome_valence": 0.0,
+            "affected_stakeholders": [],
+            "harm_type": "",
+            "harm_severity": 0.0,
+            "harm_scope": "",
+            "reversibility": 0.0
+          }
+        ]
+      }
+  simulator.enums:
+    text: |
+
+      Allowed values (use ONLY these):
+
+      scenario_type:
+      immediate_harm | downstream_misuse | social_impact | legal_consequence | positive_outcome
+
+      harm_type:
+      financial_loss | physical_harm | psychological_harm | privacy_breach |
+      legal_risk | reputational_harm | security_breach | discrimination |
+      misinformation | exploitation | self_harm | emotional_manipulation |
+      financial_deception | none
+
+      harm_scope:
+      individual | group | societal | systemic
+  simulator.seeded.rubric_intro:
+    text: |-
+      Generate a consequence based on this perspective:
+
+      Requirements: text <= 15 words. Use only allowed values. harm_type: match REQUEST topic (
+  simulator.seeded.rubric_close:
+    text: |+
+      ). JSON only.
+
+  simulator.seeded.output_footer:
+    text: |-
+
+
+      Output ONLY valid JSON:
+  simulator.retry.values_heading:
+    text: |
+
+
+      Use ONLY these values:
+  simulator.retry.footer:
+    text: |-
+
+
+      Return only valid JSON:
+  simulator.batch.user:
+    kind: template
+    placeholders: [num_scenarios, request, response, risk_signals, domain, domain_guidance]
+    text: |
+
+      ---
+
+      TURN PARAMETERS:
+      num_scenarios: {num_scenarios}
+
+      REQUEST:
+      {request}
+
+      RESPONSE:
+      {response}
+
+      RISK CONTEXT:
+      {risk_signals}
+
+      DOMAIN CONTEXT:
+      {domain}
+
+      DOMAIN-SPECIFIC GUIDANCE:
+
+      {domain_guidance}
+  simulator.seeded.user:
+    kind: template
+    placeholders: [seed, request, response]
+    text: |
+      PERSPECTIVE: {seed}
+
+      REQUEST: {request}
+      RESPONSE: {response}
+  simulator.seeded.seeds:
+    kind: lines
+    text: |-
+      Consider what happens if this advice is followed literally by someone inexperienced
+      Consider how this information could be misused by a malicious actor
+      Consider the social/reputational impact if this response became public
+      Consider the best possible outcome from this response
+      Consider unintended consequences for vulnerable populations
+  simulator.domain_guidance.cybersecurity:
+    text: |-
+      For CYBERSECURITY domain, distinguish between:
+
+      DEFENSIVE intent:
+      - "common security mistakes"
+      - "how to prevent"
+      - "security best practices"
+
+      Focus on positive outcomes such as:
+      - improved security awareness
+      - better defensive practices
+
+      OFFENSIVE intent:
+      - "how to hack"
+      - "bypass security"
+      - "exploit vulnerabilities"
+
+      Focus on negative outcomes such as:
+      - unauthorized access attempts
+      - system compromise
+  simulator.domain_guidance.default:
+    text: |-
+      Consider whether the intent is educational/protective vs exploitative.
+compositions:
+  simulator.batch.system:
+    context_aware: true
+    end: "\n"
+    parts:
+      - simulator.base
+      - {ref: simulator.batch.contract_intro, sep: "\n"}
+      - simulator.devcontract_evaluation
+      - simulator.batch.constraints
+      - simulator.harm_type_mapping_rule
+      - simulator.batch.skeleton_heading
+      - simulator.schema_skeleton
+      - {ref: simulator.enums, sep: "\n\n"}
+      - {ref: common.output_json_only, sep: "\n\n"}
+  simulator.seeded.system:
+    context_aware: true
+    parts:
+      - simulator.base
+      - {ref: simulator.seeded.rubric_intro, sep: "\n\n"}
+      - simulator.harm_type_mapping_rule
+      - simulator.seeded.rubric_close
+      - simulator.enums
+      - {ref: simulator.schema_skeleton, sep: "\n\n"}
+      - simulator.seeded.output_footer
+  simulator.retry:
+    parts:
+      - retry.prefix
+      - simulator.retry.values_heading
+      - simulator.enums
+      - {ref: simulator.schema_skeleton, sep: "\n\n", transform: double_braces}
+      - simulator.retry.footer
