@@ -2,7 +2,7 @@
 Generates the dynamic sections of HARM_SIGNAL_PROMPT_TEMPLATE from the SignalRegistry.
 
 The static scaffolding (system prompt invariants, normalization instructions,
-output footer) remains in prompts.py. This module fills only the five
+output footer) lives in the prompt set (``risk.yaml``). This module fills only the five
 signal-specific placeholder sections.
 
 Exported:
@@ -12,16 +12,21 @@ Exported:
     render_evaluation_order(registry)       → str  (EVALUATION ORDER block)
     render_output_schema(registry)          → str  (OUTPUT JSON schema block)
     get_harm_signal_prompts(registry)       → tuple[system_prompt, user_template]
+
+The fixed wording around the registry-derived sections comes from a ``PromptSet``
+(``prompt_set=None`` means the packaged defaults); the registry-derived labels stay in code.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from moralstack.prompts.catalog import NO_CONTEXT, PromptContext, PromptSet, default_prompt_set
+
 from .registry import SignalRegistry
 
 
-def render_evaluation_order(registry: SignalRegistry) -> str:
+def render_evaluation_order(registry: SignalRegistry, prompt_set: PromptSet | None = None) -> str:
     """Render the EVALUATION ORDER section.
 
     Signals with effects.priority_resolution_in_prompt=True are listed first.
@@ -31,24 +36,17 @@ def render_evaluation_order(registry: SignalRegistry) -> str:
     if not priority_signals:
         return ""
 
+    ps = prompt_set or default_prompt_set()
     lines = []
     for sig in priority_signals:
-        topic_hints = sig.short_description
-        lines.append(
-            f"If the payload involves {topic_hints}:\n"
-            f"  → resolve {sig.key} FIRST, then evaluate the rest of the\n"
-            f"    questions against the SAME payload. Wrapper cues about reputation,\n"
-            f"    Twitter moderation, Wikipedia layout, or generic deceptive campaigns\n"
-            f"    do NOT prevent {sig.key}=yes when the substantive payload is minor-contact\n"
-            f"    or grooming."
-        )
+        lines.append(ps.format("risk.signals.evaluation_order_item", topic_hints=sig.short_description, key=sig.key))
     return "\n\n".join(lines)
 
 
 def render_signal_definitions(registry: SignalRegistry) -> str:
     """Render the SIGNAL DEFINITIONS section for the LLM prompt.
 
-    Format mirrors the current hardcoded prompts.py section exactly.
+    Format is byte-identical to the pre-externalization section (pinned by the A0 golden).
     """
     parts: list[str] = []
     for sig in registry.signals.values():
@@ -93,10 +91,11 @@ def render_coherence_rules(registry: SignalRegistry) -> str:
     return "\n".join(f"• {rule}" for rule in rules)
 
 
-def render_output_schema(registry: SignalRegistry) -> str:
+def render_output_schema(registry: SignalRegistry, prompt_set: PromptSet | None = None) -> str:
     """Render the OUTPUT JSON schema listing all signal keys + domain_sensitivity."""
+    ps = prompt_set or default_prompt_set()
     field_count = len(registry.signals) + 1  # +1 for domain_sensitivity
-    lines = [f"OUTPUT — STRICT JSON ONLY ({field_count} fields)", "", "{{"]
+    lines = [ps.format("risk.signals.output_schema_header", field_count=field_count), "", "{{"]
     for sig in registry.signals.values():
         if sig.key == "q8_self_harm_suicide":
             # Special case: key in JSON uses snake_case as-is
@@ -105,7 +104,7 @@ def render_output_schema(registry: SignalRegistry) -> str:
     lines.append('  "domain_sensitivity": "LOW" | "MEDIUM" | "HIGH"')
     lines.append("}}")
     lines.append("")
-    lines.append("Return ONLY valid JSON. No preamble, no markdown fences, no commentary.")
+    lines.append(ps.text("risk.signals.output_schema_footer"))
     return "\n".join(lines)
 
 
@@ -144,7 +143,12 @@ def harm_signal_response_format(registry: SignalRegistry) -> dict[str, Any]:
     }
 
 
-def get_harm_signal_prompts(registry: SignalRegistry) -> tuple[str, str]:
+def get_harm_signal_prompts(
+    registry: SignalRegistry,
+    *,
+    prompt_set: PromptSet | None = None,
+    ctx: PromptContext = NO_CONTEXT,
+) -> tuple[str, str]:
     """
     Return (system_prompt, user_template) for the Harm Signal Scanner mini-estimator.
 
@@ -152,30 +156,31 @@ def get_harm_signal_prompts(registry: SignalRegistry) -> tuple[str, str]:
     domain sensitivity, coherence rules, output schema) are static — they
     depend only on the fixed SignalRegistry, never on per-request data — so
     they are rendered once here and appended to the static
-    HARM_SIGNAL_SYSTEM_PROMPT to form the cacheable system prefix. The
-    user_template carries ONLY the per-request `{request}` field.
+    ``risk.signals.system_head`` composition to form the cacheable system
+    prefix. The user_template carries ONLY the per-request `{request}` field.
+
+    ``ctx`` selects the ``when`` variant of the system head (the developer-contract
+    scope principle can be conditional in a deployer override); the default set
+    renders identically for every context.
 
     Callers should use user_template.format(request=...) to produce the
     final per-request user message.
     """
-    from moralstack.models.risk.prompts import (  # noqa: PLC0415
-        HARM_SIGNAL_STATIC_TEMPLATE,
-        HARM_SIGNAL_SYSTEM_PROMPT,
-        HARM_SIGNAL_USER_TEMPLATE,
-    )
+    ps = prompt_set or default_prompt_set()
 
-    evaluation_order = render_evaluation_order(registry)
+    evaluation_order = render_evaluation_order(registry, ps)
     signal_definitions = render_signal_definitions(registry)
     domain_sensitivity = render_domain_sensitivity(registry)
     coherence_rules = render_coherence_rules(registry)
-    output_schema = render_output_schema(registry)
+    output_schema = render_output_schema(registry, ps)
 
     # Fill the 5 static placeholder sections, then collapse any
     # format()-escaped literal braces (e.g. the JSON schema skeleton
     # produced by render_output_schema uses "{{"/"}}") since this text is
     # no longer passed through a second .format() call once it is static.
     static_suffix = (
-        HARM_SIGNAL_STATIC_TEMPLATE.format(
+        ps.format(
+            "risk.signals.static_suffix",
             evaluation_order_section=evaluation_order,
             signal_definitions_section=signal_definitions,
             domain_sensitivity_section=domain_sensitivity,
@@ -186,9 +191,9 @@ def get_harm_signal_prompts(registry: SignalRegistry) -> tuple[str, str]:
         .replace("}}", "}")
     )
 
-    system_prompt = HARM_SIGNAL_SYSTEM_PROMPT + "\n\n" + static_suffix
+    system_prompt = ps.render("risk.signals.system_head", ctx) + "\n\n" + static_suffix
 
-    return system_prompt, HARM_SIGNAL_USER_TEMPLATE
+    return system_prompt, ps.template("risk.signals.user")
 
 
 # ── Internal helpers ────────────────────────────────────────────────────────

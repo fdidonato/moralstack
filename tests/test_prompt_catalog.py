@@ -1158,17 +1158,10 @@ def test_override_of_wire_form_fragment_flows_to_retry_with_transform(tmp_path: 
 
 def _live_compositions() -> dict[str, tuple[str, str]]:
     """composition id -> (live value, A0 snapshot key)."""
-    from moralstack.models.risk import prompts as rp
     from moralstack.prompts import critic_prompt, hindsight_prompt, perspectives_prompt, retry, simulator_prompt
     from moralstack.runtime.modules import critic_module, hindsight_module
 
     return {
-        "risk.intent.system": (rp.INTENT_CONTEXT_SYSTEM_PROMPT, "const/models.risk.prompts.INTENT_CONTEXT_SYSTEM_PROMPT"),
-        "risk.signals.system_head": (rp.HARM_SIGNAL_SYSTEM_PROMPT, "const/models.risk.prompts.HARM_SIGNAL_SYSTEM_PROMPT"),
-        "risk.operational.system": (
-            rp.OPERATIONAL_RISK_SYSTEM_PROMPT,
-            "const/models.risk.prompts.OPERATIONAL_RISK_SYSTEM_PROMPT",
-        ),
         "critic.full.system": (
             critic_prompt.CRITIC_FULL_SYSTEM_PROMPT,
             "const/prompts.critic_prompt.CRITIC_FULL_SYSTEM_PROMPT",
@@ -1226,7 +1219,10 @@ def test_default_roundtrip_matches_live_constants(snapshot_table: dict[str, Any]
     """Every composition rendered from the packaged YAML equals the live constant AND the A0 snapshot entry."""
     ds = default_prompt_set()
     live = _live_compositions()
-    assert set(live) == set(ds.composition_ids()), "a composition is missing from the guard"
+    # A2a: the risk constants are re-exports of the packaged set (nothing left to compare); their bytes are
+    # pinned by the A0 golden and by tests/test_prompt_set_threading_risk.py.
+    migrated = {"risk.intent.system", "risk.signals.system_head", "risk.operational.system"}
+    assert set(live) | migrated == set(ds.composition_ids()), "a composition is missing from the guard"
     problems: list[str] = []
     for cid, (value, key) in live.items():
         snap = _snapshot_value(snapshot_table, key)
@@ -1241,7 +1237,6 @@ def test_default_roundtrip_matches_live_constants(snapshot_table: dict[str, Any]
 
 def _live_standalone() -> dict[str, tuple[str, str]]:
     """fragment id -> (kind, live value) for fragments that equal an existing module constant."""
-    from moralstack.models.risk import prompts as rp
     from moralstack.orchestration import _policy_helpers as ph
     from moralstack.orchestration import domain_exclusion
     from moralstack.orchestration import safe_refusal_generator as srg
@@ -1258,10 +1253,6 @@ def _live_standalone() -> dict[str, tuple[str, str]]:
     out: dict[str, tuple[str, str]] = {
         "common.output_json_only": ("text", _common.OUTPUT_JSON_ONLY),
         "retry.prefix": ("text", retry.RETRY_PREFIX),
-        "risk.intent.user": ("template", rp.INTENT_CONTEXT_PROMPT_TEMPLATE),
-        "risk.signals.user": ("template", rp.HARM_SIGNAL_USER_TEMPLATE),
-        "risk.operational.user": ("template", rp.OPERATIONAL_RISK_PROMPT_TEMPLATE),
-        "risk.signals.static_suffix": ("template", rp.HARM_SIGNAL_STATIC_TEMPLATE),
         "critic.base": ("text", critic_prompt._CRITIC_FULL_BASE_PROMPT),
         "critic.full.user": ("template", critic_prompt.CRITIC_FULL_TEMPLATE),
         "critic.quick.user": ("template", critic_module.QUICK_CHECK_PROMPT_TEMPLATE),
@@ -1635,30 +1626,6 @@ def test_policy_rewrite_contract_regeneration_and_draft_match_fragments_match_th
         assert got == _snapshot_value(snapshot_table, f"wire/draft_match/{case}/call#0/prompt"), case
 
 
-def test_risk_head_fragments_end_at_the_existing_partition_markers() -> None:
-    """Independent oracle for the DC cut boundaries (deleted in A2a with the rest of the guard).
-
-    The live constants are split on the partition markers that
-    tests/test_estimator_developer_contract_interpretation.py already relies on.
-    """
-    from moralstack.models.risk import prompts as rp
-
-    ds = default_prompt_set()
-    cuts = {
-        "risk.intent.head": (
-            rp.INTENT_CONTEXT_SYSTEM_PROMPT,
-            "\n\n6. DEVELOPER CONTRACT \u2014 PRIORITY OVER ALL OTHER FRAMINGS.",
-        ),
-        "risk.signals.head": (rp.HARM_SIGNAL_SYSTEM_PROMPT, "\n\n4. DEVELOPER CONTRACT SCOPE."),
-        "risk.operational.head": (rp.OPERATIONAL_RISK_SYSTEM_PROMPT, "\n\n7. DEVELOPER CONTRACT SCOPE."),
-    }
-    for fid, (live, marker) in cuts.items():
-        head, sep, tail = live.partition(marker)
-        assert sep and tail, fid
-        assert ds.text(fid) == head.rstrip("\n"), f"{fid}: {_first_diff(ds.text(fid), head)}"
-        assert "DEVELOPER CONTRACT" not in ds.text(fid), fid
-
-
 def test_every_packaged_fragment_is_covered_by_the_duplication_guard() -> None:
     """A fragment that no guard compares with the live code would be an unchecked copy."""
     ds = default_prompt_set()
@@ -1724,6 +1691,12 @@ def test_every_packaged_fragment_is_covered_by_the_duplication_guard() -> None:
             "compliance.dccl.transcript_complete_note",
             "compliance.dccl.transcript_fallback",
             "compliance.draft_match.user",
+            # A2a: the risk constants are re-exports, no longer a second copy to compare; the user/static
+            # templates stay pinned to the A0 snapshot in test_standalone_constants_equal_the_a0_snapshot.
+            "risk.intent.user",
+            "risk.signals.user",
+            "risk.operational.user",
+            "risk.signals.static_suffix",
             "risk.context_preface",
             "risk.intent.principles_block",
             "risk.intent.principles_none_found",

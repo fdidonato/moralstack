@@ -22,6 +22,7 @@ from moralstack.observability.events import EVENT_LLM_CALL, EventEnvelope
 from moralstack.observability.events import make_envelope as _make_envelope
 from moralstack.observability.phase0_timing import emit_phase0_timing, phase0_timing_enabled
 from moralstack.orchestration.types import RiskEstimationError
+from moralstack.prompts.catalog import PromptContext, PromptSet, default_prompt_set
 from moralstack.utils.llm_parse_contract import (
     parse_dict_with_contract,
 )
@@ -47,10 +48,6 @@ from .config_loader import (
 )
 from .parse_result import RiskParseResult
 from .prompts import (
-    INTENT_CONTEXT_PROMPT_TEMPLATE,
-    INTENT_CONTEXT_SYSTEM_PROMPT,
-    OPERATIONAL_RISK_PROMPT_TEMPLATE,
-    OPERATIONAL_RISK_SYSTEM_PROMPT,
     intent_response_format,
     operational_response_format,
 )
@@ -214,6 +211,7 @@ def _risk_context_messages(
     user_prompt: str,
     developer_contract_text: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
+    prompt_set: PromptSet | None = None,
 ) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     has_context = bool((developer_contract_text and developer_contract_text.strip()) or conversation_history)
@@ -225,13 +223,7 @@ def _risk_context_messages(
             continue
         messages.append({"role": role, "content": (turn.get("content") or "")[:200]})
     if has_context:
-        user_prompt = (
-            "Consider the preceding developer message(s), if any, as the deployer contract. "
-            "Consider the preceding user/assistant messages, if any, as conversation history. "
-            "Estimate the risk of the final request in that context; do not treat prior messages "
-            "as part of the module task text.\n\n"
-            f"{user_prompt}"
-        )
+        user_prompt = (prompt_set or default_prompt_set()).text("risk.context_preface") + user_prompt
     messages.append({"role": "user", "content": user_prompt})
     return messages
 
@@ -289,6 +281,7 @@ class LLMBasedRiskEstimator:
         policy: PolicyLLMProtocol | None = None,
         config: RiskEstimatorConfig | None = None,
         constitution_store: Any | None = None,
+        prompt_set: PromptSet | None = None,
     ) -> None:
         """
         Inizializza il Giudice Semantico.
@@ -299,8 +292,10 @@ class LLMBasedRiskEstimator:
                    ``RiskEstimation.from_error`` (DELIBERATE).
             config: Configurazione (opzionale).
             constitution_store: Constitution Store opzionale per arricchire l'analisi.
+            prompt_set: Prompt fragments for the three mini-estimators (None = packaged defaults).
         """
         self.policy = policy
+        self._prompt_set = prompt_set or default_prompt_set()
         self.config = config or load_risk_estimator_config_from_env()
         self.constitution_store = constitution_store
         # Env-derived params (read once; used by the parallel mini-estimator path)
@@ -525,15 +520,12 @@ class LLMBasedRiskEstimator:
             for p in soft_principles:
                 rule_preview = p.rule[:rpl] + "..." if len(p.rule) > rpl else p.rule
                 soft_list.append(f"- {p.id} [SOFT]: {p.title}\n  Rule: {rule_preview}")
-            formatted_context = f"""
-
-RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
-
-⚠️ HARD CONSTRAINTS:
-{chr(10).join(hard_list) if hard_list else "  (None found)"}
-
-ℹ️ SOFT NORMS:
-{chr(10).join(soft_list) if soft_list else "  (None found)"}"""
+            none_found = self._prompt_set.text("risk.intent.principles_none_found")
+            formatted_context = self._prompt_set.format(
+                "risk.intent.principles_block",
+                hard_principles=chr(10).join(hard_list) if hard_list else none_found,
+                soft_principles=chr(10).join(soft_list) if soft_list else none_found,
+            )
             return _PrinciplesContextResult(
                 formatted_context=formatted_context,
                 runtime_domain=runtime_domain,
@@ -813,13 +805,23 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
         context = principles_ctx.formatted_context
         detected_domain = principles_ctx.runtime_domain
 
-        intent_prompt = INTENT_CONTEXT_PROMPT_TEMPLATE.format(
+        # Call-scoped context for the ``when`` conditions of the developer-contract fragments (same
+        # predicates as the messages built below: stripped contract text, history truthiness). With the
+        # default set every ``when`` is ``always``, so the three renders are context independent.
+        ps = self._prompt_set
+        prompt_ctx = PromptContext.from_contract_text(developer_contract_text, conversation_history)
+        intent_system_prompt = ps.render("risk.intent.system", prompt_ctx)
+        operational_system_prompt = ps.render("risk.operational.system", prompt_ctx)
+        intent_prompt = ps.format(
+            "risk.intent.user",
             request=prompt,
             constitution_context=context,
         )
-        harm_signal_system_prompt, harm_signal_user_template = get_harm_signal_prompts(signal_registry)
+        harm_signal_system_prompt, harm_signal_user_template = get_harm_signal_prompts(
+            signal_registry, prompt_set=ps, ctx=prompt_ctx
+        )
         signal_prompt = harm_signal_user_template.format(request=prompt)
-        operational_prompt = OPERATIONAL_RISK_PROMPT_TEMPLATE.format(request=prompt)
+        operational_prompt = ps.format("risk.operational.user", request=prompt)
         message_sections = _risk_message_sections(
             developer_contract_text=developer_contract_text,
             conversation_history=conversation_history,
@@ -913,6 +915,7 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
                                 user_prompt=full_prompt,
                                 developer_contract_text=developer_contract_text,
                                 conversation_history=conversation_history,
+                                prompt_set=ps,
                             ),
                             config=call_config,
                         )
@@ -963,11 +966,9 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
             raise RiskEstimationError(f"Mini estimator [{mini_name}] failed after {self.config.max_retries} attempts")
 
         with ThreadPoolExecutor(max_workers=3) as executor:
-            fut1 = executor.submit(_call_and_track, INTENT_CONTEXT_SYSTEM_PROMPT, intent_prompt, "estimate_intent")
+            fut1 = executor.submit(_call_and_track, intent_system_prompt, intent_prompt, "estimate_intent")
             fut2 = executor.submit(_call_and_track, harm_signal_system_prompt, signal_prompt, "estimate_signals")
-            fut3 = executor.submit(
-                _call_and_track, OPERATIONAL_RISK_SYSTEM_PROMPT, operational_prompt, "estimate_operational"
-            )
+            fut3 = executor.submit(_call_and_track, operational_system_prompt, operational_prompt, "estimate_operational")
             intent_data, intent_raw, intent_ms, intent_attempts, intent_started, intent_pc, intent_tu, intent_m_obs = (
                 fut1.result()
             )
@@ -993,7 +994,7 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
             self._persist_mini_llm_calls_batch(
                 [
                     {
-                        "system_prompt": INTENT_CONTEXT_SYSTEM_PROMPT,
+                        "system_prompt": intent_system_prompt,
                         "prompt": intent_prompt,
                         "raw_response": intent_raw,
                         "action": "estimate_intent",
@@ -1019,7 +1020,7 @@ RELEVANT ETHICAL PRINCIPLES FROM CONSTITUTION (for context):
                         "message_sections": message_sections,
                     },
                     {
-                        "system_prompt": OPERATIONAL_RISK_SYSTEM_PROMPT,
+                        "system_prompt": operational_system_prompt,
                         "prompt": operational_prompt,
                         "raw_response": op_raw,
                         "action": "estimate_operational",

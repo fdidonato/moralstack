@@ -201,6 +201,33 @@ Shared steps:
 
 Persistence of LLM calls is best-effort and must not affect risk decisions. The three real mini-estimator rows are written as one synchronous batch; SQLite write failures roll back the whole mini-estimator group. The optional synthetic `calibration_guard` row remains a single synchronous write with `sequence_in_cycle=-8`, a NULL `model` (synthetic row, no provider call) and `billable_provider_call=False` (audit-only; excluded from token/cost aggregation so it never appears as a "missing"-usage row in the UI).
 
+### Prompt source: `PromptSet` (prompt externalization, step A2a)
+
+The risk prompt texts are fragments in `moralstack/prompts/data/risk.yaml`; `models/risk/prompts.py` keeps
+`INTENT_CONTEXT_SYSTEM_PROMPT`, `HARM_SIGNAL_SYSTEM_PROMPT`, `OPERATIONAL_RISK_SYSTEM_PROMPT` and the four
+user/static templates only as **default re-exports** (byte-identical values; the response-format schemas are
+still code). Runtime code does not read those constants:
+
+- `LLMBasedRiskEstimator(..., prompt_set=None)` stores `prompt_set or default_prompt_set()` (`self._prompt_set`).
+- Per request `_parallel_mini_analysis` builds `ctx = PromptContext.from_contract_text(developer_contract_text,
+  conversation_history)` (contract present = non-empty after `strip()`, history present = truthiness) and renders
+  `risk.intent.system`, `risk.signals.system_head` (through
+  `get_harm_signal_prompts(registry, *, prompt_set=None, ctx=NO_CONTEXT)`) and `risk.operational.system` with it.
+  The rendered strings are what the executor sends **and** what the persisted `system_prompt` rows hold.
+- The user templates, the principles block (`risk.intent.principles_block` / `principles_none_found`), the context
+  preface (`risk.context_preface`, via `_risk_context_messages(..., prompt_set=None)`) and the evaluation-order /
+  output-schema wording around the signal registry also come from the set. Registry-derived labels and the item-line
+  formats (`- {id} [HARD]: ...`) stay in code.
+- `when`: all defaults are `always`, so with the packaged set the three system prompts are identical in every
+  context (single-turn byte parity). A deployer override can make the seven developer-contract fragments
+  (`risk.intent.devcontract_principle`, `.step0`, `.step1_step0_note`, `.offensive_contract_note`,
+  `.esi_contract_note`, `risk.signals.devcontract_scope`, `risk.operational.devcontract_scope`) conditional on
+  `contract_present`: they are then dropped when the call has no contract text and kept when it has one.
+  A whitespace-only contract counts as no contract. The legacy `generate()` branch drops the contract from the
+  wire but `contract_present` stays true for a non-empty contract (documented edge case).
+- Tests: `tests/test_prompt_set_threading_risk.py` (marker, `when` drop/keep, persisted == sent, default fallback,
+  byte identity with the A0 snapshot).
+
 ### Constitution retrieval (single upstream wave)
 
 `_get_principles_context(prompt, *, retrieval_query=None, retrieval_top_k=None)`

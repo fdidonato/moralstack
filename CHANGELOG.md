@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_LLM_CLASSIFIER_SYSTEM_PROMPT` stay importable as default re-exports. The controller still builds the
   layer without a set (wired in A2c).
 
+- **Risk estimator reads its prompts from a `PromptSet` (prompt externalization, step A2a).**
+  `LLMBasedRiskEstimator`, `get_harm_signal_prompts`, `render_evaluation_order`, `render_output_schema` and
+  `_risk_context_messages` gain an optional `prompt_set` (default: the packaged set); the system prompts are
+  rendered per call with a `PromptContext` (so a deployer `when: contract_present` on the developer-contract
+  fragments takes effect), and the persisted `system_prompt` is the rendered string. The constants in
+  `models/risk/prompts.py` become default re-exports with identical bytes. With the default set every wire,
+  persisted row and cache key is unchanged (A0 golden green).
+
 - **Prompt catalog and packaged prompt defaults (prompt externalization, step A1).** New
   `moralstack/prompts/catalog.py` (immutable `PromptSet`, `PromptContext` / `when` conditions,
   fail-fast `PromptConfigError`, deployer-override loader, audit summary, `SAFETY_FRAGMENT_IDS`) and
