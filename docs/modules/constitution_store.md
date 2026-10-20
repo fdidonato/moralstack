@@ -134,7 +134,8 @@ store = ConstitutionStore(config=cfg)
 
 All fields have defaults; only override what you need. See `ConstitutionStoreConfig` in `store.py` for the full list (
 `config_dir`, `core_file`, `overlays_dir`, `policy_llm`, `use_llm_matching`, `openai_config`, `max_parallel_agents`,
-`use_enhanced_retrieval`, `confidence_threshold`, `use_domain_prefilter`, `max_prefilter_domains`).
+`use_enhanced_retrieval`, `confidence_threshold`, `use_domain_prefilter`, `max_prefilter_domains`,
+`prompt_set`).
 
 When `max_parallel_agents` is not set explicitly, SDK/CLI runtime wiring resolves it from
 `MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS` (fallback default: `4` — bumped from `2`;
@@ -166,6 +167,12 @@ constitution_store = ConstitutionStore(
     max_parallel_agents=4,
 )
 ```
+
+`prompt_set` (also a keyword-only argument of `ConstitutionStore.__init__`; as for every other option the
+`config` object wins when both are given) is the `PromptSet` (`moralstack/prompts/catalog.py`) that supplies the
+prefilter and domain-agent prompt texts. `None` means the packaged defaults, byte-identical to the previous
+inline strings. The store passes it to `ConstitutionRetrieverConfig.prompt_set`, which hands it to
+`DomainPrefilter`, `EnhancedDomainAgent` and `DomainAgent` (each also accepts `prompt_set=` directly).
 
 ### Principle Retrieval
 
@@ -349,6 +356,15 @@ The LLM sees each candidate domain through its description (scope line + `NOT:` 
 alone when the description is empty), selecting up to the configured cap (see `max_prefilter_domains`), each domain gated on
 its own confidence. Token usage remains constrained relative to injecting full principle payloads
 at this stage.
+
+Prompt sources: the prefilter system/user prompts are the `retrieval.prefilter.system` (a safety fragment: it
+carries the SAFETY RECALL rules) and `retrieval.prefilter.user` fragments; the domain agents use
+`retrieval.agent.{enhanced,legacy}.{system,user}`, `retrieval.agent.negative_section` and
+`retrieval.agent.negative_examples.<domain>`. Runtime code reads the instance's prompt set; the module constants
+`_ENHANCED_DOMAIN_AGENT_SYSTEM_PROMPT`, `_LEGACY_DOMAIN_AGENT_SYSTEM_PROMPT` and the class attribute
+`EnhancedDomainAgent.DOMAIN_NEGATIVE_EXAMPLES` remain importable as default re-exports. The domain-agent cache
+key already hashes the system and user prompt text, so agents with different sets never share an entry; the
+prefilter cache is per instance.
 
 ### 2. Domain Agent Evaluation
 

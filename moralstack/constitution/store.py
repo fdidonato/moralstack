@@ -233,6 +233,8 @@ class ConstitutionStoreConfig:
     confidence_threshold: float = 0.6
     use_domain_prefilter: bool = True
     max_prefilter_domains: int = 3
+    # A PromptSet, or None for the packaged defaults (typed Any: see ConstitutionRetrieverConfig).
+    prompt_set: Any | None = None
 
 
 class ConstitutionStore:
@@ -269,6 +271,7 @@ class ConstitutionStore:
         confidence_threshold: float = 0.6,
         use_domain_prefilter: bool = True,
         max_prefilter_domains: int = 3,
+        prompt_set: Any | None = None,
     ) -> None:
         """
         Initialize the store.
@@ -289,6 +292,7 @@ class ConstitutionStore:
             confidence_threshold: Min confidence to accept principles.
             use_domain_prefilter: Pre-filter domains before running agents.
             max_prefilter_domains: Max domains selected by pre-filter.
+            prompt_set: PromptSet for the prefilter and domain-agent prompts; None = packaged defaults.
         """
         if config is not None:
             cfg = config
@@ -305,6 +309,7 @@ class ConstitutionStore:
                 confidence_threshold=confidence_threshold,
                 use_domain_prefilter=use_domain_prefilter,
                 max_prefilter_domains=max_prefilter_domains,
+                prompt_set=prompt_set,
             )
 
         if cfg.config_dir is None:
@@ -349,6 +354,7 @@ class ConstitutionStore:
             confidence_threshold=cfg.confidence_threshold,
             use_domain_prefilter=cfg.use_domain_prefilter,
             max_prefilter_domains=cfg.max_prefilter_domains,
+            prompt_set=cfg.prompt_set,
         )
         self._retriever = ConstitutionRetriever(
             config=retriever_config,

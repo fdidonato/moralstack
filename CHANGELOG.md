@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Retrieval prompts read from the prompt set (prompt externalization, step A2e).**
+  `ConstitutionStoreConfig.prompt_set` and a keyword-only `ConstitutionStore(prompt_set=...)` (config wins),
+  propagated through `ConstitutionRetrieverConfig.prompt_set` to `DomainPrefilter`, `EnhancedDomainAgent` and
+  `DomainAgent`: prefilter and agent system/user prompts and the per-domain negative examples now come from the
+  set. `prompt_set=None` uses the packaged defaults, so wires and the domain-agent cache keys are byte-identical;
+  the old module constants stay as default re-exports.
+
 - **Prompt catalog and packaged prompt defaults (prompt externalization, step A1).** New
   `moralstack/prompts/catalog.py` (immutable `PromptSet`, `PromptContext` / `when` conditions,
   fail-fast `PromptConfigError`, deployer-override loader, audit summary, `SAFETY_FRAGMENT_IDS`) and

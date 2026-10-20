@@ -1242,7 +1242,6 @@ def test_default_roundtrip_matches_live_constants(snapshot_table: dict[str, Any]
 def _live_standalone() -> dict[str, tuple[str, str]]:
     """fragment id -> (kind, live value) for fragments that equal an existing module constant."""
     from moralstack.compliance import dccl, safety_override
-    from moralstack.constitution import retriever
     from moralstack.models.risk import prompts as rp
     from moralstack.orchestration import _policy_helpers as ph
     from moralstack.orchestration import domain_exclusion
@@ -1293,8 +1292,6 @@ def _live_standalone() -> dict[str, tuple[str, str]]:
         "compliance.dccl.system": ("text", dccl._DCCL_LLM_SYSTEM_PROMPT),
         "compliance.draft_match.system": ("text", dccl.DCCL_DRAFT_MATCH_SYSTEM_PROMPT),
         "compliance.safety_classifier.system": ("text", safety_override._LLM_CLASSIFIER_SYSTEM_PROMPT),
-        "retrieval.agent.enhanced.system": ("text", retriever._ENHANCED_DOMAIN_AGENT_SYSTEM_PROMPT),
-        "retrieval.agent.legacy.system": ("text", retriever._LEGACY_DOMAIN_AGENT_SYSTEM_PROMPT),
         "refusal.system": ("text", srg._build_system_message()),
         "exclusion.system": ("text", domain_exclusion._build_system_message()),
     }
@@ -1302,8 +1299,6 @@ def _live_standalone() -> dict[str, tuple[str, str]]:
         out[f"perspectives.identity.{p.id}"] = ("text", p.prompt_template)
     for harm_type, items in srg._HARM_TYPE_CATEGORIES.items():
         out[f"refusal.category_hints.{harm_type}"] = ("lines", "\n".join(items))
-    for domain, items in retriever.EnhancedDomainAgent.DOMAIN_NEGATIVE_EXAMPLES.items():
-        out[f"retrieval.agent.negative_examples.{domain}"] = ("lines", "\n".join(items))
     # wire-form fragments: the module constant is the source form with ``{{``/``}}``
     out["simulator.schema_skeleton"] = (
         "text",
@@ -1704,49 +1699,6 @@ def test_dccl_fragments_reproduce_the_live_builders() -> None:
         assert expected == trailer
 
 
-def test_retrieval_prefilter_and_agent_fragments_reproduce_the_live_code(snapshot_table: dict[str, Any]) -> None:
-    from moralstack.constitution import retriever as rt
-
-    ds = default_prompt_set()
-    prefilter = rt.DomainPrefilter.__new__(rt.DomainPrefilter)
-    prefilter.max_domains = 3
-    live = prefilter._build_prefilter_system_prompt("- a: b.\n- c {x}")
-    assert ds.format("retrieval.prefilter.system", domain_list="- a: b.\n- c {x}", max_domains=3) == live
-    snap_user = _snapshot_value(snapshot_table, "wire/prefilter/real_catalog/call#0/m1/content")
-    assert snap_user == ds.format("retrieval.prefilter.user", query="How do I synthesize a controlled substance at home?")
-
-    from moralstack.constitution.prompt_formatter import format_principles_for_prompt
-    from tests.prompts_golden import capture
-
-    principles = capture._principles()
-    summary = [{"id": p.id, "title": p.title, "rule": p.rule, "level": p.level} for p in principles]
-    principles_text = format_principles_for_prompt(summary, include_level=True, style="compact", max_rule_len=233)
-    query = 'Query with "quotes" and {braces}'
-    negatives = "\n".join(f"- {ex}" for ex in ds.lines("retrieval.agent.negative_examples.financial"))
-    enhanced = ds.format(
-        "retrieval.agent.enhanced.user",
-        domain_upper="FINANCIAL",
-        domain_desc="Financial domain description.",
-        query=query,
-        principles_text=principles_text,
-        domain_name="financial",
-        negative_section=ds.format("retrieval.agent.negative_section", examples=negatives),
-    )
-    assert enhanced == _snapshot_value(snapshot_table, "wire/enhanced_domain_agent/with_negatives/call#0/m1/content")
-    plain = ds.format(
-        "retrieval.agent.enhanced.user",
-        domain_upper="LEGAL",
-        domain_desc="Principles specific to legal domain",
-        query=query,
-        principles_text=principles_text,
-        domain_name="legal",
-        negative_section="",
-    )
-    assert plain == _snapshot_value(snapshot_table, "wire/enhanced_domain_agent/without_negatives/call#0/m1/content")
-    legacy = ds.format("retrieval.agent.legacy.user", domain_upper="LEGAL", query=query, principles_text=principles_text)
-    assert legacy == _snapshot_value(snapshot_table, "wire/legacy_domain_agent/default/call#0/m1/content")
-
-
 def test_risk_head_fragments_end_at_the_existing_partition_markers() -> None:
     """Independent oracle for the DC cut boundaries (deleted in A2a with the rest of the guard).
 
@@ -1775,6 +1727,26 @@ def test_every_packaged_fragment_is_covered_by_the_duplication_guard() -> None:
     """A fragment that no guard compares with the live code would be an unchecked copy."""
     ds = default_prompt_set()
     covered: set[str] = set(_live_standalone())
+    # retrieval.*: no longer a copy of live code (A2e); the golden wires and the marker tests in
+    # tests/test_prompt_set_threading_retrieval.py cover every one of these IDs. Listed explicitly so a new
+    # retrieval.* fragment is still reported as uncovered.
+    covered.update(
+        {
+            "retrieval.agent.enhanced.system",
+            "retrieval.agent.legacy.system",
+            "retrieval.agent.enhanced.user",
+            "retrieval.agent.legacy.user",
+            "retrieval.agent.negative_section",
+            "retrieval.agent.negative_examples.financial",
+            "retrieval.agent.negative_examples.research",
+            "retrieval.agent.negative_examples.journalism",
+            "retrieval.agent.negative_examples.enterprise",
+            "retrieval.agent.negative_examples.mental_health",
+            "retrieval.agent.negative_examples.medical",
+            "retrieval.prefilter.system",
+            "retrieval.prefilter.user",
+        }
+    )
     for cid in ds.composition_ids():
         covered.update(part.ref for part in ds._compositions[cid].parts)
     covered.update(
@@ -1810,11 +1782,6 @@ def test_every_packaged_fragment_is_covered_by_the_duplication_guard() -> None:
             "compliance.dccl.transcript_complete_note",
             "compliance.dccl.transcript_fallback",
             "compliance.draft_match.user",
-            "retrieval.prefilter.system",
-            "retrieval.prefilter.user",
-            "retrieval.agent.enhanced.user",
-            "retrieval.agent.legacy.user",
-            "retrieval.agent.negative_section",
             "risk.context_preface",
             "risk.intent.principles_block",
             "risk.intent.principles_none_found",
