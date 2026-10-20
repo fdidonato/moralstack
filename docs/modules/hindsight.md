@@ -210,6 +210,22 @@ if hindsight.expected_value < 0.7:
 
 ---
 
+## Prompt set (prompt externalization, A2b)
+
+The hindsight texts live in `moralstack/prompts/data/hindsight.yaml` (`hindsight.batch.system`,
+`hindsight.single.system`, `hindsight.retry.*`, `hindsight.batch.user`, `hindsight.single.user`).
+`LLMHindsightEvaluator(..., prompt_set=None)` (and `create_hindsight_evaluator`) reads them from its
+own `PromptSet`; `None` is the packaged default. `HINDSIGHT_BATCH_SYSTEM_PROMPT`,
+`HINDSIGHT_SINGLE_SYSTEM_PROMPT`, `HINDSIGHT_PROMPT_TEMPLATE`, `RETRY_PROMPT` and
+`RETRY_BATCH_PROMPT` are default re-exports with identical bytes.
+
+- The batch system prompt is rendered per call with a `PromptContext`; the single system prompt is
+  not context-aware. The persisted `HindsightResult.system_prompt` is the rendered string that was sent.
+- Cache: the context fingerprint carries `PromptSet.cache_tag_for(ctx)` (empty for the default set,
+  so default keys are unchanged).
+
+---
+
 ## Caching
 
 The module implements caching to avoid recomputation:

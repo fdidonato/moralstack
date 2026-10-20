@@ -1,90 +1,31 @@
 """
 Prompt di retry centralizzati per parsing JSON fallito.
 Usati da critic, perspectives, simulator, hindsight.
+
+Default re-exports of the packaged compositions (byte-identical to the former literals). The modules read
+the same texts from their own ``PromptSet`` (``retry.prefix``, ``critic.retry``, ``simulator.retry``, ...).
 """
 
 from __future__ import annotations
 
-from moralstack.prompts.simulator_prompt import SIMULATOR_ENUMS, SIMULATOR_SCHEMA_SKELETON
+from moralstack.prompts.catalog import default_prompt_set
+from moralstack.prompts.simulator_prompt import SIMULATOR_ENUMS, SIMULATOR_SCHEMA_SKELETON  # noqa: F401 - historical names
 
-RETRY_PREFIX = "Your previous response was not valid JSON. " "Please return ONLY valid JSON with no additional text."
+_DEFAULT = default_prompt_set()
+
+RETRY_PREFIX = _DEFAULT.text("retry.prefix")
 
 # Critic: schema decision/violations/revision_guidance
-RETRY_CRITIC = RETRY_PREFIX + """
-
-Expected format:
-{{
-  "decision": "PROCEED" | "REVISE" | "REFUSE",
-  "violated_hard": true | false,
-  "violations": [
-    {{
-      "principle_id": "string",
-      "severity": number between 0.0 and 1.0,
-      "rationale": "string",
-      "evidence": "string"
-    }}
-  ],
-  "revision_guidance": "string"
-}}
-
-Return only valid JSON:"""
+RETRY_CRITIC = _DEFAULT.text("critic.retry")
 
 # Perspectives: schema compatto
-RETRY_PERSPECTIVES = """ERROR: Your response was not valid JSON.
-Output ONLY a JSON object like this example:
-{{"approval_score": 0.7, "concerns": [], "suggestions": [], "rationale": "Good response"}}
-JSON:"""
+RETRY_PERSPECTIVES = _DEFAULT.text("perspectives.retry")
 
 # Simulator: usa schema condiviso
-RETRY_SIMULATOR = (
-    RETRY_PREFIX
-    + """
-
-Use ONLY these values:
-"""
-    + SIMULATOR_ENUMS
-    + """
-
-"""
-    + SIMULATOR_SCHEMA_SKELETON
-    + """
-
-Return only valid JSON:"""
-)
+RETRY_SIMULATOR = _DEFAULT.text("simulator.retry")
 
 # Hindsight single evaluation
-RETRY_HINDSIGHT_SINGLE = RETRY_PREFIX + """
-
-Expected format:
-{{
-  "safety": number between -1.0 and 1.0,
-  "helpfulness": number between -1.0 and 1.0,
-  "honesty": number between -1.0 and 1.0,
-  "harm_probability": number between 0.0 and 1.0,
-  "benefit_probability": number between 0.0 and 1.0,
-  "confidence": number between 0.0 and 1.0,
-  "rationale": "string"
-}}
-
-Return only valid JSON:"""
+RETRY_HINDSIGHT_SINGLE = _DEFAULT.text("hindsight.retry.single")
 
 # Hindsight batch
-RETRY_HINDSIGHT_BATCH = RETRY_PREFIX + """
-
-Expected format:
-{{
-  "evaluations": [
-    {{
-      "scenario_id": "string",
-      "safety": number between -1.0 and 1.0,
-      "helpfulness": number between -1.0 and 1.0,
-      "honesty": number between -1.0 and 1.0,
-      "harm_probability": number between 0.0 and 1.0,
-      "benefit_probability": number between 0.0 and 1.0,
-      "confidence": number between 0.0 and 1.0,
-      "rationale": "string"
-    }}
-  ]
-}}
-
-Return only valid JSON:"""
+RETRY_HINDSIGHT_BATCH = _DEFAULT.text("hindsight.retry.batch")

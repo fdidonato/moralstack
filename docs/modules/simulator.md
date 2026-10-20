@@ -55,6 +55,23 @@ batch-only contract and vice versa:
 Both system prompts are byte-stable across requests for their own path (verified by
 `tests/test_static_prefix_stability.py`) and retries are unchanged.
 
+### Prompt set (prompt externalization, A2b)
+
+The simulator texts live in `moralstack/prompts/data/simulator.yaml` (`simulator.batch.system`,
+`simulator.seeded.system`, `simulator.retry` compositions, the user templates, the seeds as a `lines`
+fragment, domain guidance). `LLMConsequenceSimulator(..., prompt_set=None)` (and `create_simulator`)
+reads them from its own `PromptSet`; `None` is the packaged default. The module constants
+(`SIMULATOR_BATCH_SYSTEM_PROMPT`, `SIMULATOR_SEEDED_SYSTEM_PROMPT`, `RETRY_PROMPT`, `SCENARIO_SEEDS`,
+`SEEDED_PROMPT_TEMPLATE`, ...) are default re-exports with identical bytes.
+
+- The batch and seeded system prompts are rendered per call with a `PromptContext` (contract / history
+  present), and the persisted `SimulationResult.system_prompt` is that rendered string.
+- `simulator.enums` and `simulator.schema_skeleton` also appear in the retry composition, so a
+  non-`always` `when` on them is a load error.
+- Cache: `build_context_fingerprint(..., prompt_set_tag=...)` receives `PromptSet.cache_tag_for(ctx)`
+  (empty for the default set, so default keys are unchanged; `ps:<fp16>:<c><h>` otherwise), so another
+  prompt set never reuses an entry.
+
 ## Structured Outputs (schema enforced by the provider)
 
 `response_format` is a **strict `json_schema`** (`simulator_response_format()` in

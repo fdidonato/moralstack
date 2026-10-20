@@ -33,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `models/risk/prompts.py` become default re-exports with identical bytes. With the default set every wire,
   persisted row and cache key is unchanged (A0 golden green).
 
+||||||| parent of 58b2486 (feat(prompts): thread prompt set into deliberation)
+
+- **Prompt externalization, step A2b (deliberative modules and cache tag).** The critic, simulator,
+  hindsight and perspectives modules (and `build_module_messages`) take an optional `prompt_set` and
+  read their system prompts (rendered per call with the contract/history `PromptContext`), user
+  templates, seeds and retry texts from it; `prompts/*` constants are now default re-exports with
+  identical bytes, and the persisted `system_prompt` is the rendered string. `evaluate_single` and
+  `create_minimal_ensemble` use the instance set. `build_context_fingerprint` gained `prompt_set_tag`
+  (empty for the default set, so every default cache key is unchanged). No behavior change with the
+  default set.
+
 - **Prompt catalog and packaged prompt defaults (prompt externalization, step A1).** New
   `moralstack/prompts/catalog.py` (immutable `PromptSet`, `PromptContext` / `when` conditions,
   fail-fast `PromptConfigError`, deployer-override loader, audit summary, `SAFETY_FRAGMENT_IDS`) and

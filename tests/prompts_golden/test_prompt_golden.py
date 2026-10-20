@@ -446,17 +446,31 @@ def test_classify_survives_a_one_byte_change_of_every_marker(where: str) -> None
     assert capture._classify("a system prompt that belongs to nobody", markers) == "other"
 
 
-def test_one_byte_change_in_a_module_system_prompt_surfaces_as_a_key_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The last byte of the critic's real system prompt differs from the oracle's constant: the capture must
-    complete (no pydantic traceback) and report the differing keys with their first differing offset."""
-    from moralstack.runtime.modules import critic_module
+def test_one_byte_change_in_a_module_system_prompt_surfaces_as_a_key_mismatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The last byte of a fragment of the critic's real system prompt differs from the oracle: the capture must
+    complete (no pydantic traceback) and report the differing keys with their first differing offset.
 
-    original = critic_module.CRITIC_FULL_SYSTEM_PROMPT
-    mutated = original[:-1] + ("X" if original[-1] != "X" else "Y")
+    The modules read their ``PromptSet`` (not the module-level constants), so the mutation goes through an
+    override set installed as the process default; the re-export constants stay untouched."""
+    from moralstack.prompts import catalog
+
+    original_set = catalog.default_prompt_set()
+    # critic.rules.tail belongs to the full critique only (the last part, common.output_json_only, is shared
+    # with the other modules, which would put non-critic keys among the problems).
+    fragment_id = "critic.rules.tail"
+    text = original_set.text(fragment_id)
+    mutated = text[:-1] + ("X" if text[-1] != "X" else "Y")
+    (tmp_path / "override.yaml").write_text(
+        json.dumps({"version": 1, "fragments": {fragment_id: {"text": mutated}}}), encoding="utf-8"
+    )
+    mutated_set = catalog.load_prompt_set(tmp_path)
     with monkeypatch.context() as patched:
-        patched.setattr(critic_module, "CRITIC_FULL_SYSTEM_PROMPT", mutated)
+        patched.setattr(catalog, "_DEFAULT", mutated_set)
+        patched.setattr(catalog, "_DEFAULT_PARSED", None)
         live = capture.build_section("module_wires")
-    assert critic_module.CRITIC_FULL_SYSTEM_PROMPT == original  # restored
+    assert catalog.default_prompt_set() is original_set  # restored
     problems = _compare_section("module_wires", live)
     assert problems, "a changed critic system prompt must fail the module wire comparison"
     assert all("critic" in p for p in problems), problems[:3]

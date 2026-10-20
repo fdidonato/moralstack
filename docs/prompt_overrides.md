@@ -2,7 +2,10 @@
 
 > **Status: not yet wired. Overrides take effect from step A3.** This is the A1 skeleton: the catalog
 > (`moralstack/prompts/catalog.py`) and the packaged defaults (`moralstack/prompts/data/*.yaml`) exist and are
-> tested, but no module reads them yet, `GovernanceConfig.prompts_dir` does not exist yet and
+> tested. From step A2b the deliberative modules (critic, simulator, hindsight, perspectives) and
+> `message_context` read their prompts from a `PromptSet` handed to their constructors (default: the packaged
+> set; the prompt constants stay as default re-exports), and the module caches carry `PromptSet.cache_tag_for(ctx)`
+> (empty for the default set). Nothing builds a non-default set at runtime yet: `GovernanceConfig.prompts_dir` does not exist yet and
 > `MORALSTACK_PROMPTS_DIR` is not read by any entry point. Nothing in this document changes behavior today.
 > The full guide (complete fragment table, coherent `when` groups, audit walkthrough) is written in A3 and
 > finalized in A5.

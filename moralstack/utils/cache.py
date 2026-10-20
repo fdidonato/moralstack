@@ -317,11 +317,15 @@ def build_context_fingerprint(
     *,
     developer_contract: Any = None,
     conversation_history: Any = None,
+    prompt_set_tag: str = "",
 ) -> str:
     """
     Build a deterministic fingerprint of the conversational context.
 
-    Returns an empty string when both inputs are missing or empty.
+    ``prompt_set_tag`` (``PromptSet.cache_tag_for(ctx)``) isolates non-default prompt sets in the
+    shared cache. It is empty for the default set, so every default key stays byte-identical.
+
+    Returns an empty string when all inputs are missing or empty.
     """
     parts: list[str] = []
 
@@ -345,6 +349,9 @@ def build_context_fingerprint(
             turns_blob = "|".join(turn_strings)
             history_hash = hashlib.md5(turns_blob.encode()).hexdigest()[:12]
             parts.append(f"ch:{history_hash}")
+
+    if prompt_set_tag:
+        parts.append(prompt_set_tag)
 
     return ";".join(parts)
 

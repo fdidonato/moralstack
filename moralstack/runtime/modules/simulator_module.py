@@ -19,8 +19,9 @@ from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
 from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
 from moralstack.orchestration.contract import DeveloperContract
+from moralstack.prompts.catalog import PromptContext, PromptSet, default_prompt_set
 from moralstack.prompts.retry import RETRY_SIMULATOR
-from moralstack.prompts.simulator_prompt import (
+from moralstack.prompts.simulator_prompt import (  # noqa: F401 - default re-exports, kept importable
     SIMULATOR_BATCH_SYSTEM_PROMPT,
     SIMULATOR_SEEDED_SYSTEM_PROMPT,
 )
@@ -153,24 +154,16 @@ class SimulationResult:
 # Protocols
 # =============================================================================
 
-SCENARIO_SEEDS = [
-    "Consider what happens if this advice is followed literally by someone inexperienced",
-    "Consider how this information could be misused by a malicious actor",
-    "Consider the social/reputational impact if this response became public",
-    "Consider the best possible outcome from this response",
-    "Consider unintended consequences for vulnerable populations",
-]
+# Default re-exports of the packaged fragments (byte-identical to the former literals). Runtime code reads
+# the module's own ``PromptSet`` (``self._prompt_set``), never these constants.
+SCENARIO_SEEDS = list(default_prompt_set().lines("simulator.seeded.seeds"))
 
 # Prompt-caching reorder (A3): dynamic-only. The static rubric (incl. the
 # "Generate a consequence based on this perspective:" framing, Requirements,
-# enums, and schema skeleton) now lives in SIMULATOR_SEEDED_SYSTEM_PROMPT
-# (moralstack/prompts/simulator_prompt.py) and is sent once per call as the
+# enums, and schema skeleton) lives in the ``simulator.seeded.system`` composition
+# (moralstack/prompts/data/simulator.yaml) and is sent once per call as the
 # system prefix; only the per-request seed/request/response remain here.
-SEEDED_PROMPT_TEMPLATE = """PERSPECTIVE: {seed}
-
-REQUEST: {request}
-RESPONSE: {response}
-"""
+SEEDED_PROMPT_TEMPLATE = default_prompt_set().template("simulator.seeded.user")
 
 RETRY_PROMPT = RETRY_SIMULATOR
 
@@ -272,6 +265,7 @@ class LLMConsequenceSimulator:
         self,
         policy: PolicyLLMProtocol,
         config: SimulatorConfig | None = None,
+        prompt_set: PromptSet | None = None,
     ) -> None:
         """
         Inizializza il Consequence Simulator.
@@ -279,8 +273,10 @@ class LLMConsequenceSimulator:
         Args:
             policy: Policy LLM per generazione scenari
             config: Configurazione (opzionale)
+            prompt_set: PromptSet da cui leggere prompt, seed e retry (default: set impacchettato)
         """
         self.policy = policy
+        self._prompt_set = prompt_set or default_prompt_set()
         if config is not None:
             self.config = config
         else:
@@ -334,6 +330,9 @@ class LLMConsequenceSimulator:
         context_fingerprint = build_context_fingerprint(
             developer_contract=developer_contract,
             conversation_history=conversation_history,
+            prompt_set_tag=self._prompt_set.cache_tag_for(
+                PromptContext.from_contract(developer_contract, conversation_history)
+            ),
         )
         if self.config.enable_caching:
             cache = get_global_cache()
@@ -397,8 +396,13 @@ class LLMConsequenceSimulator:
         ctx = delib_context or DelibContext(user_prompt=request, draft_text_full=response)
         from moralstack.prompts.simulator_prompt import build_simulator_prompt
 
-        prompt = build_simulator_prompt(ctx, num_scenarios=num_scenarios)
+        prompt = build_simulator_prompt(ctx, num_scenarios=num_scenarios, prompt_set=self._prompt_set)
         legacy_prompt = prompt + _build_context_block(developer_contract, conversation_history)
+        # Per-call system prompt (``when`` evaluated against this call); also what gets persisted.
+        batch_system_prompt = self._prompt_set.render(
+            "simulator.batch.system", PromptContext.from_contract(developer_contract, conversation_history)
+        )
+        retry_text = self._prompt_set.text("simulator.retry")
 
         raw_response = ""
         parse_attempts = 0
@@ -416,25 +420,26 @@ class LLMConsequenceSimulator:
                 if hasattr(self.policy, "generate_messages"):
                     result = self.policy.generate_messages(
                         messages=build_module_messages(
-                            system_prompt=SIMULATOR_BATCH_SYSTEM_PROMPT,
+                            system_prompt=batch_system_prompt,
                             user_prompt=prompt,
                             developer_contract=developer_contract,
                             conversation_history=conversation_history,
-                            retry_prompt="" if attempt == 0 else RETRY_PROMPT,
+                            retry_prompt="" if attempt == 0 else retry_text,
+                            prompt_set=self._prompt_set,
                         ),
                         config=self._generation_config,
                     )
                 elif attempt == 0:
                     result = self.policy.generate(
                         prompt=legacy_prompt,
-                        system=SIMULATOR_BATCH_SYSTEM_PROMPT,
+                        system=batch_system_prompt,
                         config=self._generation_config,
                     )
                 else:
-                    retry_prompt = f"{legacy_prompt}\n\n{RETRY_PROMPT}"
+                    retry_prompt = f"{legacy_prompt}\n\n{retry_text}"
                     result = self.policy.generate(
                         prompt=retry_prompt,
-                        system=SIMULATOR_BATCH_SYSTEM_PROMPT,
+                        system=batch_system_prompt,
                         config=self._generation_config,
                     )
 
@@ -446,13 +451,13 @@ class LLMConsequenceSimulator:
 
                 # Parse JSON (parser strutturato obbligatorio; nessun fallback)
                 consequences = parse_simulator_response(raw_response)
-                effective_prompt = prompt if attempt == 0 else f"{prompt}\n\n{RETRY_PROMPT}"
+                effective_prompt = prompt if attempt == 0 else f"{prompt}\n\n{retry_text}"
                 return self._build_result(
                     consequences=consequences,
                     raw_response=raw_response,
                     parse_attempts=parse_attempts,
                     prompt=effective_prompt,
-                    system_prompt=SIMULATOR_BATCH_SYSTEM_PROMPT,
+                    system_prompt=batch_system_prompt,
                     tokens_used=tokens_used,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
@@ -520,8 +525,15 @@ class LLMConsequenceSimulator:
         # Seleziona seed appropriati
         selected_seeds = self._select_seeds(num_scenarios)
 
+        # Per-call system prompt (``when`` evaluated against this call); also what gets persisted.
+        seeded_system_prompt = self._prompt_set.render(
+            "simulator.seeded.system", PromptContext.from_contract(developer_contract, conversation_history)
+        )
+        retry_text = self._prompt_set.text("simulator.retry")
+
         for seed in selected_seeds:
-            prompt = SEEDED_PROMPT_TEMPLATE.format(
+            prompt = self._prompt_set.format(
+                "simulator.seeded.user",
                 seed=seed,
                 request=request,
                 response=response,
@@ -537,32 +549,33 @@ class LLMConsequenceSimulator:
                     if hasattr(self.policy, "generate_messages"):
                         result = self.policy.generate_messages(
                             messages=build_module_messages(
-                                system_prompt=SIMULATOR_SEEDED_SYSTEM_PROMPT,
+                                system_prompt=seeded_system_prompt,
                                 user_prompt=prompt,
                                 developer_contract=developer_contract,
                                 conversation_history=conversation_history,
-                                retry_prompt="" if attempt == 0 else RETRY_PROMPT,
+                                retry_prompt="" if attempt == 0 else retry_text,
+                                prompt_set=self._prompt_set,
                             ),
                             config=self._generation_config,
                         )
                     elif attempt == 0:
                         result = self.policy.generate(
                             prompt=legacy_prompt,
-                            system=SIMULATOR_SEEDED_SYSTEM_PROMPT,
+                            system=seeded_system_prompt,
                             config=self._generation_config,
                         )
                     else:
-                        retry_prompt = f"{legacy_prompt}\n\n{RETRY_PROMPT}"
+                        retry_prompt = f"{legacy_prompt}\n\n{retry_text}"
                         result = self.policy.generate(
                             prompt=retry_prompt,
-                            system=SIMULATOR_SEEDED_SYSTEM_PROMPT,
+                            system=seeded_system_prompt,
                             config=self._generation_config,
                         )
 
                     seed_raw_response = result.text
                     attempt_token_usage = TokenUsage.from_generation_result(result)
                     raw_responses.append(seed_raw_response)
-                    prompts_used.append(prompt if attempt == 0 else f"{prompt}\n\n{RETRY_PROMPT}")
+                    prompts_used.append(prompt if attempt == 0 else f"{prompt}\n\n{retry_text}")
                     total_tokens_used += attempt_token_usage.total_tokens
                     pt = getattr(result, "prompt_tokens", None)
                     if pt is not None:
@@ -609,7 +622,7 @@ class LLMConsequenceSimulator:
             raw_response="\n---\n".join(raw_responses),
             parse_attempts=total_attempts,
             prompt="\n---\n".join(prompts_used) if prompts_used else "",
-            system_prompt=SIMULATOR_SEEDED_SYSTEM_PROMPT,
+            system_prompt=seeded_system_prompt,
             tokens_used=total_tokens_used,
             prompt_tokens=(total_prompt_tokens if has_prompt_tokens else None),
             completion_tokens=(total_completion_tokens if has_completion_tokens else None),
@@ -624,18 +637,19 @@ class LLMConsequenceSimulator:
         Garantisce diversità includendo sempre worst-case e best-case
         se possibile.
         """
-        if num_scenarios >= len(SCENARIO_SEEDS):
-            return SCENARIO_SEEDS[:num_scenarios]
+        seeds = self._prompt_set.lines("simulator.seeded.seeds")
+        if num_scenarios >= len(seeds):
+            return list(seeds[:num_scenarios])
 
         # Priorità: worst-case (index 0,1), best-case (3), altri
-        priority_order = [0, 1, 3, 2, 4]  # Indices in SCENARIO_SEEDS
+        priority_order = [0, 1, 3, 2, 4]  # Indices in the seeds list
 
         selected: list[str] = []
         for idx in priority_order:
             if len(selected) >= num_scenarios:
                 break
-            if idx < len(SCENARIO_SEEDS):
-                selected.append(SCENARIO_SEEDS[idx])
+            if idx < len(seeds):
+                selected.append(seeds[idx])
 
         return selected
 
@@ -717,6 +731,7 @@ class LLMConsequenceSimulator:
 def create_simulator(
     policy: PolicyLLMProtocol,
     config: SimulatorConfig | None = None,
+    prompt_set: PromptSet | None = None,
 ) -> LLMConsequenceSimulator:
     """
     Factory function per creare un Consequence Simulator.
@@ -726,6 +741,7 @@ def create_simulator(
     Args:
         policy: Policy LLM da usare
         config: Optional explicit config; when None, loaded from env
+        prompt_set: PromptSet to read prompts from (optional; default: packaged set)
 
     Returns:
         LLMConsequenceSimulator configurato
@@ -733,4 +749,5 @@ def create_simulator(
     return LLMConsequenceSimulator(
         policy=policy,
         config=config,
+        prompt_set=prompt_set,
     )

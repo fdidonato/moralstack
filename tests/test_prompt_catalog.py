@@ -1158,43 +1158,8 @@ def test_override_of_wire_form_fragment_flows_to_retry_with_transform(tmp_path: 
 
 def _live_compositions() -> dict[str, tuple[str, str]]:
     """composition id -> (live value, A0 snapshot key)."""
-    from moralstack.prompts import critic_prompt, hindsight_prompt, perspectives_prompt, retry, simulator_prompt
-    from moralstack.runtime.modules import critic_module, hindsight_module
 
-    return {
-        "critic.full.system": (
-            critic_prompt.CRITIC_FULL_SYSTEM_PROMPT,
-            "const/prompts.critic_prompt.CRITIC_FULL_SYSTEM_PROMPT",
-        ),
-        "critic.quick.system": (
-            critic_module.CRITIC_SYSTEM_PROMPT,
-            "const/runtime.modules.critic_module.CRITIC_SYSTEM_PROMPT",
-        ),
-        "critic.retry": (retry.RETRY_CRITIC, "const/prompts.retry.RETRY_CRITIC"),
-        "perspectives.system_body": (
-            perspectives_prompt.build_perspectives_system_prompt(),
-            "builder/perspectives_system_prompt/default",
-        ),
-        "simulator.batch.system": (
-            simulator_prompt.SIMULATOR_BATCH_SYSTEM_PROMPT,
-            "const/prompts.simulator_prompt.SIMULATOR_BATCH_SYSTEM_PROMPT",
-        ),
-        "simulator.seeded.system": (
-            simulator_prompt.SIMULATOR_SEEDED_SYSTEM_PROMPT,
-            "const/prompts.simulator_prompt.SIMULATOR_SEEDED_SYSTEM_PROMPT",
-        ),
-        "simulator.retry": (retry.RETRY_SIMULATOR, "const/prompts.retry.RETRY_SIMULATOR"),
-        "hindsight.batch.system": (
-            hindsight_prompt.HINDSIGHT_BATCH_SYSTEM_PROMPT,
-            "const/prompts.hindsight_prompt.HINDSIGHT_BATCH_SYSTEM_PROMPT",
-        ),
-        "hindsight.single.system": (
-            hindsight_module.HINDSIGHT_SINGLE_SYSTEM_PROMPT,
-            "const/runtime.modules.hindsight_module.HINDSIGHT_SINGLE_SYSTEM_PROMPT",
-        ),
-        "hindsight.retry.single": (retry.RETRY_HINDSIGHT_SINGLE, "const/prompts.retry.RETRY_HINDSIGHT_SINGLE"),
-        "hindsight.retry.batch": (retry.RETRY_HINDSIGHT_BATCH, "const/prompts.retry.RETRY_HINDSIGHT_BATCH"),
-    }
+    return {}
 
 
 @pytest.fixture(scope="module")
@@ -1222,7 +1187,20 @@ def test_default_roundtrip_matches_live_constants(snapshot_table: dict[str, Any]
     # A2a: the risk constants are re-exports of the packaged set (nothing left to compare); their bytes are
     # pinned by the A0 golden and by tests/test_prompt_set_threading_risk.py.
     migrated = {"risk.intent.system", "risk.signals.system_head", "risk.operational.system"}
-    assert set(live) | migrated == set(ds.composition_ids()), "a composition is missing from the guard"
+    retired_a2b = {
+        "critic.full.system",
+        "critic.quick.system",
+        "critic.retry",
+        "perspectives.system_body",
+        "simulator.batch.system",
+        "simulator.seeded.system",
+        "simulator.retry",
+        "hindsight.batch.system",
+        "hindsight.single.system",
+        "hindsight.retry.single",
+        "hindsight.retry.batch",
+    }
+    assert set(live) | migrated | retired_a2b == set(ds.composition_ids()), "a composition is missing from the guard"
     problems: list[str] = []
     for cid, (value, key) in live.items():
         snap = _snapshot_value(snapshot_table, key)
@@ -1240,40 +1218,9 @@ def _live_standalone() -> dict[str, tuple[str, str]]:
     from moralstack.orchestration import _policy_helpers as ph
     from moralstack.orchestration import domain_exclusion
     from moralstack.orchestration import safe_refusal_generator as srg
-    from moralstack.prompts import _common, critic_prompt, hindsight_prompt, perspectives_prompt, retry, simulator_prompt
-    from moralstack.runtime.modules import (
-        critic_module,
-        hindsight_module,
-        message_context,
-        perspective_module,
-        simulator_module,
-    )
     from moralstack.utils.output_protection import OutputProtector
 
     out: dict[str, tuple[str, str]] = {
-        "common.output_json_only": ("text", _common.OUTPUT_JSON_ONLY),
-        "retry.prefix": ("text", retry.RETRY_PREFIX),
-        "critic.base": ("text", critic_prompt._CRITIC_FULL_BASE_PROMPT),
-        "critic.full.user": ("template", critic_prompt.CRITIC_FULL_TEMPLATE),
-        "critic.quick.user": ("template", critic_module.QUICK_CHECK_PROMPT_TEMPLATE),
-        "perspectives.base": ("text", perspective_module.PERSPECTIVE_SYSTEM_PROMPT),
-        "perspectives.risk_context_interpretation": ("text", perspectives_prompt.RISK_CONTEXT_INTERPRETATION),
-        "perspectives.devcontract_evaluation": ("text", perspectives_prompt.DEVELOPER_CONTRACT_EVALUATION),
-        "perspectives.turn_context": ("template", perspectives_prompt._PERSPECTIVE_TURN_CONTEXT_TEMPLATE),
-        "perspectives.retry": ("text", retry.RETRY_PERSPECTIVES),
-        "simulator.base": ("text", simulator_prompt._SIMULATOR_BASE_SYSTEM_PROMPT),
-        "simulator.enums": ("text", simulator_prompt.SIMULATOR_ENUMS),
-        "simulator.harm_type_mapping_rule": ("text", simulator_prompt.HARM_TYPE_MAPPING_RULE),
-        "simulator.devcontract_evaluation": ("text", simulator_prompt.DEVELOPER_CONTRACT_EVALUATION),
-        "simulator.batch.user": ("template", simulator_prompt.SIMULATOR_FULL_TEMPLATE),
-        "simulator.seeded.user": ("template", simulator_module.SEEDED_PROMPT_TEMPLATE),
-        "simulator.seeded.seeds": ("lines", "\n".join(simulator_module.SCENARIO_SEEDS)),
-        "simulator.domain_guidance.cybersecurity": ("text", simulator_prompt.DOMAIN_GUIDANCE["cybersecurity"]),
-        "simulator.domain_guidance.default": ("text", simulator_prompt.DEFAULT_DOMAIN_GUIDANCE),
-        "hindsight.base": ("text", _common.HINDSIGHT_BASE_FRAMING),
-        "hindsight.batch.user": ("template", hindsight_prompt.HINDSIGHT_BATCH_FULL_TEMPLATE),
-        "hindsight.single.user": ("template", hindsight_module.HINDSIGHT_PROMPT_TEMPLATE),
-        "context.module_preface": ("text", message_context._CONTEXT_REFERENCE_INSTRUCTION),
         "policy.system": ("text", ph.POLICY_SYSTEM_PROMPT),
         "policy.language_rules": ("text", OutputProtector.LANGUAGE_RULES),
         "policy.anti_leak_rules": ("text", OutputProtector.ANTI_LEAK_RULES),
@@ -1282,24 +1229,8 @@ def _live_standalone() -> dict[str, tuple[str, str]]:
         "refusal.system": ("text", srg._build_system_message()),
         "exclusion.system": ("text", domain_exclusion._build_system_message()),
     }
-    for p in perspective_module.DEFAULT_PERSPECTIVES:
-        out[f"perspectives.identity.{p.id}"] = ("text", p.prompt_template)
     for harm_type, items in srg._HARM_TYPE_CATEGORIES.items():
         out[f"refusal.category_hints.{harm_type}"] = ("lines", "\n".join(items))
-    # wire-form fragments: the module constant is the source form with ``{{``/``}}``
-    out["simulator.schema_skeleton"] = (
-        "text",
-        simulator_prompt.SIMULATOR_SCHEMA_SKELETON.replace("{{", "{").replace("}}", "}"),
-    )
-    common = perspectives_prompt.PERSPECTIVE_COMMON_INSTRUCTIONS
-    assert common.endswith(_common.OUTPUT_JSON_ONLY)
-    out["perspectives.common_instructions"] = (
-        "text",
-        common[: -len(_common.OUTPUT_JSON_ONLY)].replace("{{", "{").replace("}}", "}"),
-    )
-    # the hindsight batch composition carries the contract block's terminal newline in ``end``
-    assert hindsight_prompt.DEVELOPER_CONTRACT_EVALUATION.endswith("\n")
-    out["hindsight.devcontract_evaluation"] = ("text", hindsight_prompt.DEVELOPER_CONTRACT_EVALUATION[:-1])
     return out
 
 
@@ -1322,27 +1253,10 @@ def test_standalone_constants_equal_the_a0_snapshot(snapshot_table: dict[str, An
     """The snapshot pins the constants; the YAML is checked against the live ones above and, here, against it."""
     ds = default_prompt_set()
     pinned = {
-        "const/prompts._common.OUTPUT_JSON_ONLY": "common.output_json_only",
-        "const/prompts.retry.RETRY_PREFIX": "retry.prefix",
         "const/models.risk.prompts.HARM_SIGNAL_STATIC_TEMPLATE": "risk.signals.static_suffix",
         "const/models.risk.prompts.INTENT_CONTEXT_PROMPT_TEMPLATE": "risk.intent.user",
         "const/models.risk.prompts.HARM_SIGNAL_USER_TEMPLATE": "risk.signals.user",
         "const/models.risk.prompts.OPERATIONAL_RISK_PROMPT_TEMPLATE": "risk.operational.user",
-        "const/prompts.critic_prompt.CRITIC_FULL_TEMPLATE": "critic.full.user",
-        "const/runtime.modules.critic_module.QUICK_CHECK_PROMPT_TEMPLATE": "critic.quick.user",
-        "const/prompts._common.HINDSIGHT_BASE_FRAMING": "hindsight.base",
-        "const/prompts.simulator_prompt.SIMULATOR_ENUMS": "simulator.enums",
-        "const/prompts.simulator_prompt.HARM_TYPE_MAPPING_RULE": "simulator.harm_type_mapping_rule",
-        "const/prompts.simulator_prompt.DEVELOPER_CONTRACT_EVALUATION": "simulator.devcontract_evaluation",
-        "const/prompts.simulator_prompt.SIMULATOR_FULL_TEMPLATE": "simulator.batch.user",
-        "const/runtime.modules.simulator_module.SEEDED_PROMPT_TEMPLATE": "simulator.seeded.user",
-        "const/prompts.hindsight_prompt.HINDSIGHT_BATCH_FULL_TEMPLATE": "hindsight.batch.user",
-        "const/runtime.modules.hindsight_module.HINDSIGHT_PROMPT_TEMPLATE": "hindsight.single.user",
-        "const/prompts.perspectives_prompt.RISK_CONTEXT_INTERPRETATION": "perspectives.risk_context_interpretation",
-        "const/prompts.perspectives_prompt.DEVELOPER_CONTRACT_EVALUATION": "perspectives.devcontract_evaluation",
-        "const/prompts.perspectives_prompt._PERSPECTIVE_TURN_CONTEXT_TEMPLATE": "perspectives.turn_context",
-        "const/runtime.modules.perspective_module.PERSPECTIVE_SYSTEM_PROMPT": "perspectives.base",
-        "const/runtime.modules.message_context._CONTEXT_REFERENCE_INSTRUCTION": "context.module_preface",
         "const/orchestration._policy_helpers.POLICY_SYSTEM_PROMPT": "policy.system",
         "const/orchestration._policy_helpers.SAFE_COMPLETE_GENERATION_INSTRUCTION": "policy.safe_complete_instruction",
         "const/orchestration._policy_helpers.CONSTRAINED_GENERATION_INSTRUCTION": "policy.constrained_instruction",
@@ -1357,12 +1271,7 @@ def test_standalone_constants_equal_the_a0_snapshot(snapshot_table: dict[str, An
     for key, fid in pinned.items():
         snap = _snapshot_value(snapshot_table, key)
         assert ds._fragments[fid].text == snap, f"{fid}: {_first_diff(ds._fragments[fid].text, snap)}"
-    # identity texts and keyed lists
-    for pid in ("user", "vulnerable", "observer", "adversary", "compliance"):
-        key = f"const/runtime.modules.perspective_module.DEFAULT_PERSPECTIVES.{pid}.prompt_template"
-        assert ds.text(f"perspectives.identity.{pid}") == _snapshot_value(snapshot_table, key)
-    for i, seed in enumerate(ds.lines("simulator.seeded.seeds")):
-        assert seed == _snapshot_value(snapshot_table, f"const/runtime.modules.simulator_module.SCENARIO_SEEDS.{i}")
+    # keyed lists
     for harm_type in ("child_exploitation", "financial", "physical", "reputational", "illegal", "emotional_relational"):
         for i, item in enumerate(ds.lines(f"refusal.category_hints.{harm_type}")):
             key = f"const/orchestration.safe_refusal_generator._HARM_TYPE_CATEGORIES.{harm_type}.{i}"
@@ -1388,82 +1297,6 @@ def test_dead_path_constants_equal_double_braces_of_default() -> None:
 
 
 # -- inline templates: assembled exactly as the code does, compared with the live builders -----
-
-
-def _delib(**kwargs: Any) -> Any:
-    from tests.prompts_golden import capture
-
-    return capture._delib_context(**kwargs)
-
-
-def test_critic_user_prompt_fragments_reproduce_the_live_builder() -> None:
-    from moralstack.prompts.critic_prompt import build_critic_prompt
-
-    ds = default_prompt_set()
-    principles = "HARD.TEST.1 [H]: rule one\nSOFT.TEST.1 [S]: rule two"
-    cases = {
-        "none": ("", ""),
-        "violations": ("HARD.TEST.1: leaked {detail}", ""),
-        "guidance": ("", "suggest: reframe at a conceptual level"),
-        "both": ("  HARD.TEST.1: leaked detail \n", "\tsuggest: reframe  "),
-        "blank": ("   ", "\n"),
-    }
-    for case, (violations, guidance) in cases.items():
-        ctx = _delib()
-        blocks = []
-        if violations and violations.strip():
-            blocks.append(ds.format("critic.full.previous_violations_block", previous_violations=violations.strip()))
-        if guidance and guidance.strip():
-            blocks.append(ds.format("critic.full.previous_guidance_block", previous_guidance=guidance.strip()))
-        section = "\n" + "\n\n".join(blocks) if blocks else ""
-        got = ds.format(
-            "critic.full.user",
-            principles=principles,
-            risk_signals=ctx.get_risk_signals_str() or "none",
-            request=ctx.user_prompt,
-            response=ctx.draft_text_full,
-            previous_guidance_section=section,
-        )
-        assert got == build_critic_prompt(ctx, principles, previous_violations=violations, previous_guidance=guidance), case
-
-
-def test_simulator_hindsight_perspectives_user_prompts_reproduce_the_live_builders() -> None:
-    from moralstack.prompts.hindsight_prompt import build_hindsight_prompt
-    from moralstack.prompts.perspectives_prompt import build_perspectives_user_prompt
-    from moralstack.prompts.simulator_prompt import build_simulator_prompt
-
-    ds = default_prompt_set()
-    ctx = _delib()
-    risk = ctx.get_risk_signals_str() or "none"
-    domain_guidance = ds.text("simulator.domain_guidance.default")
-    got = ds.format(
-        "simulator.batch.user",
-        num_scenarios=3,
-        request=ctx.user_prompt,
-        response=ctx.draft_text_full,
-        risk_signals=risk,
-        domain="general",
-        domain_guidance=domain_guidance,
-    )
-    live = build_simulator_prompt(_delib(domain_overlay="no_such_domain"))
-    assert got.replace("domain_overlay", "x") == live.replace("no_such_domain", "general")
-    cyber = build_simulator_prompt(_delib(domain_overlay="cybersecurity"))
-    assert ds.text("simulator.domain_guidance.cybersecurity") in cyber
-
-    assert ds.format(
-        "hindsight.batch.user",
-        consequences="CONSEQ",
-        request=ctx.user_prompt,
-        response=ctx.draft_text_full,
-        risk_signals=risk,
-    ) == build_hindsight_prompt(ctx, "CONSEQ")
-
-    identity = ds.format("perspectives.identity_block", perspective_name="Direct User", perspective_instructions="INSTR")
-    assert identity == build_perspectives_user_prompt("Direct User", "INSTR", None)
-    with_turn = identity + ds.format(
-        "perspectives.turn_context", request=ctx.user_prompt, response=ctx.draft_text_full, risk_signals=risk
-    )
-    assert with_turn == build_perspectives_user_prompt("Direct User", "INSTR", ctx)
 
 
 def test_language_prefix_hard_violation_exclusion_and_refusal_fragments_reproduce_the_live_code() -> None:
@@ -1705,6 +1538,9 @@ def test_every_packaged_fragment_is_covered_by_the_duplication_guard() -> None:
             "risk.signals.output_schema_footer",
         }
     )
-    missing = sorted(set(ds.fragment_ids()) - covered)
+    # common/retry/critic/perspectives/simulator/hindsight/context: the constants are default re-exports of
+    # these fragments since A2b, so comparing them here would be tautological; the A0 golden oracle pins them.
+    retired = ("common.", "retry.", "critic.", "perspectives.", "simulator.", "hindsight.", "context.")
+    missing = sorted(fid for fid in set(ds.fragment_ids()) - covered if not fid.startswith(retired))
     assert not missing, f"fragments not covered by any duplication-guard check: {missing}"
     assert not sorted(covered - set(ds.fragment_ids())), "the guard names a fragment that no longer exists"

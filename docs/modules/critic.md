@@ -132,6 +132,28 @@ unchanged (pinned by `tests/test_static_prefix_stability.py`).
 
 ---
 
+## Prompt set (prompt externalization, A2b)
+
+The critic prompt texts are named fragments in `moralstack/prompts/data/critic.yaml`
+(`critic.base`, `critic.rules.*`, `critic.retry`, `critic.full.user`, `critic.quick.user`, ...).
+`LLMConstitutionalCritic(..., prompt_set=None)` (and `create_critic`) reads them from its own
+`PromptSet`; `None` is the packaged default set. `CRITIC_FULL_SYSTEM_PROMPT`,
+`CRITIC_SYSTEM_PROMPT`, `QUICK_CHECK_PROMPT_TEMPLATE`, `RETRY_PROMPT` and
+`CRITIC_SHARED_RULES` stay importable as default re-exports with identical bytes; runtime code
+never reads them.
+
+- `critique()` renders `critic.full.system` per call with a `PromptContext` (contract present
+  when `developer_contract.raw_text` is non-empty after `strip()`; history present when
+  `conversation_history` is truthy), so a deployer `when` on `critic.rules.devcontract` is honored.
+  The persisted `CriticReport.system_prompt` is that rendered string. The default set renders the
+  same bytes for every context.
+- The quick-check path (`quick_check()`) is non-context-aware: `critic.base` is shared with it, so a
+  non-`always` `when` on `critic.base` is a load error.
+- `build_critic_prompt(..., prompt_set=None)` and `build_module_messages(..., prompt_set=None)` take
+  the user templates and the context preface from the same set.
+
+---
+
 ## Output Structure
 
 ### CriticReport

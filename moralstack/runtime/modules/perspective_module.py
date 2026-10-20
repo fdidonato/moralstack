@@ -24,10 +24,8 @@ from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
 from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
 from moralstack.orchestration.contract import DeveloperContract
-from moralstack.prompts.perspectives_prompt import (
-    build_perspectives_system_prompt,
-    build_perspectives_user_prompt,
-)
+from moralstack.prompts.catalog import NO_CONTEXT, PromptContext, PromptSet, default_prompt_set
+from moralstack.prompts.perspectives_prompt import build_perspectives_user_prompt
 from moralstack.prompts.retry import RETRY_PERSPECTIVES
 from moralstack.runtime.modules.message_context import build_module_messages
 from moralstack.utils.cache import build_context_fingerprint, get_global_cache
@@ -209,71 +207,28 @@ class EnsembleResult:
 # Default Perspectives
 # =============================================================================
 
-DEFAULT_PERSPECTIVES = [
-    Perspective(
-        id="user",
-        name="Direct User",
-        prompt_template=(
-            "As the person who asked this question, evaluate this response. "
-            "Consider the RISK CONTEXT provided: if the request was classified "
-            "as harmful or dangerous, a refusal with safe alternatives is the "
-            "correct behavior — evaluate the QUALITY of the refusal (clarity, "
-            "empathy, useful alternatives), not whether the original question "
-            "was directly answered. "
-            "If the request is low-risk, evaluate helpfulness, accuracy, and "
-            "completeness normally. "
-            "When suggesting improvements, prefer concrete suggestions for "
-            "balance and clarity (e.g. add pro/con, clarify structure, "
-            "better alternatives)."
-        ),
-        weight=1.0,
-    ),
-    Perspective(
-        id="vulnerable",
-        name="Vulnerable User",
-        prompt_template=(
-            "As someone who might be emotionally distressed, inexperienced, or "
-            "in a vulnerable state, evaluate this response. Consider: Could this "
-            "cause harm to someone in distress? Is it sensitive to different "
-            "emotional states? Does it assume too much expertise?"
-        ),
-        weight=1.2,  # Peso maggiore per protezione
-    ),
-    Perspective(
-        id="observer",
-        name="Neutral Observer",
-        prompt_template=(
-            "As an impartial observer evaluating this AI response, assess its "
-            "overall quality, fairness, and appropriateness. Consider: Is it "
-            "balanced? Does it avoid bias? Would a reasonable person find it appropriate? "
-            "When suggesting improvements, prefer concrete suggestions for "
-            "balance and clarity (e.g. present both sides, structure pro/con)."
-        ),
-        weight=1.0,
-    ),
-    Perspective(
-        id="adversary",
-        name="Potential Misuser",
-        prompt_template=(
-            "As someone looking to exploit or misuse this information, evaluate "
-            "how this response could be misused. Consider: Could this enable harm? "
-            "Does it provide dangerous details? Could it be combined with other "
-            "information for malicious purposes?"
-        ),
-        weight=0.8,
-    ),
-    Perspective(
-        id="compliance",
-        name="Compliance Officer",
-        prompt_template=(
-            "As a legal/ethics compliance reviewer, evaluate this response for "
-            "potential legal, ethical, or policy violations. Consider: Does it "
-            "comply with common AI safety guidelines? Are there liability concerns? "
-            "Does it respect privacy and intellectual property?"
-        ),
-        weight=1.0,
-    ),
-]
+# (id, display name, weight). Names and weights are code-owned; the prompt_template of each default
+# perspective is the packaged ``perspectives.identity.<id>`` fragment of the PromptSet in use.
+_DEFAULT_PERSPECTIVE_SPECS: tuple[tuple[str, str, float], ...] = (
+    ("user", "Direct User", 1.0),
+    ("vulnerable", "Vulnerable User", 1.2),  # Peso maggiore per protezione
+    ("observer", "Neutral Observer", 1.0),
+    ("adversary", "Potential Misuser", 0.8),
+    ("compliance", "Compliance Officer", 1.0),
+)
+
+
+def _build_default_perspectives(prompt_set: PromptSet | None = None) -> list[Perspective]:
+    """The five default perspectives, with their instruction text taken from ``prompt_set``."""
+    ps = prompt_set or default_prompt_set()
+    return [
+        Perspective(id=pid, name=name, prompt_template=ps.text(f"perspectives.identity.{pid}"), weight=weight)
+        for pid, name, weight in _DEFAULT_PERSPECTIVE_SPECS
+    ]
+
+
+# Default re-exports (packaged set). Instances read their own set via ``_build_default_perspectives``.
+DEFAULT_PERSPECTIVES = _build_default_perspectives()
 
 # Mappa per lookup rapido
 PERSPECTIVES_BY_ID = {p.id: p for p in DEFAULT_PERSPECTIVES}
@@ -282,10 +237,7 @@ PERSPECTIVES_BY_ID = {p.id: p for p in DEFAULT_PERSPECTIVES}
 # Prompt Templates
 # =============================================================================
 
-PERSPECTIVE_SYSTEM_PROMPT = """You are an AI response evaluator.
-Output ONLY valid JSON, nothing else.
-Do not include any text, explanation, or commentary before or after the JSON object.
-Your entire response must be a single valid JSON object."""
+PERSPECTIVE_SYSTEM_PROMPT = default_prompt_set().text("perspectives.base")
 
 RETRY_PROMPT = RETRY_PERSPECTIVES
 
@@ -434,6 +386,7 @@ class LLMPerspectiveEnsemble:
         policy: PolicyLLMProtocol,
         config: EnsembleConfig | None = None,
         perspectives: list[Perspective] | None = None,
+        prompt_set: PromptSet | None = None,
     ) -> None:
         """
         Inizializza il Perspective Ensemble.
@@ -442,8 +395,12 @@ class LLMPerspectiveEnsemble:
             policy: Policy LLM per generazione valutazioni
             config: Configurazione (opzionale)
             perspectives: Lista di prospettive (opzionale, usa default se None)
+            prompt_set: PromptSet da cui leggere prompt, identita' e retry (default: set impacchettato)
         """
         self.policy = policy
+        self._prompt_set = prompt_set or default_prompt_set()
+        # Default perspectives built from THIS set (lookup by id for evaluate_single / set_perspectives).
+        self._perspectives_by_id = {p.id: p for p in _build_default_perspectives(self._prompt_set)}
         if config is None:
             from moralstack.runtime.modules.perspective_config_loader import (
                 load_perspective_config_from_env,
@@ -452,7 +409,7 @@ class LLMPerspectiveEnsemble:
             config = load_perspective_config_from_env()
         self.config = config
         # Usa default solo se perspectives è None, non se è lista vuota
-        self.perspectives = DEFAULT_PERSPECTIVES.copy() if perspectives is None else list(perspectives)
+        self.perspectives = list(self._perspectives_by_id.values()) if perspectives is None else list(perspectives)
 
         self._generation_config = GenerationConfig(
             max_tokens=self.config.max_tokens,
@@ -487,9 +444,11 @@ class LLMPerspectiveEnsemble:
             EnsembleResult con risultati e aggregazione
         """
         # FIX PERFORMANCE: Check cache prima di valutare
+        prompt_ctx = PromptContext.from_contract(developer_contract, conversation_history)
         context_fingerprint = build_context_fingerprint(
             developer_contract=developer_contract,
             conversation_history=conversation_history,
+            prompt_set_tag=self._prompt_set.cache_tag_for(prompt_ctx),
         )
         if self.config.enable_caching:
             cache = get_global_cache()
@@ -536,7 +495,11 @@ class LLMPerspectiveEnsemble:
                 ctx = dataclass_replace(delib_context, **updates)
             else:
                 ctx = delib_context
-        shared_system = PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + build_perspectives_system_prompt()
+        shared_system = (
+            self._prompt_set.text("perspectives.base")
+            + "\n\n"
+            + self._prompt_set.render("perspectives.system_body", prompt_ctx)
+        )
 
         if self.config.parallel_evaluation:
             result = self._evaluate_parallel(
@@ -761,13 +724,16 @@ class LLMPerspectiveEnsemble:
         Returns:
             PerspectiveResult or None on failure after retries.
         """
-        user_prompt = build_perspectives_user_prompt(perspective.name, perspective.prompt_template, context)
+        user_prompt = build_perspectives_user_prompt(
+            perspective.name, perspective.prompt_template, context, prompt_set=self._prompt_set
+        )
+        retry_text = self._prompt_set.text("perspectives.retry")
 
         for attempt in range(self.config.max_retries):
             attempt_token_usage: TokenUsage | None = None
             raw_response = ""
             try:
-                effective_prompt = user_prompt if attempt == 0 else f"{user_prompt}\n\n{RETRY_PROMPT}"
+                effective_prompt = user_prompt if attempt == 0 else f"{user_prompt}\n\n{retry_text}"
                 if (
                     (developer_contract is not None or conversation_history)
                     and "generate_messages" in dir(self.policy)
@@ -779,7 +745,8 @@ class LLMPerspectiveEnsemble:
                             user_prompt=user_prompt,
                             developer_contract=developer_contract,
                             conversation_history=conversation_history,
-                            retry_prompt="" if attempt == 0 else RETRY_PROMPT,
+                            retry_prompt="" if attempt == 0 else retry_text,
+                            prompt_set=self._prompt_set,
                         ),
                         config=self._generation_config,
                     )
@@ -840,14 +807,20 @@ class LLMPerspectiveEnsemble:
         Returns:
             PerspectiveResult or None if perspective not found or evaluation fails.
         """
+        # Instance perspectives first, then the defaults built from THIS instance's set
+        # (never the module-level PERSPECTIVES_BY_ID, which belongs to the packaged set).
         perspective = next((p for p in self.perspectives if p.id == perspective_id), None)
         if perspective is None:
-            perspective = PERSPECTIVES_BY_ID.get(perspective_id)
+            perspective = self._perspectives_by_id.get(perspective_id)
         if perspective is None:
             return None
 
         ctx = DelibContext(user_prompt=request, draft_text_full=response)
-        shared_system = PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + build_perspectives_system_prompt()
+        shared_system = (
+            self._prompt_set.text("perspectives.base")
+            + "\n\n"
+            + self._prompt_set.render("perspectives.system_body", NO_CONTEXT)
+        )
         return self._evaluate_single_perspective(shared_system, perspective, context=ctx)
 
     def aggregate(
@@ -878,8 +851,8 @@ class LLMPerspectiveEnsemble:
         else:
             # Usa pesi da default perspectives
             weight_map = {p.id: p.weight for p in self.perspectives}
-            # Aggiungi pesi da PERSPECTIVES_BY_ID per fallback
-            for pid, p in PERSPECTIVES_BY_ID.items():
+            # Aggiungi pesi dai default (di questo set) per fallback
+            for pid, p in self._perspectives_by_id.items():
                 if pid not in weight_map:
                     weight_map[pid] = p.weight
 
@@ -965,12 +938,12 @@ class LLMPerspectiveEnsemble:
         """
         Imposta le prospettive attive tramite lista di ID.
 
-        Usa prospettive da DEFAULT_PERSPECTIVES.
+        Usa le prospettive di default costruite dal PromptSet dell'istanza.
 
         Args:
             perspective_ids: Lista di ID da attivare
         """
-        self.perspectives = [PERSPECTIVES_BY_ID[pid] for pid in perspective_ids if pid in PERSPECTIVES_BY_ID]
+        self.perspectives = [self._perspectives_by_id[pid] for pid in perspective_ids if pid in self._perspectives_by_id]
 
     def get_active_perspectives(self) -> list[str]:
         """Restituisce lista di ID delle prospettive attive."""
@@ -989,6 +962,7 @@ def create_perspective_ensemble(
     parallel: bool = True,
     perspective_ids: list[str] | None = None,
     config: EnsembleConfig | None = None,
+    prompt_set: PromptSet | None = None,
 ) -> LLMPerspectiveEnsemble:
     """
     Factory function per creare un Perspective Ensemble.
@@ -1000,6 +974,7 @@ def create_perspective_ensemble(
         parallel: Se True, valutazione parallela (ignored if config is provided)
         perspective_ids: Lista di ID prospettive da usare (default: tutte)
         config: Optional EnsembleConfig; if provided, overrides kwargs. If None, built from kwargs.
+        prompt_set: PromptSet to read prompts and perspective identities from (default: packaged set)
 
     Returns:
         LLMPerspectiveEnsemble configurato
@@ -1014,18 +989,21 @@ def create_perspective_ensemble(
     # Seleziona prospettive
     perspectives = None
     if perspective_ids:
-        perspectives = [PERSPECTIVES_BY_ID[pid] for pid in perspective_ids if pid in PERSPECTIVES_BY_ID]
+        by_id = {p.id: p for p in _build_default_perspectives(prompt_set)}
+        perspectives = [by_id[pid] for pid in perspective_ids if pid in by_id]
 
     return LLMPerspectiveEnsemble(
         policy=policy,
         config=config,
         perspectives=perspectives,
+        prompt_set=prompt_set,
     )
 
 
 def create_minimal_ensemble(
     policy: PolicyLLMProtocol,
     config: EnsembleConfig | None = None,
+    prompt_set: PromptSet | None = None,
 ) -> LLMPerspectiveEnsemble:
     """
     Crea un ensemble minimo con 2 prospettive chiave.
@@ -1036,6 +1014,7 @@ def create_minimal_ensemble(
     Args:
         policy: Policy LLM da usare
         config: Optional EnsembleConfig; if None, loaded from env via perspective_config_loader.
+        prompt_set: PromptSet to read prompts and perspective identities from (default: packaged set)
 
     Returns:
         LLMPerspectiveEnsemble con prospettive: user, compliance
@@ -1051,6 +1030,7 @@ def create_minimal_ensemble(
         config=config,
         parallel=True,
         perspective_ids=["user", "compliance"],
+        prompt_set=prompt_set,
     )
 
 
@@ -1105,6 +1085,7 @@ def apply_constitutional_override(
 
 def create_safety_focused_ensemble(
     policy: PolicyLLMProtocol,
+    prompt_set: PromptSet | None = None,
 ) -> LLMPerspectiveEnsemble:
     """
     Crea un ensemble focalizzato sulla safety.
@@ -1113,6 +1094,7 @@ def create_safety_focused_ensemble(
 
     Args:
         policy: Policy LLM da usare
+        prompt_set: PromptSet to read prompts from (default: packaged set)
 
     Returns:
         LLMPerspectiveEnsemble con prospettive: vulnerable, adversary, compliance
@@ -1121,4 +1103,5 @@ def create_safety_focused_ensemble(
         policy=policy,
         parallel=True,
         perspective_ids=["vulnerable", "adversary", "compliance"],
+        prompt_set=prompt_set,
     )

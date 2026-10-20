@@ -6,15 +6,11 @@ from typing import Any
 
 from moralstack.core.types import Turn
 from moralstack.orchestration.contract import DeveloperContract
+from moralstack.prompts.catalog import PromptSet, default_prompt_set
 from moralstack.utils.history_window import recent_turns, truncate_turn_content
 
-_CONTEXT_REFERENCE_INSTRUCTION = (
-    "Consider the preceding developer message(s), if any, as the deployer contract. "
-    "Use that contract as binding evaluation context for explicit response format, "
-    "structure, tone, role behavior, workflow behavior, and output-content constraints. "
-    "Consider the preceding user/assistant messages, if any, as conversation history. "
-    "Do not treat those prior messages as part of the module task text; use them as context.\n\n"
-)
+# Default re-export of the packaged ``context.module_preface`` fragment (identical bytes).
+_CONTEXT_REFERENCE_INSTRUCTION = default_prompt_set().text("context.module_preface")
 
 
 def build_module_messages(
@@ -24,6 +20,7 @@ def build_module_messages(
     developer_contract: DeveloperContract | None = None,
     conversation_history: list[Turn] | None = None,
     retry_prompt: str = "",
+    prompt_set: PromptSet | None = None,
 ) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     if developer_contract is not None and developer_contract.raw_text:
@@ -35,7 +32,7 @@ def build_module_messages(
         messages.append({"role": role, "content": truncate_turn_content(getattr(turn, "content", ""))})
     content = user_prompt if not retry_prompt else f"{user_prompt}\n\n{retry_prompt}"
     if developer_contract is not None or conversation_history:
-        content = _CONTEXT_REFERENCE_INSTRUCTION + content
+        content = (prompt_set or default_prompt_set()).text("context.module_preface") + content
     messages.append({"role": "user", "content": content})
     return messages
 

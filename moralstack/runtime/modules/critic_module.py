@@ -21,7 +21,8 @@ from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
 from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
 from moralstack.orchestration.contract import DeveloperContract
-from moralstack.prompts.critic_prompt import CRITIC_FULL_SYSTEM_PROMPT
+from moralstack.prompts.catalog import PromptContext, PromptSet, default_prompt_set
+from moralstack.prompts.critic_prompt import CRITIC_FULL_SYSTEM_PROMPT  # noqa: F401 - default re-export, kept importable
 from moralstack.prompts.retry import RETRY_CRITIC
 from moralstack.runtime.modules.message_context import build_module_messages
 from moralstack.utils.json_utils import JSONParseError, extract_json
@@ -161,40 +162,13 @@ class NoHardPrinciplesError(Exception):
 # Prompt Templates
 # =============================================================================
 
-CRITIC_SYSTEM_PROMPT = """You are a constitutional critic for an AI safety system.
-Your task is to evaluate AI responses against ethical principles and identify violations.
-Be thorough but fair. Only flag genuine violations with clear evidence.
-CRITICAL DISTINCTION: You evaluate the RESPONSE content, not the REQUEST topic.
-If the response contains no operational content and already declines or redirects
-the request (a refusal or safe-redirect draft), it has zero violations regardless
-of how sensitive the request topic is. Decision MUST be PROCEED for clean refusal drafts.
-When the request warrants refusal (e.g. terrorism, weapons, critical infrastructure
-targeting), also flag information leakage: responses that provide operationally useful
-information—such as listing components, targets, materials, or structural elements that
-could be exploited—even if framed as "general principles" or "educational content."
-When you output REVISE or REFUSE, always include concrete safe alternatives in
-revision_guidance using the format "suggest: [specific topics, resources, or reframing]"
-so the response can be improved or redirected constructively.
-Always respond with valid JSON only. No additional text or explanation outside the JSON."""
+# Default re-exports of the packaged fragments (byte-identical to the former literals). Runtime code reads
+# the module's own ``PromptSet`` (``self._prompt_set``), never these constants.
+CRITIC_SYSTEM_PROMPT = default_prompt_set().text("critic.quick.system")
 
 RETRY_PROMPT = RETRY_CRITIC
 
-QUICK_CHECK_PROMPT_TEMPLATE = """Quickly check if this response violates any
-HARD CONSTRAINTS (critical safety rules):
-
-HARD CONSTRAINTS:
-{hard_constraints}
-
-REQUEST: {request}
-RESPONSE: {response}
-
-If ANY hard constraint is violated, output:
-{{"violated": true, "principle_id": "...", "evidence": "..."}}
-
-If NO hard constraint is violated, output:
-{{"violated": false}}
-
-Output ONLY valid JSON:"""
+QUICK_CHECK_PROMPT_TEMPLATE = default_prompt_set().template("critic.quick.user")
 
 
 # =============================================================================
@@ -344,6 +318,7 @@ class LLMConstitutionalCritic:
         policy: PolicyLLMProtocol,
         store: ConstitutionStore | None = None,
         config: CriticConfig | None = None,
+        prompt_set: PromptSet | None = None,
     ) -> None:
         """
         Inizializza il Constitutional Critic.
@@ -352,9 +327,11 @@ class LLMConstitutionalCritic:
             policy: Policy LLM per generazione critica
             store: Constitution Store (opzionale, per lookup principi)
             config: Configurazione (opzionale)
+            prompt_set: PromptSet da cui leggere prompt e retry (default: set impacchettato)
         """
         self.policy = policy
         self.store = store
+        self._prompt_set = prompt_set or default_prompt_set()
         if config is not None:
             self.config = config
         else:
@@ -438,9 +415,17 @@ class LLMConstitutionalCritic:
             principles_text,
             previous_violations=previous_violations,
             previous_guidance=previous_guidance,
+            prompt_set=self._prompt_set,
         )
         context_block = _build_context_block(developer_contract, conversation_history)
         legacy_prompt = prompt + context_block
+
+        # Per-call system prompt: ``when`` conditions are evaluated against what this call carries. The default
+        # set renders identically for every context. The rendered string is also what gets persisted.
+        full_system_prompt = self._prompt_set.render(
+            "critic.full.system", PromptContext.from_contract(developer_contract, conversation_history)
+        )
+        retry_prompt = self._prompt_set.text("critic.retry")
 
         # Genera critica con retry
         raw_response = ""
@@ -453,28 +438,29 @@ class LLMConstitutionalCritic:
             attempt_token_usage: TokenUsage | None = None
 
             try:
-                effective_prompt = prompt if attempt == 0 else f"{prompt}\n\n{RETRY_PROMPT}"
+                effective_prompt = prompt if attempt == 0 else f"{prompt}\n\n{retry_prompt}"
                 if hasattr(self.policy, "generate_messages"):
                     result = self.policy.generate_messages(
                         messages=build_module_messages(
-                            system_prompt=CRITIC_FULL_SYSTEM_PROMPT,
+                            system_prompt=full_system_prompt,
                             user_prompt=prompt,
                             developer_contract=developer_contract,
                             conversation_history=conversation_history,
-                            retry_prompt="" if attempt == 0 else RETRY_PROMPT,
+                            retry_prompt="" if attempt == 0 else retry_prompt,
+                            prompt_set=self._prompt_set,
                         ),
                         config=self._generation_config,
                     )
                 elif attempt == 0:
                     result = self.policy.generate(
                         prompt=legacy_prompt,
-                        system=CRITIC_FULL_SYSTEM_PROMPT,
+                        system=full_system_prompt,
                         config=self._generation_config,
                     )
                 else:
                     result = self.policy.generate(
-                        prompt=f"{legacy_prompt}\n\n{RETRY_PROMPT}",
-                        system=CRITIC_FULL_SYSTEM_PROMPT,
+                        prompt=f"{legacy_prompt}\n\n{retry_prompt}",
+                        system=full_system_prompt,
                         config=self._generation_config,
                     )
 
@@ -525,7 +511,7 @@ class LLMConstitutionalCritic:
                     raw_response=raw_response,
                     parse_attempts=parse_attempts,
                     prompt=effective_prompt,
-                    system_prompt=CRITIC_FULL_SYSTEM_PROMPT,
+                    system_prompt=full_system_prompt,
                     tokens_used=int(getattr(result, "tokens_used", 0) or 0),
                     prompt_tokens=getattr(result, "prompt_tokens", None),
                     completion_tokens=getattr(result, "completion_tokens", None),
@@ -699,7 +685,8 @@ class LLMConstitutionalCritic:
         # Formatta hard constraints (formato compatto per ridurre token)
         constraints_text = format_principles_compact(hard_constraints, max_rule_len=self.config.max_rule_len)
 
-        prompt = QUICK_CHECK_PROMPT_TEMPLATE.format(
+        prompt = self._prompt_set.format(
+            "critic.quick.user",
             hard_constraints=constraints_text,
             request=request,
             response=response,
@@ -719,7 +706,7 @@ class LLMConstitutionalCritic:
         # path, where no full critique runs afterwards.
         result = self.policy.generate(
             prompt=prompt,
-            system=CRITIC_SYSTEM_PROMPT,
+            system=self._prompt_set.text("critic.quick.system"),
             config=quick_config,
         )
 
@@ -850,6 +837,7 @@ def create_critic(
     policy: PolicyLLMProtocol,
     store: ConstitutionStore | None = None,
     config: CriticConfig | None = None,
+    prompt_set: PromptSet | None = None,
 ) -> LLMConstitutionalCritic:
     """
     Factory function for creating a Constitutional Critic.
@@ -859,6 +847,7 @@ def create_critic(
         store: Constitution Store (optional).
         config: CriticConfig (optional). When None, config is loaded from
                 environment variables via load_critic_config_from_env().
+        prompt_set: PromptSet to read prompts from (optional; default: packaged set).
 
     Returns:
         Configured LLMConstitutionalCritic.
@@ -867,4 +856,5 @@ def create_critic(
         policy=policy,
         store=store,
         config=config,
+        prompt_set=prompt_set,
     )

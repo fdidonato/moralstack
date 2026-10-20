@@ -342,6 +342,26 @@ consensus_level = 1 - (std_dev(approval_scores) / 0.5)
 
 ---
 
+## Prompt set (prompt externalization, A2b)
+
+The perspectives texts live in `moralstack/prompts/data/perspectives.yaml` (`perspectives.base`,
+`perspectives.system_body` composition, `perspectives.identity.*`, `perspectives.identity_block`,
+`perspectives.turn_context`, `perspectives.retry`). `LLMPerspectiveEnsemble(..., prompt_set=None)`,
+`create_perspective_ensemble`, `create_minimal_ensemble` and `create_safety_focused_ensemble` read them
+from the given `PromptSet`; `None` is the packaged default. `DEFAULT_PERSPECTIVES`,
+`PERSPECTIVES_BY_ID`, `PERSPECTIVE_SYSTEM_PROMPT` and `RETRY_PROMPT` stay as default re-exports.
+
+- Default perspectives are built per instance (`_build_default_perspectives(prompt_set)`: id, name and
+  weight are code-owned, the instruction text comes from `perspectives.identity.<id>`).
+- `evaluate()` renders `perspectives.system_body` with the per-call `PromptContext`. `evaluate_single()`
+  has no contract or history, so it renders with `NO_CONTEXT`; it looks the perspective up in the instance
+  `perspectives` first and then in the set-derived map, never in the module-level `PERSPECTIVES_BY_ID`.
+- Persisted `EnsembleResult.system_prompts` are the rendered strings. Cache keys carry
+  `PromptSet.cache_tag_for(ctx)` (empty for the default set).
+- `build_perspectives_prompt` / `PERSPECTIVE_FULL_TEMPLATE` are a dead path and stay on the defaults.
+
+---
+
 ## Caching
 
 The module implements caching:
