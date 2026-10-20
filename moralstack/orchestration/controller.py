@@ -130,6 +130,7 @@ from moralstack.orchestration.types import (
     normalize_final_action,
     risk_category_str,
 )
+from moralstack.prompts.catalog import PromptSet, default_prompt_set
 from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace, normalize_trace_fields
 from moralstack.sdk.session_store import SessionStoreProtocol
 
@@ -167,6 +168,16 @@ def _supported_estimate_kwargs(estimate: Any, kwargs: dict[str, Any]) -> tuple[d
 # own top_k (protocol-only estimator implementing only `estimate(prompt)`, e.g.
 # `RiskEstimatorProtocol` in core/types.py or a test double).
 DEFAULT_RISK_TOP_K = 10
+
+
+def _controller_prompt_set(controller: Any) -> PromptSet:
+    """The controller's ``PromptSet``.
+
+    A plain attribute read, except that an object without ``_prompt_set`` (the golden oracle and a few tests
+    call the unbound methods on a ``SimpleNamespace`` stand-in) resolves to the packaged defaults.
+    """
+    candidate = getattr(controller, "_prompt_set", None)
+    return candidate if isinstance(candidate, PromptSet) else default_prompt_set()
 
 
 def _as_risk_protocol(r: RiskEstimation) -> RiskEstimationProtocol:
@@ -214,8 +225,10 @@ class OrchestrationController:
         *,
         ledger: SemanticDecisionLedger | None = None,
         session_store: SessionStoreProtocol | None = None,
+        prompt_set: PromptSet | None = None,
     ) -> None:
         self.config = config
+        self._prompt_set = prompt_set or default_prompt_set()
         self._persistence = persistence if persistence is not None else NullPersistence()
         self._events: EventEmitter = event_emitter if event_emitter is not None else DefaultEventEmitter()
         self.policy = policy
@@ -229,7 +242,7 @@ class OrchestrationController:
         self._protected_system_prompt = protected_system_prompt
         self.logger = logger
 
-        self.assembler = ResponseAssembler(policy)
+        self.assembler = ResponseAssembler(policy, prompt_set=self._prompt_set)
         self._trace_lock = threading.Lock()
         self.execution_trace: dict[str, dict[str, Any]] = {}
         self._diagnostics = DiagnosticsLayer(self._trace_lock, self.execution_trace)
@@ -248,6 +261,7 @@ class OrchestrationController:
             protected_system_prompt=protected_system_prompt,
             logger=logger,
             assembler=self.assembler,
+            prompt_set=self._prompt_set,
         )
         self._parser_diagnostic_handlers: dict[str, logging.Handler] = {}
         self._trace_lifecycle = TraceLifecycle(
@@ -259,10 +273,16 @@ class OrchestrationController:
             policy=policy,
             constitution_store=constitution_store,
             event_emitter=self._events,
+            prompt_set=self._prompt_set,
         )
         self._ledger: SemanticDecisionLedger | None = ledger
         self._session_store: SessionStoreProtocol | None = session_store
         self._fast_path_runner = ConversationalFastPathRunner()
+
+    @property
+    def prompt_set(self) -> PromptSet:
+        """The ``PromptSet`` this controller (and every component it built) reads its prompt texts from."""
+        return self._prompt_set
 
     def set_logger(self, logger: LoggerProtocol | None) -> None:
         """Set the logger for tracking LLM calls (propagated to runner)."""
@@ -1074,6 +1094,7 @@ class OrchestrationController:
                 request.prompt,
                 "",
                 request.prompt,
+                prompt_set=_controller_prompt_set(self),
             )
             # Select the speculative-draft generator: the upstream-origin
             # generator when the caller wired one (opt-in
@@ -1303,7 +1324,7 @@ class OrchestrationController:
             from moralstack.compliance.types import ComplianceDecision
             from moralstack.observability.emit_helpers import persist_orchestration_event
 
-            compliance_layer = DeveloperContractComplianceLayer(policy=self.policy)
+            compliance_layer = DeveloperContractComplianceLayer(policy=self.policy, prompt_set=_controller_prompt_set(self))
             conv_ctx = getattr(request, "conversation_context", None)
 
             persist_orchestration_event(
@@ -1393,16 +1414,18 @@ class OrchestrationController:
             mode="normal",
         )
         action_ref = cv.matched_rule.action_payload_summary or cv.matched_rule.rule_excerpt
+        prompt_set = _controller_prompt_set(self)
         ctx = getattr(request, "conversation_context", None)
         transcript_block = ""
         if ctx is not None and getattr(ctx, "prior_turn_count", 0) > 0:
             transcript, _ = ctx.role_serialized_transcript(budget=6000)
             if transcript:
-                transcript_block = f"\n\nRole-ordered conversation transcript:\n{transcript}"
-        user = (
-            f"The deployer contract authorizes this exact response for the request: "
-            f"{action_ref}.\nProduce that authorized response now, exactly and without "
-            f"refusal.{transcript_block}\n\nFinal user request: {request.prompt}"
+                transcript_block = prompt_set.format("policy.contract_regeneration.transcript_block", transcript=transcript)
+        user = prompt_set.format(
+            "policy.contract_regeneration.user",
+            action_ref=action_ref,
+            transcript_block=transcript_block,
+            request=request.prompt,
         )
 
         from moralstack.models.base import GenerationConfig
@@ -1453,7 +1476,6 @@ class OrchestrationController:
         """Re-check draft against the matched rule action; semantic LLM only if substring fails."""
         from moralstack.compliance.config import get_dccl_confidence_threshold, get_dccl_llm_model
         from moralstack.compliance.dccl import (
-            DCCL_DRAFT_MATCH_SYSTEM_PROMPT,
             draft_match_response_format,
             validate_draft_against_action,
         )
@@ -1470,11 +1492,9 @@ class OrchestrationController:
         if self.policy is None or not action_excerpt or not draft:
             return (False, "none", conf)
 
-        prompt = (
-            f"AUTHORIZED ACTION:\n{action_excerpt[:500]}\n\n"
-            f"DRAFT:\n{draft[:1000]}\n\n"
-            f"Does the draft semantically deliver the authorized action?"
-        )
+        prompt_set = _controller_prompt_set(self)
+        draft_match_system = prompt_set.text("compliance.draft_match.system")
+        prompt = prompt_set.format("compliance.draft_match.user", action=action_excerpt[:500], draft=draft[:1000])
         config = GenerationConfig(
             max_tokens=128,
             temperature=0.0,
@@ -1486,7 +1506,7 @@ class OrchestrationController:
         try:
             result = self.policy.generate(
                 prompt=prompt,
-                system=DCCL_DRAFT_MATCH_SYSTEM_PROMPT,
+                system=draft_match_system,
                 config=config,
                 model_override=get_dccl_llm_model(),
             )
@@ -1509,7 +1529,7 @@ class OrchestrationController:
                     "started_at": wall,
                     "duration_ms": elapsed_ms,
                     "prompt": prompt,
-                    "system_prompt": DCCL_DRAFT_MATCH_SYSTEM_PROMPT,
+                    "system_prompt": draft_match_system,
                     "raw_response": raw_text,
                     "token_usage_json": (result.token_usage_json() if hasattr(result, "token_usage_json") else None),
                     "sequence_in_cycle": -4,
@@ -1869,6 +1889,7 @@ class OrchestrationController:
             domain=excluded_domain,
             user_prompt=request.prompt,
             llm_client=self.policy,
+            prompt_set=_controller_prompt_set(self),
         )
         processing_time_ms = int((time.time() - start_time) * 1000)
         metadata = ResponseMetadata.for_domain_excluded(processing_time_ms, request.request_id, excluded_domain)

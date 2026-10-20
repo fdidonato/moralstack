@@ -13,12 +13,16 @@ from moralstack.orchestration.types import (
     DeliberationState,
     PerspectiveResultProtocol,
 )
+from moralstack.prompts.catalog import PromptSet, default_prompt_set
 
 _LOG = logging.getLogger(__name__)
 
 
-def _append_simulator_guidance(guidance_parts: list[str], state: DeliberationState) -> None:
-    """Append simulator consequence lines using the same rules as the legacy aggregator."""
+def _append_simulator_guidance(guidance_parts: list[str], state: DeliberationState, ps: PromptSet) -> None:
+    """Append simulator consequence lines using the same rules as the legacy aggregator.
+
+    The bracket tags stay in code (logic and reports match on them); the sentences come from ``ps``.
+    """
     if not state.simulations:
         return
     negative_consequences: list[str] = []
@@ -41,14 +45,10 @@ def _append_simulator_guidance(guidance_parts: list[str], state: DeliberationSta
         avoid_str = "; ".join(negative_consequences[:3])
         guidance_parts.append(f"[SIMULATOR - Avoid] {avoid_str}")
     elif has_negative_valence:
-        guidance_parts.append(
-            f"[SIMULATOR] Response may have negative consequences "
-            f"(valence: {valence:.2f}). Mitigate potential risks and "
-            "make the response more constructive."
-        )
+        guidance_parts.append("[SIMULATOR] " + ps.format("guidance.simulator.negative_valence", valence=f"{valence:.2f}"))
 
 
-def _append_hindsight_guidance(guidance_parts: list[str], state: DeliberationState) -> None:
+def _append_hindsight_guidance(guidance_parts: list[str], state: DeliberationState, ps: PromptSet) -> None:
     """Append hindsight lines (legacy behavior when signal filter is off or bypassed)."""
     if state.hindsight:
         hindsight_feedback = None
@@ -69,9 +69,7 @@ def _append_hindsight_guidance(guidance_parts: list[str], state: DeliberationSta
     if state.hindsight_score < 0.7:
         if not any("[HINDSIGHT]" in p for p in guidance_parts):
             guidance_parts.append(
-                f"[HINDSIGHT] Low score ({state.hindsight_score:.2f}). "
-                "Improve the overall ethical value of the response, "
-                "making it more balanced and responsible."
+                "[HINDSIGHT] " + ps.format("guidance.hindsight.low_score", score=f"{state.hindsight_score:.2f}")
             )
 
 
@@ -110,26 +108,21 @@ def _append_perspectives_guidance(
         guidance_parts.append(f"[PERSPECTIVES - Concerns] {'; '.join(persp_concerns[:5])}")
 
 
-def _build_unfiltered_guidance(state: DeliberationState, has_critical: bool) -> str:
+def _build_unfiltered_guidance(state: DeliberationState, has_critical: bool, ps: PromptSet) -> str:
     """Original aggregation: balance first (if no hard violations), then all modules."""
     guidance_parts: list[str] = []
     if not has_critical:
-        guidance_parts.append(
-            "[BALANCE] Maintain or improve the balance between pros and cons; " "do not add only caveats or disclaimers."
-        )
-        guidance_parts.append(
-            "[BALANCE] Present both sides of the argument; prefer improving "
-            "balance and structure over adding more caveats."
-        )
+        guidance_parts.append("[BALANCE] " + ps.text("guidance.balance.maintain"))
+        guidance_parts.append("[BALANCE] " + ps.text("guidance.balance.both_sides"))
     if state.last_critique and state.last_critique.revision_guidance:
         critic_guidance = state.last_critique.revision_guidance
         if critic_guidance and critic_guidance.strip():
             guidance_parts.append(f"[CRITIC] {critic_guidance}")
     _append_perspectives_guidance(guidance_parts, state, per_perspective_approval_threshold=None)
-    _append_hindsight_guidance(guidance_parts, state)
-    _append_simulator_guidance(guidance_parts, state)
+    _append_hindsight_guidance(guidance_parts, state, ps)
+    _append_simulator_guidance(guidance_parts, state, ps)
     if not guidance_parts:
-        return "Improve the response to make it clearer and more complete."
+        return ps.text("guidance.fallback")
     return "\n".join(guidance_parts)
 
 
@@ -159,6 +152,7 @@ def build_aggregated_guidance(
     *,
     filter_marginal: bool = True,
     telemetry: dict[str, Any] | None = None,
+    prompt_set: PromptSet | None = None,
 ) -> str:
     """
     Build a single guidance string from the current deliberation state,
@@ -172,7 +166,10 @@ def build_aggregated_guidance(
 
     If ``telemetry`` is provided, it is updated with gate decisions and scalar signals for logging
     and persistence.
+
+    ``prompt_set`` is the source of the instruction sentences (None = packaged defaults).
     """
+    ps = prompt_set or default_prompt_set()
     has_critical = bool(state.last_critique and getattr(state.last_critique, "has_critical_violations", False))
     apply_filter = bool(filter_marginal and not has_critical)
 
@@ -183,7 +180,7 @@ def build_aggregated_guidance(
         _fill_telemetry_defaults(telemetry, state)
 
     if not apply_filter:
-        result = _build_unfiltered_guidance(state, has_critical)
+        result = _build_unfiltered_guidance(state, has_critical, ps)
         if telemetry is not None:
             telemetry["guidance_empty"] = not result.strip()
             telemetry["guidance_char_len"] = len(result)
@@ -223,7 +220,7 @@ def build_aggregated_guidance(
         telemetry["hindsight_section_included"] = include_hindsight
         telemetry["hindsight_effectively_present"] = _hindsight_effectively_present(state)
     if include_hindsight:
-        _append_hindsight_guidance(guidance_parts, state)
+        _append_hindsight_guidance(guidance_parts, state, ps)
 
     # --- SIMULATOR ---
     include_simulator = False
@@ -235,7 +232,7 @@ def build_aggregated_guidance(
             telemetry["semantic_expected_harm"] = sem_harm
             telemetry["simulator_section_included"] = include_simulator
     if include_simulator:
-        _append_simulator_guidance(guidance_parts, state)
+        _append_simulator_guidance(guidance_parts, state, ps)
 
     if filter_marginal:
         if not guidance_parts:
@@ -252,15 +249,8 @@ def build_aggregated_guidance(
 
     # --- BALANCE (only with substantive content, and never for hard-violation path) ---
     if guidance_parts and not has_critical:
-        guidance_parts.insert(
-            0,
-            "[BALANCE] Maintain or improve the balance between pros and cons; " "do not add only caveats or disclaimers.",
-        )
-        guidance_parts.insert(
-            1,
-            "[BALANCE] Present both sides of the argument; prefer improving "
-            "balance and structure over adding more caveats.",
-        )
+        guidance_parts.insert(0, "[BALANCE] " + ps.text("guidance.balance.maintain"))
+        guidance_parts.insert(1, "[BALANCE] " + ps.text("guidance.balance.both_sides"))
 
     result = "\n".join(guidance_parts) if guidance_parts else ""
     if telemetry is not None:

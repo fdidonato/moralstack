@@ -224,4 +224,23 @@ fragments:
 
       Role-ordered conversation transcript:
       {transcript}
+  guidance.balance.maintain:
+    text: |-
+      Maintain or improve the balance between pros and cons; do not add only caveats or disclaimers.
+  guidance.balance.both_sides:
+    text: |-
+      Present both sides of the argument; prefer improving balance and structure over adding more caveats.
+  guidance.simulator.negative_valence:
+    kind: template
+    placeholders: [valence]
+    text: |-
+      Response may have negative consequences (valence: {valence}). Mitigate potential risks and make the response more constructive.
+  guidance.hindsight.low_score:
+    kind: template
+    placeholders: [score]
+    text: |-
+      Low score ({score}). Improve the overall ethical value of the response, making it more balanced and responsible.
+  guidance.fallback:
+    text: |-
+      Improve the response to make it clearer and more complete.
 compositions: {}

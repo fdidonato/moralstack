@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Policy and orchestration prompts read from the prompt set (prompt externalization, step A2c).**
+  `Orchestrator` / `create_orchestrator` / `OrchestrationController` take `prompt_set=None` (read-only `prompt_set`
+  properties) and hand it to the runner, the response assembler, the refusal handler, the DCCL layer and
+  `OpenAIPolicy(prompt_set=)`; `OutputProtector` / `create_protector`, `force_language_prefix`,
+  `resolve_prompt_with_language`, `generate_llm_safe_refusal[_detailed]` and `generate_domain_exclusion_response`
+  gain the same optional kwarg. The policy base, language/anti-leak/canary text, SAFE_COMPLETE / CONSTRAINED
+  instructions, hard-violation guidance, rewrite texts, contract regeneration, draft-match and refusal / exclusion
+  messages come from the set, and persisted `system_prompt` rows hold the rendered string. The five revision-guidance
+  sentences of `guidance_builder` are now `guidance.*` fragments in `policy.yaml` (the bracket tags stay in code).
+  With `prompt_set=None` every wire and persisted row is byte-identical (A0 golden green); the old constants stay
+  importable as default re-exports. The temporary A1 duplication guard in `tests/test_prompt_catalog.py` is removed,
+  replaced by `tests/test_prompt_set_threading.py` (including a reachability sweep over every packaged fragment).
+
 - **Retrieval prompts read from the prompt set (prompt externalization, step A2e).**
   `ConstitutionStoreConfig.prompt_set` and a keyword-only `ConstitutionStore(prompt_set=...)` (config wins),
   propagated through `ConstitutionRetrieverConfig.prompt_set` to `DomainPrefilter`, `EnhancedDomainAgent` and
@@ -22,8 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   system prompt from it, and every DCCL caller (`_classify_safety_override`, `validate_contract`)
   forwards the instance set. Persisted `system_prompt` rows hold the rendered string. With the default
   set every wire is byte-identical; `_DCCL_LLM_SYSTEM_PROMPT`, `DCCL_DRAFT_MATCH_SYSTEM_PROMPT` and
-  `_LLM_CLASSIFIER_SYSTEM_PROMPT` stay importable as default re-exports. The controller still builds the
-  layer without a set (wired in A2c).
+  `_LLM_CLASSIFIER_SYSTEM_PROMPT` stay importable as default re-exports.
 
 - **Risk estimator reads its prompts from a `PromptSet` (prompt externalization, step A2a).**
   `LLMBasedRiskEstimator`, `get_harm_signal_prompts`, `render_evaluation_order`, `render_output_schema` and
@@ -32,8 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fragments takes effect), and the persisted `system_prompt` is the rendered string. The constants in
   `models/risk/prompts.py` become default re-exports with identical bytes. With the default set every wire,
   persisted row and cache key is unchanged (A0 golden green).
-
-||||||| parent of 58b2486 (feat(prompts): thread prompt set into deliberation)
 
 - **Prompt externalization, step A2b (deliberative modules and cache tag).** The critic, simulator,
   hindsight and perspectives modules (and `build_module_messages`) take an optional `prompt_set` and

@@ -218,4 +218,10 @@ fragments:
       User text (for language detection only): '{prompt_snippet}'
 
       Write 2-3 polite sentences explaining you cannot assist with this topic. Respond in the EXACT SAME LANGUAGE as the user's text. No technical details.
+  refusal.final_revalidation_rationale:
+    text: |-
+      The candidate final answer failed the final developer-contract validation. Refuse without quoting protected content, internal detector details, or policy identifiers.
+  refusal.assembler_harmful_rationale:
+    text: |-
+      Request classified as clearly harmful based on policy evaluation.
 compositions: {}

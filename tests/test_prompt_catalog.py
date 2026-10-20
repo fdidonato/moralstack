@@ -1,8 +1,7 @@
 """Prompt catalog (``moralstack/prompts/catalog.py``): loader, validation, overrides, audit, identity.
 
-Tier 1 (content independent) except the clearly marked duplication guard, which exists only while the
-module constants still hold the prompt text: it is deleted in the A2x step where each module's constants
-become re-exports of the catalog.
+Tier 1 (content independent) except the A0-snapshot comparisons at the end of the file (the YAML text equals
+the frozen pre-externalization bytes).
 
 Synthetic trees go through the internal ``_load_from(defaults_dir, prompts_dir)`` hook; the tests on the
 packaged set use ``default_prompt_set()`` / ``load_prompt_set()``.
@@ -1151,15 +1150,11 @@ def test_override_of_wire_form_fragment_flows_to_retry_with_transform(tmp_path: 
 
 
 # --------------------------------------------------------------------------------------
-# DUPLICATION GUARD (temporary): packaged YAML == live Python constants == A0 snapshot.
-# Deleted, module by module, in the A2x steps where the constants become re-exports.
+# A0 snapshot comparisons: the packaged YAML text equals the frozen pre-externalization bytes.
+# (The temporary A1 duplication guard against the live module constants was removed in A2c: every constant is now
+# a default re-export of the catalog, so such a comparison would be circular. The live behaviour is pinned by
+# tests/prompts_golden, and the reachability of every fragment by tests/test_prompt_set_threading.py.)
 # --------------------------------------------------------------------------------------
-
-
-def _live_compositions() -> dict[str, tuple[str, str]]:
-    """composition id -> (live value, A0 snapshot key)."""
-
-    return {}
 
 
 @pytest.fixture(scope="module")
@@ -1180,77 +1175,8 @@ def _first_diff(a: str, b: str) -> str:
     return f"lengths {len(a)} vs {len(b)}, first difference at offset {i}"
 
 
-def test_default_roundtrip_matches_live_constants(snapshot_table: dict[str, Any]) -> None:
-    """Every composition rendered from the packaged YAML equals the live constant AND the A0 snapshot entry."""
-    ds = default_prompt_set()
-    live = _live_compositions()
-    # A2a: the risk constants are re-exports of the packaged set (nothing left to compare); their bytes are
-    # pinned by the A0 golden and by tests/test_prompt_set_threading_risk.py.
-    migrated = {"risk.intent.system", "risk.signals.system_head", "risk.operational.system"}
-    retired_a2b = {
-        "critic.full.system",
-        "critic.quick.system",
-        "critic.retry",
-        "perspectives.system_body",
-        "simulator.batch.system",
-        "simulator.seeded.system",
-        "simulator.retry",
-        "hindsight.batch.system",
-        "hindsight.single.system",
-        "hindsight.retry.single",
-        "hindsight.retry.batch",
-    }
-    assert set(live) | migrated | retired_a2b == set(ds.composition_ids()), "a composition is missing from the guard"
-    problems: list[str] = []
-    for cid, (value, key) in live.items():
-        snap = _snapshot_value(snapshot_table, key)
-        for ctx in ALL_CONTEXTS if ds.is_context_aware(cid) else [NO_CONTEXT]:
-            rendered = ds.render(cid, ctx)
-            if rendered != value:
-                problems.append(f"{cid} {ctx}: differs from the live constant ({_first_diff(rendered, value)})")
-            if rendered != snap:
-                problems.append(f"{cid} {ctx}: differs from the A0 snapshot ({_first_diff(rendered, snap)})")
-    assert not problems, "\n".join(problems)
-
-
-def _live_standalone() -> dict[str, tuple[str, str]]:
-    """fragment id -> (kind, live value) for fragments that equal an existing module constant."""
-    from moralstack.orchestration import _policy_helpers as ph
-    from moralstack.orchestration import domain_exclusion
-    from moralstack.orchestration import safe_refusal_generator as srg
-    from moralstack.utils.output_protection import OutputProtector
-
-    out: dict[str, tuple[str, str]] = {
-        "policy.system": ("text", ph.POLICY_SYSTEM_PROMPT),
-        "policy.language_rules": ("text", OutputProtector.LANGUAGE_RULES),
-        "policy.anti_leak_rules": ("text", OutputProtector.ANTI_LEAK_RULES),
-        "policy.safe_complete_instruction": ("text", ph.SAFE_COMPLETE_GENERATION_INSTRUCTION),
-        "policy.constrained_instruction": ("text", ph.CONSTRAINED_GENERATION_INSTRUCTION),
-        "refusal.system": ("text", srg._build_system_message()),
-        "exclusion.system": ("text", domain_exclusion._build_system_message()),
-    }
-    for harm_type, items in srg._HARM_TYPE_CATEGORIES.items():
-        out[f"refusal.category_hints.{harm_type}"] = ("lines", "\n".join(items))
-    return out
-
-
-def test_standalone_fragments_equal_live_constants() -> None:
-    ds = default_prompt_set()
-    problems: list[str] = []
-    for fid, (kind, value) in _live_standalone().items():
-        frag = ds._fragments.get(fid)
-        if frag is None:
-            problems.append(f"{fid}: missing from the packaged set")
-            continue
-        if frag.kind != kind:
-            problems.append(f"{fid}: kind {frag.kind} != {kind}")
-        if frag.text != value:
-            problems.append(f"{fid}: {_first_diff(frag.text, value)}")
-    assert not problems, "\n".join(problems)
-
-
 def test_standalone_constants_equal_the_a0_snapshot(snapshot_table: dict[str, Any]) -> None:
-    """The snapshot pins the constants; the YAML is checked against the live ones above and, here, against it."""
+    """The A0 snapshot pins the pre-externalization bytes of the constants; the packaged YAML must equal them."""
     ds = default_prompt_set()
     pinned = {
         "const/models.risk.prompts.HARM_SIGNAL_STATIC_TEMPLATE": "risk.signals.static_suffix",
@@ -1296,124 +1222,12 @@ def test_dead_path_constants_equal_double_braces_of_default() -> None:
     )
 
 
-# -- inline templates: assembled exactly as the code does, compared with the live builders -----
-
-
-def test_language_prefix_hard_violation_exclusion_and_refusal_fragments_reproduce_the_live_code() -> None:
-    from moralstack.orchestration import _policy_helpers as ph
-    from moralstack.orchestration import domain_exclusion
-    from moralstack.orchestration import safe_refusal_generator as srg
-    from moralstack.orchestration.deliberation_runner import _hard_violation_regeneration_guidance
-    from moralstack.orchestration.refusal_context import RefusalContext
-
-    ds = default_prompt_set()
-    assert ds.format("policy.language_prefix.explicit", language="English", prompt="P {x}") == ph.force_language_prefix(
-        "P {x}", "English"
-    )
-    assert ds.format("policy.language_prefix.implicit", prompt="P {x}") == ph.force_language_prefix("P {x}")
-    assert ds.format("policy.hard_violation_guidance", ids="A, B") == _hard_violation_regeneration_guidance(["A", "B"])
-    assert ds.format(
-        "policy.hard_violation_guidance", ids=ds.text("policy.hard_violation_guidance.unspecified")
-    ) == _hard_violation_regeneration_guidance([])
-    assert ds.format("exclusion.user", domain="political", prompt_snippet="hi {x}") == domain_exclusion._build_user_message(
-        "political", "hi {x}"
-    )
-
-    def hints(items: tuple[str, ...]) -> str:
-        return "\n".join(f"    - {b}" for b in items)
-
-    # evidence mode (refusal context present), with and without a redirection in the context
-    for redirection in ("red it {x}", ""):
-        ctx = RefusalContext(
-            risk_category="x",
-            harm_type="reputational",
-            request_type="clear_harm",
-            rationale="rat {braces} here",
-            operational_risk="HIGH",
-            requested_instructions=True,
-            intent_operational=True,
-            safe_refusal_focus="focus",
-            refusal_redirection=redirection,
-        )
-        live = srg._build_user_message(
-            "do {bad} thing", "RC", ["A", "B"], "Italian", "finance", "ignored", "", ctx, ("t1", "t2")
-        )
-        evidence = ds.format(
-            "refusal.evidence_block",
-            harm_type="reputational",
-            request_type="clear_harm",
-            rationale_text="rat {braces} here",
-            safe_refusal_focus="focus",
-            operational_risk="HIGH",
-            requested_instructions=True,
-            intent_operational=True,
-            redirection_guidance=redirection or ds.text("refusal.default_redirection"),
-        )
-        got = ds.format(
-            "refusal.user",
-            request_context_block=ds.format("refusal.request_context_block", user_prompt="do {bad} thing"),
-            risk_category="RC",
-            reasons_str="A, B",
-            domain_str="finance",
-            context_block=evidence,
-            leak_avoidance_block=ds.format("refusal.leak_avoidance_block", terms="t1, t2"),
-            category_hints=hints(ds.lines("refusal.category_hints.reputational")),
-            language="Italian",
-        )
-        assert got == live, _first_diff(got, live)
-    # legacy mode (no refusal context): rationale and domain blocks, fallback hints
-    live = srg._build_user_message("req", "RC", [], "English", "finance", "some rationale", "do X", None, ())
-    context = (
-        ds.format("refusal.legacy_rationale_block", rationale="some rationale")
-        + ds.format("refusal.legacy_domain_block", domain="finance")
-        + ds.format("refusal.legacy_domain_redirection", domain="finance", redirection="do X")
-    )
-    got = ds.format(
-        "refusal.user",
-        request_context_block=ds.format("refusal.request_context_block", user_prompt="req"),
-        risk_category="RC",
-        reasons_str="policy_decision",
-        domain_str="finance",
-        context_block=context,
-        leak_avoidance_block="",
-        category_hints=hints(ds.lines("refusal.category_hints.fallback")),
-        language="English",
-    )
-    assert got == live, _first_diff(got, live)
-
-
-def test_canary_and_estimator_fragments_reproduce_the_live_code() -> None:
-    from moralstack.models.risk.estimator import _risk_context_messages
-    from moralstack.utils.output_protection import CanaryProtection
-
-    ds = default_prompt_set()
-    canary = CanaryProtection(rotate_per_request=False)
-    assert canary.inject("") == ds.format("policy.canary_instruction", canary=canary.current_canary)
-    messages = _risk_context_messages(system_prompt="S", user_prompt="U {x}", developer_contract_text="contract")
-    assert messages[-1]["content"] == ds.text("risk.context_preface") + "U {x}"
-
-
-def test_risk_principles_block_and_signal_renderer_fragments_reproduce_the_live_code(snapshot_table: dict[str, Any]) -> None:
-    from moralstack.models.risk.signals import prompt_renderer
-    from moralstack.models.risk.signals.registry import registry
-
+def test_risk_principles_block_fragment_matches_the_a0_snapshot(snapshot_table: dict[str, Any]) -> None:
     ds = default_prompt_set()
     none = ds.text("risk.intent.principles_none_found")
     soft = "- SOFT.TEST.1 [SOFT]: Soft title\n  Rule: Short soft rule."
     block = ds.format("risk.intent.principles_block", hard_principles=none, soft_principles=soft)
     assert block == _snapshot_value(snapshot_table, "builder/risk_principles_block/soft_only_hard_none_found")
-
-    # evaluation order items and the output schema header/footer
-    items = [
-        ds.format("risk.signals.evaluation_order_item", topic_hints=sig.short_description, key=sig.key)
-        for sig in registry.signals.values()
-        if sig.effects.priority_resolution_in_prompt
-    ]
-    assert "\n\n".join(items) == prompt_renderer.render_evaluation_order(registry)
-    lines = [ds.format("risk.signals.output_schema_header", field_count=len(registry.signals) + 1), "", "{{"]
-    lines += [f'  "{sig.key}": "yes" | "no",' for sig in registry.signals.values()]
-    lines += ['  "domain_sensitivity": "LOW" | "MEDIUM" | "HIGH"', "}}", "", ds.text("risk.signals.output_schema_footer")]
-    assert "\n".join(lines) == prompt_renderer.render_output_schema(registry)
 
 
 def test_policy_rewrite_contract_regeneration_and_draft_match_fragments_match_the_a0_snapshot(
@@ -1457,90 +1271,3 @@ def test_policy_rewrite_contract_regeneration_and_draft_match_fragments_match_th
     ):
         got = ds.format("compliance.draft_match.user", action=action[:500], draft=draft[:1000])
         assert got == _snapshot_value(snapshot_table, f"wire/draft_match/{case}/call#0/prompt"), case
-
-
-def test_every_packaged_fragment_is_covered_by_the_duplication_guard() -> None:
-    """A fragment that no guard compares with the live code would be an unchecked copy."""
-    ds = default_prompt_set()
-    covered: set[str] = set(_live_standalone())
-    # retrieval.*: no longer a copy of live code (A2e); the golden wires and the marker tests in
-    # tests/test_prompt_set_threading_retrieval.py cover every one of these IDs. Listed explicitly so a new
-    # retrieval.* fragment is still reported as uncovered.
-    covered.update(
-        {
-            "retrieval.agent.enhanced.system",
-            "retrieval.agent.legacy.system",
-            "retrieval.agent.enhanced.user",
-            "retrieval.agent.legacy.user",
-            "retrieval.agent.negative_section",
-            "retrieval.agent.negative_examples.financial",
-            "retrieval.agent.negative_examples.research",
-            "retrieval.agent.negative_examples.journalism",
-            "retrieval.agent.negative_examples.enterprise",
-            "retrieval.agent.negative_examples.mental_health",
-            "retrieval.agent.negative_examples.medical",
-            "retrieval.prefilter.system",
-            "retrieval.prefilter.user",
-        }
-    )
-    for cid in ds.composition_ids():
-        covered.update(part.ref for part in ds._compositions[cid].parts)
-    covered.update(
-        {
-            # compared with the live builders / the A0 snapshot in the inline-template tests above
-            "critic.full.previous_violations_block",
-            "critic.full.previous_guidance_block",
-            "perspectives.identity_block",
-            "policy.language_prefix.explicit",
-            "policy.language_prefix.implicit",
-            "policy.hard_violation_guidance",
-            "policy.hard_violation_guidance.unspecified",
-            "policy.canary_instruction",
-            "policy.rewrite.user",
-            "policy.rewrite.default_system",
-            "policy.rewrite.constraints",
-            "policy.contract_regeneration.user",
-            "policy.contract_regeneration.transcript_block",
-            "exclusion.user",
-            "refusal.user",
-            "refusal.evidence_block",
-            "refusal.default_redirection",
-            "refusal.legacy_rationale_block",
-            "refusal.legacy_domain_block",
-            "refusal.legacy_domain_redirection",
-            "refusal.request_context_block",
-            "refusal.leak_avoidance_block",
-            "refusal.category_hints.fallback",
-            # A2d: the module constants are default re-exports now. Bytes: the A0 snapshot pins
-            # (test_standalone_constants_equal_the_a0_snapshot, builder/dccl_* golden keys); threading:
-            # tests/test_prompt_set_threading_compliance.py
-            "compliance.dccl.system",
-            "compliance.draft_match.system",
-            "compliance.safety_classifier.system",
-            "compliance.dccl.native_trailer",
-            "compliance.dccl.no_draft",
-            "compliance.dccl.fallback_user",
-            "compliance.dccl.transcript_truncated_note",
-            "compliance.dccl.transcript_complete_note",
-            "compliance.dccl.transcript_fallback",
-            "compliance.draft_match.user",
-            # A2a: the risk constants are re-exports, no longer a second copy to compare; the user/static
-            # templates stay pinned to the A0 snapshot in test_standalone_constants_equal_the_a0_snapshot.
-            "risk.intent.user",
-            "risk.signals.user",
-            "risk.operational.user",
-            "risk.signals.static_suffix",
-            "risk.context_preface",
-            "risk.intent.principles_block",
-            "risk.intent.principles_none_found",
-            "risk.signals.evaluation_order_item",
-            "risk.signals.output_schema_header",
-            "risk.signals.output_schema_footer",
-        }
-    )
-    # common/retry/critic/perspectives/simulator/hindsight/context: the constants are default re-exports of
-    # these fragments since A2b, so comparing them here would be tautological; the A0 golden oracle pins them.
-    retired = ("common.", "retry.", "critic.", "perspectives.", "simulator.", "hindsight.", "context.")
-    missing = sorted(fid for fid in set(ds.fragment_ids()) - covered if not fid.startswith(retired))
-    assert not missing, f"fragments not covered by any duplication-guard check: {missing}"
-    assert not sorted(covered - set(ds.fragment_ids())), "the guard names a fragment that no longer exists"

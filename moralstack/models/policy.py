@@ -22,6 +22,7 @@ from typing import Any
 
 from moralstack.models.base import GenerationConfig, GenerationOverrides, GenerationResult
 from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
+from moralstack.prompts.catalog import PromptSet, default_prompt_set
 from moralstack.utils.openai_params import (
     completion_tokens_param,
     supports_json_schema,
@@ -101,6 +102,7 @@ class OpenAIPolicy:
         timeout_ms: int | None = None,
         max_retries: int | None = None,
         config: OpenAIPolicyConfig | None = None,
+        prompt_set: PromptSet | None = None,
     ) -> None:
         """
         Args:
@@ -110,7 +112,9 @@ class OpenAIPolicy:
             timeout_ms: Override OPENAI_TIMEOUT_MS in millisecondi
             max_retries: Override OPENAI_MAX_RETRIES
             config: Config object che sovrascrive i singoli parametri
+            prompt_set: PromptSet da cui `rewrite` legge i propri testi (default: set impacchettato)
         """
+        self._prompt_set = prompt_set or default_prompt_set()
         # 1. Carichiamo i default da env (con eventuali override di api_key/model da costruttore)
         env_cfg = _get_openai_config(api_key_override=api_key, model_override=model)
 
@@ -441,62 +445,14 @@ class OpenAIPolicy:
         supports it: the existing draft is provided as a prediction hint so
         that unchanged portions are generated significantly faster.
         """
-        rewrite_prompt = (
-            f"ORIGINAL REQUEST:\n{prompt}\n\n"
-            f"CURRENT DRAFT:\n{draft}\n\n"
-            f"REVISION FEEDBACK:\n{guidance}\n\n"
-            "If the CURRENT DRAFT is a single enumerated answer (exactly one of a "
-            "small fixed option set such as TRUE/FALSE, YES/NO, a single letter, or "
-            "a single number) and the REVISION FEEDBACK contains no hard safety "
-            "requirement, return the CURRENT DRAFT UNCHANGED. Soft, balance, or "
-            "disclaimer feedback must never change which option is selected. "
-            "Revise only what is necessary to address the feedback above. "
-            "Preserve the original request's exact output constraints: word count, "
-            "number count, name count, keyword count, punctuation requirements, "
-            "no-whitespace rules, option-only answers, quote nesting, bullet/sub-bullet "
-            "format, sentence count, sentence starts, alphabetic word patterns, language, "
-            "and any instruction not to explain. "
-            "Do not make the response longer, more structured, more caveated, or more "
-            "explanatory unless the user requested that or the feedback cannot be satisfied "
-            "otherwise. "
-            "Output ONLY the revised response, no additional commentary."
-        )
-        rewrite_system = system or (
-            "You are an assistant that revises responses based on feedback. "
-            "When revising, first identify and preserve the user's explicit output "
-            "constraints exactly, including requested format, length, style, structure, "
-            "language, ordering, required fields, forbidden elements, and any instruction "
-            "to be concise or to output only a specific artifact. "
-            "If the user requested a specific format or constrained output, make the "
-            "smallest necessary edit needed to satisfy the feedback and the user's "
-            "constraints. Do not add headings, lists, caveats, disclaimers, explanations, "
-            "examples, extra context, alternative formulations, or extra lines unless "
-            "the user explicitly requested them or a hard safety requirement requires them. "
-            "If the user did not request a specific constrained output format, maintain "
-            "or improve the depth, structure, clarity, and reasoning quality of the "
-            "response. Continue to present multiple perspectives, balanced analysis, "
-            "relevant caveats, and clear organization when they improve the answer. "
-            "Use numbered lists or structured sections when helpful. "
-            "In all cases, incorporate the feedback faithfully, avoid unnecessary "
-            "verbosity, and do not change correct content that does not need to be changed. "
-            "Respond in the SAME LANGUAGE as the original user request."
-        )
+        # getattr: test doubles borrow this method (``OpenAIPolicy.rewrite(fake, ...)``) without running __init__.
+        candidate = getattr(self, "_prompt_set", None)
+        ps = candidate if isinstance(candidate, PromptSet) else default_prompt_set()
+        rewrite_prompt = ps.format("policy.rewrite.user", prompt=prompt, draft=draft, guidance=guidance)
+        rewrite_system = system or ps.text("policy.rewrite.default_system")
 
         # Append constraints regardless of source
-        rewrite_system += (
-            "REWRITE CONSTRAINTS:\n"
-            "- Do NOT add new examples, scenarios, or operational details "
-            "not present in the original draft.\n"
-            "- Focus on restructuring, deepening, and reframing the EXISTING "
-            "content based on the feedback.\n"
-            "- When feedback says to focus on narrative or conceptual aspects, "
-            "REMOVE operational specifics rather than adding new ones.\n"
-            "- Preserve exact user-requested output constraints if explicit requested: word counts, numeric "
-            "counts, required names, keyword counts, punctuation, no-whitespace rules, "
-            "option-only formats, quotes, bullets, sentence counts, and language.\n"
-            "- If the feedback is only soft/cosmetic, do not violate any explicit output "
-            "constraint to satisfy it.\n"
-        )
+        rewrite_system += ps.text("policy.rewrite.constraints")
         draft_prediction = {"type": "content", "content": draft} if draft else None
         logger.info(
             "policy_rewrite using model=%s (primary=%s)",

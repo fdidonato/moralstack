@@ -33,6 +33,7 @@ from moralstack.orchestration.types import (
     RiskEstimationProtocol,
     risk_category_str,
 )
+from moralstack.prompts.catalog import PromptSet, default_prompt_set
 
 # Same value used by deliberation_runner.SEQ_REFUSAL_OR_FINALIZE; duplicated
 # here to avoid a cyclic import (deliberation_runner depends on this module).
@@ -61,8 +62,9 @@ class ResponseAssembler:
     )
     REFUSAL_MIN_REASON_LEN = 80
 
-    def __init__(self, policy: PolicyLLMProtocol | None = None):
+    def __init__(self, policy: PolicyLLMProtocol | None = None, prompt_set: PromptSet | None = None):
         self.policy = policy
+        self._prompt_set = prompt_set or default_prompt_set()
 
     def assemble(
         self,
@@ -287,7 +289,13 @@ class ResponseAssembler:
 
         # Fallback finale: almeno il reason_code è informativo
         if not _critique_guidance and state.has_critical_violations:
-            _critique_guidance = "Request classified as clearly harmful based on policy evaluation."
+            # Model-facing only when a policy LLM will receive it as the refusal rationale; without a policy the
+            # sentence is the static delivered/metadata fallback and keeps its literal.
+            _critique_guidance = (
+                self._prompt_set.text("refusal.assembler_harmful_rationale")
+                if self.policy is not None
+                else "Request classified as clearly harmful based on policy evaluation."
+            )
 
         reason = _critique_guidance or "[REFUSAL_FALLBACK]"
 
@@ -326,6 +334,7 @@ class ResponseAssembler:
                     rationale=reason if reason else None,
                     refusal_redirection=refusal_redirection,
                     refusal_context=refusal_context,
+                    prompt_set=self._prompt_set,
                 )
                 _refusal_duration_ms = (time.time() - _refusal_t0) * 1000.0
                 content = refusal_result.text

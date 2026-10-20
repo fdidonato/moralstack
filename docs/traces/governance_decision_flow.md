@@ -7,6 +7,15 @@ unverified branches are noted inline.
 Primary code: `moralstack/orchestration/controller.py` (`process`, line 1885),
 `moralstack/sdk/wrapper.py`, `moralstack/runtime/decision/safe_complete_policy.py`.
 
+**Prompt sources (prompt externalization, A2c).** The decision flow below never reads prompt text: `final_action`
+comes from structured signals. Every model-facing text the flow sends (policy base, language prefix, SAFE_COMPLETE /
+CONSTRAINED instructions, hard-violation guidance, revision guidance, refusal and domain-exclusion messages, the
+contract-regeneration and draft-match prompts) is read from the orchestrator's `PromptSet`
+(`Orchestrator.prompt_set` -> `OrchestrationController.prompt_set` -> runner / assembler / refusal handler / DCCL),
+defaulting to the packaged YAML fragments in `moralstack/prompts/data/`. With the default set the wires and persisted
+`system_prompt` rows are byte-identical to the former inline texts (`tests/prompts_golden`); the code-owned gates
+(`path_router.is_hard_signal_refuse`, the DCCL category check, the response schemas) do not depend on prompt text.
+
 ---
 
 ## 0. Entry

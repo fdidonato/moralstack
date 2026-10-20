@@ -5,7 +5,9 @@
 > tested. From step A2b the deliberative modules (critic, simulator, hindsight, perspectives) and
 > `message_context` read their prompts from a `PromptSet` handed to their constructors (default: the packaged
 > set; the prompt constants stay as default re-exports), and the module caches carry `PromptSet.cache_tag_for(ctx)`
-> (empty for the default set). Nothing builds a non-default set at runtime yet: `GovernanceConfig.prompts_dir` does not exist yet and
+> (empty for the default set). From step A2c the policy and orchestration layer (`Orchestrator`,
+> `OrchestrationController`, the runner, the refusal / exclusion generators, `OpenAIPolicy.rewrite`, the output
+> protector and the revision guidance) reads its texts from the same kind of set. Nothing builds a non-default set at runtime yet: `GovernanceConfig.prompts_dir` does not exist yet and
 > `MORALSTACK_PROMPTS_DIR` is not read by any entry point. Nothing in this document changes behavior today.
 > The full guide (complete fragment table, coherent `when` groups, audit walkthrough) is written in A3 and
 > finalized in A5.
@@ -105,10 +107,13 @@ IDs are lowercase dotted names, in 11 files. The authoritative list is `default_
 `.composition_ids()` (the counts are not repeated here so they cannot drift). The complete table (with the
 coherent `when` groups) is added in A3/A5.
 
-**Deferred to A2c.** Five revision-guidance fragments from `orchestration/guidance_builder.py` are not packaged yet:
-`guidance.balance.maintain`, `guidance.balance.both_sides`, `guidance.simulator.negative_valence` (template
-`{valence}`), `guidance.hindsight.low_score` (template `{score}`) and `guidance.fallback`. They will live in
-`policy.yaml` (they reach `OpenAIPolicy.rewrite` as `REVISION FEEDBACK:`); the bracket tags stay in code.
+**Revision guidance (externalized in A2c).** Five revision-guidance fragments from `orchestration/guidance_builder.py`
+live in `policy.yaml`: `guidance.balance.maintain`, `guidance.balance.both_sides`,
+`guidance.simulator.negative_valence` (template `{valence}`, preformatted `:.2f` by the code),
+`guidance.hindsight.low_score` (template `{score}`, same rule) and `guidance.fallback`. They reach
+`OpenAIPolicy.rewrite` as `REVISION FEEDBACK:`. The bracket tags (`[BALANCE]`, `[CRITIC]`, `[SIMULATOR]`,
+`[HINDSIGHT]`, `[PERSPECTIVES - ...]`) stay in code, because code matches on them; each fragment is the sentence
+that follows its tag.
 
 | prefix | file | covers |
 |---|---|---|

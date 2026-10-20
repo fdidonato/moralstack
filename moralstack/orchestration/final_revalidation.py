@@ -25,6 +25,7 @@ from moralstack.orchestration.safe_refusal_generator import (
     resolve_refusal_domain_and_redirection,
 )
 from moralstack.orchestration.types import ResponseType
+from moralstack.prompts.catalog import PromptSet, default_prompt_set
 
 logger = logging.getLogger(__name__)
 
@@ -538,6 +539,10 @@ def _generate_post_revalidation_refusal(
     policy = getattr(orchestrator, "policy", None)
     generate = getattr(policy, "generate", None) if policy is not None else None
     llm_client = policy if callable(generate) else None
+    # The orchestrator facade/controller exposes its PromptSet; anything else (test doubles, hand-wired
+    # objects) falls back to the packaged defaults inside the refusal generator.
+    orchestrator_prompt_set = getattr(orchestrator, "prompt_set", None)
+    prompt_set = orchestrator_prompt_set if isinstance(orchestrator_prompt_set, PromptSet) else None
     language = _detect_language_fallback(getattr(request, "prompt", "") or "")
     domain, refusal_redirection = resolve_refusal_domain_and_redirection(
         request_prompt=getattr(request, "prompt", "") or "",
@@ -547,10 +552,7 @@ def _generate_post_revalidation_refusal(
         constitution_store=getattr(orchestrator, "constitution_store", None),
     )
     reason_codes = list(dict.fromkeys(["FINAL_REVALIDATION_BLOCKED", block_reason, *violated_principles]))
-    rationale = (
-        "The candidate final answer failed the final developer-contract validation. "
-        "Refuse without quoting protected content, internal detector details, or policy identifiers."
-    )
+    rationale = (prompt_set or default_prompt_set()).text("refusal.final_revalidation_rationale")
 
     start = time.perf_counter()
     wall = int(time.time() * 1000)
@@ -564,6 +566,7 @@ def _generate_post_revalidation_refusal(
         rationale=rationale,
         refusal_redirection=refusal_redirection,
         refusal_context=None,
+        prompt_set=prompt_set,
     )
     duration_ms = (time.perf_counter() - start) * 1000
     refusal = refusal_result.text

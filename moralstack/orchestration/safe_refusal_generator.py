@@ -13,6 +13,7 @@ from typing import Any, Protocol
 
 from moralstack.observability.token_usage import TokenUsage
 from moralstack.orchestration.refusal_context import RefusalContext
+from moralstack.prompts.catalog import PromptSet, default_prompt_set
 
 logger = logging.getLogger(__name__)
 
@@ -112,32 +113,19 @@ _CYBER_LEAK_TERMS = (
 
 # Mapping harm_type → human-readable broad unsafe category phrasing used to
 # anchor the refusal's first sentence. Keeps the LLM from picking unrelated
-# categories from a flat list of examples.
+# categories from a flat list of examples. The texts live in
+# moralstack/prompts/data/refusal.yaml (``refusal.category_hints.<harm_type>``); this name stays
+# importable as a default re-export. Runtime code reads the ``PromptSet`` it was given.
 _HARM_TYPE_CATEGORIES: dict[str, list[str]] = {
-    "reputational": [
-        "damaging someone's reputation through false or manipulative content",
-        "running a deceptive online campaign against a third party",
-        "coordinating online harassment or a smear campaign against an identifiable target",
-    ],
-    "financial": [
-        "financial fraud or deception",
-        "financial exploitation",
-    ],
-    "physical": [
-        "causing physical harm",
-        "making or using a weapon",
-    ],
-    "child_exploitation": [
-        "contacting or grooming minors online",
-        "obtaining scripts or persuasion tactics for inappropriate adult-minor interactions",
-        "seeking facilitation of exploitation or sexualization of minors",
-    ],
-    "illegal": [
-        "an unlawful action",
-    ],
-    "emotional_relational": [
-        "manipulating or coercing someone in a personal relationship",
-    ],
+    harm_type: list(default_prompt_set().lines(f"refusal.category_hints.{harm_type}"))
+    for harm_type in (
+        "reputational",
+        "financial",
+        "physical",
+        "child_exploitation",
+        "illegal",
+        "emotional_relational",
+    )
 }
 
 
@@ -277,16 +265,11 @@ def resolve_refusal_domain_and_redirection(
     return domain, refusal_redirection
 
 
-def _build_system_message() -> str:
-    return (
-        "You are an AI assistant responsible for generating safe refusal responses. "
-        "Your task is to refuse a user request that has already been classified as harmful. "
-        "You must never provide technical details, instructions, examples, or references "
-        "that could enable harmful activity."
-    )
+def _build_system_message(prompt_set: PromptSet | None = None) -> str:
+    return (prompt_set or default_prompt_set()).text("refusal.system")
 
 
-def _format_harm_type_category_hints(harm_type: str) -> str:
+def _format_harm_type_category_hints(harm_type: str, prompt_set: PromptSet | None = None) -> str:
     """Render harm_type-aligned category hints; falls back to a coarse list.
 
     The LLM is asked to pick a broad unsafe-action category for the first
@@ -294,31 +277,15 @@ def _format_harm_type_category_hints(harm_type: str) -> str:
     prevents the previous failure mode where it picked an unrelated entry
     (e.g. "cyber abuse or unauthorized access") from a flat list.
     """
+    ps = prompt_set or default_prompt_set()
     ht = (harm_type or "").lower().strip()
-    bullets = _HARM_TYPE_CATEGORIES.get(ht)
-    if bullets:
-        return "\n".join(f"    - {b}" for b in bullets)
-    # Generic fallback used when harm_type is unset or "none"; keeps prior
-    # examples available so the model has anchors.
-    return (
-        "    - making or using a weapon\n"
-        "    - making an improvised weapon\n"
-        "    - making an incendiary device\n"
-        "    - making an explosive device\n"
-        "    - making an explosive device more harmful or lethal\n"
-        "    - increasing the lethality of a weapon\n"
-        "    - forging prescriptions or medical documents\n"
-        "    - obtaining prescription medication fraudulently\n"
-        "    - misrepresenting symptoms to a medical professional\n"
-        "    - unsafe use of illicit drugs\n"
-        "    - cyber abuse or unauthorized access\n"
-        "    - fraud or deception\n"
-        "    - discriminatory content targeting a protected group\n"
-        "    - harassment, doxxing, or privacy invasion\n"
-        "    - damaging someone's reputation through false or manipulative content\n"
-        "    - running a deceptive online campaign against a third party\n"
-        "    - self-harm or suicide instructions"
-    )
+    fragment_id = f"refusal.category_hints.{ht}"
+    # "fallback" is the generic list itself: it is used when harm_type is unset, "none" or unknown.
+    bullets = ps.lines(fragment_id) if ht and ht != "fallback" and ps.has(fragment_id) else ()
+    if not bullets:
+        # as before: an unknown harm_type, or a hint list an override emptied, uses the generic list
+        bullets = ps.lines("refusal.category_hints.fallback")
+    return "\n".join(f"    - {b}" for b in bullets)
 
 
 def _build_user_message(
@@ -331,7 +298,9 @@ def _build_user_message(
     refusal_redirection: str = "",
     refusal_context: RefusalContext | None = None,
     leak_avoidance_terms: tuple[str, ...] = (),
+    prompt_set: PromptSet | None = None,
 ) -> str:
+    ps = prompt_set or default_prompt_set()
     reasons_str = ", ".join(policy_reason_codes) if policy_reason_codes else "policy_decision"
     domain_str = domain.strip() if domain else "general"
 
@@ -343,167 +312,58 @@ def _build_user_message(
         redirection_guidance = (
             refusal_context.refusal_redirection
             or refusal_context.safe_redirection_guidance
-            or "Redirect toward safe, lawful, constructive alternatives."
+            or ps.text("refusal.default_redirection")
         )
 
         rationale_text = refusal_context.rationale or rationale or ""
         rationale_text = rationale_text[:_RATIONALE_MAX_LEN]
         harm_type_for_hints = refusal_context.harm_type or ""
 
-        context_block = f"""
-PRIMARY EVIDENCE — use these to ground the refusal:
-- harm_type: {refusal_context.harm_type or "unknown"}
-- request_type: {refusal_context.request_type or "unknown"}
-- risk-estimator rationale: {rationale_text or "(empty)"}
-
-SECONDARY EVIDENCE (supporting context only, lower weight):
-- refusal focus: {refusal_context.safe_refusal_focus}
-- operational risk: {refusal_context.operational_risk or "unknown"}
-- requested instructions: {refusal_context.requested_instructions}
-- intent operational: {refusal_context.intent_operational}
-
-SAFE REDIRECTION GUIDANCE:
-{redirection_guidance}
-
-REFUSAL QUALITY REQUIREMENTS — mandatory:
-The refusal must be both specific and convincing.
-
-Specificity:
-- The first sentence must name the concrete unsafe action category derived from
-  PRIMARY EVIDENCE.
-- Do not use vague categories such as "unsafe content", "harmful request",
-  "unlawful actions", or "policy violation" if PRIMARY EVIDENCE supports a more
-  concrete category.
-- Ground the refusal in the risk-estimator rationale, harm_type, request_type,
-  and activated signals.
-- Do not introduce unrelated risk categories.
-- Do not mention wrapper-only features such as article format, JSON format,
-  roleplay, fictional framing, or creative style unless they are relevant to
-  evasion or concealment.
-
-Convincingness:
-- Clearly explain why complying would be unsafe, unlawful, deceptive, or harmful
-  in practical terms.
-- The explanation must be understandable without exposing operational details.
-- If the request includes concealment, evasion, optimization, or platform-bypass
-  framing, mention that broad goal safely.
-- Provide a safe redirection that addresses the same underlying need without
-  enabling the harmful action.
-- Do not use generic redirections. Redirections must follow PRIMARY EVIDENCE,
-  not the surface domain, when the two conflict.
-
-GROUNDING RULES (mandatory):
-A. Name a broad unsafe-action category that is consistent with PRIMARY EVIDENCE
-   (harm_type and rationale). Do NOT introduce categories absent from BOTH.
-B. If harm_type=reputational, do NOT use cyber, hacking, intrusion, malware,
-   or unauthorized-access language unless the rationale explicitly mentions
-   technical compromise of systems or accounts.
-C. If harm_type=financial without an explicit fraud signal in the evidence,
-   frame as financial harm or exploitation; do not assume "fraud or deception"
-   unless the rationale supports it.
-D. The redirection must address the same underlying need expressed in the
-   request:
-     • reputational → fair competitive practices, honest marketing,
-       legitimate differentiation, transparent communication
-     • cyber → defensive security, authorized testing
-     • weapons/physical → de-escalation, emergency services
-     • self-harm → crisis support and trusted contacts
-     • privacy → consent, lawful reporting channels
-     • financial → lawful financial conduct, consumer protection
-E. Do not reveal internal labels, signal names (Qx:...), policy codes, risk
-   scores, estimator names, or pipeline details.
-F. When refusing predilige well written and safe convincingness and specificity
-"""
+        context_block = ps.format(
+            "refusal.evidence_block",
+            harm_type=refusal_context.harm_type or "unknown",
+            request_type=refusal_context.request_type or "unknown",
+            rationale_text=rationale_text or "(empty)",
+            safe_refusal_focus=refusal_context.safe_refusal_focus,
+            operational_risk=refusal_context.operational_risk or "unknown",
+            requested_instructions=refusal_context.requested_instructions,
+            intent_operational=refusal_context.intent_operational,
+            redirection_guidance=redirection_guidance,
+        )
     else:
         # Backward compatibility block
         rationale_block = ""
         if rationale and str(rationale).strip():
-            rationale_block = (
-                f"\nThe risk classification system provided this high-level rationale; "
-                "use it as a guide for the tone and focus of your refusal "
-                "(understand the general nature of the concern—safety, "
-                "ethics, or policy—at an abstract level):\n"
-                f'"{rationale.strip()[:400]}"\n\n'
-                "CRITICAL: You must NOT repeat, quote, paraphrase, or mention any specific "
-                "terms, substances, procedures, tools, or techniques from the rationale. "
-                "Express your refusal at an abstract level only.\n\n"
-            )
+            rationale_block = ps.format("refusal.legacy_rationale_block", rationale=rationale.strip()[:400])
 
         domain_topic_block = ""
         if domain_str != "general":
             redirection = refusal_redirection.strip() if refusal_redirection else ""
-            domain_topic_block = (
-                f"\nGeneral topic (domain): {domain_str}\n\n"
-                "You ARE allowed to mention this general topic at a descriptive level.\n"
-                "You must NOT provide operational details, step-by-step instructions, "
-                "templates, or concrete reusable examples.\n"
-                "You must NOT quote or reference the original request.\n\n"
-            )
+            domain_topic_block = ps.format("refusal.legacy_domain_block", domain=domain_str)
             if redirection:
-                domain_topic_block += (
-                    f"SPECIFIC REDIRECTION GUIDANCE for {domain_str} domain:\n"
-                    f"{redirection}\n\n"
-                    "IMPORTANT: Use these specific suggestions for redirection rather than generic educational platforms. "
-                    "Tailor your redirection to the domain context provided above.\n\n"
+                domain_topic_block += ps.format(
+                    "refusal.legacy_domain_redirection", domain=domain_str, redirection=redirection
                 )
         context_block = f"{rationale_block}{domain_topic_block}"
 
     request_context_block = ""
     if str(user_prompt).strip():
-        request_context_block = (
-            "Original user request context (relevance only; never provide operational details):\n"
-            f"{str(user_prompt).strip()}\n\n"
-        )
+        request_context_block = ps.format("refusal.request_context_block", user_prompt=str(user_prompt).strip())
 
     leak_avoidance_block = ""
     if leak_avoidance_terms:
-        joined = ", ".join(leak_avoidance_terms)
-        leak_avoidance_block = (
-            "\nA previous attempt mentioned terms that are NOT supported by the evidence:\n"
-            f"{joined}\n"
-            "Do not use these terms unless they appear in the rationale above.\n"
-        )
+        leak_avoidance_block = ps.format("refusal.leak_avoidance_block", terms=", ".join(leak_avoidance_terms))
 
-    category_hints = _format_harm_type_category_hints(harm_type_for_hints)
-
-    return (
-        f"{request_context_block}"
-        f"The user's request has been classified as:\n"
-        f"- Risk category: {risk_category}\n"
-        f"- Policy reasons: {reasons_str}\n"
-        f"- Context domain: {domain_str}\n"
-        f"{context_block}"
-        f"{leak_avoidance_block}"
-        "Write a refusal response that:\n\n"
-        "1. Clearly refuses the unsafe request.\n"
-        "2. Name the broad unsafe action category in the first sentence.\n"
-        "   The category must be concrete enough that the refusal makes sense\n"
-        "   without reading the original prompt, and consistent with PRIMARY\n"
-        "   EVIDENCE (harm_type + rationale). Categories aligned with the\n"
-        "   detected harm_type:\n"
-        f"{category_hints}\n"
-        "3. Does not repeat operational details, tool combinations, procedures, "
-        "payloads, substances, or step-by-step content from the original request.\n"
-        "4. Explains the refusal briefly based on safety, ethics, or lawfulness.\n"
-        "5. Provides a safe redirection aligned with the user's apparent underlying context "
-        "and the SAFE REDIRECTION GUIDANCE above:\n"
-        "- Explain the concrete harm class.\n"
-        "- Redirect to a safe alternative aligned with the same user need/context.\n"
-        "6. If domain-specific refusal_redirection is present, use it. "
-        "Otherwise do not invent a domain and do not redirect to unrelated topics.\n"
-        "7. If the request asks to intensify, optimize, improve, conceal, evade detection, "
-        "or make a harmful action more effective, the refusal must mention that broad "
-        "optimization goal safely.\n"
-        "    Allowed:\n"
-        "    'I can't help make an explosive device more harmful or lethal.'\n"
-        "    'I can't help make fraud more convincing.'\n"
-        "    'I can't help make a smear campaign more damaging.'\n"
-        "    Forbidden:\n"
-        "    Mentioning tools, materials, parameters, steps, payloads, document fields, "
-        "symptoms, or operational techniques.\n"
-        "8. Use professional, non-judgmental language.\n"
-        f"9. Write entirely in {language}.\n\n"
-        "The response must be self-contained and safe."
+    return ps.format(
+        "refusal.user",
+        request_context_block=request_context_block,
+        risk_category=risk_category,
+        reasons_str=reasons_str,
+        domain_str=domain_str,
+        context_block=context_block,
+        leak_avoidance_block=leak_avoidance_block,
+        category_hints=_format_harm_type_category_hints(harm_type_for_hints, ps),
+        language=language,
     )
 
 
@@ -568,6 +428,7 @@ def generate_llm_safe_refusal_detailed(
     rationale: str | None = None,
     refusal_redirection: str = "",
     refusal_context: RefusalContext | None = None,
+    prompt_set: PromptSet | None = None,
 ) -> RefusalGenerationResult:
     """Generate the refusal and return its full provenance.
 
@@ -578,15 +439,17 @@ def generate_llm_safe_refusal_detailed(
     contains cyber-vocabulary terms incompatible with the harm_type, a single
     retry is issued instructing the model to avoid those terms.
 
-    See `generate_llm_safe_refusal` for the parameter semantics.
+    See `generate_llm_safe_refusal` for the parameter semantics. ``prompt_set`` is the source of every
+    prompt text (None = packaged defaults).
     """
+    ps = prompt_set or default_prompt_set()
     risk_cat = (risk_category or "").strip() or "classified_as_harmful"
     reason_codes = list(policy_reason_codes) if policy_reason_codes else ["policy_decision"]
     lang = (language or "").strip() or "English"
     dom = (domain or "").strip() or "general"
     rational = (rationale or "").strip() or None
 
-    system = _build_system_message()
+    system = _build_system_message(ps)
     user_msg = _build_user_message(
         str(user_prompt or ""),
         risk_cat,
@@ -596,6 +459,7 @@ def generate_llm_safe_refusal_detailed(
         rationale=rational,
         refusal_redirection=refusal_redirection,
         refusal_context=refusal_context,
+        prompt_set=ps,
     )
 
     if llm_client is None:
@@ -634,6 +498,7 @@ def generate_llm_safe_refusal_detailed(
             refusal_redirection=refusal_redirection,
             refusal_context=refusal_context,
             leak_avoidance_terms=leaked_terms,
+            prompt_set=ps,
         )
         retry_text, retry_usage = _llm_refusal_call(llm_client=llm_client, system=system, user_msg=retry_user_msg)
         token_usages.append(retry_usage)
@@ -679,6 +544,7 @@ def generate_llm_safe_refusal(
     rationale: str | None = None,
     refusal_redirection: str = "",
     refusal_context: RefusalContext | None = None,
+    prompt_set: PromptSet | None = None,
 ) -> str:
     """
     Genera la forma linguistica del rifiuto tramite LLM.
@@ -715,6 +581,7 @@ def generate_llm_safe_refusal(
         rationale=rationale,
         refusal_redirection=refusal_redirection,
         refusal_context=refusal_context,
+        prompt_set=prompt_set,
     ).text
 
 

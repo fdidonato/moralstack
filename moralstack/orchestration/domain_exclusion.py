@@ -12,6 +12,7 @@ import logging
 from typing import Any, Protocol
 
 from moralstack.models.base import GenerationConfig
+from moralstack.prompts.catalog import PromptSet, default_prompt_set
 
 logger = logging.getLogger(__name__)
 
@@ -21,23 +22,13 @@ DOMAIN_EXCLUSION_FALLBACK_MARKER = "[DOMAIN_EXCLUDED_FALLBACK]"
 _DOMAIN_EXCLUSION_MAX_TOKENS = 128
 
 
-def _build_system_message() -> str:
-    return (
-        "You are an AI assistant. Write a polite, empathetic message explaining "
-        "you cannot help with a specific topic. Always respond in the same language "
-        "as the user's message. Do not provide technical details about configuration "
-        "or exclusion."
-    )
+def _build_system_message(prompt_set: PromptSet | None = None) -> str:
+    return (prompt_set or default_prompt_set()).text("exclusion.system")
 
 
-def _build_user_message(domain: str, user_prompt: str) -> str:
+def _build_user_message(domain: str, user_prompt: str, prompt_set: PromptSet | None = None) -> str:
     prompt_snippet = (user_prompt or "").strip()[:200]
-    return (
-        f"Topic not available: '{domain}'.\n\n"
-        f"User text (for language detection only): '{prompt_snippet}'\n\n"
-        "Write 2-3 polite sentences explaining you cannot assist with this topic. "
-        "Respond in the EXACT SAME LANGUAGE as the user's text. No technical details."
-    )
+    return (prompt_set or default_prompt_set()).format("exclusion.user", domain=domain, prompt_snippet=prompt_snippet)
 
 
 class _LLMGenerateProtocol(Protocol):
@@ -50,6 +41,7 @@ def generate_domain_exclusion_response(
     domain: str,
     user_prompt: str,
     llm_client: _LLMGenerateProtocol | None = None,
+    prompt_set: PromptSet | None = None,
 ) -> str:
     """
     Generate a polite exclusion message in the user's language. max_tokens=128.
@@ -61,6 +53,7 @@ def generate_domain_exclusion_response(
         domain: Domain name that is excluded (e.g. political, medical).
         user_prompt: User request text (first 200 chars used for language detection).
         llm_client: Policy LLM with generate(); None for fallback marker.
+        prompt_set: source of the system and user texts (None = packaged defaults).
 
     Returns:
         Short polite message in the user's language, or DOMAIN_EXCLUSION_FALLBACK_MARKER.
@@ -69,8 +62,9 @@ def generate_domain_exclusion_response(
         return DOMAIN_EXCLUSION_FALLBACK_MARKER
 
     domain_str = (domain or "").strip() or "this topic"
-    system = _build_system_message()
-    user_msg = _build_user_message(domain_str, user_prompt or "")
+    ps = prompt_set or default_prompt_set()
+    system = _build_system_message(ps)
+    user_msg = _build_user_message(domain_str, user_prompt or "", ps)
 
     try:
         gen_config = GenerationConfig(max_tokens=_DOMAIN_EXCLUSION_MAX_TOKENS)

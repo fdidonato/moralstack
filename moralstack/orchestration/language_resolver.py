@@ -10,6 +10,7 @@ from moralstack.orchestration.safe_refusal_generator import (
     _detect_language_fallback,
     _iso_to_language_name,
 )
+from moralstack.prompts.catalog import PromptSet
 
 
 def get_explicit_language(detected_iso: str, fallback_prompt: str | None) -> str:
@@ -27,10 +28,12 @@ def resolve_prompt_with_language(
     prompt: str,
     detected_iso: str,
     fallback_prompt: str | None,
+    prompt_set: PromptSet | None = None,
 ) -> str:
     """
     Return the user prompt with language instruction prefix so the LLM responds
-    in the user's language. Uses get_explicit_language then force_language_prefix.
+    in the user's language. Uses get_explicit_language then force_language_prefix
+    (the prefix text comes from ``prompt_set``; None = packaged defaults).
     """
     explicit_lang = get_explicit_language(detected_iso, fallback_prompt)
-    return force_language_prefix(prompt, explicit_language=explicit_lang)
+    return force_language_prefix(prompt, explicit_language=explicit_lang, prompt_set=prompt_set)

@@ -31,6 +31,7 @@ from moralstack.orchestration.types import (
     RiskEstimationProtocol,
     risk_category_str,
 )
+from moralstack.prompts.catalog import PromptSet, default_prompt_set
 
 
 class RefusalHandler:
@@ -41,10 +42,12 @@ class RefusalHandler:
         policy: PolicyLLMProtocol | None,
         constitution_store: ConstitutionStoreProtocol | None,
         event_emitter: EventEmitter,
+        prompt_set: PromptSet | None = None,
     ) -> None:
         self.policy = policy
         self.constitution_store = constitution_store
         self._events = event_emitter
+        self._prompt_set = prompt_set or default_prompt_set()
 
     def handle(
         self,
@@ -101,6 +104,7 @@ class RefusalHandler:
             rationale=rationale if rationale else None,
             refusal_redirection=refusal_redirection,
             refusal_context=refusal_context,
+            prompt_set=self._prompt_set,
         )
         _refusal_duration_ms = (time.time() - _refusal_t0) * 1000.0
         refusal_content = refusal_result.text

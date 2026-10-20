@@ -69,8 +69,9 @@ verdict = layer.evaluate(request, speculative_draft, risk_estimation)
 
 The constructor also takes `prompt_set: PromptSet | None = None` (default: the packaged
 `default_prompt_set()`). Every prompt text the layer sends comes from that set (see
-"LLM prompt design"); the controller does not pass a set yet (wired in step A2c of the
-prompt externalization).
+"LLM prompt design"); `OrchestrationController` builds the layer with its own set
+(`DeveloperContractComplianceLayer(policy=..., prompt_set=...)`), and reads the draft-match system and user texts
+(`compliance.draft_match.system` / `compliance.draft_match.user`) from the same set.
 
 ### `ComplianceVerdict`
 

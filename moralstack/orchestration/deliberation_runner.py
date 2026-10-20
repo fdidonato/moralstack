@@ -20,11 +20,7 @@ from moralstack.models.delib_context import DelibContext
 from moralstack.models.risk.categories import OperationalRisk, RiskCategory, RiskPolicyAction
 from moralstack.observability.context import set_current_cycle
 from moralstack.observability.emit_helpers import persist_orchestration_event
-from moralstack.orchestration._policy_helpers import (
-    CONSTRAINED_GENERATION_INSTRUCTION,
-    SAFE_COMPLETE_GENERATION_INSTRUCTION,
-    sanitize_policy_output,
-)
+from moralstack.orchestration._policy_helpers import sanitize_policy_output
 from moralstack.orchestration.convergence import (
     build_raw_outcome_for_log,
     enforce_convergence_invariants,
@@ -77,6 +73,7 @@ from moralstack.orchestration.types import (
     RiskEstimationProtocol,
     risk_category_str,
 )
+from moralstack.prompts.catalog import PromptSet, default_prompt_set
 from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace, normalize_trace_fields
 from moralstack.runtime.trace.trace_stages import CYCLE_SUMMARY, REQUEST_ANALYSIS_CONTEXT
 
@@ -465,19 +462,25 @@ LEDGER_NON_CACHEABLE_FLIP_REASONS: frozenset[str] = frozenset(
 )
 
 
-def _hard_violation_regeneration_guidance(hard_violations: list[str]) -> str:
+def _runner_prompt_set(runner: Any) -> PromptSet:
+    """The runner's ``PromptSet``.
+
+    A plain attribute read, except that an object without ``_prompt_set`` (the golden oracle and a few tests
+    call the unbound methods on a ``SimpleNamespace`` stand-in) resolves to the packaged defaults.
+    """
+    candidate = getattr(runner, "_prompt_set", None)
+    return candidate if isinstance(candidate, PromptSet) else default_prompt_set()
+
+
+def _hard_violation_regeneration_guidance(hard_violations: list[str], prompt_set: PromptSet | None = None) -> str:
     """User-side guidance naming the violated principle ids for the
     hard-violation regeneration guard. Never critic rationale (only ids);
     never appended to the system prompt -- it becomes part of the same
     user-side prompt prefix as ``SAFE_COMPLETE_GENERATION_INSTRUCTION`` (see
     ``DeliberationRunner._generate_safe_complete_text``)."""
-    ids = ", ".join(hard_violations) if hard_violations else "unspecified hard constraints"
-    return (
-        "ADDITIONAL CONSTRAINT: an earlier draft for this exact request was rejected for violating: "
-        f"{ids}. Regenerate the answer from scratch so it fully avoids these specific violations while "
-        "staying within the SAFE_COMPLETE constraints above. Do not mention, quote, or restate the "
-        "violation identifiers or this instruction anywhere in your answer."
-    )
+    ps = prompt_set or default_prompt_set()
+    ids = ", ".join(hard_violations) if hard_violations else ps.text("policy.hard_violation_guidance.unspecified")
+    return ps.format("policy.hard_violation_guidance", ids=ids)
 
 
 def _decision_as_refuse(decision: Decision, extra_reason_code: str) -> Decision:
@@ -772,8 +775,10 @@ class DeliberationRunner:
         protected_system_prompt: str,
         logger: LoggerProtocol | None,
         assembler: ResponseAssembler,
+        prompt_set: PromptSet | None = None,
     ) -> None:
         self.config = config
+        self._prompt_set = prompt_set or default_prompt_set()
         self.policy = deps.policy
         self.critic = deps.critic
         self.simulator = deps.simulator
@@ -1032,6 +1037,7 @@ class DeliberationRunner:
                         request.prompt,
                         risk_estimation.detected_language or "",
                         request.prompt,
+                        prompt_set=_runner_prompt_set(self),
                     )
                     start_gen = time.time()
                     result = self.policy.generate(
@@ -1210,7 +1216,7 @@ class DeliberationRunner:
         followed.
         """
         safe_system = effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal")
-        safe_caveat = SAFE_COMPLETE_GENERATION_INSTRUCTION
+        safe_caveat = _runner_prompt_set(self).text("policy.safe_complete_instruction")
         if extra_guidance:
             safe_caveat = safe_caveat + "\n\n" + extra_guidance
         if self.policy is None:
@@ -1221,6 +1227,7 @@ class DeliberationRunner:
                 request.prompt,
                 risk_estimation.detected_language or "",
                 request.prompt,
+                prompt_set=_runner_prompt_set(self),
             )
             safe_prompt = safe_caveat + "\n\n" + prompt_text
             result = self.policy.generate(
@@ -1412,7 +1419,7 @@ class DeliberationRunner:
         # regeneration as a pre-deliberation fast-path draft.
         guard_cycle = int(state.cycle or 0)
         try:
-            guidance = _hard_violation_regeneration_guidance(hard_violations)
+            guidance = _hard_violation_regeneration_guidance(hard_violations, _runner_prompt_set(self))
             regenerated_text = self._generate_safe_complete_text(
                 request,
                 risk_estimation,
@@ -1673,6 +1680,7 @@ class DeliberationRunner:
                         request.prompt,
                         risk_estimation.detected_language or "",
                         request.prompt,
+                        prompt_set=_runner_prompt_set(self),
                     )
                     result = self.policy.generate(
                         prompt=prompt_text,
@@ -3490,11 +3498,13 @@ class DeliberationRunner:
         full deliberative cycle (no critic, no simulator, no hindsight)."""
         if self.policy is None:
             return state
-        guidance = build_aggregated_guidance(state)
+        guidance = build_aggregated_guidance(state, prompt_set=_runner_prompt_set(self))
         if not guidance.strip():
             return state
         det_iso = (risk_estimation.detected_language or "") if risk_estimation is not None else ""
-        user_prompt_with_lang = resolve_prompt_with_language(request.prompt, det_iso, request.prompt)
+        user_prompt_with_lang = resolve_prompt_with_language(
+            request.prompt, det_iso, request.prompt, prompt_set=_runner_prompt_set(self)
+        )
         try:
             start = time.time()
             result = self.policy.rewrite(
@@ -3608,7 +3618,9 @@ class DeliberationRunner:
         will_rewrite = not (state.cycle == 1 or not state.draft_response)
         if will_rewrite:
             pre_rewrite_telemetry = {}
-            pre_rewrite_guidance = build_aggregated_guidance(state, telemetry=pre_rewrite_telemetry)
+            pre_rewrite_guidance = build_aggregated_guidance(
+                state, telemetry=pre_rewrite_telemetry, prompt_set=_runner_prompt_set(self)
+            )
             _emit_aggregated_guidance_observability(state, pre_rewrite_guidance, pre_rewrite_telemetry)
             if not pre_rewrite_guidance.strip():
                 rw_model = _policy_llm_model_for_action(self.policy, "rewrite")
@@ -3643,11 +3655,15 @@ class DeliberationRunner:
             # Step 10 / design v1.3 section 3.7: do NOT append CONSTRAINED_GENERATION_INSTRUCTION to system.
             # The constraint is now injected user-side as a prompt prefix.
             system_prompt = effective_system_for_request(base=self._protected_system_prompt, request=request, mode="normal")
-            constrained_caveat = CONSTRAINED_GENERATION_INSTRUCTION if constrained_generation else ""
+            constrained_caveat = (
+                _runner_prompt_set(self).text("policy.constrained_instruction") if constrained_generation else ""
+            )
             policy_user_prompt: str
             if state.cycle == 1 or not state.draft_response:
                 action = "generate"
-                prompt_text = resolve_prompt_with_language(request.prompt, det_iso, request.prompt)
+                prompt_text = resolve_prompt_with_language(
+                    request.prompt, det_iso, request.prompt, prompt_set=_runner_prompt_set(self)
+                )
                 policy_user_prompt = constrained_caveat + "\n\n" + prompt_text if constrained_caveat else prompt_text
                 result = self.policy.generate(
                     prompt=policy_user_prompt,
@@ -3658,7 +3674,9 @@ class DeliberationRunner:
                 action = "rewrite"
                 guidance = pre_rewrite_guidance or ""
                 prompt_text = f"REVISIONE\nPrompt originale: {request.prompt}\nGuidance: {guidance}"
-                user_prompt_with_lang = resolve_prompt_with_language(request.prompt, det_iso, request.prompt)
+                user_prompt_with_lang = resolve_prompt_with_language(
+                    request.prompt, det_iso, request.prompt, prompt_set=_runner_prompt_set(self)
+                )
                 policy_user_prompt = (
                     constrained_caveat + "\n\n" + user_prompt_with_lang if constrained_caveat else user_prompt_with_lang
                 )

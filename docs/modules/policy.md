@@ -24,7 +24,8 @@ The Policy LLM handles:
 
 ## Generator system prompt (`POLICY_SYSTEM_PROMPT`)
 
-> **Location**: `moralstack/orchestration/_policy_helpers.py`
+> **Location**: `moralstack/orchestration/_policy_helpers.py` (text: fragment `policy.system` in
+> `moralstack/prompts/data/policy.yaml`; the constant is a default re-export, the orchestrator reads its `PromptSet`)
 
 The base system prompt for the governed generator (speculative draft, policy
 generate/rewrite) is intentionally **mode-conditional**, so format-strict
@@ -172,6 +173,12 @@ alter the output quality.
 **Rewrite model**: `OpenAIPolicy` may use a separate model for `rewrite()` only via `MORALSTACK_POLICY_REWRITE_MODEL`.
 If unset or empty, `rewrite()` uses the same model as `generate()` (`OPENAI_MODEL`). This keeps the first-pass
 draft on the primary model while allowing a lighter model for deliberative revisions (see `docs/architecture_spec.md`).
+
+`OpenAIPolicy(..., prompt_set=None)` reads the rewrite texts from its `PromptSet` (default: the packaged set):
+`policy.rewrite.user` (template with the original request, the current draft and the revision feedback),
+`policy.rewrite.default_system` (used when the caller passes no `system`) and `policy.rewrite.constraints`
+(appended to either system, with no separator). `refuse()` keeps its inline texts (dead path, not overridable). The
+mini-estimator policies of the risk estimator only run `generate`/`generate_messages`, so they need no prompt text.
 
 The rewrite prompt also includes explicit constraints that prevent lighter models from adding
 new operational content not present in the original draft. Measured when the templates still
