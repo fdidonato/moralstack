@@ -2122,9 +2122,11 @@ Answer EXCLUSIVELY in valid JSON format (no text before/after):
 class MoralStackRunner:
     """Runs queries through MoralStack."""
 
-    def __init__(self, api_key: str | None = None, model: str = "gpt-4o"):
+    def __init__(self, api_key: str | None = None, model: str = "gpt-4o", prompt_set: Any = None):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.model = model
+        # The one PromptSet of this run (None = packaged defaults); handed to every module built in _initialize.
+        self.prompt_set = prompt_set
         self.orchestrator = None
         self._initialized = False
         self._init_lock = threading.Lock()
@@ -2180,43 +2182,61 @@ class MoralStackRunner:
             sys.path.insert(0, str(ROOT_DIR / "scripts"))
             from moralstack.models.policy import OpenAIPolicy
 
-            policy = OpenAIPolicy(api_key=self.api_key, model=self.model)
+            prompt_set = self.prompt_set
+            policy = OpenAIPolicy(api_key=self.api_key, model=self.model, prompt_set=prompt_set)
             constitution_store = ConstitutionStore(
                 use_llm_matching=True,
                 openai_config=OpenAIClientConfig.with_env_fallback(
                     api_key=self.api_key,
                     model=self.model,
                 ),
+                prompt_set=prompt_set,
             )
             risk_model = get_risk_env_str(ENV_MODEL, "")
-            policy_for_risk = OpenAIPolicy(api_key=self.api_key, model=risk_model) if risk_model else policy
+            policy_for_risk = (
+                OpenAIPolicy(api_key=self.api_key, model=risk_model, prompt_set=prompt_set) if risk_model else policy
+            )
             risk_estimator = LLMBasedRiskEstimator(
                 policy=policy_for_risk,
                 constitution_store=constitution_store,
+                prompt_set=prompt_set,
             )
             # Critic: single source of config and model is .env (MORALSTACK_CRITIC_*);
             # no CLI override.
             critic_model = get_critic_env_str(CRITIC_ENV_MODEL, "")
-            policy_for_critic = OpenAIPolicy(api_key=self.api_key, model=critic_model) if critic_model else policy
+            policy_for_critic = (
+                OpenAIPolicy(api_key=self.api_key, model=critic_model, prompt_set=prompt_set) if critic_model else policy
+            )
             critic = LLMConstitutionalCritic(
                 policy=policy_for_critic,
                 store=constitution_store,
+                prompt_set=prompt_set,
             )
             # Simulator: single source of config and model is .env (MORALSTACK_SIMULATOR_*);
             # no CLI override.
             simulator_model = get_simulator_env_str(SIMULATOR_ENV_MODEL, "")
-            policy_for_simulator = OpenAIPolicy(api_key=self.api_key, model=simulator_model) if simulator_model else policy
-            simulator = LLMConsequenceSimulator(policy=policy_for_simulator)
+            policy_for_simulator = (
+                OpenAIPolicy(api_key=self.api_key, model=simulator_model, prompt_set=prompt_set)
+                if simulator_model
+                else policy
+            )
+            simulator = LLMConsequenceSimulator(policy=policy_for_simulator, prompt_set=prompt_set)
             # Hindsight: single source of config and model is .env (MORALSTACK_HINDSIGHT_*);
             # no CLI override.
             hindsight_model = get_hindsight_env_str(HINDSIGHT_ENV_MODEL, "")
-            policy_for_hindsight = OpenAIPolicy(api_key=self.api_key, model=hindsight_model) if hindsight_model else policy
-            hindsight = LLMHindsightEvaluator(policy=policy_for_hindsight)
+            policy_for_hindsight = (
+                OpenAIPolicy(api_key=self.api_key, model=hindsight_model, prompt_set=prompt_set)
+                if hindsight_model
+                else policy
+            )
+            hindsight = LLMHindsightEvaluator(policy=policy_for_hindsight, prompt_set=prompt_set)
             perspectives_model = get_perspective_env_str(PERSPECTIVES_ENV_MODEL, "")
             policy_for_perspectives = (
-                OpenAIPolicy(api_key=self.api_key, model=perspectives_model) if perspectives_model else policy
+                OpenAIPolicy(api_key=self.api_key, model=perspectives_model, prompt_set=prompt_set)
+                if perspectives_model
+                else policy
             )
-            perspectives = create_minimal_ensemble(policy=policy_for_perspectives)
+            perspectives = create_minimal_ensemble(policy=policy_for_perspectives, prompt_set=prompt_set)
             config = load_orchestrator_config_from_env()
             self.orchestrator = Orchestrator(
                 config=config,
@@ -2227,6 +2247,7 @@ class MoralStackRunner:
                 hindsight=hindsight,
                 perspectives=perspectives,
                 constitution_store=constitution_store,
+                prompt_set=prompt_set,
             )
             self._initialized = True
             print("  ✓ MoralStack initialized")
@@ -2410,12 +2431,18 @@ class BenchmarkRunner:
         self.max_concurrent = max(1, int(max_concurrent))
         self._rng = __import__("random").Random(seed) if seed is not None else None
 
+        # Resolve and load the prompt set ONCE, before any LLM client exists: a bad MORALSTACK_PROMPTS_DIR must
+        # fail a paid run before it spends anything (env only, no flag; load_env() already ran in main()).
+        from moralstack.prompts.catalog import load_prompt_set, resolve_prompts_dir
+
+        self.prompt_set = load_prompt_set(resolve_prompts_dir(None))
+
         self.openai_client = OpenAIClient(
             api_key=self.api_key,
             model=self.baseline_model,
             judge_model=self.judge_model,
         )
-        self.moralstack_runner = MoralStackRunner(api_key=self.api_key, model=self.model)
+        self.moralstack_runner = MoralStackRunner(api_key=self.api_key, model=self.model, prompt_set=self.prompt_set)
 
         self.report = BenchmarkReport()
 

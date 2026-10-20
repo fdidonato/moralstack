@@ -154,12 +154,15 @@ class ModuleLoader:
             raise ValueError("OPENAI_API_KEY is required. Set OPENAI_API_KEY or use --openai-key.")
 
         from moralstack.pipeline.deliberation_stack import build_deliberation_modules
+        from moralstack.prompts.catalog import resolve_prompts_dir
 
         built_modules, meta = build_deliberation_modules(
             api_key=api_key,
             primary_model=self.config.openai_model,
             max_parallel_agents=self.config.max_parallel_agents,
             minimal=self.config.minimal,
+            # Env only (MORALSTACK_PROMPTS_DIR): the CLI has no prompts flag. A bad directory raises here.
+            prompts_dir=resolve_prompts_dir(None),
         )
 
         modules["policy"] = built_modules.policy
@@ -167,6 +170,8 @@ class ModuleLoader:
         print_colored(f"  ✓ policy: OpenAI ({meta.policy_model})", "green")
 
         modules["_constitution_store"] = built_modules.constitution_store
+        # The one set every module was built with; the orchestrator must receive the same object.
+        modules["_prompt_set"] = getattr(built_modules, "prompt_set", None)
         excluded_domains = built_modules.constitution_store.get_excluded_domains()
         if excluded_domains:
             print_colored(f"  ⚠  Excluded domains: {', '.join(sorted(excluded_domains))}", "yellow")

@@ -6,6 +6,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from moralstack.pipeline.deliberation_stack import build_deliberation_modules
+from moralstack.prompts.catalog import resolve_prompts_dir
 from moralstack.sdk.errors import GovernanceConfigError, GovernancePipelineError
 from moralstack.utils.env_loader import load_env
 
@@ -185,6 +186,8 @@ def _bootstrap_pipeline(config: GovernanceConfig) -> Orchestrator:
     api_key = _resolve_api_key(config)
     model = _resolve_model(config)
     base_url = config.base_url or os.getenv("OPENAI_BASE_URL") or None
+    # Precedence: config.prompts_dir > MORALSTACK_PROMPTS_DIR > packaged defaults (blank counts as unset).
+    prompts_dir = resolve_prompts_dir(config.prompts_dir)
 
     try:
         modules, _ = build_deliberation_modules(
@@ -193,6 +196,7 @@ def _bootstrap_pipeline(config: GovernanceConfig) -> Orchestrator:
             base_url=base_url,
             constitution_dir=config.constitution_dir,
             minimal=False,
+            prompts_dir=prompts_dir,
         )
     except Exception as e:
         raise GovernancePipelineError("Failed to initialize deliberation modules", cause=e) from e
@@ -213,6 +217,8 @@ def _bootstrap_pipeline(config: GovernanceConfig) -> Orchestrator:
             perspectives=modules.perspectives,
             constitution_store=modules.constitution_store,
             ledger=ledger,
+            # The one set the modules were built with; None (hand-built modules) means the packaged defaults.
+            prompt_set=modules.prompt_set,
         )
     except Exception as e:
         raise GovernancePipelineError("Failed to initialize orchestrator", cause=e) from e

@@ -69,7 +69,10 @@ when you open the relevant files — the headline below is only the reminder.
    system prompt. → `.claude/rules/prompt-transparency.md`
 3. **Hard-signal supremacy (P0).** Hard topical signals (self-harm, child safety,
    weapons, physical harm) are never overridable by a developer contract, a domain
-   overlay, or a cached ledger decision. → `.claude/rules/hard-signal-safety.md`
+   overlay, or a cached ledger decision. Accepted exception: a deployer-configured
+   `prompts_dir` / `MORALSTACK_PROMPTS_DIR` may change prompt *text*, safety fragments
+   included (audited, one WARNING each); the code-level gates stay non-overridable.
+   → `.claude/rules/hard-signal-safety.md`
 4. **Single-turn prompt transparency.** No `developer_contract` + no
    `conversation_history` ⇒ byte-identical prompt/system composition to the
    single-turn baseline. → `.claude/rules/prompt-transparency.md`

@@ -25,7 +25,9 @@ class RecordingPolicy:
 
     instances: list[RecordingPolicy] = []
 
-    def __init__(self, api_key: str | None = None, model: str | None = None, base_url: str | None = None) -> None:
+    def __init__(
+        self, api_key: str | None = None, model: str | None = None, base_url: str | None = None, prompt_set: object = None
+    ) -> None:
         self.api_key = api_key
         self.model = model or "gpt-4o"
         self.base_url = base_url

@@ -8,7 +8,8 @@ file is a pointer**, not a second copy that could drift.
   `.claude/rules/`
   - `decision-policy.md` — decision/generation separation (P0).
   - `prompt-transparency.md` — system-prompt transparency; single-turn byte parity.
-  - `hard-signal-safety.md` — hard-signal supremacy (P0).
+  - `hard-signal-safety.md` — hard-signal supremacy (P0); names the accepted, audited,
+    deployer-side `prompts_dir` vector (code-level gates stay non-overridable).
   - `constitution-domains.md` — `core` is retrieval-only.
   - `observability.md` — telemetry never breaks the request.
   - `governed-delivery.md` — governed delivery only; fail closed.

@@ -522,6 +522,13 @@ def _override_fragment(base: _Fragment, entry: Any, path: Path) -> _Fragment:
                     ", ".join(missing),
                     path.name,
                 )
+                if fid == "policy.canary_instruction" and "canary" in missing:
+                    logger.warning(
+                        "prompt override of %s omits {canary} (file=%s): system-prompt leak detection (canary) "
+                        "is DISABLED by this override",
+                        fid,
+                        path.name,
+                    )
         elif base.kind == "lines":
             _check_lines(text, path=path, fid=fid)
     if "when" in entry:
@@ -763,8 +770,8 @@ def _assemble(parsed: _ParsedDefaults, prompts_dir: str | os.PathLike[str] | Non
     for fid in safety_overridden:
         kinds = "+".join(frags[fid].overridden)
         logger.warning(
-            "prompt override touches safety-relevant fragment %s (%s); hard-signal reporting may be weakened; "
-            "recorded in prompt_config.safety_fragments_overridden",
+            "prompt override touches safety-relevant fragment %s (%s); a safety-relevant prompt fragment was "
+            "overridden; listed in prompt_config.safety_fragments_overridden",
             fid,
             kinds,
         )
@@ -824,13 +831,18 @@ def load_prompt_set(prompts_dir: str | os.PathLike[str] | None) -> PromptSet:
     return _load_from(_DATA_DIR, prompts_dir)
 
 
-def resolve_prompts_dir(explicit: str | None) -> str | None:
-    """Explicit setting first, then a non-blank ``MORALSTACK_PROMPTS_DIR``, else ``None`` (packaged defaults)."""
-    if explicit is not None and explicit.strip():
-        return explicit
+def resolve_prompts_dir(explicit: str | os.PathLike[str] | None) -> str | None:
+    """Explicit setting first, then a non-blank ``MORALSTACK_PROMPTS_DIR``, else ``None`` (packaged defaults).
+
+    A ``PathLike`` is accepted; the returned value is the stripped string.
+    """
+    if explicit is not None:
+        text = os.fspath(explicit)
+        if text.strip():
+            return text.strip()
     from_env = os.environ.get(ENV_PROMPTS_DIR)
     if from_env is not None and from_env.strip():
-        return from_env
+        return from_env.strip()
     return None
 
 

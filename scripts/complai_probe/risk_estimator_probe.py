@@ -44,6 +44,7 @@ def _load_estimator_and_orchestrator(want_full: bool):
         import os
 
         from moralstack.pipeline.deliberation_stack import build_deliberation_modules
+        from moralstack.prompts.catalog import resolve_prompts_dir
         from moralstack.sdk.bootstrap import _bootstrap_pipeline, _resolve_api_key, _resolve_model
         from moralstack.sdk.config import GovernanceConfig
         from moralstack.utils.env_loader import load_env
@@ -65,6 +66,7 @@ def _load_estimator_and_orchestrator(want_full: bool):
             base_url=config.base_url or os.getenv("OPENAI_BASE_URL") or None,
             constitution_dir=config.constitution_dir,
             minimal=False,
+            prompts_dir=resolve_prompts_dir(None),
         )
         estimator = modules.risk_estimator
 

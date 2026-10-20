@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Deployer prompt overrides are now effective (prompt externalization, step A3).**
+  `GovernanceConfig.prompts_dir` and `MORALSTACK_PROMPTS_DIR` (registered as an optional env var; precedence config,
+  then env, then the packaged defaults; a blank value is unset) point to a directory of override `*.yaml` files.
+  `build_deliberation_modules(prompts_dir=)` loads ONE `PromptSet` and hands it to the policy (and every per-module
+  policy), the store, the risk estimator, the critic, the simulator, hindsight and the perspective ensemble
+  (`DeliberationModules.prompt_set`); the SDK bootstrap, the CLI (env only) and the benchmark (env only, loaded in
+  `BenchmarkRunner.__init__` before any LLM client, so a bad directory fails before spending) give the same object to
+  the `Orchestrator`. A bad directory fails the build (`GovernancePipelineError` through the SDK), so no client and
+  no request exist. The invariant texts (`.claude/rules/hard-signal-safety.md`, `PROJECT_SPEC.md` section 5.3,
+  `docs/ai/INVARIANTS.md`) now name `prompts_dir` as an accepted, audited, deployer-side vector for prompt text; the
+  code-level gates stay non-overridable (new `tests/governance_invariants/test_prompt_override_invariants.py` and
+  `tests/test_prompt_plumbing.py`). `docs/prompt_overrides.md` is the full deployer guide. With no `prompts_dir` every
+  wire is byte-identical (A0 golden green).
+
 - **Policy and orchestration prompts read from the prompt set (prompt externalization, step A2c).**
   `Orchestrator` / `create_orchestrator` / `OrchestrationController` take `prompt_set=None` (read-only `prompt_set`
   properties) and hand it to the runner, the response assembler, the refusal handler, the DCCL layer and

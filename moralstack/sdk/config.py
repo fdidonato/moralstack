@@ -67,6 +67,16 @@ class GovernanceConfig:
     domain_overlay: str | None = None
     """Force a specific domain overlay (e.g. 'healthcare', 'legal', 'finance')."""
 
+    # --- Prompt overrides ---
+    prompts_dir: str | None = None
+    """
+    Directory of prompt override files (``*.yaml``) that replace the text or the ``when`` condition of
+    packaged prompt fragments. Precedence: this field, then ``MORALSTACK_PROMPTS_DIR``, then the packaged
+    defaults; ``None`` or a blank string means "not set". A missing, empty or invalid directory fails the
+    pipeline build (``GovernancePipelineError``). Overrides can weaken governance: they are a deployer-side
+    vector, audited (the audit record is persisted per run from step A4). See docs/prompt_overrides.md.
+    """
+
     # --- Observability ---
     observability_mode: str = "off"
     """Observability mode: 'off' | 'file_only' | 'db_only' | 'dual'."""

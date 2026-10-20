@@ -100,6 +100,7 @@ class MoralStackCLI:
 
             orch_config = load_orchestrator_config_from_env()
 
+            prompt_set = modules.get("_prompt_set")
             constitution_store = modules.get("_constitution_store")
             if not constitution_store:
                 from moralstack.constitution.openai_config import OpenAIClientConfig
@@ -118,6 +119,7 @@ class MoralStackCLI:
                             model=self.config.openai_model,
                         ),
                         max_parallel_agents=self.config.max_parallel_agents,
+                        prompt_set=prompt_set,
                     )
                 )
 
@@ -131,6 +133,7 @@ class MoralStackCLI:
                 hindsight=modules.get("hindsight"),
                 perspectives=modules.get("perspectives"),
                 constitution_store=constitution_store,
+                prompt_set=prompt_set,
             )
 
             # Save constitution_store for access to relevant principles

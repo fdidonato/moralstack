@@ -338,7 +338,7 @@ class LLMBasedRiskEstimator:
             existing = self._mini_policy_pool.get(key)
             if existing is not None:
                 return existing
-            pol = OpenAIPolicy(model=target_model)
+            pol = OpenAIPolicy(model=target_model, prompt_set=self._prompt_set)
             if self.policy is not None and hasattr(self.policy, "tracker") and getattr(self.policy, "tracker", None):
                 pol.set_cost_tracker(self.policy.tracker)
             self._mini_policy_pool[key] = pol

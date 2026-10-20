@@ -30,7 +30,7 @@ moralstack/
                          #   output_contract.py: Tier-1 enumerated-output
                          #   detection (TRUE/FALSE etc.) used by the critic gate
   prompts/               # module prompt templates
-    catalog.py           # prompt catalog: fragments, compositions, `when`, overrides, audit (A1: not yet consumed)
+    catalog.py           # prompt catalog: fragments, compositions, `when`, overrides, audit (read by every module; `prompts_dir` effective since A3)
     data/*.yaml          # 11 packaged default prompt-fragment files (byte-identical to the module constants)
   reports/               # markdown/conversation/benchmark export + UI data builders
                          #   pipeline_failure.py: shared SYSTEM.* pipeline-failure predicate
@@ -79,7 +79,8 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `_build_ledger(config)` wires `SemanticDecisionLedger` with a provider-selected embedder
   (`LocalEmbedder` by default, `OpenAIEmbedder` when `embedder_provider="openai"` or
   `MORALSTACK_EMBEDDER_PROVIDER=openai`).
-- `config.py` — `GovernanceConfig` (domain_overlay, failure_policy,
+- `config.py` — `GovernanceConfig` (domain_overlay, `prompts_dir` (prompt overrides; env
+  `MORALSTACK_PROMPTS_DIR`), failure_policy,
   observability_mode, jsonl_dir, enable_session_tracking, `embedder_provider`,
   `generation` ("internal" | "upstream_then_verify"), …).
 - `session.py` — `SessionState`: per-client conversation_id + turn counter,
@@ -339,10 +340,12 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 - `schema.py` — `RiskEstimation`.
 
 ### Prompts — `moralstack/prompts/`
-- `catalog.py` — prompt catalog (prompt externalization, Phase A, step A1; **not yet wired into
-  any module** — the prompt constants in `models/risk/prompts.py`, `prompts/*_prompt.py`, `retry.py`,
-  the runtime modules and the orchestration/compliance/retrieval code still hold the live text, and
-  A2x re-exports them from the catalog). `load_prompt_set(dir)` / `default_prompt_set()` return an
+- `catalog.py` — prompt catalog (prompt externalization, Phase A). Every module reads its text from a
+  `PromptSet` (the prompt constants in `models/risk/prompts.py`, `prompts/*_prompt.py`, `retry.py`, … are
+  default re-exports). The composition roots (`pipeline/deliberation_stack.build_deliberation_modules(prompts_dir=)`,
+  `sdk/bootstrap`, `cli/loader` + `cli/shell`, `scripts/benchmark_moralstack.py`) resolve
+  `GovernanceConfig.prompts_dir` > `MORALSTACK_PROMPTS_DIR` > packaged defaults (blank = unset) and hand ONE set
+  to every consumer and to the `Orchestrator` (`DeliberationModules.prompt_set`). `load_prompt_set(dir)` / `default_prompt_set()` return an
   immutable `PromptSet`: named fragments (`text` / `template` / `lines`) plus compositions
   (ordered parts with `sep`, `end`, an optional `double_braces` transform and a `context_aware`
   flag), validated at load (`PromptConfigError`, fail fast, never at request time) and pre-rendered for

@@ -172,6 +172,7 @@ See [docs/modules/openai_params.md](docs/modules/openai_params.md) for details a
 | MORALSTACK_UI_USERNAME         | -                         | Basic Auth for UI (required when running moralstack-ui)        |
 | MORALSTACK_UI_PASSWORD         | -                         | Basic Auth for UI                                              |
 | MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS | 2          | Parallel domain agents for constitution retrieval              |
+| MORALSTACK_PROMPTS_DIR         | -                         | Directory of prompt override `*.yaml` files (deployer-side, can weaken governance; see [docs/prompt_overrides.md](docs/prompt_overrides.md)) |
 | MORALSTACK_OPENAI_COMPATIBLE_MAX_INFLIGHT | 8           | OpenAI-compatible bridge max in-flight requests before HTTP 503 |
 | MORALSTACK_OPENAI_COMPATIBLE_RETRY_AFTER_SECONDS | 10  | Retry-After seconds returned by OpenAI-compatible bridge overload responses |
 | MORALSTACK_VERBOSE             | -                         | Set to 1 for verbose output                                    |

@@ -49,6 +49,15 @@ All benchmark configuration can be overridden via `.env`. Variables are read whe
 | `MORALSTACK_BENCHMARK_BASELINE_MODEL` | `gpt-4o`            | Model for **baseline only** (raw GPT, no MoralStack). **Single source of truth** for baseline: env > CLI `--model` > default. MoralStack modules use their own env vars (MORALSTACK_RISK_MODEL, MORALSTACK_CRITIC_MODEL, etc.).                                                                                                         |
 | `MORALSTACK_BENCHMARK_JUDGE_MODEL`    | -                   | Model for the judge (evaluation). **Priority**: env > CLI `--judge-model` > default (same as generation model). When set, always used; when not set, the judge uses the same model as Baseline and MoralStack. When different from the generation model, the judge is independent. Example: `gpt-4o-mini` for a smaller, cheaper judge. |
 
+### Prompt overrides
+
+The benchmark honours `MORALSTACK_PROMPTS_DIR` (no CLI flag), so Phase B A/B runs can compare prompt sets. The prompt
+set is resolved and loaded **once, in `BenchmarkRunner.__init__`, before any LLM client is created**: a missing,
+empty or invalid directory raises `PromptConfigError` and the run stops before spending anything. The same set object is
+handed to `MoralStackRunner` and, from its `_initialize`, to the store, the policies, the risk estimator, the four
+modules and the orchestrator. The baseline and the judge do not use MoralStack prompts. See
+[Prompt overrides](../prompt_overrides.md).
+
 ## Model Resolution
 
 **Baseline** (single source of truth for baseline only):

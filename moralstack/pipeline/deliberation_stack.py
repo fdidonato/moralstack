@@ -15,6 +15,7 @@ from moralstack.models.policy import OpenAIPolicy
 from moralstack.models.risk import LLMBasedRiskEstimator
 from moralstack.models.risk.config_loader import ENV_MODEL as RISK_ENV_MODEL
 from moralstack.models.risk.config_loader import get_risk_env_str
+from moralstack.prompts.catalog import load_prompt_set
 from moralstack.runtime.modules.critic_config_loader import ENV_MODEL as CRITIC_ENV_MODEL
 from moralstack.runtime.modules.critic_config_loader import get_critic_env_str
 from moralstack.runtime.modules.critic_module import LLMConstitutionalCritic
@@ -43,6 +44,8 @@ class DeliberationModules:
     simulator: Any | None
     hindsight: Any | None
     perspectives: Any | None
+    # The single PromptSet every module above was built with (None only for hand-built containers).
+    prompt_set: Any = None
 
 
 @dataclass(frozen=True)
@@ -69,10 +72,11 @@ def _resolve_optional_model(
     getter: Any,
     primary_policy: OpenAIPolicy,
     api_key: str,
+    prompt_set: Any = None,
 ) -> tuple[OpenAIPolicy, str]:
     model = getter(env_key, "")
     if model:
-        return OpenAIPolicy(api_key=api_key, model=model), model
+        return OpenAIPolicy(api_key=api_key, model=model, prompt_set=prompt_set), model
     return primary_policy, primary_policy.model
 
 
@@ -84,12 +88,20 @@ def build_deliberation_modules(
     constitution_dir: str | None = None,
     max_parallel_agents: int | None = None,
     minimal: bool = False,
+    prompts_dir: str | None = None,
 ) -> tuple[DeliberationModules, DeliberationBuildMeta]:
-    """Build the full deliberation module graph with env-driven module models."""
+    """Build the full deliberation module graph with env-driven module models.
+
+    ``prompts_dir`` is the already-resolved override directory (``None`` = packaged defaults). The prompt set
+    is loaded here, so a bad directory raises ``PromptConfigError`` before any module exists, and the one set
+    is handed to every consumer: a request must never mix two sets.
+    """
+    prompt_set = load_prompt_set(prompts_dir)
     policy = OpenAIPolicy(
         api_key=api_key,
         model=primary_model,
         base_url=base_url,
+        prompt_set=prompt_set,
     )
 
     resolved_parallel_agents = resolve_constitution_max_parallel_agents(max_parallel_agents)
@@ -102,16 +114,18 @@ def build_deliberation_modules(
             model=primary_model,
         ),
         max_parallel_agents=resolved_parallel_agents,
+        prompt_set=prompt_set,
     )
     if constitution_dir is not None:
         store_cfg = replace(store_cfg, config_dir=constitution_dir)
 
     constitution_store = ConstitutionStore(config=store_cfg)
 
-    risk_policy, risk_model = _resolve_optional_model(RISK_ENV_MODEL, get_risk_env_str, policy, api_key)
+    risk_policy, risk_model = _resolve_optional_model(RISK_ENV_MODEL, get_risk_env_str, policy, api_key, prompt_set)
     risk_estimator = LLMBasedRiskEstimator(
         policy=cast(Any, risk_policy),
         constitution_store=constitution_store,
+        prompt_set=prompt_set,
     )
 
     if minimal:
@@ -123,6 +137,7 @@ def build_deliberation_modules(
             simulator=None,
             hindsight=None,
             perspectives=None,
+            prompt_set=prompt_set,
         )
         meta = DeliberationBuildMeta(
             policy_model=policy.model,
@@ -134,10 +149,11 @@ def build_deliberation_modules(
         )
         return modules, meta
 
-    critic_policy, critic_model = _resolve_optional_model(CRITIC_ENV_MODEL, get_critic_env_str, policy, api_key)
+    critic_policy, critic_model = _resolve_optional_model(CRITIC_ENV_MODEL, get_critic_env_str, policy, api_key, prompt_set)
     critic = LLMConstitutionalCritic(
         policy=cast(Any, critic_policy),
         store=constitution_store,
+        prompt_set=prompt_set,
     )
 
     simulator_policy, simulator_model = _resolve_optional_model(
@@ -145,24 +161,27 @@ def build_deliberation_modules(
         get_simulator_env_str,
         policy,
         api_key,
+        prompt_set,
     )
-    simulator = LLMConsequenceSimulator(policy=cast(Any, simulator_policy))
+    simulator = LLMConsequenceSimulator(policy=cast(Any, simulator_policy), prompt_set=prompt_set)
 
     hindsight_policy, hindsight_model = _resolve_optional_model(
         HINDSIGHT_ENV_MODEL,
         get_hindsight_env_str,
         policy,
         api_key,
+        prompt_set,
     )
-    hindsight = LLMHindsightEvaluator(policy=cast(Any, hindsight_policy))
+    hindsight = LLMHindsightEvaluator(policy=cast(Any, hindsight_policy), prompt_set=prompt_set)
 
     perspectives_policy, perspectives_model = _resolve_optional_model(
         PERSPECTIVES_ENV_MODEL,
         get_perspective_env_str,
         policy,
         api_key,
+        prompt_set,
     )
-    perspectives = create_minimal_ensemble(policy=cast(Any, perspectives_policy))
+    perspectives = create_minimal_ensemble(policy=cast(Any, perspectives_policy), prompt_set=prompt_set)
 
     modules = DeliberationModules(
         policy=policy,
@@ -172,6 +191,7 @@ def build_deliberation_modules(
         simulator=simulator,
         hindsight=hindsight,
         perspectives=perspectives,
+        prompt_set=prompt_set,
     )
     meta = DeliberationBuildMeta(
         policy_model=policy.model,
