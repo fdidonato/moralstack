@@ -503,7 +503,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opt-in keys stay commented; keys that take precedence over a `GovernanceConfig` field or
   a CLI flag (`MORALSTACK_GENERATION_MODE`, `MORALSTACK_LEDGER_ENABLED` /
   `_SIMILARITY_THRESHOLD` / `_MAX_ENTRIES`, `MORALSTACK_EMBEDDER_PROVIDER`,
-  `MORALSTACK_BENCHMARK_BASELINE_MODEL` / `_JUDGE_MODEL`) are commented with a warning.
+  `MORALSTACK_BENCHMARK_BASELINE_MODEL`) are commented with a warning; `MORALSTACK_BENCHMARK_JUDGE_MODEL=gpt-5.2`
+  is set on purpose (the judge of the benchmark runs) and overrides `--judge-model`. The UI ships
+  `admin`/`admin` as local-development credentials, to be changed before exposing the UI.
   Dropped the keys nothing reads (`MORALSTACK_DOMAIN_PREFILTER_MODEL`,
   `MORALSTACK_OPENAI_COMPATIBLE_MAX_INFLIGHT`, `MORALSTACK_OPENAI_COMPATIBLE_RETRY_AFTER_SECONDS`);
   added 12 keys that were read but undocumented there (`MORALSTACK_GENERATION_MODE`,
