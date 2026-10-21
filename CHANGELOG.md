@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`action_payload`, `draft` + `rule_action`). The client-body section is renamed "Original request messages (client
   body)".
 
+### Changed
+
+- **DCCL `llm_calls` rows are persisted in cycle 0.** The `evaluate` (`sequence_in_cycle` -5) and `safety_override`
+  (-6) rows written by `moralstack/compliance/dccl.py` now carry `cycle=0` instead of `NULL`, in SQLite and in the
+  JSONL envelope; sequence numbers are unchanged. Readers that treated NULL as "pre-cycle" should read cycle 0 with
+  these sequence numbers; the request page and the markdown export already handle both.
+
 ## 1.0.0 — 2026-10-21
 
 ### Upgrading from 0.7.0

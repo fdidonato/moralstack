@@ -253,7 +253,7 @@ class DeveloperContractComplianceLayer:
                 None,
                 None,
                 {
-                    "cycle": None,
+                    "cycle": 0,
                     "phase": "compliance_layer",
                     "module": "compliance_layer",
                     "action": "safety_override",
@@ -481,7 +481,7 @@ class DeveloperContractComplianceLayer:
                     None,
                     None,
                     {
-                        "cycle": None,
+                        "cycle": 0,
                         "phase": "compliance_layer",
                         "module": "compliance_layer",
                         "action": "evaluate",

@@ -208,7 +208,11 @@ classifier. The classifier text is a safety fragment (`SAFETY_FRAGMENT_IDS`): an
 is recorded in the audit summary. Since A4b-4/5 the `evaluate`, `safety_override` and `draft_revalidate` rows carry the exact messages sent as `wire` in
 `parsed_summary_json` (on the legacy `generate()` branch the row `prompt` keeps the native trailer while the wire holds the
 fallback user prompt that was sent); `validate_contract` now classifies through `_classify_safety_override`, so its call is
-persisted when it runs inside a request scope. All DCCL call sites (`_classify_safety_override`,
+persisted when it runs inside a request scope. Coordinates (2026-10-21): the `evaluate` row is persisted at
+`(cycle 0, sequence_in_cycle -5)`, the `safety_override` row at `(cycle 0, -6)`, and the synthetic hard-signal gate /
+downgrade node and the `draft_revalidate` row sit at `-4` (`compliance/dccl.py`, `record_llm_call` blocks; `cycle` was
+`None` before, which the request page showed as a separate "Initial assessment" group; legacy rows are normalized to
+cycle 0 at read time, `docs/traces/observability_db_to_ui.md` section 5). All DCCL call sites (`_classify_safety_override`,
 `validate_contract`) forward the same set to `classify_safety_override(..., prompt_set=)`;
 this changes only where the text comes from, never a decision path. The persisted
 `llm_calls.system_prompt` is the rendered string. `_DCCL_LLM_SYSTEM_PROMPT`,

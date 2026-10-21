@@ -77,7 +77,9 @@ In MoralStack terms:
    classification is language-agnostic: `classify_safety_override` is LLM-only (the
    English keyword pre-filter was removed) and runs on a small model
    (`MORALSTACK_DCCL_SAFETY_OVERRIDE_MODEL`, default `gpt-4o-mini`); its call is
-   persisted to `llm_calls` (`module=compliance_layer`, `action=safety_override`).
+   persisted to `llm_calls` (`module=compliance_layer`, `action=safety_override`, `cycle=0`, `sequence_in_cycle=-6`;
+   the `evaluate` row is `cycle=0`, `-5`; both were `cycle=NULL` before 2026-10-21 and the request page
+   normalizes legacy rows to cycle 0).
    Since A4b (2026-10-21) the DCCL `evaluate`, `safety_override` and `draft_revalidate` rows carry the exact
    messages sent under `wire` in `parsed_summary_json` (format in `docs/modules/observability.md`), and
    `validate_contract` classifies through the same persisting wrapper `_classify_safety_override` (same

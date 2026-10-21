@@ -552,3 +552,53 @@ class TestSafetyOverrideObservability:
         layer = DeveloperContractComplianceLayer(policy=None)
         assert layer._classify_safety_override("payload") is None
         assert captured == []
+
+
+class TestDcclRowsPersistedInCycle0:
+    """The DCCL llm_calls rows carry cycle 0 (not NULL) so the request page shows them in the initial-assessment
+    cycle with the coordinates ``(cycle 0, seq -5)`` evaluate / ``(cycle 0, seq -6)`` safety_override."""
+
+    @staticmethod
+    def _capture(monkeypatch) -> list[dict]:
+        captured: list[dict] = []
+
+        def _fake_record(logger, diagnostics_payload, persist_kwargs):
+            if persist_kwargs is not None:
+                captured.append(persist_kwargs)
+
+        monkeypatch.setattr("moralstack.orchestration.persistence_helpers.record_llm_call", _fake_record)
+        return captured
+
+    def test_structured_match_persists_safety_override_in_cycle_0(self, monkeypatch):
+        monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "hybrid")
+        captured = self._capture(monkeypatch)
+        policy = _MockPolicy(response_text="{}")
+        layer = DeveloperContractComplianceLayer(policy=policy)
+        rule = StructuredRule(rule_id="r1", trigger_pattern="HELLO", action_payload="WORLD")
+        contract = replace(
+            DeveloperContract.from_text("if user says HELLO reply WORLD"),
+            structured_rules=(rule,),
+        )
+        verdict = layer.evaluate(_FakeRequest(prompt="HELLO", developer_contract=contract), speculative_draft="WORLD")
+        assert verdict.decision == ComplianceDecision.MATCH
+        rows = [(r["action"], r["cycle"], r["sequence_in_cycle"]) for r in captured]
+        assert rows == [("safety_override", 0, -6)]
+
+    def test_llm_match_persists_evaluate_and_safety_override_in_cycle_0(self, monkeypatch):
+        monkeypatch.setenv("MORALSTACK_DCCL_EVALUATION_PATH", "hybrid")
+        captured = self._capture(monkeypatch)
+        policy = _MockPolicy(response_text="""{
+            "verdict": "MATCH",
+            "rule_excerpt": "from contract prose",
+            "action_excerpt": "y",
+            "safety_override_reason": null,
+            "contract_injection_detected": false,
+            "rationale": "ok",
+            "confidence": 0.95
+        }""")
+        layer = DeveloperContractComplianceLayer(policy=policy)
+        contract = DeveloperContract.from_text("if user types X, reply y")
+        verdict = layer.evaluate(_FakeRequest(prompt="X", developer_contract=contract), speculative_draft="y")
+        assert verdict.decision == ComplianceDecision.MATCH
+        rows = {r["action"]: (r["cycle"], r["sequence_in_cycle"]) for r in captured}
+        assert rows == {"evaluate": (0, -5), "safety_override": (0, -6)}
