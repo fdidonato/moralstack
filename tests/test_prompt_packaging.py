@@ -94,6 +94,24 @@ def test_pyproject_package_data_includes_the_signal_registry_yaml() -> None:
         assert any(fnmatch.fnmatch(name, pattern) for pattern in patterns), name
 
 
+def test_pyproject_package_data_includes_the_ui_assets() -> None:
+    """The dashboard reads ``templates/`` and ``static/`` next to ``app.py`` and silently falls back to bare HTML when
+    they are missing: a wheel without them ships a degraded ``moralstack-ui``."""
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    package_data = pyproject["tool"]["setuptools"]["package-data"]
+    ui_dir = REPO_ROOT / "moralstack" / "ui"
+    assets = sorted(
+        path.relative_to(ui_dir).as_posix()
+        for sub in ("templates", "static")
+        for path in (ui_dir / sub).rglob("*")
+        if path.is_file()
+    )
+    assert "templates/base.html" in assets and "static/css/main.css" in assets
+    patterns = package_data.get("moralstack.ui", [])
+    for name in assets:
+        assert any(fnmatch.fnmatch(name, pattern) for pattern in patterns), name
+
+
 def test_every_data_dir_yaml_is_loaded() -> None:
     """No orphan files in the data dir, no ``*.yml`` the loader would never read, and every ID is in the set."""
     files = _data_files()
