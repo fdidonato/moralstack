@@ -138,8 +138,14 @@ def test_estimator_retry_failed_rows_arrive_through_the_real_emit_path(recorder:
 def test_estimator_without_a_request_scope_still_persists_nothing_and_still_fails_closed(recorder: _Recorder) -> None:
     """No run/request ids: the emit gate drops the rows (by design) and the request still fails closed."""
     estimator = LLMBasedRiskEstimator(policy=_AlwaysUnparseable(), config=RiskEstimatorConfig(max_retries=2))
-    with pytest.raises(RiskEstimationError):
-        estimator._parallel_mini_analysis("una domanda qualsiasi")
+    # Pin a clean scope: another test may leave ids set on this thread's context (GovernedClient never resets them).
+    tokens = [(var, var.set(None)) for var in (obs_context._run_id, obs_context._request_id)]
+    try:
+        with pytest.raises(RiskEstimationError):
+            estimator._parallel_mini_analysis("una domanda qualsiasi")
+    finally:
+        for var, token in reversed(tokens):
+            var.reset(token)
     assert recorder.rows == []
 
 
