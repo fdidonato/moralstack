@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The request page shows the DCCL and the steps around it in the order the code runs them.** DCCL rows persisted
+  with `cycle=NULL` were drawn as a second "Initial assessment" group before retrieval and risk, `safety_override`
+  came before `evaluate`, and the fast-path refusal was drawn "parallel" with the hard-signal gate and before path
+  routing. The cycle-0 rank now follows the controller: prefilter (with the speculative draft when its run overlaps
+  it) → domain agents → risk minis → calibration → DCCL `evaluate` → `safety_override` → regenerate / revalidate →
+  gate or downgrade → contract-skipped modules (one "skipped · N modules" step) → path routing → ledger → deliberation
+  retrieval → draft → quick check → refusal. Legacy NULL-cycle DCCL rows render in cycle 0 with a "legacy row" badge;
+  any other NULL-cycle row is labelled "Unsequenced rows (cycle NULL)". The journey uses the same order, marks steps
+  "Parallel" only for more than 1 ms of overlap, the timeline lists `compliance_layer` after `risk_estimator`, and the
+  pipes into DCCL nodes say what flows ("risk + draft → DCCL", "verdict → safety check", "hard-signal gate (P0)",
+  "MATCH downgraded", "regenerated draft → revalidate"). Display only: no decision path changes.
+- **The request page shows the developer contract on every node that received it, and only there.** New
+  `moralstack/ui/contract_delivery.py` identifies the contract by the verdict's `contract_hash` and reads each call's
+  recorded wire to say how it arrived (native developer or system message, embedded in the system or user prompt) and
+  whether it was full or truncated. The critic, whose summary is plain text, now shows it too. `safety_override`,
+  `draft_revalidate`, refusal and synthetic nodes no longer claim it; their input rows describe what they received
+  (`action_payload`, `draft` + `rule_action`). The client-body section is renamed "Original request messages (client
+  body)".
+
 ## 1.0.0 — 2026-10-21
 
 ### Upgrading from 0.7.0

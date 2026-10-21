@@ -6,6 +6,8 @@ Auth: MORALSTACK_UI_USERNAME, MORALSTACK_UI_PASSWORD (form-based login)
 """
 
 import json
+import logging
+import math
 import os
 import secrets
 import sys
@@ -69,7 +71,10 @@ from moralstack.reports.runtime_decisions import (
     build_runtime_decision_observability,
     enrich_llm_call_for_ui,
 )
+from moralstack.ui.contract_delivery import contract_delivery_for_call, resolve_request_contract
 from moralstack.utils.env_loader import _purge_empty_env_vars
+
+_LOG = logging.getLogger(__name__)
 
 
 class _ReadStoreProxy:
@@ -367,6 +372,11 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
             # violation on the cycle's draft, not by risk + principles alone.
             inputs.append({"label": "hard_violations", "source": "critic"})
             inputs.append({"label": "risk", "source": "risk_estimator"})
+        elif "compliance-regenerate" in action:
+            # DCCL regeneration: the prompt is the matched rule action + transcript + request (controller.py), not
+            # risk + principles. The developer contract (system message) is added by the contract resolver.
+            inputs.append({"label": "rule_action", "source": "dccl matched rule"})
+            inputs.append({"label": "prompt", "source": "user"})
         elif cycle == 0:
             inputs.append({"label": "risk", "source": "risk_estimator"})
             inputs.append({"label": "principles", "source": "constitution"})
@@ -399,9 +409,20 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
         inputs.append({"label": "draft", "source": "policy"})
         inputs.append({"label": "consequences", "source": "simulator"})
     elif "compliance" in module:
-        inputs.append({"label": "developer_contract", "source": "user"})
-        inputs.append({"label": "draft", "source": "policy"})
-        inputs.append({"label": "prompt", "source": "user"})
+        if action == "safety_override":
+            # Receives the matched rule action (the speculative draft as fallback on the LLM path), never the
+            # contract or the prompt (dccl.py safety_override call sites).
+            inputs.append(
+                {"label": "action_payload", "source": "matched rule action (speculative draft as LLM-path fallback)"}
+            )
+        elif action == "draft_revalidate":
+            # Re-validates the regenerated draft against the matched rule action (controller.py), not the contract.
+            inputs.append({"label": "draft", "source": "policy (compliance-regenerate)"})
+            inputs.append({"label": "rule_action", "source": "matched rule"})
+        else:
+            inputs.append({"label": "developer_contract", "source": "user"})
+            inputs.append({"label": "draft", "source": "policy"})
+            inputs.append({"label": "prompt", "source": "user"})
     elif "constitution" in module:
         inputs.append({"label": "domain", "source": "risk_estimator"})
 
@@ -543,6 +564,41 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _attach_contract_delivery(llm_calls: list[dict[str, Any]], orchestration_events: list[dict[str, Any]]) -> None:
+    """Annotate real ``llm_calls`` rows with how they received the developer contract (read-only, never raises).
+
+    Real rows only: synthetic nodes (downgrade, deferred, calibration, routing, ledger) never get a contract io-row.
+    A failure degrades to "no contract section" (PROJECT_SPEC §5.6).
+    """
+    try:
+        contract = resolve_request_contract(llm_calls, orchestration_events)
+    except Exception:
+        _LOG.debug("developer contract resolution failed", exc_info=True)
+        return
+    if contract is None:
+        return
+    for call in llm_calls:
+        if not isinstance(call, dict):
+            continue
+        try:
+            delivery = contract_delivery_for_call(call, contract)
+            call["contract_delivery"] = delivery
+            if delivery is None:
+                continue
+            io = call.get("io_annotations")
+            inputs = io.get("inputs") if isinstance(io, dict) else None
+            if not isinstance(inputs, list):
+                continue
+            existing = next((i for i in inputs if isinstance(i, dict) and i.get("label") == "developer_contract"), None)
+            if existing is not None:
+                existing["source"] = delivery["short_label"]
+            else:
+                inputs.insert(0, {"label": "developer_contract", "source": delivery["short_label"]})
+        except Exception:
+            _LOG.debug("developer contract delivery failed for one llm call", exc_info=True)
+            call["contract_delivery"] = None
+
+
 # Deliberation-cycle visual tiers (cycle >= 1).  SEQ_SIMULATOR=3 and SEQ_PERSPECTIVES=4
 # share a tier because they run in parallel via executor.submit.
 _SEQ_TO_VISUAL_TIER: dict[int, int] = {
@@ -565,37 +621,70 @@ _HARD_VIOLATION_REGENERATION_ACTION = "generate (hard_violation_regeneration)"
 _HARD_VIOLATION_REVALIDATION_ACTION = "critique (hard_violation_revalidation)"
 _LEGACY_GUARD_REGENERATION_ACTION = "generate (safe_complete_path)"
 
-# Cycle-0 pipeline sequences (constitution -10/-1, risk -9, calibration -8/-7,
-# compliance -5, …). Values are relative ranks only; the synthetic calibration
-# (-7) and path-routing (-2) governance nodes sit where the controller runs them:
-# after the risk minis / calibration guard and after every pre-branch step
-# respectively, never after the policy draft they precede.
-_CYCLE0_SEQ_TO_VISUAL_TIER: dict[int, int] = {
-    -10: 0,  # domain prefilter (risk routing)
-    -9: 1,  # risk mini-estimators (parallel)
-    -8: 2,  # calibration guard (persisted row)
-    -7: 3,  # calibration synthesis (synthetic node)
-    -5: 4,  # DCCL evaluate
-    -1: 5,  # domain prefilter (deliberation retrieval)
-    -4: 6,  # draft revalidation (Case 2)
-    -2: 7,  # path routing (synthetic node)
-    0: 1,  # speculative policy (parallel with risk)
-    1: 8,  # fast-path SAFE_COMPLETE / compliance-regenerate policy
-}
+# Cycle-0 visual ranks (relative order only, never asserted as literals): the order the controller RUNS the steps
+# (``controller.py``): risk-routing prefilter -> domain agents (they run after the prefilter chose the domains) ->
+# risk minis in parallel with the speculative draft -> calibration guard -> calibration (synthetic) -> DCCL evaluate ->
+# DCCL safety_override -> compliance regenerate -> draft revalidate -> hard-signal gate / ordinary downgrade
+# (synthetic) -> deferred markers (emitted after the verdict) -> path routing (synthetic) -> ledger fast-path
+# (synthetic) -> deliberation retrieval prefilter -> its agents -> route draft -> fast-path quick check -> terminal.
+_T_RISK_PREFILTER = 0
+_T_RISK_AGENTS = 1
+_T_RISK_MINIS = 2
+_T_CALIBRATION_GUARD = 3
+_T_CALIBRATION = 4
+_T_DCCL_EVALUATE = 5
+_T_DCCL_SAFETY_OVERRIDE = 6
+_T_COMPLIANCE_REGENERATE = 7
+_T_DRAFT_REVALIDATE = 8
+_T_COMPLIANCE_GATE = 9
+_T_DEFERRED_MARKERS = 10
+_T_PATH_ROUTING = 11
+_T_LEDGER = 12
+_T_DELIBERATION_PREFILTER = 13
+_T_DELIBERATION_AGENTS = 14
+_T_ROUTE_DRAFT = 15
+_T_QUICK_CHECK = 16
+_T_TERMINAL = 17
+# Unmapped cycle-0 sequences (e.g. a hard-violation guard row that ever ran in cycle 0) sort in a tail after every
+# mapped tier, keeping their relative order and never colliding with a mapped step.
+_CYCLE0_UNMAPPED_TIER_BASE = 100
 
-# The fast-path HARD quick check is persisted in cycle 0 with SEQ_CRITIC (2): after the fast draft (tier 8). Keyed on the
+# seq -> rank for the steps identified by sequence alone; seq -10 / -1 are split by action in _visual_tier_for_call.
+_CYCLE0_SEQ_TO_VISUAL_TIER: dict[int, int] = {
+    -9: _T_RISK_MINIS,  # risk mini-estimators (parallel)
+    0: _T_RISK_MINIS,  # speculative policy default; overridden from timings (RV12, _stamp_speculative_tier_overrides)
+    -8: _T_CALIBRATION_GUARD,  # calibration guard (persisted row)
+    -7: _T_CALIBRATION,  # calibration synthesis (synthetic node)
+    -5: _T_DCCL_EVALUATE,
+    -6: _T_DCCL_SAFETY_OVERRIDE,  # runs after evaluate (alone on the structured path)
+    -4: _T_DRAFT_REVALIDATE,  # draft revalidation (real row); the synthetic gate/downgrade nodes are keyed by phase
+    -2: _T_PATH_ROUTING,  # path routing (synthetic node)
+    -3: _T_LEDGER,  # ledger fast-path (synthetic node)
+    1: _T_ROUTE_DRAFT,  # fast-path SAFE_COMPLETE / reuse / output protection draft
+    6: _T_TERMINAL,  # fast-path refusal, domain exclusion
+}
+_CYCLE0_PREFILTER_TIER_BY_SEQ: dict[int, tuple[int, int]] = {
+    -10: (_T_RISK_PREFILTER, _T_RISK_AGENTS),
+    -1: (_T_DELIBERATION_PREFILTER, _T_DELIBERATION_AGENTS),
+}
+_DOMAIN_AGENT_ACTION_SUFFIX = "domain_agent"  # enhanced_domain_agent / legacy_domain_agent
+_DEFERRED_MARKER_PHASE = "deferred_to_compliance"
+_DEFERRED_MARKER_ACTION = "skipped - contract authorized"
+_COMPLIANCE_GATE_PHASES = frozenset({"safety_gate", "match_downgraded"})
+
+# The fast-path HARD quick check is persisted in cycle 0 with SEQ_CRITIC (2): after the fast draft. Keyed on the
 # action, NOT on the sequence alone, because other cycle-0 rows legitimately carry seq 2 (the synthetic "critic deferred
 # to compliance" marker) and keep their own tier.
 _QUICK_CHECK_ACTION = "quick_check"
-_QUICK_CHECK_VISUAL_TIER = 9
+_QUICK_CHECK_VISUAL_TIER = _T_QUICK_CHECK
 _RETRY_FAILED_OUTCOME = "retry_failed"
 _SEQUENTIAL_RETRY_MODULES = frozenset({"critic", "hindsight"})
 _RETRY_AFTER_FAILED_LABEL = "retry after failed attempt"
 _SEQ_SYNTHETIC_CALIBRATION = -7
 _SEQ_SYNTHETIC_PATH_ROUTING = -2
 
-# Canonical per-module sequence used to place synthetic "deferred"/"skipped" markers
-# in the same visual tier the module would have occupied (mirrors _SEQ_TO_VISUAL_TIER).
+# Canonical per-module sequence of the synthetic "deferred"/"skipped" markers (mirrors _SEQ_TO_VISUAL_TIER). It places
+# them in cycles >= 1 only: in cycle 0 the marker phase / action overrides it (see _visual_tier_for_call).
 _SEQ_BY_DEFERRED_MODULE: dict[str, int] = {
     "policy": 1,
     "critic": 2,
@@ -605,18 +694,120 @@ _SEQ_BY_DEFERRED_MODULE: dict[str, int] = {
 }
 
 
+_VISUAL_TIER_OVERRIDE_KEY = "_visual_tier_override"
+_RISK_TIERS_FOR_SPECULATIVE = (_T_RISK_PREFILTER, _T_RISK_AGENTS, _T_RISK_MINIS)
+
+
+def _is_raw_cycle_zero(call: dict[str, Any]) -> bool:
+    """True only for rows whose raw cycle is the integer 0 (a None/garbage cycle is never cycle 0 here, matching the
+    graph grouping). Never raises."""
+    cycle = call.get("cycle")
+    if cycle is None:
+        return False
+    try:
+        return int(cycle) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_cycle0_speculative_draft(call: dict[str, Any]) -> bool:
+    """The cycle-0 seq-0 speculative draft (policy or upstream_speculative), never a ``speculative-reuse`` row."""
+    try:
+        if not _is_raw_cycle_zero(call) or call.get("sequence_in_cycle") is None:
+            return False
+        if int(call["sequence_in_cycle"]) != 0:
+            return False
+    except (TypeError, ValueError):
+        return False
+    action = (call.get("action") or "").strip().lower()
+    phase = (call.get("phase") or "").strip().lower()
+    if "reuse" in action or (call.get("call_kind") or "") == "speculative_reuse":
+        return False
+    return phase == "speculative_generate" or "speculative" in action
+
+
+def _stamp_speculative_tier_overrides(calls: list[dict[str, Any]]) -> None:
+    """RV12: place the cycle-0 speculative draft in the risk/retrieval tier its [start, start+duration] window overlaps
+    most (union window of that tier's rows present in ``calls``); tie -> earliest tier; missing/zero timing or no
+    such rows -> no override (the static minis tier). Pure, idempotent (recomputed on every call), never raises:
+    the graph grouping and the journey key both read the stamp through ``_visual_tier_for_call``."""
+    try:
+        specs = [c for c in calls if _is_cycle0_speculative_draft(c)]
+        if not specs:
+            return
+        windows: dict[int, tuple[float, float]] = {}
+        spec_ids = {id(c) for c in specs}
+        for c in calls:
+            if id(c) in spec_ids or not _is_raw_cycle_zero(c) or c.get("started_at") is None:
+                continue
+            tier = _visual_tier_for_call(c)
+            if tier not in _RISK_TIERS_FOR_SPECULATIVE:
+                continue
+            start = float(c["started_at"])
+            end = start + float(c.get("duration_ms") or 0)
+            lo, hi = windows.get(tier, (start, end))
+            windows[tier] = (min(lo, start), max(hi, end))
+        for spec in specs:
+            spec.pop(_VISUAL_TIER_OVERRIDE_KEY, None)
+            dur = float(spec.get("duration_ms") or 0)
+            if spec.get("started_at") is None or dur <= 0:
+                continue
+            s_start = float(spec["started_at"])
+            s_end = s_start + dur
+            best_tier, best_overlap = None, 0.0
+            for tier in _RISK_TIERS_FOR_SPECULATIVE:  # ascending rank: strict ">" keeps the earliest on ties
+                if tier not in windows:
+                    continue
+                lo, hi = windows[tier]
+                overlap = min(s_end, hi) - max(s_start, lo)
+                if overlap > best_overlap:
+                    best_tier, best_overlap = tier, overlap
+            if best_tier is not None:
+                spec[_VISUAL_TIER_OVERRIDE_KEY] = best_tier
+    except Exception:  # noqa: BLE001 - display helper must never break the page
+        _LOG.debug("speculative tier placement failed", exc_info=True)
+
+
 def _visual_tier_for_call(call: dict[str, Any]) -> int:
-    """Map a call to a visual tier for grouping parallel modules."""
+    """Map a call to a visual tier for grouping parallel modules.
+
+    Cycle-0 precedence chain (first match wins; this is the ONE place that decides, the journey sort key delegates):
+      0. ``_visual_tier_override`` (stamped on the cycle-0 speculative draft by
+         ``_stamp_speculative_tier_overrides``, RV12: placement from timings);
+      1. action ``quick_check``                                    -> quick-check tier;
+      2. deferred marker: phase ``deferred_to_compliance`` OR action ``skipped - contract authorized``
+         (the real nodes carry both; phase-less fixtures only the action)  -> deferred-markers tier;
+      3. compliance_layer gate / ordinary downgrade phase           -> gate tier (after draft revalidation);
+      4. compliance regenerate (call_kind or action)                -> regenerate tier;
+      5. seq -10 / -1 split by action: domain agents rank after the prefilter that chose their domains;
+      6. static seq table;
+      7. unmapped: ``100 + seq`` tail (never collides, keeps relative order).
+    A row without ``sequence_in_cycle`` sorts last (9999).
+    """
     seq_raw = call.get("sequence_in_cycle")
     if seq_raw is None:
         return 9999
     seq = int(seq_raw)
     cycle = int(call.get("cycle") or 0)
     if cycle == 0:
-        if seq == 2 and (call.get("action") or "").strip().lower() == _QUICK_CHECK_ACTION:
+        override = call.get(_VISUAL_TIER_OVERRIDE_KEY)
+        if isinstance(override, int):
+            return override
+        action = (call.get("action") or "").strip().lower()
+        if seq == 2 and action == _QUICK_CHECK_ACTION:
             return _QUICK_CHECK_VISUAL_TIER
+        if (call.get("phase") or "") == _DEFERRED_MARKER_PHASE or action == _DEFERRED_MARKER_ACTION:
+            return _T_DEFERRED_MARKERS
+        module = (call.get("module") or "").strip().lower()
+        if module == "compliance_layer" and (call.get("phase") or "") in _COMPLIANCE_GATE_PHASES:
+            return _T_COMPLIANCE_GATE
+        if (call.get("call_kind") or "") == "compliance_regenerate" or "compliance-regenerate" in action:
+            return _T_COMPLIANCE_REGENERATE
+        prefilter_pair = _CYCLE0_PREFILTER_TIER_BY_SEQ.get(seq)
+        if prefilter_pair is not None:
+            return prefilter_pair[1] if action.endswith(_DOMAIN_AGENT_ACTION_SUFFIX) else prefilter_pair[0]
         vt = _CYCLE0_SEQ_TO_VISUAL_TIER.get(seq)
-        return vt if vt is not None else seq
+        return vt if vt is not None else _CYCLE0_UNMAPPED_TIER_BASE + seq
     vt = _SEQ_TO_VISUAL_TIER.get(seq)
     return vt if vt is not None else seq
 
@@ -682,6 +873,8 @@ def _group_calls_into_tiers_and_enrich(calls: list[dict[str, Any]]) -> list[list
     """
     if not calls:
         return []
+
+    _stamp_speculative_tier_overrides(calls)
 
     _MODULE_TO_INFERRED_SEQ: dict[str, int] = {
         "policy": 1,
@@ -776,6 +969,24 @@ def _tier_started_after(src: list[dict[str, Any]], dst: list[dict[str, Any]]) ->
     return dst_start >= src_end
 
 
+def _compliance_connector_label(src: list[dict[str, Any]], dst: list[dict[str, Any]]) -> str:
+    """RV13: say what flows into a compliance node instead of a generic "DCCL"."""
+    dst_compliance = [c for c in dst if "compliance" in (c.get("module") or "").lower()]
+    phases = {(c.get("phase") or "") for c in dst_compliance}
+    if "safety_gate" in phases:
+        return "hard-signal gate (P0)"
+    if "match_downgraded" in phases:
+        return "MATCH downgraded"
+    actions = {(c.get("action") or "").lower() for c in dst_compliance}
+    if "safety_override" in actions and any(
+        "compliance" in (c.get("module") or "").lower() and (c.get("action") or "").lower() == "evaluate" for c in src
+    ):
+        return "verdict → safety check"
+    if "draft_revalidate" in actions:
+        return "regenerated draft → revalidate"
+    return "risk + draft → DCCL"
+
+
 def _compute_connector_labels(tiers: list[list[dict[str, Any]]]) -> list[str | None]:
     """Return a human-readable label for the pipe AFTER each tier.
 
@@ -820,7 +1031,7 @@ def _compute_connector_labels(tiers: list[list[dict[str, Any]]]) -> list[str | N
                     else "scheduled in parallel with critic (not gated)"
                 )
         if any("compliance" in m for m in dst_modules):
-            parts.append("DCCL")
+            parts.append(_compliance_connector_label(tiers[i], tiers[i + 1]))
         labels.append(" · ".join(parts) if parts else None)
     return labels
 
@@ -2118,8 +2329,12 @@ def _build_synthetic_path_routing_node(
     traces: list[dict[str, Any]],
     calibration_node: dict[str, Any] | None,
     llm_calls: list[dict[str, Any]],
+    extra_anchor_nodes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
-    """Synthetic flow node: path_router / controller branch, from persisted debug (no extra LLM)."""
+    """Synthetic flow node: path_router / controller branch, from persisted debug (no extra LLM).
+
+    ``extra_anchor_nodes`` are synthetic nodes that run before routing (the compliance gate / downgrade): the node's
+    placement time is moved after them so the timeline never shows routing before the gate."""
     obs = build_orchestrator_observability(debug_events, traces)
     if not obs.get("has_routing_data"):
         return None
@@ -2131,6 +2346,15 @@ def _build_synthetic_path_routing_node(
             io["outputs"].append({"label": f"detail_{i + 1}", "value": str(b)[:800]})
     _, _, _, last_risk_end = _extract_mini_estimator_data(llm_calls)
     anchor = int(calibration_node["started_at"]) if calibration_node else int(last_risk_end)
+    # Placement anchor (not a measured time): after the end of every cycle-0 DCCL / compliance-regenerate row and of
+    # the pre-routing synthetic gate / downgrade nodes, because routing runs after all of them.
+    for c in [*llm_calls, *(extra_anchor_nodes or [])]:
+        if int(c.get("cycle") or 0) != 0:
+            continue
+        if (c.get("module") or "").strip().lower() == "compliance_layer" or (
+            (c.get("call_kind") or "") == "compliance_regenerate"
+        ):
+            anchor = max(anchor, math.ceil((c.get("started_at") or 0) + (c.get("duration_ms") or 0)))
     started_at = anchor + 1
     raw_payload = {
         "narrative_bullets": obs.get("narrative_bullets"),
@@ -2519,7 +2743,8 @@ def _synthetic_compliance_downgrade_nodes(
     if not events:
         return []
 
-    # Anchor just after the DCCL judge node (compliance_layer, seq -5) when present.
+    # Fallback placement time: just after the last compliance_layer row. The node itself is ranked by phase (gate tier,
+    # after draft revalidation (-4) and before path routing), not by this time.
     last_compliance_end = 0
     for c in all_flow_calls:
         if (c.get("module") or "").strip().lower() == "compliance_layer":
@@ -2715,6 +2940,20 @@ def _synthetic_module_skipped_nodes(orchestration_events: list[dict[str, Any]]) 
     return nodes
 
 
+def _normalize_dccl_legacy_cycles(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Legacy data fix: DCCL ``llm_calls`` rows (module ``compliance_layer``) used to be persisted with ``cycle=NULL``
+    (``dccl.py``; new rows carry cycle 0), which made the page draw them in a separate "Initial assessment" group
+    before retrieval/risk. Show them in cycle 0, flagged ``_cycle_normalized``. Deliberately scoped to compliance rows:
+    a generic NULL->0 would hide future coordinate bugs in other writers. Returns the rows it changed."""
+    changed: list[dict[str, Any]] = []
+    for call in calls:
+        if call.get("cycle") is None and (call.get("module") or "").strip().lower() == "compliance_layer":
+            call["cycle"] = 0
+            call["_cycle_normalized"] = True
+            changed.append(call)
+    return changed
+
+
 def _normalize_post_output_cycles(calls: list[dict[str, Any]]) -> None:
     """Place provider delivery and revalidation nodes after deliberation in UI graphs."""
 
@@ -2861,16 +3100,34 @@ def _synthetic_constitution_call_from_traces(traces: list[dict[str, Any]]) -> di
     return None
 
 
-def _journey_sort_key(c: dict[str, Any]) -> tuple[Any, Any, Any, Any, Any]:
-    """Sort key: cycle, sequence_in_cycle, id, started_at (tie-break), phase."""
+def _journey_sort_key(c: dict[str, Any]) -> tuple[Any, ...]:
+    """Sort key: cycle, graph visual tier, own-tier failed attempts first, sequence_in_cycle, id, started_at
+    (tie-break), phase. Delegating to ``_visual_tier_for_call`` makes the journey order equal the flattened graph
+    tiers; for cycles >= 1 the tiers are monotone in seq, so the order there is unchanged."""
     cycle = c.get("cycle") if c.get("cycle") is not None else -1
     seq = c.get("sequence_in_cycle") if c.get("sequence_in_cycle") is not None else 999
-    return (cycle, seq, c.get("id") or 0, c.get("started_at") or 0, c.get("phase") or "")
+    return (
+        cycle,
+        _visual_tier_for_call(c),
+        0 if _is_own_tier_retry(c) else 1,
+        seq,
+        c.get("id") or 0,
+        c.get("started_at") or 0,
+        c.get("phase") or "",
+    )
 
 
 def _journey_steps(llm_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return llm_calls sorted by logical order (cycle, sequence_in_cycle) then started_at for journey."""
+    """Return llm_calls in journey order: stamp the RV12 speculative placement, then sort by ``_journey_sort_key``
+    (cycle -> visual tier -> own-tier retry flag -> seq -> id -> started_at -> phase)."""
+    _stamp_speculative_tier_overrides(llm_calls)
     return sorted(llm_calls, key=_journey_sort_key)
+
+
+# ``started_at`` is wall-clock int ms while ``duration_ms`` is a float perf_counter measure: back-to-back steps can
+# appear to overlap by a fraction of a ms. Overlaps up to this tolerance are not "Parallel" (journey only; the graph
+# connector ``_tier_started_after`` stays strict, it is deliberation-scheduler semantics).
+_PARALLEL_OVERLAP_TOLERANCE_MS = 1.0
 
 
 def _enrich_journey_with_timing_and_parallel(
@@ -2905,7 +3162,7 @@ def _enrich_journey_with_timing_and_parallel(
             o_start = other.get("started_at") or 0
             o_dur = other.get("duration_ms") or 0
             o_end = o_start + o_dur
-            if start_ms < o_end and o_start < end_ms:
+            if start_ms < o_end - _PARALLEL_OVERLAP_TOLERANCE_MS and o_start < end_ms - _PARALLEL_OVERLAP_TOLERANCE_MS:
                 is_parallel = True
                 break
         entry: dict[str, Any] = dict(c)
@@ -2920,6 +3177,7 @@ def _enrich_journey_with_timing_and_parallel(
 # Display order of modules for timeline rows (metro map)
 _TIMELINE_MODULE_ORDER = (
     "risk_estimator",
+    "compliance_layer",
     "orchestrator",
     "constitution",
     "policy",
@@ -3872,6 +4130,7 @@ button:hover{opacity:0.9}
         _tag_constitution_phases(llm_calls)
         _hydrate_speculative_reuse_calls(llm_calls)
         rehomed_guard_calls = _rehome_legacy_hard_violation_guard_calls(llm_calls)
+        normalized_dccl_calls = _normalize_dccl_legacy_cycles(llm_calls)
         for call in llm_calls:
             call["io_annotations"] = _build_module_io_annotations(call)
             call["retry_subject"] = _retry_subject(call)
@@ -3880,6 +4139,11 @@ button:hover{opacity:0.9}
         for call in rehomed_guard_calls:
             # Keep the re-homing visible: the persisted row carried legacy coordinates.
             call["semantic_badges"] = [*call["semantic_badges"], "legacy row re-homed to guard"]
+        for call in normalized_dccl_calls:
+            # Keep the normalization visible: the persisted row carried cycle NULL.
+            call["semantic_badges"] = [*call["semantic_badges"], "legacy row: cycle NULL shown as 0"]
+        # Which real rows received the developer contract (and how); synthetic nodes are never annotated.
+        _attach_contract_delivery(llm_calls, orchestration_events)
 
         all_flow_calls = list(llm_calls)
         if synthetic_constitution is not None:
@@ -3892,7 +4156,12 @@ button:hover{opacity:0.9}
         if calibration_node is not None:
             all_flow_calls.append(calibration_node)
 
-        path_routing_node = _build_synthetic_path_routing_node(debug_events, traces, calibration_node, llm_calls)
+        # The gate / downgrade nodes run before routing: computed first so the routing placement anchor can follow them.
+        # (Only compliance_layer rows matter to them; those are all real llm_calls rows.)
+        downgrade_nodes = _synthetic_compliance_downgrade_nodes(orchestration_events, all_flow_calls)
+        path_routing_node = _build_synthetic_path_routing_node(
+            debug_events, traces, calibration_node, llm_calls, extra_anchor_nodes=downgrade_nodes
+        )
         if path_routing_node is not None:
             all_flow_calls.append(path_routing_node)
 
@@ -3920,7 +4189,7 @@ button:hover{opacity:0.9}
         # Governance steps that otherwise vanish from the graph (audit completeness):
         # compliance MATCH downgrade / hard-signal gate, deferred modules, ledger
         # fast-path, early convergence, and gated (skipped) modules.
-        all_flow_calls.extend(_synthetic_compliance_downgrade_nodes(orchestration_events, all_flow_calls))
+        all_flow_calls.extend(downgrade_nodes)
         all_flow_calls.extend(_synthetic_module_deferred_nodes(orchestration_events))
         ledger_fast_path_node = _synthetic_ledger_fast_path_node(orchestration_events, all_flow_calls)
         if ledger_fast_path_node is not None:
@@ -3955,8 +4224,7 @@ button:hover{opacity:0.9}
                 }
             )
 
-        llm_calls_for_journey = list(all_flow_calls)
-        llm_calls_for_journey.sort(key=_journey_sort_key)
+        llm_calls_for_journey = _journey_steps(list(all_flow_calls))
 
         journey_steps = _journey_steps(llm_calls_for_journey)
         journey_steps_enriched = _enrich_journey_with_timing_and_parallel(journey_steps)

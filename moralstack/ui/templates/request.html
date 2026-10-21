@@ -24,6 +24,18 @@
 {% endif %}
 {% endif %}
 {% endmacro %}
+{# Developer contract delivery for one real call (call.contract_delivery, resolved from the call's wire record by
+   ui/contract_delivery.py). Renders nothing when the call did not receive the contract. Jinja autoescape stays on. #}
+{% macro contract_delivery_block(call) %}
+{% set cd = call.get('contract_delivery') %}
+{% if cd %}
+<details class="contract-delivery">
+    <summary>Developer contract <span class="muted">&middot; {{ cd.label }} &middot; {{ cd.coverage }}{% if cd.calls_total > 1 %} &middot; {{ cd.calls_with_contract }} of {{ cd.calls_total }} calls{% endif %}</span></summary>
+    <pre class="block">{{ cd.excerpt }}</pre>
+    <div class="muted">{% if cd.verified %}Identity verified by contract_hash.{% else %}Identity not verified by contract_hash.{% endif %}{% if cd.truncated %} The module received only the first {{ cd.chars_received }} of {{ cd.chars_total }} characters.{% endif %}</div>
+</details>
+{% endif %}
+{% endmacro %}
 <style>
 .badge-tokens { background: rgba(45, 212, 191, 0.15); color: #2dd4bf; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .badge-cached { background: rgba(129, 140, 248, 0.15); color: #818cf8; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -1184,7 +1196,7 @@
             {% if call.is_parallel %}<span class="badge badge-parallel"
                                            title="Ran in parallel with other modules in this cycle">Parallel</span>{%
             endif %}
-            <span class="journey-cycle">{% if call.cycle is none or call.cycle == 0 %}cycle 0{% else %}cycle {{ call.cycle }}{% endif %}</span>
+            <span class="journey-cycle">{% if call.cycle is none or call.cycle == 0 %}cycle 0{% else %}cycle {{ call.cycle }}{% endif %}{% if call.get('_cycle_normalized') %} <span class="muted" title="Persisted with cycle NULL (legacy row); shown in cycle 0">(legacy cycle NULL)</span>{% endif %}</span>
             <span class="journey-module">{{ call.module }} / {{ call.phase }}{% if call.get('is_draft_reuse') %}
                 <span class="badge badge-parallel" title="Speculative draft reused without a policy LLM call">Draft reused (no policy call)</span>{% elif call.get('is_final_revalidation') %} <span
                     class="badge badge-running" title="Post-output governance check before delivery">Final revalidation</span>{% elif call.get('parallel_retrieval') %} <span
@@ -1343,7 +1355,9 @@
         <div class="flow-cycle-marker" data-cycle="{{ cycle_data.cycle_num if cycle_data.cycle_num is not none else 0 }}">
             {% if cycle_data.cycle_label %}
             {{ cycle_data.cycle_label }} <span class="flow-cycle-badge">post-output</span>
-            {% elif cycle_data.cycle_num is none or cycle_data.cycle_num == 0 %}
+            {% elif cycle_data.cycle_num is none %}
+            Unsequenced rows (cycle NULL)
+            {% elif cycle_data.cycle_num == 0 %}
             Initial assessment <span class="flow-cycle-badge">cycle 0</span>
             {% else %}
             Deliberation <span class="flow-cycle-badge">cycle {{ cycle_data.cycle_num }}</span>
@@ -1365,7 +1379,11 @@
 
                 <div class="flow-tier {% if tier|length > 1 %}flow-tier--parallel{% endif %}">
                     {% if tier|length > 1 %}
+                    {% if tier | rejectattr('phase', 'equalto', 'deferred_to_compliance') | list | length == 0 %}
+                    <span class="flow-tier-parallel-label">skipped &middot; {{ tier|length }} modules</span>
+                    {% else %}
                     <span class="flow-tier-parallel-label">parallel &middot; {{ tier|length }} calls</span>
+                    {% endif %}
                     {% endif %}
 
                     {% for call in tier %}
@@ -1447,6 +1465,7 @@
                                 <p class="call-result-text">{{ preview }}</p>
                             </div>
                             {% endif %}
+                            {{ contract_delivery_block(call) }}
                             <details>
                                 <summary>Prompt</summary>
                                 <pre class="block">{{ call.prompt }}</pre>
@@ -1458,7 +1477,7 @@
                             {% set message_sections = call.parsed_summary_json | message_sections %}
                             {% if message_sections %}
                             <details>
-                                <summary>Original System / Developer Messages</summary>
+                                <summary>Original request messages (client body)</summary>
                                 {% if message_sections.system_messages %}
                                 <div class="meta-label">System</div>
                                 <pre class="block">{{ message_sections.system_messages | join('\n\n---\n\n') }}</pre>
@@ -1742,6 +1761,7 @@
         <p class="call-result-text">{{ preview }}</p>
     </div>
     {% endif %}
+    {{ contract_delivery_block(call) }}
     <details>
         <summary>Prompt</summary>
         <pre class="block">{{ call.prompt }}</pre>
@@ -1753,7 +1773,7 @@
     {% set message_sections = call.parsed_summary_json | message_sections %}
     {% if message_sections %}
     <details>
-        <summary>Original System / Developer Messages</summary>
+        <summary>Original request messages (client body)</summary>
         {% if message_sections.system_messages %}
         <div class="meta-label">System</div>
         <pre class="block">{{ message_sections.system_messages | join('\n\n---\n\n') }}</pre>

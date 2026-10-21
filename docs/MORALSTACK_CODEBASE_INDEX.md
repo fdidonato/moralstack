@@ -927,7 +927,8 @@ renders as a `safety_gate` alert node), `_synthetic_module_deferred_nodes`
 (`LEDGER_FAST_PATH_APPLIED/NOT_APPLIED`), `_synthetic_convergence_node`
 (`EARLY_CONVERGENCE_ACCEPTED/REJECTED`), and `_synthetic_module_skipped_nodes`
 (`SIMULATOR_SKIPPED`/`CRITIC_SKIPPED`). All carry `module`, `sequence_in_cycle`
-(placed in the module's canonical tier via `_SEQ_BY_DEFERRED_MODULE`) and
+(in cycle 0 the deferred markers are ranked by phase `deferred_to_compliance` / action `skipped - contract authorized`
+into one post-verdict tier labelled `skipped · N modules`; `_SEQ_BY_DEFERRED_MODULE` places them only in cycles >= 1) and
 `io_annotations` so they render and expand like any node. `_build_path_badge_info`
 distinguishes the P0 hard-signal block (`kind=compliance_blocked_p0`) from ordinary
 downgrades. `compliance_layer` and `final_revalidation` now have a legend colour in
@@ -937,8 +938,17 @@ downgrades. `compliance_layer` and `final_revalidation` now have a legend colour
 `(sequence_in_cycle, id, started_at)` (`_group_calls_into_tiers_and_enrich`), so a
 node without a sequence sinks to the bottom of its cycle. The synthetic calibration
 and path-routing nodes therefore carry `_SEQ_SYNTHETIC_CALIBRATION=-7` /
-`_SEQ_SYNTHETIC_PATH_ROUTING=-2`, mapped in `_CYCLE0_SEQ_TO_VISUAL_TIER` after the
-risk minis / calibration guard and before the policy draft they precede. The
+`_SEQ_SYNTHETIC_PATH_ROUTING=-2`, ranked by `_visual_tier_for_call` after the
+risk minis / calibration guard and before the policy draft they precede.
+**Cycle-0 rank (2026-10-21, `_T_*` constants, relative order only):** risk-routing prefilter -> domain agents
+(`*domain_agent` action) -> risk minis -> calibration guard -> calibration -> DCCL evaluate (-5) ->
+DCCL safety_override (-6) -> compliance regenerate -> draft revalidate (-4) -> hard-signal gate / downgrade ->
+deferred markers -> path routing (-2) -> ledger (-3) -> deliberation prefilter -> its agents -> route draft ->
+quick_check -> terminal (seq 6); unmapped seqs form a `100 + seq` tail. The cycle-0 speculative draft (seq 0) is placed from timings into the risk tier (prefilter / agents / minis) it overlaps most (`_stamp_speculative_tier_overrides`, RV12); connector labels into compliance nodes say what flows (`_compliance_connector_label`, RV13). `_journey_sort_key` delegates to it
+(journey == flattened graph tiers); `_normalize_dccl_legacy_cycles` shows legacy `cycle=NULL` DCCL rows in cycle 0
+(badge `legacy row: cycle NULL shown as 0`); other NULL-cycle rows render under "Unsequenced rows (cycle NULL)";
+the timeline lists `compliance_layer` after `risk_estimator`. Detail: `docs/traces/observability_db_to_ui.md` section 5;
+tests: `tests/test_ui_dccl_ordering.py`. **Developer contract delivery (2026-10-21):** `moralstack/ui/contract_delivery.py` (pure, read-only: `resolve_request_contract` verifies the contract text by `contract_hash`; `contract_delivery_for_call` classifies a real `llm_calls` row from its wire record as native / embedded / recorded-sections and never claims `safety_override`, `draft_revalidate`, hydrated or synthetic rows); `ui/app.py:_attach_contract_delivery` wires it into `request_detail`, `request.html:contract_delivery_block` renders it; tests: `tests/test_ui_contract_delivery.py`. The
 hard-violation delivery guard's rows (`SEQ_HARD_VIOLATION_REGENERATION=7`,
 `_REVALIDATION=8`, see `deliberation_runner.py`) tier after simulator/perspectives
 in `_SEQ_TO_VISUAL_TIER`; `_rehome_legacy_hard_violation_guard_calls` re-homes rows

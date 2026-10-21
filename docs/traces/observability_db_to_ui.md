@@ -264,7 +264,7 @@ Per-request accessors: `get_request`, `get_llm_calls_for_request`,
 `get_conversation_ids_for_run` (`read_store.py:53-97,229-564`).
 
 `llm_calls` are ordered by `(cycle, sequence_in_cycle, started_at, phase)`
-(`read_store.py:276-282`) so the UI can rebuild execution order without relying
+(`read_store.py:318-320`) so the UI can rebuild execution order without relying
 on wall-clock alone. The execution graph's tiers follow the same key
 (`ui/app.py:_group_calls_into_tiers_and_enrich`): a node without
 `sequence_in_cycle` sinks to the bottom of its cycle, which is why the synthetic
@@ -279,7 +279,7 @@ shows those legacy rows where they were persisted.
 Rows that are written from outside a deliberation cycle must carry their own coordinates, or they land in a
 NULL-cycle group of the graph. The risk estimator's `retry_failed` rows carry `cycle=0` / `sequence_in_cycle=-9`
 (the mini rows' tier), and the fast-path `quick_check` row carries `cycle=0` / `sequence_in_cycle=2`, which
-`_CYCLE0_SEQ_TO_VISUAL_TIER` maps to tier 9 (after the fast draft at tier 8; unmapped, seq 2 would collapse into the
+`_visual_tier_for_call` ranks in the quick-check tier (after the fast draft; unmapped, seq 2 would collapse into the
 calibration-guard tier and sort before the draft). The perspectives and hindsight `retry_failed` rows are written
 inside a deliberation cycle with the cycle ContextVar and no sequence, so the request page infers their tier from
 the module. A failed attempt of a module that runs ALONE in its tier (critic, hindsight) is NOT drawn as a "parallel"
@@ -290,9 +290,47 @@ drawing those as a chain would be a causal falsehood. In every case the `retry_f
 (`badge-fail`) and the node names who failed (`failed: <mini>` / `failed: perspective <name>` / `failed: scenario <id>` /
 `failed: simulator seed <s>` / `failed: simulator batch`, from the additive `parsed_summary_json` keys). `retry_failed` rows are
 ignored by `_tier_started_after` (their `started_at` is the emit time, zero duration), so they cannot hide the real
-`gate: proceed` label of the next tier. The `quick_check` tier (9) is keyed on the row's action, not on cycle 0 / seq 2 alone, because
+`gate: proceed` label of the next tier. The `quick_check` tier is keyed on the row's action, not on cycle 0 / seq 2 alone, because
 the synthetic "critic deferred to compliance" marker also sits at cycle 0 / seq 2 and keeps its own tier. A `quick_check` with
 no verdict renders `quick check: no verdict (<error type>)`. Tests: `tests/test_ui_llm_call_visibility*.py`.
+
+**DCCL coordinates and cycle-0 order** (`tests/test_ui_dccl_ordering.py`). DCCL `llm_calls` rows
+(`module=compliance_layer`: evaluate seq -5, safety_override seq -6) were persisted with `cycle=NULL`
+(`compliance/dccl.py`); since 2026-10-21 they carry `cycle=0` (two literals, `dccl.py` safety_override and evaluate
+`record_llm_call` blocks). Rows written before that are normalized at read time by
+`_normalize_dccl_legacy_cycles` (called in `request_detail` right after `_rehome_legacy_hard_violation_guard_calls`;
+compliance rows with `cycle None` only, flagged `_cycle_normalized` and badged `legacy row: cycle NULL shown as 0`
+in the graph and `(legacy cycle NULL)` in the journey). The normalization is deliberately NOT generic: any other
+remaining NULL-cycle row stays in its own group, labelled "Unsequenced rows (cycle NULL)" instead of "Initial
+assessment", so a future coordinate bug stays visible. `read_store` ordering (`:318-320`) and the markdown export are
+unchanged (the raw list there still shows -6 before -5 for new rows; only the no-graph fallback list on the page
+shows raw order).
+
+Cycle-0 tier order (`_visual_tier_for_call`; named `_T_*` constants, relative order only, never assert the numbers):
+risk-routing `domain_prefilter` (-10) -> its `*domain_agent` rows (-10, parallel among themselves) -> risk minis
+(-9) -> calibration guard (-8) -> calibration (-7, synthetic) -> DCCL evaluate
+(-5) -> DCCL safety_override (-6) -> compliance regenerate (seq 1, `call_kind=compliance_regenerate` /
+`compliance-regenerate` in the action) -> draft revalidate (-4 real row) -> hard-signal gate / ordinary downgrade
+(synthetic, phase `safety_gate` / `match_downgraded`; the hard-signal gate never coexists with a
+regenerate / revalidate row; an ordinary downgrade has a -4 revalidate row only when the semantic-LLM revalidation
+ran, and no -4 row on the substring / early-return branch, `controller.py:1509-1514`, `:1541-1557`) -> deferred markers (phase `deferred_to_compliance` OR action
+`skipped - contract authorized`, one tier labelled `skipped · N modules`) -> path routing (-2, synthetic) -> ledger
+fast-path (-3, synthetic) -> deliberation retrieval prefilter (-1) -> its agents (-1) -> route draft (seq 1) ->
+`quick_check` (action) -> terminal (seq 6: fast-path refusal, domain exclusion). Unmapped cycle-0 sequences land in a
+tail (`100 + seq`), never colliding with a mapped step. Precedence (documented once in the function docstring):
+quick_check action, deferred marker, gate/downgrade phase, compliance regenerate, -10/-1 action split, static table,
+tail. **Speculative draft placement (RV12):** the seq-0 speculative draft (cycle 0; policy or `upstream_speculative`; never a `speculative-reuse` row; only rows whose raw cycle is 0, a NULL-cycle row never counts) joins the risk/retrieval tier (prefilter, agents, minis) with which its `[started_at, started_at+duration_ms]` window overlaps most, measured against the union window of that tier's rows in the same request; tie -> earliest tier; missing/zero timing or no such rows -> the minis tier. `_stamp_speculative_tier_overrides` stamps `_visual_tier_override` (pure, idempotent, never raises; run by the grouping and by `_journey_steps`, which `request_detail` uses as the single sort entry), so graph and journey share one source of truth (request 1166f216: drawn and listed with the prefilter, before the agents). **Connector labels into compliance nodes (RV13, `_compliance_connector_label`):** evaluate -> `risk + draft → DCCL`; safety_override after evaluate -> `verdict → safety check` (on the structured path, after calibration/risk -> `risk + draft → DCCL`); synthetic gate (phase `safety_gate`) -> `hard-signal gate (P0)`; ordinary downgrade (phase `match_downgraded`) -> `MATCH downgraded`; regenerated-draft revalidation (action `draft_revalidate`) -> `regenerated draft → revalidate`. The journey key `_journey_sort_key` delegates to `_visual_tier_for_call`, so journey order equals the flattened
+graph tiers (cycles >= 1 unchanged: tiers are monotone in seq). "Journey == graph" holds at tier level: inside one tier the graph orders by `id`/`started_at`, the journey by `seq` first. Journey "Parallel" is time-truthful and tolerates
+`_PARALLEL_OVERLAP_TOLERANCE_MS` = 1 ms (wall-clock int `started_at` vs float `perf_counter` duration), so it can
+differ from the graph tiers where the speculative draft (DCCL does not await it, `controller.py:1320-1323`) shares a tier with rows it did not wait for. The
+graph connector `_tier_started_after` (`gate: proceed`, cycles >= 1) stays strict and unchanged (known difference).
+The prefilter (and other cycle-0 rows) can therefore legitimately read "Parallel" in the journey when the
+speculative draft (seq 0, not awaited) overlaps it in time: journey Parallel is time-truthful, graph tiers follow
+execution dependencies.
+The execution timeline lists `compliance_layer` between `risk_estimator` and `orchestrator`
+(`_TIMELINE_MODULE_ORDER`), and the path-routing synthetic node's placement time is anchored after the last cycle-0
+compliance / compliance-regenerate row and after the synthetic gate / downgrade nodes (built first, passed as
+`extra_anchor_nodes`).
 
 ## 6. What the UI displays (`moralstack/ui/app.py`)
 
@@ -332,6 +370,35 @@ reconstructs:
   input → decision → response outcome, plus a first-turn contract/history node
   and a terminal node folding the conversation's failure-aware aggregates).
   This replaces the previous horizontal "conversation strip".
+- **Developer contract delivery (2026-10-21, `moralstack/ui/contract_delivery.py`, tests
+  `tests/test_ui_contract_delivery.py`).** Each real `llm_calls` row that actually received the developer contract shows a
+  "Developer contract" `<details>` (macro `contract_delivery_block` in `request.html`: channel label, coverage `full (N chars)`
+  / `truncated: first n of N chars`, identity note, excerpt in `<pre>`) plus a `← developer_contract (<channel>)` io-row; a
+  node that did not receive it shows nothing. Data-driven, never a per-module map. `_attach_contract_delivery`
+  (`ui/app.py`, called in `request_detail` after the io-annotation loop; wrapped, `_LOG.debug`, degrades to "no section")
+  runs `resolve_request_contract` once per request and `contract_delivery_for_call` per **real** row only (synthetic nodes
+  are never annotated). *Canonical text*: candidates are the `system_messages` / `developer_messages` of each row's
+  recorded `message_sections` (top level or `context_shape`); the one whose
+  `DeveloperContract.from_text(text, mode).contract_hash` (raw or stripped, `opaque`/`structured`,
+  `orchestration/contract.py:81-88`) equals a `COMPLIANCE_LAYER_VERDICT_*` `contract_hash` wins (`verified=True`); else
+  exactly one distinct risk-estimator developer message (`verified=False`, "identity not verified"); else nothing is
+  claimed. *Per row*: the wire record (`parsed_summary_json["wire"]`, aggregated `wire_calls` + `wire_strings`, or the
+  critic's `parsed_json["wire"]`) is decoded with `decode_wire` (pure) and each message classified: native
+  developer / system message (stripped body equals the contract, or is a prefix of >= `MIN_PARTIAL_CONTRACT_CHARS`=1000
+  chars), embedded in a system / developer / user message (longest contract prefix contained; counts if the whole
+  contract or >= 1000 chars), priority native > embedded system > developer > user; aggregated rows report
+  `calls_with_contract / calls_total`. A row without any wire falls back to the `system_prompt` / `prompt` columns, then to
+  its own recorded message sections (label says "role sent not recorded"); a row WITH a wire that does not carry the
+  contract never falls back. Never claimed: `compliance_layer` `safety_override` / `draft_revalidate` (their prompts carry
+  rule-action excerpts / the draft by construction), hydrated speculative-reuse rows, synthetic nodes; a malformed wire
+  claims nothing. Residual (documented): a contract shorter than 1000 chars quoted in full inside a draft sent to a module
+  reads "embedded in the user prompt" (literally true). Static io fixes (`_build_module_io_annotations`):
+  `safety_override` -> `action_payload` only, `draft_revalidate` -> `draft` + `rule_action`, policy
+  `generate (compliance-regenerate)` -> `rule_action` + `prompt`. The `<summary>` of the recorded request sections is now
+  "Original request messages (client body)": those sections describe what the client sent, not what a module received
+  (e.g. simulator rows record `system_messages` while the wire carries a developer message). Data exposure: the critic's
+  `parsed_json` is read by the page for the first time, decoded only to find the contract; only the contract excerpt is
+  rendered, never the full wire; the page stays behind `_require_session` and Jinja autoescape is on.
 - **Markdown exports**: per-request, per-run benchmark, and per-conversation
   AI Act art. 12 audit (`/conversations/{id}/export.md` →
   `reports/conversation_export.export_conversation_to_markdown`).

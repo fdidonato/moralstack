@@ -144,8 +144,9 @@ def test_critic_deferred_marker_keeps_its_cycle0_placement_before_the_fast_draft
     marker = {"module": "critic", "action": "skipped - contract authorized", "cycle": 0, "sequence_in_cycle": 2, "id": 0}
     draft = {"module": "policy", "action": "generate (fast_path)", "cycle": 0, "sequence_in_cycle": 1, "id": 1}
     quick = {"module": "critic", "action": "quick_check", "cycle": 0, "sequence_in_cycle": 2, "id": 2}
-    assert _visual_tier_for_call(marker) == 2  # pre-fix placement (tier == seq)
-    assert _visual_tier_for_call(draft) == 8
-    assert _visual_tier_for_call(quick) == 9
+    # Relative order only (literal tier numbers are an implementation detail): the marker ranks with the deferred
+    # markers (after the DCCL verdict that authorized the rule), before the fast draft, and the quick_check ACTION
+    # keeps the last tier, after the draft.
+    assert _visual_tier_for_call(marker) < _visual_tier_for_call(draft) < _visual_tier_for_call(quick)
     tiers = _group_calls_into_tiers_and_enrich([quick, draft, marker])
     assert [t[0]["action"] for t in tiers] == ["skipped - contract authorized", "generate (fast_path)", "quick_check"]

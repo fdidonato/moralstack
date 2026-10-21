@@ -33,4 +33,4 @@ def test_journey_sort_key_puts_missing_sequence_last():
     """Calls without sequence_in_cycle get 999 and sort after sequenced calls in same cycle."""
     key_no_seq = _journey_sort_key({"cycle": 1, "id": 0, "started_at": 100})
     key_policy = _journey_sort_key({"cycle": 1, "sequence_in_cycle": 1, "id": 0, "started_at": 50})
-    assert key_policy < key_no_seq  # (1, 1, 0, 50, "") < (1, 999, 0, 100, "")
+    assert key_policy < key_no_seq  # (1, tier(1), 1, 1, 0, 50, "") < (1, 9999, 1, 999, 0, 100, "")
