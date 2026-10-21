@@ -54,7 +54,8 @@ Before every release:
    twine check dist/*
    twine upload dist/*
    ```
-   `build` and `twine` come with `pip install -e ".[dev]"`.
+   `build` and `twine` are not part of the `dev` extra: install them once with
+   `python -m pip install build twine`.
 
 6. Verify: `pip install moralstack==0.2.0` in a fresh virtualenv.
 

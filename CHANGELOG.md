@@ -661,6 +661,8 @@ that can break an existing integration, with the migration in the matching entry
 
 ### Fixed
 
+- **`docs/RELEASING.md` no longer claims that `build` and `twine` come with the `dev` extra.** Neither is listed in
+  `pyproject.toml`; the build step now says to install them once with `python -m pip install build twine`.
 - **A wheel install can import the risk estimator again.** `moralstack/models/risk/config/signals.yaml` was not in
   `[tool.setuptools.package-data]`, so a non-editable install (`pip install moralstack` / a built wheel) failed at
   `import moralstack.models.risk.estimator` with `FileNotFoundError` (the signal registry is built at import), which
