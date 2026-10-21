@@ -25,6 +25,7 @@ from moralstack.core.types import PolicyLLMProtocol, Turn
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
 from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
+from moralstack.observability.wire import generate_messages_for, inline_wire_summary, safe_encode_wire_calls
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.catalog import NO_CONTEXT, PromptContext, PromptSet, default_prompt_set
 from moralstack.prompts.perspectives_prompt import build_perspectives_user_prompt
@@ -180,6 +181,9 @@ class EnsembleResult:
     cached_prompt_tokens: int | None = None
     token_usage_source: TokenUsageSource = "unknown"
     from_cache: bool = False
+    wire_calls: dict[str, Any] | None = None
+    """``{"wire_calls": [...], "wire_strings": [...]}``: the exact messages of every call whose prompt is joined in the
+    row (one record per result, same order as ``prompts``). Additive audit data; a cache hit carries none."""
 
     @classmethod
     def empty(cls) -> EnsembleResult:
@@ -306,6 +310,22 @@ def parse_perspective_response(
         rationale=rationale,
         raw_response=text,
     )
+
+
+def _ensemble_wire_calls(results: list[PerspectiveResult]) -> dict[str, Any] | None:
+    """Wire records of the calls behind ``results``, in result order (the order of the row's joined prompts).
+
+    None unless every result carries its captured messages. No prompt/system reference: the row's columns are the
+    joined texts, and the shared perspectives system prompt is stored once in the string table.
+    """
+    sent = [getattr(r, "_sent_wire", None) for r in results]
+    for r in results:
+        # Consumed here: the results outlive the call (state.perspectives, the LRU cache) and must not keep the messages.
+        r.__dict__.pop("_sent_wire", None)
+    calls = [item for item in sent if item is not None]
+    if not results or len(calls) != len(results):
+        return None
+    return safe_encode_wire_calls(calls, prompt_col="", system_prompt_col="")
 
 
 def _sum_optional_token_field(results: list[PerspectiveResult], field_name: str) -> int | None:
@@ -460,7 +480,7 @@ class LLMPerspectiveEnsemble:
                 context_fingerprint=context_fingerprint,
             )
             if isinstance(cached_result, EnsembleResult):
-                return dataclass_replace(cached_result, from_cache=True)
+                return dataclass_replace(cached_result, from_cache=True, wire_calls=None)
 
         active_perspectives = perspectives or self.perspectives
 
@@ -629,6 +649,7 @@ class LLMPerspectiveEnsemble:
             completion_tokens=completion_tokens,
             cached_prompt_tokens=cached_prompt_tokens,
             token_usage_source=combined_source,
+            wire_calls=_ensemble_wire_calls(results),
         )
 
     def _evaluate_sequential(
@@ -699,6 +720,7 @@ class LLMPerspectiveEnsemble:
             completion_tokens=completion_tokens,
             cached_prompt_tokens=cached_prompt_tokens,
             token_usage_source=combined_source,
+            wire_calls=_ensemble_wire_calls(results),
         )
 
     def _evaluate_single_perspective(
@@ -736,6 +758,7 @@ class LLMPerspectiveEnsemble:
 
         for attempt in range(self.config.max_retries):
             attempt_token_usage: TokenUsage | None = None
+            sent: tuple[list[dict[str, str]], str] | None = None
             raw_response = ""
             try:
                 effective_prompt = user_prompt if attempt == 0 else f"{user_prompt}\n\n{retry_text}"
@@ -744,18 +767,21 @@ class LLMPerspectiveEnsemble:
                     and "generate_messages" in dir(self.policy)
                     and callable(getattr(self.policy, "generate_messages", None))
                 ):
+                    messages = build_module_messages(
+                        system_prompt=shared_system_prompt,
+                        user_prompt=user_prompt,
+                        developer_contract=developer_contract,
+                        conversation_history=conversation_history,
+                        retry_prompt="" if attempt == 0 else retry_text,
+                        prompt_set=self._prompt_set,
+                    )
+                    sent = (messages, "messages")
                     result = self.policy.generate_messages(
-                        messages=build_module_messages(
-                            system_prompt=shared_system_prompt,
-                            user_prompt=user_prompt,
-                            developer_contract=developer_contract,
-                            conversation_history=conversation_history,
-                            retry_prompt="" if attempt == 0 else retry_text,
-                            prompt_set=self._prompt_set,
-                        ),
+                        messages=messages,
                         config=self._generation_config,
                     )
                 else:
+                    sent = (generate_messages_for(effective_prompt, shared_system_prompt), "generate")
                     result = self.policy.generate(
                         prompt=effective_prompt,
                         system=shared_system_prompt,
@@ -771,18 +797,23 @@ class LLMPerspectiveEnsemble:
                 pr.completion_tokens = getattr(result, "completion_tokens", None)
                 pr.cached_prompt_tokens = attempt_token_usage.cached_input_tokens
                 pr.token_usage_source = attempt_token_usage.source
+                # Transient audit data, not a dataclass field: the ensemble turns it into the row's wire_calls.
+                pr._sent_wire = sent  # type: ignore[attr-defined]
                 return pr
             except (JSONParseError, Exception) as e:
                 if attempt_token_usage is not None:
                     try:
                         from moralstack.observability.emit_helpers import async_persist_llm_call
 
+                        retry_reason = f"Perspective {perspective.id}/{perspective.name} retry reason: {str(e)[:200]}"
+                        summary: dict[str, Any] = {"perspective_id": perspective.id, "perspective_name": perspective.name}
+                        summary.update(inline_wire_summary(sent, retry_reason))
                         async_persist_llm_call(
                             phase="perspectives_retry",
                             module="perspectives",
                             action=f"retry_failed_attempt_{attempt + 1}",
                             model=getattr(self.policy, "model", None) or "",
-                            prompt=(f"Perspective {perspective.id}/{perspective.name} retry reason: {str(e)[:200]}"),
+                            prompt=retry_reason,
                             raw_response=raw_response or "",
                             duration_ms=0.0,
                             attempts=attempt + 1,
@@ -790,10 +821,7 @@ class LLMPerspectiveEnsemble:
                             billable_provider_call=True,
                             token_usage_json=attempt_token_usage.to_json(),
                             # Additive: WHO failed (the UI names the perspective on the node).
-                            parsed_summary_json=json.dumps(
-                                {"perspective_id": perspective.id, "perspective_name": perspective.name},
-                                ensure_ascii=False,
-                            ),
+                            parsed_summary_json=json.dumps(summary, ensure_ascii=False),
                         )
                     except Exception:
                         pass

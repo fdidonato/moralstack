@@ -382,3 +382,7 @@ runner records `CONTEXT_SHAPE_RECORDED` plus context-shape metadata on the hinds
 - [Consequence Simulator](./simulator.md) - Provides scenarios to evaluate
 - [Orchestrator](./orchestrator.md) - Uses hindsight for convergence
 - [Policy LLM](./policy.md) - Evaluation generation
+
+## Wire record (A4b-2)
+
+`HindsightResult.wire` holds the exact messages of the batch call (or of the single-consequence call; `wire_calls` when the individual path evaluated several consequences into one row). The runner adds it to the row's `parsed_summary_json`. Retry-failed rows, batch and single, carry the failed attempt's messages inline under `wire`. The single path is always `generate()`, so its `branch` is `generate`. A cache hit carries none.

@@ -7,6 +7,7 @@ Usa il Policy LLM con prompt specializzato e parsing JSON rigoroso.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -20,6 +21,7 @@ from moralstack.core.types import PolicyLLMProtocol, Turn, Violation
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
 from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
+from moralstack.observability.wire import generate_messages_for, inline_wire_summary, safe_encode_wire
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.catalog import PromptContext, PromptSet, default_prompt_set
 from moralstack.prompts.critic_prompt import CRITIC_FULL_SYSTEM_PROMPT  # noqa: F401 - default re-export, kept importable
@@ -89,6 +91,9 @@ class CriticReport:
     """True when critique returned without invoking the LLM (e.g. no relevant principles)."""
     skip_reason: str = ""
     """Human-readable reason for skipping, used in logs and UI."""
+    wire: dict[str, Any] | None = None
+    """Exact messages sent by the call that produced this report (wire record v1, ``observability/wire.py``).
+    Additive audit data; ``None`` when no model call was made or the record could not be built."""
     enumerated_output_gate_applied: bool = False
     """True when a SOFT-only REVISE was downgraded to PROCEED because the draft
     is a single enumerated answer (e.g. TRUE/FALSE). HARD violations are never
@@ -436,30 +441,29 @@ class LLMConstitutionalCritic:
         for attempt in range(self.config.max_retries):
             parse_attempts = attempt + 1
             attempt_token_usage: TokenUsage | None = None
+            sent: tuple[list[dict[str, str]], str] | None = None
 
             try:
                 effective_prompt = prompt if attempt == 0 else f"{prompt}\n\n{retry_prompt}"
                 if hasattr(self.policy, "generate_messages"):
-                    result = self.policy.generate_messages(
-                        messages=build_module_messages(
-                            system_prompt=full_system_prompt,
-                            user_prompt=prompt,
-                            developer_contract=developer_contract,
-                            conversation_history=conversation_history,
-                            retry_prompt="" if attempt == 0 else retry_prompt,
-                            prompt_set=self._prompt_set,
-                        ),
-                        config=self._generation_config,
+                    messages = build_module_messages(
+                        system_prompt=full_system_prompt,
+                        user_prompt=prompt,
+                        developer_contract=developer_contract,
+                        conversation_history=conversation_history,
+                        retry_prompt="" if attempt == 0 else retry_prompt,
+                        prompt_set=self._prompt_set,
                     )
-                elif attempt == 0:
-                    result = self.policy.generate(
-                        prompt=legacy_prompt,
-                        system=full_system_prompt,
+                    sent = (messages, "messages")
+                    result = self.policy.generate_messages(
+                        messages=messages,
                         config=self._generation_config,
                     )
                 else:
+                    legacy_user = legacy_prompt if attempt == 0 else f"{legacy_prompt}\n\n{retry_prompt}"
+                    sent = (generate_messages_for(legacy_user, full_system_prompt), "generate")
                     result = self.policy.generate(
-                        prompt=f"{legacy_prompt}\n\n{retry_prompt}",
+                        prompt=legacy_user,
                         system=full_system_prompt,
                         config=self._generation_config,
                     )
@@ -517,6 +521,9 @@ class LLMConstitutionalCritic:
                     completion_tokens=getattr(result, "completion_tokens", None),
                     cached_prompt_tokens=attempt_token_usage.cached_input_tokens,
                     token_usage_source=attempt_token_usage.source,
+                    wire=safe_encode_wire(
+                        sent[0], prompt_col=effective_prompt, system_prompt_col=full_system_prompt, branch=sent[1]
+                    ),
                     enumerated_output_gate_applied=enumerated_gate_applied,
                 )
 
@@ -527,12 +534,15 @@ class LLMConstitutionalCritic:
                     try:
                         from moralstack.observability.emit_helpers import async_persist_llm_call
 
+                        retry_reason = f"Retry reason: {str(e)[:200]}"
+                        inline_wire = inline_wire_summary(sent, retry_reason)
                         async_persist_llm_call(
                             phase="critic_retry",
                             module="critic",
                             action=f"retry_failed_attempt_{parse_attempts}",
                             model=getattr(self.policy, "model", None) or "",
-                            prompt=f"Retry reason: {str(e)[:200]}",
+                            prompt=retry_reason,
+                            parsed_summary_json=json.dumps(inline_wire) if inline_wire else None,
                             raw_response=raw_response or "",
                             duration_ms=0.0,
                             attempts=parse_attempts,

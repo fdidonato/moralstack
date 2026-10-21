@@ -24,6 +24,12 @@ from moralstack.core.types import PolicyLLMProtocol, Turn
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
 from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
+from moralstack.observability.wire import (
+    generate_messages_for,
+    inline_wire_summary,
+    safe_encode_wire,
+    safe_encode_wire_calls,
+)
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts._common import HINDSIGHT_BASE_FRAMING
 from moralstack.prompts.catalog import PromptContext, PromptSet, default_prompt_set
@@ -295,6 +301,10 @@ class HindsightResult:
     cached_prompt_tokens: int | None = None
     token_usage_source: TokenUsageSource = "unknown"
     from_cache: bool = False
+    wire: dict[str, Any] | None = None
+    """Exact messages of the single call that produced this result (wire record v1). Additive audit data."""
+    wire_calls: dict[str, Any] | None = None
+    """``{"wire_calls": [...], "wire_strings": [...]}`` when the individual path made several calls."""
 
     @classmethod
     def empty(cls) -> "HindsightResult":
@@ -534,6 +544,8 @@ class LLMHindsightEvaluator:
         request: str,
         response: str,
         consequence: Consequence,
+        *,
+        sent_calls: list[tuple[list[dict[str, str]], str]] | None = None,
     ) -> HindsightEvaluation:
         """
         Valuta un singolo scenario (risposta + conseguenza).
@@ -542,6 +554,8 @@ class LLMHindsightEvaluator:
             request: Richiesta originale dell'utente
             response: Risposta da valutare
             consequence: Conseguenza simulata da valutare
+            sent_calls: if given, receives the (messages, branch) of the call that produced the evaluation
+                (audit only; the individual path uses it to build the row's wire record)
 
         Returns:
             HindsightEvaluation con scores e metriche
@@ -563,21 +577,20 @@ class LLMHindsightEvaluator:
             attempt_token_usage: TokenUsage | None = None
             raw_response = ""
 
+            sent: tuple[list[dict[str, str]], str] | None = None
+
             try:
                 if attempt == 0:
-                    result = self.policy.generate(
-                        prompt=prompt,
-                        system=single_system_prompt,
-                        config=self._generation_config,
-                    )
+                    user_text = prompt
                 else:
                     # Retry con prompt specifico
-                    retry_prompt = f"{prompt}\n\n{self._prompt_set.text('hindsight.retry.single')}"
-                    result = self.policy.generate(
-                        prompt=retry_prompt,
-                        system=single_system_prompt,
-                        config=self._generation_config,
-                    )
+                    user_text = f"{prompt}\n\n{self._prompt_set.text('hindsight.retry.single')}"
+                sent = (generate_messages_for(user_text, single_system_prompt), "generate")
+                result = self.policy.generate(
+                    prompt=user_text,
+                    system=single_system_prompt,
+                    config=self._generation_config,
+                )
 
                 raw_response = result.text
                 attempt_token_usage = TokenUsage.from_generation_result(result)
@@ -596,12 +609,19 @@ class LLMHindsightEvaluator:
                     weights=self._score_weights,
                 )
 
+                if sent_calls is not None and sent is not None:
+                    sent_calls.append(sent)
                 return evaluation
 
             except Exception as e:  # JSONParseError included: every failed attempt is handled the same way
                 last_error = str(e)
                 self._persist_single_retry_failed(
-                    consequence, parse_attempts, e, raw_response=raw_response, token_usage=attempt_token_usage
+                    consequence,
+                    parse_attempts,
+                    e,
+                    raw_response=raw_response,
+                    token_usage=attempt_token_usage,
+                    sent=sent,
                 )
                 continue
 
@@ -628,6 +648,7 @@ class LLMHindsightEvaluator:
         *,
         raw_response: str,
         token_usage: TokenUsage | None,
+        sent: tuple[list[dict[str, str]], str] | None = None,
     ) -> None:
         """Record a paid-for single-path attempt whose output could not be parsed.
 
@@ -639,12 +660,15 @@ class LLMHindsightEvaluator:
         try:
             from moralstack.observability.emit_helpers import async_persist_llm_call
 
+            retry_prompt = f"Scenario {consequence.scenario_id} retry reason: {str(error)[:200]}"
+            summary: dict[str, Any] = {"scenario_id": consequence.scenario_id}
+            summary.update(inline_wire_summary(sent, retry_prompt))
             async_persist_llm_call(
                 phase="hindsight_retry",
                 module="hindsight",
                 action=f"retry_failed_attempt_{attempt_no}",
                 model=getattr(self.policy, "model", None) or "",
-                prompt=f"Scenario {consequence.scenario_id} retry reason: {str(error)[:200]}",
+                prompt=retry_prompt,
                 raw_response=raw_response or "",
                 duration_ms=0.0,
                 attempts=attempt_no,
@@ -652,7 +676,7 @@ class LLMHindsightEvaluator:
                 billable_provider_call=True,
                 token_usage_json=token_usage.to_json(),
                 # Additive: WHICH consequence failed (the UI names it on the node).
-                parsed_summary_json=json.dumps({"scenario_id": consequence.scenario_id}, ensure_ascii=False),
+                parsed_summary_json=json.dumps(summary, ensure_ascii=False),
             )
         except Exception:
             logger.debug("persist hindsight single retry-failed llm call failed", exc_info=True)
@@ -705,7 +729,7 @@ class LLMHindsightEvaluator:
                 context_fingerprint=context_fingerprint,
             )
             if isinstance(cached_result, HindsightResult):
-                return replace(cached_result, from_cache=True)
+                return replace(cached_result, from_cache=True, wire=None, wire_calls=None)
 
         if self.config.use_batch_evaluation and len(consequences) > 1:
             result = self._evaluate_batch(
@@ -771,29 +795,28 @@ class LLMHindsightEvaluator:
             parse_attempts = attempt + 1
             attempt_token_usage: TokenUsage | None = None
 
+            sent: tuple[list[dict[str, str]], str] | None = None
+
             try:
                 if hasattr(self.policy, "generate_messages"):
-                    result = self.policy.generate_messages(
-                        messages=build_module_messages(
-                            system_prompt=batch_system_prompt,
-                            user_prompt=prompt,
-                            developer_contract=developer_contract,
-                            conversation_history=conversation_history,
-                            retry_prompt="" if attempt == 0 else retry_batch_text,
-                            prompt_set=self._prompt_set,
-                        ),
-                        config=self._generation_config_batch,
+                    messages = build_module_messages(
+                        system_prompt=batch_system_prompt,
+                        user_prompt=prompt,
+                        developer_contract=developer_contract,
+                        conversation_history=conversation_history,
+                        retry_prompt="" if attempt == 0 else retry_batch_text,
+                        prompt_set=self._prompt_set,
                     )
-                elif attempt == 0:
-                    result = self.policy.generate(
-                        prompt=legacy_prompt,
-                        system=batch_system_prompt,
+                    sent = (messages, "messages")
+                    result = self.policy.generate_messages(
+                        messages=messages,
                         config=self._generation_config_batch,
                     )
                 else:
-                    retry_prompt = f"{legacy_prompt}\n\n{retry_batch_text}"
+                    legacy_user = legacy_prompt if attempt == 0 else f"{legacy_prompt}\n\n{retry_batch_text}"
+                    sent = (generate_messages_for(legacy_user, batch_system_prompt), "generate")
                     result = self.policy.generate(
-                        prompt=retry_prompt,
+                        prompt=legacy_user,
                         system=batch_system_prompt,
                         config=self._generation_config_batch,
                     )
@@ -838,6 +861,9 @@ class LLMHindsightEvaluator:
                     completion_tokens=getattr(result, "completion_tokens", None),
                     cached_prompt_tokens=attempt_token_usage.cached_input_tokens,
                     token_usage_source=attempt_token_usage.source,
+                    wire=safe_encode_wire(
+                        sent[0], prompt_col=effective_prompt, system_prompt_col=batch_system_prompt, branch=sent[1]
+                    ),
                 )
 
             except (JSONParseError, Exception) as e:
@@ -846,12 +872,15 @@ class LLMHindsightEvaluator:
                     try:
                         from moralstack.observability.emit_helpers import async_persist_llm_call
 
+                        retry_reason = f"Retry reason: {str(e)[:200]}"
+                        inline_wire = inline_wire_summary(sent, retry_reason)
                         async_persist_llm_call(
                             phase="hindsight_retry",
                             module="hindsight",
                             action=f"retry_failed_attempt_{parse_attempts}",
                             model=getattr(self.policy, "model", None) or "",
-                            prompt=f"Retry reason: {str(e)[:200]}",
+                            prompt=retry_reason,
+                            parsed_summary_json=json.dumps(inline_wire) if inline_wire else None,
                             raw_response=raw_response or "",
                             duration_ms=0.0,
                             attempts=parse_attempts,
@@ -884,6 +913,7 @@ class LLMHindsightEvaluator:
         """
         evaluations: list[HindsightEvaluation] = []
         prompts_used: list[str] = []
+        sent_calls: list[tuple[list[dict[str, str]], str]] = []
         total_attempts = 0
 
         for consequence in consequences:
@@ -893,7 +923,7 @@ class LLMHindsightEvaluator:
                 response=response,
                 consequence=consequence.text,
             )
-            evaluation = self.evaluate_scenario(request, response, consequence)
+            evaluation = self.evaluate_scenario(request, response, consequence, sent_calls=sent_calls)
             evaluations.append(evaluation)
             prompts_used.append(prompt_fmt)
             total_attempts += 1
@@ -906,12 +936,25 @@ class LLMHindsightEvaluator:
             refuse_threshold=self.config.refuse_threshold,
         )
 
+        row_prompt = "\n---\n".join(prompts_used) if prompts_used else ""
+        row_system = self._prompt_set.text("hindsight.single.system")
+        wire: dict[str, Any] | None = None
+        wire_calls: dict[str, Any] | None = None
+        if len(sent_calls) == 1:
+            wire = safe_encode_wire(
+                sent_calls[0][0], prompt_col=row_prompt, system_prompt_col=row_system, branch=sent_calls[0][1]
+            )
+        elif sent_calls:
+            # Several consequences share one row (prompts joined): one record per successful call.
+            wire_calls = safe_encode_wire_calls(sent_calls, prompt_col="", system_prompt_col=row_system)
         return HindsightResult(
             aggregated=aggregated,
             raw_response="",
             parse_attempts=total_attempts,
-            prompt="\n---\n".join(prompts_used) if prompts_used else "",
-            system_prompt=self._prompt_set.text("hindsight.single.system"),
+            prompt=row_prompt,
+            system_prompt=row_system,
+            wire=wire,
+            wire_calls=wire_calls,
         )
 
     def aggregate(

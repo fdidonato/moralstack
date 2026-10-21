@@ -23,6 +23,7 @@ from moralstack.observability.context import get_current_turn_number as _get_tur
 from moralstack.observability.events import EVENT_LLM_CALL, EventEnvelope
 from moralstack.observability.events import make_envelope as _make_envelope
 from moralstack.observability.phase0_timing import emit_phase0_timing, phase0_timing_enabled
+from moralstack.observability.wire import generate_messages_for, inline_wire_summary, safe_encode_wire
 from moralstack.orchestration.types import RiskEstimationError
 from moralstack.prompts.catalog import PromptContext, PromptSet, default_prompt_set
 from moralstack.utils.llm_parse_contract import (
@@ -722,6 +723,7 @@ class LLMBasedRiskEstimator:
         sequence_in_cycle: int = -9,
         message_sections: dict[str, Any] | None = None,
         billable_provider_call: bool | None = None,
+        wire: dict[str, Any] | None = None,
     ) -> EventEnvelope | None:
         import json as _json
 
@@ -737,6 +739,8 @@ class LLMBasedRiskEstimator:
             summary["parse_contract"] = parse_contract
         if message_sections:
             summary["message_sections"] = message_sections
+        if wire:
+            summary["wire"] = wire  # exact messages sent (A4b); additive key of the summary, not of the payload
         return _build_local_llm_call_envelope(
             cycle=0,
             phase="risk_estimation",
@@ -838,6 +842,10 @@ class LLMBasedRiskEstimator:
             getattr(_policy, "model", None),
         )
 
+        # Exact messages of each mini's successful call (A4b wire record), keyed by mini name; written by the
+        # worker of that mini only, read after the futures completed.
+        wires: dict[str, dict[str, Any] | None] = {}
+
         # Each future returns (
         #   data_dict, raw_response, duration_ms, attempts, started_at_ms, parse_contract, token_usage_json,
         #   resolved_model_str for observability,
@@ -875,7 +883,9 @@ class LLMBasedRiskEstimator:
 
             raw_response = ""
 
-            def _persist_retry_failed(attempt_no: int, result: Any, error: Exception) -> None:
+            def _persist_retry_failed(
+                attempt_no: int, result: Any, error: Exception, sent: tuple[list[dict[str, str]], str] | None
+            ) -> None:
                 """Record a paid-for attempt whose output could not be parsed.
 
                 Same shape as the critic/simulator/hindsight/perspectives retry
@@ -886,6 +896,9 @@ class LLMBasedRiskEstimator:
                 tu = result.token_usage_json() if hasattr(result, "token_usage_json") else None
                 if tu is None:
                     return  # no provider response: nothing was billed, nothing to record
+                retry_prompt = f"Retry reason: {str(error)[:200]}"
+                summary: dict[str, Any] = {"mini_estimator": mini_name, "estimation_mode": "parallel"}
+                summary.update(inline_wire_summary(sent, retry_prompt))
                 try:
                     from moralstack.observability.emit_helpers import async_persist_llm_call
 
@@ -894,7 +907,7 @@ class LLMBasedRiskEstimator:
                         module="risk_estimator",
                         action=f"retry_failed_attempt_{attempt_no}",
                         model=resolved_model_str or "",
-                        prompt=f"Retry reason: {str(error)[:200]}",
+                        prompt=retry_prompt,
                         raw_response=raw_response or "",
                         duration_ms=0.0,
                         attempts=attempt_no,
@@ -902,9 +915,7 @@ class LLMBasedRiskEstimator:
                         billable_provider_call=True,
                         token_usage_json=tu,
                         # Additive: WHO failed (the UI names the mini on the node).
-                        parsed_summary_json=json.dumps(
-                            {"mini_estimator": mini_name, "estimation_mode": "parallel"}, ensure_ascii=False
-                        ),
+                        parsed_summary_json=json.dumps(summary, ensure_ascii=False),
                         # Same coordinates as the mini-estimator rows (cycle 0, seq -9): no deliberation cycle is
                         # active here, so without them the row would land in a NULL-cycle group in the UI.
                         cycle=0,
@@ -915,21 +926,25 @@ class LLMBasedRiskEstimator:
 
             for attempt in range(self.config.max_retries):
                 result: Any = None
+                sent: tuple[list[dict[str, str]], str] | None = None
                 try:
                     start_gen = time.time()
                     call_config = gen_config_by_mini[mini_name]
                     if (developer_contract_text or conversation_history) and _supports_native_messages(effective_policy):
+                        messages = _risk_context_messages(
+                            system_prompt=system_prompt,
+                            user_prompt=full_prompt,
+                            developer_contract_text=developer_contract_text,
+                            conversation_history=conversation_history,
+                            prompt_set=ps,
+                        )
+                        sent = (messages, "messages")
                         result = effective_policy.generate_messages(
-                            messages=_risk_context_messages(
-                                system_prompt=system_prompt,
-                                user_prompt=full_prompt,
-                                developer_contract_text=developer_contract_text,
-                                conversation_history=conversation_history,
-                                prompt_set=ps,
-                            ),
+                            messages=messages,
                             config=call_config,
                         )
                     else:
+                        sent = (generate_messages_for(full_prompt, system_prompt), "generate")
                         result = effective_policy.generate(
                             prompt=full_prompt,
                             system=system_prompt,
@@ -945,6 +960,9 @@ class LLMBasedRiskEstimator:
                     )
                     data, p_contract = parse_dict_with_contract(raw_response, strict_json_requested=True)
                     _tu = result.token_usage_json() if hasattr(result, "token_usage_json") else None
+                    wires[mini_name] = safe_encode_wire(
+                        sent[0], prompt_col=full_prompt, system_prompt_col=system_prompt, branch=sent[1]
+                    )
                     return (
                         data,
                         raw_response,
@@ -963,7 +981,7 @@ class LLMBasedRiskEstimator:
                         self.config.max_retries,
                         str(e),
                     )
-                    _persist_retry_failed(attempt + 1, result, e)
+                    _persist_retry_failed(attempt + 1, result, e, sent)
                 except Exception as e:
                     _RISK_LOG.warning(
                         "mini_estimator[%s] attempt %s/%s failed: %s",
@@ -972,7 +990,7 @@ class LLMBasedRiskEstimator:
                         self.config.max_retries,
                         str(e),
                     )
-                    _persist_retry_failed(attempt + 1, result, e)
+                    _persist_retry_failed(attempt + 1, result, e, sent)
             raise RiskEstimationError(f"Mini estimator [{mini_name}] failed after {self.config.max_retries} attempts")
 
         with ThreadPoolExecutor(max_workers=3) as executor:
@@ -1024,6 +1042,7 @@ class LLMBasedRiskEstimator:
                         "prompt": intent_prompt,
                         "raw_response": intent_raw,
                         "action": "estimate_intent",
+                        "wire": wires.get("estimate_intent"),
                         "started_at": intent_started,
                         "duration_ms": intent_ms,
                         "attempts": intent_attempts,
@@ -1037,6 +1056,7 @@ class LLMBasedRiskEstimator:
                         "prompt": signal_prompt,
                         "raw_response": signal_raw,
                         "action": "estimate_signals",
+                        "wire": wires.get("estimate_signals"),
                         "started_at": signal_started,
                         "duration_ms": signal_ms,
                         "attempts": signal_attempts,
@@ -1050,6 +1070,7 @@ class LLMBasedRiskEstimator:
                         "prompt": operational_prompt,
                         "raw_response": op_raw,
                         "action": "estimate_operational",
+                        "wire": wires.get("estimate_operational"),
                         "started_at": op_started,
                         "duration_ms": op_ms,
                         "attempts": op_attempts,

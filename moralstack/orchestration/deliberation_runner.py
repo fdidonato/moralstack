@@ -400,6 +400,36 @@ def _policy_system_used(result: PolicyGenerationResultProtocol, fallback: str) -
     return getattr(result, "system_used", None) or fallback
 
 
+def _wire_keys(result: Any) -> dict[str, Any]:
+    """Additive wire keys (``wire`` or ``wire_calls`` + ``wire_strings``) a module result carries for its row.
+
+    Empty for a cache hit (no call was made), for mocks and for results that carry none. Never raises.
+    """
+    try:
+        if getattr(result, "from_cache", False) is True:
+            return {}
+        out: dict[str, Any] = {}
+        wire = getattr(result, "wire", None)
+        calls = getattr(result, "wire_calls", None)
+        if isinstance(wire, dict):
+            out["wire"] = wire
+        if isinstance(calls, dict):
+            out.update(calls)
+        return out
+    except Exception:
+        return {}
+
+
+def _wire_parsed_json(result: Any) -> str | None:
+    """Wire keys as a JSON object for the ``parsed_json`` column, used by rows whose ``parsed_summary_json`` is plain
+    text pinned by tests (the critic's ``Violations: N, Guidance: ...``). None when there is nothing to record."""
+    keys = _wire_keys(result)
+    try:
+        return json.dumps(keys, ensure_ascii=False) if keys else None
+    except Exception:
+        return None
+
+
 def _token_usage_json_from_result(result: Any) -> str | None:
     """Build token usage json from result-like objects used by deliberative modules."""
     from moralstack.observability.token_usage import TokenUsage
@@ -1561,7 +1591,7 @@ class DeliberationRunner:
             "prompt": getattr(critique, "prompt", None) or prompt_text,
             "system_prompt": getattr(critique, "system_prompt", ""),
             "raw_response": getattr(critique, "raw_response", "") or "",
-            "parsed_json": None,
+            "parsed_json": _wire_parsed_json(critique),
             "parsed_summary_json": response_text,
             "attempts": getattr(critique, "parse_attempts", 1),
             "sequence_in_cycle": SEQ_HARD_VIOLATION_REVALIDATION,
@@ -3936,7 +3966,7 @@ class DeliberationRunner:
                     ),
                     "system_prompt": getattr(critique, "system_prompt", ""),
                     "raw_response": getattr(critique, "raw_response", "") or "",
-                    "parsed_json": None,
+                    "parsed_json": _wire_parsed_json(critique),
                     "parsed_summary_json": (f"SKIPPED: {skip_reason}" if is_skipped else response_text),
                     "attempts": getattr(critique, "parse_attempts", 1),
                     "sequence_in_cycle": SEQ_CRITIC,
@@ -4162,6 +4192,7 @@ class DeliberationRunner:
                             "dominant_harm_types": dom_harms,
                             "worst_harm": worst,
                             "context_shape": _context_shape_payload(request, "simulator"),
+                            **_wire_keys(simulation),
                         }
                     ),
                     "attempts": getattr(simulation, "parse_attempts", 1),
@@ -4269,7 +4300,9 @@ class DeliberationRunner:
                     "prompt": getattr(hindsight_result, "prompt", ""),
                     "system_prompt": getattr(hindsight_result, "system_prompt", ""),
                     "raw_response": getattr(hindsight_result, "raw_response", ""),
-                    "parsed_summary_json": json.dumps({"context_shape": _context_shape_payload(request, "hindsight")}),
+                    "parsed_summary_json": json.dumps(
+                        {"context_shape": _context_shape_payload(request, "hindsight"), **_wire_keys(hindsight_result)}
+                    ),
                     "attempts": getattr(hindsight_result, "parse_attempts", 1),
                     "sequence_in_cycle": SEQ_HINDSIGHT,
                     "token_usage_json": _token_usage_json_from_result(hindsight_result),
@@ -4386,7 +4419,9 @@ class DeliberationRunner:
                     "prompt": "\n---\n".join(prompts_list) if prompts_list else "",
                     "system_prompt": "\n---\n".join(system_list) if system_list else "",
                     "raw_response": raw_resp,
-                    "parsed_summary_json": json.dumps({"context_shape": _context_shape_payload(request, "perspectives")}),
+                    "parsed_summary_json": json.dumps(
+                        {"context_shape": _context_shape_payload(request, "perspectives"), **_wire_keys(result)}
+                    ),
                     "sequence_in_cycle": SEQ_PERSPECTIVES,
                     "token_usage_json": _token_usage_json_from_result(result),
                     "billable_provider_call": not from_cache,

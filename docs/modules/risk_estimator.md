@@ -669,3 +669,7 @@ High-level flow of risk estimation:
 - [Orchestrator](./orchestrator.md) - Flow coordination
 - [Constitutional Critic](./critic.md) - Principle validation
 - [Constitution Store](./constitution_store.md) - Ethical principle management
+
+## Wire record (A4b-1)
+
+Each mini-estimator row's `parsed_summary_json` carries `wire`: the exact messages of the successful call (`messages` when contract or history is present and the policy is native-capable, otherwise `generate`). It records what the model received: the last 3 history turns cut to 200 characters and the context preface, which `message_sections` (full, untruncated) and `prompt` do not hold. The retry-failed rows carry the failed attempt's messages inline under `wire`. `_build_mini_llm_call_envelope` takes an optional `wire=`; the strict payload-key guard is untouched (the key lives inside the summary).

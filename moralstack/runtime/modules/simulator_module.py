@@ -19,6 +19,12 @@ from moralstack.core.types import PolicyLLMProtocol, Turn
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
 from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
+from moralstack.observability.wire import (
+    generate_messages_for,
+    inline_wire_summary,
+    safe_encode_wire,
+    safe_encode_wire_calls,
+)
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.catalog import PromptContext, PromptSet, default_prompt_set
 from moralstack.prompts.retry import RETRY_SIMULATOR
@@ -128,6 +134,11 @@ class SimulationResult:
     cached_prompt_tokens: int | None = None
     token_usage_source: TokenUsageSource = "unknown"
     from_cache: bool = False
+    wire: dict[str, Any] | None = None
+    """Exact messages of the single call that produced this result (wire record v1). Additive audit data."""
+    wire_calls: dict[str, Any] | None = None
+    """``{"wire_calls": [...], "wire_strings": [...]}`` for the seeded path (one record per model call, failed
+    attempts included, like the joined ``prompt``). A cache hit carries neither."""
 
     @classmethod
     def empty(cls) -> SimulationResult:
@@ -343,7 +354,7 @@ class LLMConsequenceSimulator:
                 context_fingerprint=context_fingerprint,
             )
             if cached_result is not None:
-                return replace(cast(SimulationResult, cached_result), from_cache=True)
+                return replace(cast(SimulationResult, cached_result), from_cache=True, wire=None, wire_calls=None)
 
         k = num_scenarios or self.config.default_num_scenarios
         k = max(1, min(k, 10))  # Limita range
@@ -417,29 +428,28 @@ class LLMConsequenceSimulator:
             parse_attempts = attempt + 1
             attempt_token_usage = None
 
+            sent: tuple[list[dict[str, str]], str] | None = None
+
             try:
                 if hasattr(self.policy, "generate_messages"):
-                    result = self.policy.generate_messages(
-                        messages=build_module_messages(
-                            system_prompt=batch_system_prompt,
-                            user_prompt=prompt,
-                            developer_contract=developer_contract,
-                            conversation_history=conversation_history,
-                            retry_prompt="" if attempt == 0 else retry_text,
-                            prompt_set=self._prompt_set,
-                        ),
-                        config=self._generation_config,
+                    messages = build_module_messages(
+                        system_prompt=batch_system_prompt,
+                        user_prompt=prompt,
+                        developer_contract=developer_contract,
+                        conversation_history=conversation_history,
+                        retry_prompt="" if attempt == 0 else retry_text,
+                        prompt_set=self._prompt_set,
                     )
-                elif attempt == 0:
-                    result = self.policy.generate(
-                        prompt=legacy_prompt,
-                        system=batch_system_prompt,
+                    sent = (messages, "messages")
+                    result = self.policy.generate_messages(
+                        messages=messages,
                         config=self._generation_config,
                     )
                 else:
-                    retry_prompt = f"{legacy_prompt}\n\n{retry_text}"
+                    legacy_user = legacy_prompt if attempt == 0 else f"{legacy_prompt}\n\n{retry_text}"
+                    sent = (generate_messages_for(legacy_user, batch_system_prompt), "generate")
                     result = self.policy.generate(
-                        prompt=retry_prompt,
+                        prompt=legacy_user,
                         system=batch_system_prompt,
                         config=self._generation_config,
                     )
@@ -464,6 +474,9 @@ class LLMConsequenceSimulator:
                     completion_tokens=completion_tokens,
                     cached_prompt_tokens=attempt_token_usage.cached_input_tokens,
                     token_usage_source=attempt_token_usage.source,
+                    wire=safe_encode_wire(
+                        sent[0], prompt_col=effective_prompt, system_prompt_col=batch_system_prompt, branch=sent[1]
+                    ),
                 )
             except (JSONParseError, Exception) as e:
                 last_error = e
@@ -484,7 +497,9 @@ class LLMConsequenceSimulator:
                             billable_provider_call=True,
                             token_usage_json=attempt_token_usage.to_json(),
                             # Additive: WHICH simulator call failed (the UI names it on the node).
-                            parsed_summary_json=json.dumps({"simulator_path": "batch"}),
+                            parsed_summary_json=json.dumps(
+                                {"simulator_path": "batch", **inline_wire_summary(sent, f"Retry reason: {str(e)[:200]}")}
+                            ),
                         )
                     except Exception:
                         pass
@@ -524,6 +539,7 @@ class LLMConsequenceSimulator:
         has_prompt_tokens = False
         has_completion_tokens = False
         seed_token_usages: list[TokenUsage] = []
+        sent_calls: list[tuple[list[dict[str, str]], str]] = []
 
         # Seleziona seed appropriati
         selected_seeds = self._select_seeds(num_scenarios)
@@ -548,35 +564,35 @@ class LLMConsequenceSimulator:
                 attempt_token_usage: TokenUsage | None = None
                 seed_raw_response = ""
 
+                sent: tuple[list[dict[str, str]], str] | None = None
+
                 try:
                     if hasattr(self.policy, "generate_messages"):
-                        result = self.policy.generate_messages(
-                            messages=build_module_messages(
-                                system_prompt=seeded_system_prompt,
-                                user_prompt=prompt,
-                                developer_contract=developer_contract,
-                                conversation_history=conversation_history,
-                                retry_prompt="" if attempt == 0 else retry_text,
-                                prompt_set=self._prompt_set,
-                            ),
-                            config=self._generation_config,
+                        messages = build_module_messages(
+                            system_prompt=seeded_system_prompt,
+                            user_prompt=prompt,
+                            developer_contract=developer_contract,
+                            conversation_history=conversation_history,
+                            retry_prompt="" if attempt == 0 else retry_text,
+                            prompt_set=self._prompt_set,
                         )
-                    elif attempt == 0:
-                        result = self.policy.generate(
-                            prompt=legacy_prompt,
-                            system=seeded_system_prompt,
+                        sent = (messages, "messages")
+                        result = self.policy.generate_messages(
+                            messages=messages,
                             config=self._generation_config,
                         )
                     else:
-                        retry_prompt = f"{legacy_prompt}\n\n{retry_text}"
+                        legacy_user = legacy_prompt if attempt == 0 else f"{legacy_prompt}\n\n{retry_text}"
+                        sent = (generate_messages_for(legacy_user, seeded_system_prompt), "generate")
                         result = self.policy.generate(
-                            prompt=retry_prompt,
+                            prompt=legacy_user,
                             system=seeded_system_prompt,
                             config=self._generation_config,
                         )
 
                     seed_raw_response = result.text
                     attempt_token_usage = TokenUsage.from_generation_result(result)
+                    sent_calls.append(sent)  # same moment as ``prompts_used``: the row's joined prompt lists these calls
                     raw_responses.append(seed_raw_response)
                     prompts_used.append(prompt if attempt == 0 else f"{prompt}\n\n{retry_text}")
                     total_tokens_used += attempt_token_usage.total_tokens
@@ -610,7 +626,12 @@ class LLMConsequenceSimulator:
                                 billable_provider_call=True,
                                 token_usage_json=attempt_token_usage.to_json(),
                                 parsed_summary_json=json.dumps(
-                                    {"simulator_path": "seeded", "seed": str(seed)[:60]}, ensure_ascii=False
+                                    {
+                                        "simulator_path": "seeded",
+                                        "seed": str(seed)[:60],
+                                        **inline_wire_summary(sent, f"Retry reason: {str(e)[:200]}"),
+                                    },
+                                    ensure_ascii=False,
                                 ),
                             )
                         except Exception:
@@ -634,6 +655,8 @@ class LLMConsequenceSimulator:
             completion_tokens=(total_completion_tokens if has_completion_tokens else None),
             cached_prompt_tokens=(combined.cached_input_tokens if combined is not None else None),
             token_usage_source=combined_source,
+            # No prompt reference: the row's prompt is the calls' prompts joined; the system prompt is shared.
+            wire_calls=safe_encode_wire_calls(sent_calls, prompt_col="", system_prompt_col=seeded_system_prompt),
         )
 
     def _select_seeds(self, num_scenarios: int) -> list[str]:
@@ -671,6 +694,8 @@ class LLMConsequenceSimulator:
         completion_tokens: int | None = None,
         cached_prompt_tokens: int | None = None,
         token_usage_source: TokenUsageSource = "unknown",
+        wire: dict[str, Any] | None = None,
+        wire_calls: dict[str, Any] | None = None,
     ) -> SimulationResult:
         """
         Costruisce SimulationResult con metriche aggregate.
@@ -726,6 +751,8 @@ class LLMConsequenceSimulator:
             completion_tokens=completion_tokens,
             cached_prompt_tokens=cached_prompt_tokens,
             token_usage_source=token_usage_source,
+            wire=wire,
+            wire_calls=wire_calls,
         )
 
 

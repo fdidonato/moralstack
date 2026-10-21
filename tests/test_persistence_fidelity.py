@@ -39,7 +39,7 @@ from moralstack.observability import context as obs_context
 from moralstack.observability import obs, router
 from moralstack.observability import service as service_module
 from moralstack.observability.sinks.sqlite_sink import create_run, init_db, upsert_request
-from moralstack.observability.wire import decode_wire, generate_messages_for
+from moralstack.observability.wire import REF_PROMPT, REF_SYSTEM, decode_wire, generate_messages_for
 from tests.prompts_golden import capture as cap
 from tests.prompts_golden.fakes import UNPARSEABLE, WireCall
 
@@ -64,6 +64,7 @@ BRANCH_UNRECORDED = "branch_unrecorded"
 DEVELOPER_CONTENT_MISMATCH = "developer_content_mismatch"
 PHANTOM_CONTEXT = "phantom_context"  # the row claims context the wire did not carry (no legacy branch involved)
 ROW_WITHOUT_CALL = "row_without_call"  # a row of a call family with no call left to pair with it
+COLUMN_NOT_REFERENCED = "column_not_referenced"  # a non-empty prompt/system_prompt column the wire record never uses
 WIRE_MISMATCH = "wire_mismatch"  # a row carries a wire record that does not decode to what was sent
 
 GapKey = tuple[str, str, str, str]  # (module, path, context, gap_kind)
@@ -998,11 +999,28 @@ def _split_aggregated_system(system_prompt: str, count: int) -> list[str]:
 _BAD_WIRE = object()
 
 
+def _wire_holder(row: dict[str, Any]) -> dict[str, Any] | None:
+    """The JSON object carrying the row's wire keys: its summary, or ``parsed_json`` for rows whose summary is plain
+    text (the critic's ``Violations: N, Guidance: ...`` is pinned by tests, so its wire lives in ``parsed_json``)."""
+    summary = _parse_summary(row.get("parsed_summary_json"))
+    for holder in (summary, _parse_summary(row.get("parsed_json"))):
+        if holder and ("wire" in holder or "wire_calls" in holder):
+            return holder
+    return summary
+
+
+def _wire_refs(holder: dict[str, Any] | None) -> set[str]:
+    """Columns (``system_prompt`` / ``prompt``) referenced by the row's wire record(s)."""
+    if not holder:
+        return set()
+    records = [holder["wire"]] if isinstance(holder.get("wire"), dict) else holder.get("wire_calls") or []
+    return {m["ref"] for rec in records for m in rec.get("messages", []) if "ref" in m}
+
+
 def _row_decoded(row: dict[str, Any]) -> Any:
     """Messages rebuilt from the row's wire record: a list per call, None without a record, ``_BAD_WIRE`` if malformed."""
-    summary = _parse_summary(row.get("parsed_summary_json"))
     try:
-        return _decode_row_wire(summary, row.get("prompt") or "", row.get("system_prompt") or "")
+        return _decode_row_wire(_wire_holder(row), row.get("prompt") or "", row.get("system_prompt") or "")
     except ValueError:
         return _BAD_WIRE
 
@@ -1156,13 +1174,19 @@ def _compare_group(
     calls = [observed.calls[i] for i in indexes]
 
     try:
-        decoded = _decode_row_wire(summary, prompt, system_prompt)
+        decoded = _decode_row_wire(_wire_holder(row), prompt, system_prompt)
     except ValueError:
         return {(module, WIRE_MISMATCH)}
     if decoded is not None:
         sent_all = [_sent_messages(c) for c in calls]
         if decoded != sent_all:
             out.add((module, WIRE_MISMATCH))
+        if not out and not aggregated and len(calls) == 1:
+            # Column tripwire: the record must reference every non-empty column of its row. A column the record does
+            # not use means the wire no longer proves what the column holds (G1/G3 would otherwise go unnoticed).
+            refs = _wire_refs(_wire_holder(row))
+            if (system_prompt and REF_SYSTEM not in refs) or (prompt and REF_PROMPT not in refs):
+                out.add((module, COLUMN_NOT_REFERENCED))
         return out
 
     base_family = module
@@ -1236,6 +1260,7 @@ def _persisted_inputs(rows: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
             r.get("prompt") or "",
             r.get("system_prompt") or "",
             r.get("parsed_summary_json") or "",
+            r.get("parsed_json") or "",
         )
         for r in rows
     )
@@ -1274,26 +1299,22 @@ def report(env: Env) -> dict[GapKey, str]:
 # KNOWN_GAPS: the observed gaps, checked in (A4b-0)
 # --------------------------------------------------------------------------------------
 # One row per (gap id, module, gap kind) with the paths and contexts it was observed on. Each A4b fix removes its own
-# rows (or narrows their paths/contexts); at the end of A4b the table is empty. G1-G9 are the plan's ids; NEW-n are
-# gaps the characterization found that the plan did not list:
-#   NEW-1  estimator minis AND perspectives with parallel_evaluation=True (the production default): a failed parse
-#          attempt leaves no row at all. G4 for perspectives therefore holds only with parallel_evaluation=False
-#          (the sequential scenarios); the `*/parallel` paths show NEW-1 instead. Estimator: a failed parse attempt
-#          leaves no row at all. The retry-failed row is written from the mini
-#          estimator's worker thread, which carries no observability context (run/request ids), so it is dropped.
-#   NEW-2  critic quick check (fast path): the call is never persisted.
-#   NEW-3  hindsight single-consequence path: the failed attempt has no retry-failed row.
-#   NEW-4  speculative draft row: persists the language-prefixed prompt although the native path sent the raw
-#          messages, and the protected system prompt although the legacy path sent the contract-composed one.
+# rows (or narrows their paths/contexts); at the end of A4b the table is empty. G1-G9 are the plan's ids.
+#
+# A4b-1..3 (estimator, critic, simulator, hindsight, perspectives) are done: their rows are gone. What is left belongs to
+# batch 3: DCCL (G6), contract regeneration (G1), the safety classifier and domain exclusion (G8), the refusal (G9) and
+# the speculative draft (NEW-4).
+#
+# History of the ids that are not the plan's: NEW-1 (failed attempts of the risk minis and of parallel perspectives were
+# dropped: bare ThreadPoolExecutor workers carry no observability context), NEW-2 (the critic quick check was never
+# persisted) and NEW-3 (the single-consequence hindsight failure had no row) were fixed in d588e9f, before A4b-1..3.
+# NEW-4: the speculative draft row persists the language-prefixed prompt although the native path sent the raw messages,
+# and the protected system prompt although the legacy path sent the contract-composed one.
 _CTX_ANY = ("contract", "history", "contract_history")  # any context but none
 _CTX_HISTORY = ("history", "contract_history")
 _CTX_CONTRACT = ("contract", "contract_history")
 _CTX_NONE = ("nocontext",)
 _KNOWN_GAP_TABLE: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], ...] = (
-    ("G7", "critic", "branch_unrecorded", ("legacy/first", "legacy/retry"), _CTX_ANY),
-    ("G3", "critic", "history_content_mismatch", ("native/first", "native/retry"), _CTX_HISTORY),
-    ("G3", "critic", "missing_preface", ("native/first", "native/retry"), _CTX_ANY),
-    ("G4", "critic", "retry_row_without_prompt", ("legacy/retry", "native/retry"), CONTEXTS),
     ("G6", "dccl", "missing_developer", ("llm_fallback/native",), _CTX_CONTRACT),
     (
         "G6",
@@ -1303,104 +1324,9 @@ _KNOWN_GAP_TABLE: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], 
         _CTX_CONTRACT,
     ),
     ("G8", "domain_exclusion", "unpersisted_call", ("domain_excluded",), CONTEXTS),
-    ("G4", "estimator", "retry_row_without_prompt", ("legacy/retry", "native/retry"), CONTEXTS),
-    ("G7", "estimator", "branch_unrecorded", ("legacy/first", "legacy/retry"), _CTX_ANY),
-    ("G2", "estimator", "history_content_mismatch", ("native/first", "native/retry"), _CTX_HISTORY),
-    ("G2", "estimator", "missing_preface", ("native/first", "native/retry"), _CTX_ANY),
     ("G1", "g13", "system_mismatch", ("legacy/first", "legacy/retry", "native/first", "native/retry"), _CTX_CONTRACT),
-    (
-        "G7",
-        "hindsight",
-        "branch_unrecorded",
-        ("legacy/first", "legacy/retry", "single/native/first", "single/native/retry"),
-        _CTX_ANY,
-    ),
-    ("G3", "hindsight", "history_content_mismatch", ("native/first", "native/retry"), _CTX_HISTORY),
-    ("G3", "hindsight", "missing_preface", ("native/first", "native/retry"), _CTX_ANY),
-    ("G3", "hindsight", "missing_retry_suffix", ("single/native/retry",), CONTEXTS),
-    ("G4", "hindsight", "retry_row_without_prompt", ("legacy/retry", "native/retry", "single/native/retry"), CONTEXTS),
-    (
-        "G5",
-        "perspectives",
-        "aggregated_row",
-        (
-            "legacy/first",
-            "legacy/first/parallel",
-            "legacy/retry",
-            "legacy/retry/parallel",
-            "native/first",
-            "native/first/parallel",
-            "native/retry",
-            "native/retry/parallel",
-        ),
-        CONTEXTS,
-    ),
-    (
-        "G7",
-        "perspectives",
-        "branch_unrecorded",
-        ("legacy/first", "legacy/first/parallel", "legacy/retry", "legacy/retry/parallel"),
-        _CTX_ANY,
-    ),
-    (
-        "G3",
-        "perspectives",
-        "history_content_mismatch",
-        ("native/first", "native/first/parallel", "native/retry", "native/retry/parallel"),
-        _CTX_HISTORY,
-    ),
-    (
-        "G3",
-        "perspectives",
-        "missing_preface",
-        ("native/first", "native/first/parallel", "native/retry", "native/retry/parallel"),
-        _CTX_ANY,
-    ),
-    ("G4", "perspectives", "retry_row_without_prompt", ("evaluate_single/retry",), _CTX_NONE),
-    (
-        "G4",
-        "perspectives",
-        "retry_row_without_prompt",
-        ("legacy/retry", "legacy/retry/parallel", "native/retry", "native/retry/parallel"),
-        CONTEXTS,
-    ),
     ("G9", "refusal", "unpersisted_call", ("refuse/leak_retry",), CONTEXTS),
     ("G8", "safety_classifier", "unpersisted_call", ("validate_contract",), _CTX_CONTRACT),
-    (
-        "G5",
-        "simulator",
-        "aggregated_row",
-        ("seeded/legacy/first", "seeded/legacy/retry", "seeded/native/first", "seeded/native/retry"),
-        CONTEXTS,
-    ),
-    (
-        "G7",
-        "simulator",
-        "branch_unrecorded",
-        ("legacy/first", "legacy/retry", "seeded/legacy/first", "seeded/legacy/retry"),
-        _CTX_ANY,
-    ),
-    (
-        "G3",
-        "simulator",
-        "history_content_mismatch",
-        ("native/first", "native/retry", "seeded/native/first", "seeded/native/retry"),
-        _CTX_HISTORY,
-    ),
-    (
-        "G3",
-        "simulator",
-        "missing_preface",
-        ("native/first", "native/retry", "seeded/native/first", "seeded/native/retry"),
-        _CTX_ANY,
-    ),
-    (
-        "G4",
-        "simulator",
-        "retry_row_without_prompt",
-        ("legacy/retry", "native/retry", "seeded/legacy/retry", "seeded/native/retry"),
-        CONTEXTS,
-    ),
     ("G7", "speculative", "branch_unrecorded", ("speculative/legacy",), _CTX_HISTORY),
     ("NEW-4", "speculative", "system_mismatch", ("speculative/legacy",), ("contract_history",)),
     ("NEW-4", "speculative", "user_mismatch", ("speculative/native",), _CTX_HISTORY),
@@ -1596,6 +1522,10 @@ def test_a_row_carrying_a_wire_record_closes_its_gaps_and_a_wrong_one_is_reporte
         branch="messages",
     )
     assert analyse(observed_with(tampered)) == {("critic", WIRE_MISMATCH)}
+
+    # An exact record that never references the row's columns is reported: the columns are no longer proven.
+    unreferenced = encode_wire(sent, prompt_col="", system_prompt_col="", branch="messages")
+    assert analyse(observed_with(unreferenced)) == {("critic", COLUMN_NOT_REFERENCED)}
 
 
 def test_diff_against_known_fails_on_a_new_gap_and_on_a_stale_entry():

@@ -426,3 +426,7 @@ runner records `CONTEXT_SHAPE_RECORDED` plus context-shape metadata on the persp
 - [Orchestrator](./orchestrator.md) - Guidance aggregation
 - [Hindsight Evaluator](./hindsight.md) - Another evaluation source
 - [Policy LLM](./policy.md) - Evaluation generation
+
+## Wire record (A4b-3)
+
+`EnsembleResult.wire_calls` is `{"wire_calls": [...], "wire_strings": [...]}`: one record per result, in the order of the row's joined `prompts`, sharing one string table (the common system prompt is stored once). The runner adds both keys to the perspectives row's `parsed_summary_json`. Because the row aggregates N calls, `wire_calls` is what makes each call reconstructable. Retry-failed rows (sequential and parallel) carry the failed attempt's messages inline under `wire`; the order of concurrent calls carries no meaning. A cache hit carries none.

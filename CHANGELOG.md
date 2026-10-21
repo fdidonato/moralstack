@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Wire records on the estimator, critic, simulator, hindsight and perspectives rows (prompt externalization, step A4b-1..3).**
+  The estimator mini rows, the critic, the simulator (batch and seeded), hindsight (batch and single) and perspectives rows, and
+  every retry-failed row of those modules, now carry the exact messages sent: `wire` (or `wire_calls` + `wire_strings` for the
+  seeded simulator, perspectives and multi-consequence hindsight rows) in `parsed_summary_json`; the critic's in `parsed_json`,
+  because its summary is plain text pinned by tests. Records are built at the call site from the arguments passed to the policy,
+  wrapped (a failure never reaches the module call), carried by additive optional fields on the result objects and cleared on a
+  cache hit. No existing field changes meaning, no row is added or split. Removes those modules' entries from `KNOWN_GAPS`
+  (`tests/test_persistence_fidelity.py`); new `tests/test_wire_modules.py`.
+
 - **Persistence fidelity: characterization and wire codec (prompt externalization, step A4b, batch 1).**
   New `moralstack/observability/wire.py` (pure codec for the record that will describe the exact messages sent by a
   call: `generate_messages_for`, `encode_wire`, `encode_wire_calls`, `decode_wire`, `wire_sha256`) and two test files:

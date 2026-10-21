@@ -540,6 +540,14 @@ history actually exceeded the cut).
 
 ---
 
+## Wire record (A4b-2)
+
+`CriticReport.wire` holds the exact messages of the call that produced the report (native `generate_messages` list or the
+legacy `generate()` pair, `branch` says which; format in `docs/modules/observability.md`). The runner persists it as
+`{"wire": ...}` in the row's `parsed_json` column, NOT in `parsed_summary_json`, which stays the plain text
+`Violations: N, Guidance: ...`. A failed parse attempt's retry-failed row carries the failed attempt's messages inline.
+Building the record is best-effort and never changes the report.
+
 ## See Also
 
 - [Constitution Store](./constitution_store.md) - Ethical principle management

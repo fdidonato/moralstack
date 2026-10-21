@@ -429,10 +429,12 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `requests.meta_json.prompt_set = {ps, is_default}` via
   `emit_request_meta_updated` right after the request upsert.
 - `wire.py` — pure wire codec (prompt externalization A4b): `encode_wire` /
-  `decode_wire` / `encode_wire_calls` / `wire_sha256` / `generate_messages_for`.
+  `decode_wire` / `encode_wire_calls` / `wire_sha256` / `generate_messages_for`,
+  plus the never-raising `safe_encode_wire*` and `inline_wire_summary` (retry-failed rows).
   Record v1 stores the exact messages sent as column references plus a string
   table, under `parsed_summary_json["wire"]` (or `["wire_calls"]` +
-  `["wire_strings"]` for aggregated rows). No I/O; callers wrap it (invariant 6).
+  `["wire_strings"]` for aggregated rows; `parsed_json["wire"]` for the critic's
+  `critique` rows). No I/O; callers wrap it (invariant 6).
   Characterized by `tests/test_persistence_fidelity.py` (`KNOWN_GAPS`).
 - `governance_audit.py` — `finalize_governance_audit`, `posture_of`,
   `state_summary_or_none`.

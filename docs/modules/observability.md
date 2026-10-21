@@ -697,8 +697,19 @@ meaning of any existing field: it describes the exact `messages` list sent, stor
 - **Not changed, on purpose.** `prompt` does not start to include the preface, `message_sections` is not truncated to
   the window sent, the `"Retry reason: ..."` prompt of retry-failed rows stays (the failed attempt's wire is added next
   to it, with its system prompt inlined because those rows have no `system_prompt`), and aggregated rows are not split.
-- **Status.** The codec is in place; no row carries a `wire` record yet. Each A4b step adds it to one group of rows and
-  removes its entries from `KNOWN_GAPS` in `tests/test_persistence_fidelity.py`. That test drives every module and path
+- **Status.** The estimator mini rows, the critic, simulator (batch and seeded), hindsight (batch and single) and
+  perspectives rows (and their retry-failed rows) carry the record (A4b-1..3). The DCCL, draft-match, contract-regeneration,
+  speculative, refusal and policy rows do not yet. Each A4b step adds it to one group of rows and removes its entries from
+  `KNOWN_GAPS` in `tests/test_persistence_fidelity.py`.
+- **Where each module puts it.** Estimator mini rows, simulator, hindsight and perspectives rows: `parsed_summary_json`
+  (`wire`, or `wire_calls` + `wire_strings` for the seeded simulator, the perspectives row and a multi-consequence
+  hindsight row). **Critic rows: `parsed_json`** (`{"wire": {...}}`), because the critic's `parsed_summary_json` is the plain text
+  `Violations: N, Guidance: ...` that tests pin; it stays untouched. Retry-failed rows of every module carry an inline
+  `wire` in their summary (the failed attempt's messages, system prompt inlined; the row has no `system_prompt`). The
+  seeded simulator's `wire_calls` lists every call of the row including failed attempts (its joined `prompt` does); the
+  perspectives row lists the successful calls, in the order of its joined prompts. The module result objects carry the
+  record in an additive optional field (`CriticReport.wire`, `SimulationResult.wire`/`wire_calls`,
+  `HindsightResult.wire`/`wire_calls`, `EnsembleResult.wire_calls`); a cache hit clears it. That test drives every module and path
   with recording fake policies against a real SQLite DB in `dual` mode, reconstructs each call from its row and from
   `llm.call.jsonl`, and asserts the gap report equals `KNOWN_GAPS`: a new gap fails it, and so does a fixed gap that is
   still listed.

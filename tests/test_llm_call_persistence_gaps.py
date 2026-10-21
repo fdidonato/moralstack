@@ -323,4 +323,8 @@ def test_simulator_batch_retry_failed_row_names_the_failed_call(recorder: _Recor
     with _request_scope(cycle=1):
         simulator._simulate_batch("req", "resp", 1)
     (row,) = recorder.payloads(call_outcome="retry_failed")
-    assert row["module"] == "simulator" and json.loads(row["parsed_summary_json"]) == {"simulator_path": "batch"}
+    assert row["module"] == "simulator"
+    summary = json.loads(row["parsed_summary_json"])
+    # A4b-2 adds the failed attempt's messages inline under ``wire``; the identifying key is unchanged.
+    assert summary.pop("wire")["v"] == 1
+    assert summary == {"simulator_path": "batch"}

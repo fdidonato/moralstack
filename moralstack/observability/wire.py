@@ -2,7 +2,8 @@
 
 Pure functions, no I/O. The record lives at ``parsed_summary_json["wire"]`` (one call) or, for rows that
 aggregate several calls, at ``parsed_summary_json["wire_calls"]`` with one shared string table at
-``parsed_summary_json["wire_strings"]``.
+``parsed_summary_json["wire_strings"]``. The exception is the critic: its ``critique`` and
+``critique (hard_violation_revalidation)`` rows carry the record at ``parsed_json["wire"]``.
 
 Record v1::
 
@@ -28,7 +29,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 WIRE_VERSION = 1
 REF_SYSTEM = "system_prompt"
@@ -164,3 +168,45 @@ def _decode(
             raise ValueError(f"malformed wire message: {item!r}")
         out.append({"role": item["role"], "content": content})
     return out
+
+
+def safe_encode_wire(
+    messages: list[dict[str, str]],
+    *,
+    prompt_col: str,
+    system_prompt_col: str,
+    branch: str,
+) -> dict[str, Any] | None:
+    """``encode_wire`` for call sites: telemetry must never raise into a module call (None on any failure)."""
+    try:
+        return encode_wire(messages, prompt_col=prompt_col, system_prompt_col=system_prompt_col, branch=branch)
+    except Exception:
+        logger.debug("wire record not built", exc_info=True)
+        return None
+
+
+def safe_encode_wire_calls(
+    calls: list[tuple[list[dict[str, str]], str]],
+    *,
+    prompt_col: str,
+    system_prompt_col: str,
+) -> dict[str, Any] | None:
+    """``encode_wire_calls`` for call sites: None on any failure (see ``safe_encode_wire``)."""
+    try:
+        return encode_wire_calls(calls, prompt_col=prompt_col, system_prompt_col=system_prompt_col)
+    except Exception:
+        logger.debug("wire_calls record not built", exc_info=True)
+        return None
+
+
+def inline_wire_summary(sent: tuple[list[dict[str, str]], str] | None, retry_prompt: str) -> dict[str, Any]:
+    """``{"wire": ...}`` for a retry-failed row, or ``{}``: never raises.
+
+    The failed attempt's messages are inlined against ``retry_prompt`` (the row's ``prompt`` column) with no
+    system prompt reference, because a retry-failed row has no system prompt column. Empty when nothing was
+    captured or the record cannot be built, so callers can ``summary.update(...)`` it unconditionally.
+    """
+    if sent is None:
+        return {}
+    record = safe_encode_wire(sent[0], prompt_col=retry_prompt, system_prompt_col="", branch=sent[1])
+    return {"wire": record} if record else {}
