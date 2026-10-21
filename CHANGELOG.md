@@ -602,6 +602,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A wheel install can import the risk estimator again.** `moralstack/models/risk/config/signals.yaml` was not in
+  `[tool.setuptools.package-data]`, so a non-editable install (`pip install moralstack` / a built wheel) failed at
+  `import moralstack.models.risk.estimator` with `FileNotFoundError` (the signal registry is built at import), which
+  took the SDK, proxy and CLI down with it. Editable installs and in-repo runs were unaffected. Added
+  `"moralstack.models.risk.config" = ["*.yaml"]`; a rebuilt wheel now lists `signals.yaml` and the estimator
+  imports from it. New `tests/test_prompt_packaging.py::test_pyproject_package_data_includes_the_signal_registry_yaml`.
 - **Retry-failed rows written from pool workers now reach `llm_calls` (NEW-1).** The risk mini-estimator pool
   and the perspective ensemble (`parallel_evaluation=True`, the production default) submitted their work to a bare
   `ThreadPoolExecutor`; the workers did not inherit the observability ContextVars, so

@@ -79,6 +79,7 @@ include = ["moralstack*"]
 [tool.setuptools.package-data]
 "moralstack.constitution" = ["data/**/*.yaml"]
 "moralstack.prompts" = ["data/*.yaml"]
+"moralstack.models.risk.config" = ["*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

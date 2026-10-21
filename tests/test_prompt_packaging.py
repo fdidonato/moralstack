@@ -81,6 +81,19 @@ def test_pyproject_package_data_includes_prompts_yaml() -> None:
         assert any(fnmatch.fnmatch(f"data/{name}.yaml", pattern) for pattern in patterns), name
 
 
+def test_pyproject_package_data_includes_the_signal_registry_yaml() -> None:
+    """The risk signal registry is built at import from ``config/signals.yaml``: a wheel without it cannot import
+    the risk estimator (hence SDK, proxy, CLI)."""
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    package_data = pyproject["tool"]["setuptools"]["package-data"]
+    config_dir = resources.files("moralstack.models.risk.config")
+    yaml_names = sorted(entry.name for entry in config_dir.iterdir() if entry.name.endswith(".yaml"))
+    assert "signals.yaml" in yaml_names
+    patterns = package_data.get("moralstack.models.risk.config", [])
+    for name in yaml_names:
+        assert any(fnmatch.fnmatch(name, pattern) for pattern in patterns), name
+
+
 def test_every_data_dir_yaml_is_loaded() -> None:
     """No orphan files in the data dir, no ``*.yml`` the loader would never read, and every ID is in the set."""
     files = _data_files()

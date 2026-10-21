@@ -388,6 +388,7 @@ existing env vars (`override=True`); optional empty values are purged after load
 | `MORALSTACK_CORRELATION_MAX_ENTRIES` | `20000` | Max entries in the server proxy's lineage correlation store (FIFO eviction beyond this cap) |
 | `MORALSTACK_PRINCIPAL_HMAC_SECRET` | *(unset)* | Secret used to HMAC the bearer token into a tenant/principal identifier for conversation correlation; when unset, the HMAC principal path is disabled (falls back to the empty-string sentinel) |
 | `MORALSTACK_DCCL_SAFETY_OVERRIDE_MODEL` | `gpt-4o-mini` | Model for the DCCL language-agnostic safety-override classifier (runs on every contract MATCH). Keep it small so the compliance fast-path stays fast |
+| `MORALSTACK_PROMPTS_DIR` | *(unset = packaged defaults)* | Directory of prompt override `*.yaml` files (deployer-side, audited, can weaken governance). SDK equivalent: `GovernanceConfig(prompts_dir=...)`. See [docs/prompt_overrides.md](./docs/prompt_overrides.md) |
 
 **Default models by component:**
 
