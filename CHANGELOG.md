@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Prompt-audit verifier (prompt externalization, step A4c).**
+  New `scripts/verify_prompt_audit.py`: a read-only, offline, free command-line check of a database (`--db`) and/or a JSONL
+  directory (`--jsonl-dir`). It validates each run's `prompt_config` (schema, hashes, `default_fingerprint` against the
+  packaged defaults, the effective set rebuilt from the recorded overrides and compared with `set_fingerprint`, and
+  `safety_fragments_overridden`), classifies every `llm_calls` row (`ok`, `missing`, `mismatch`, `unknown`, `synthetic`,
+  `no_wire`, `wire_integrity`) by checking the persisted system prompt and the `wire` record's digest, and checks each
+  request's `prompt_set` link. A database without `prompt_config` is classified as pre-feature, not rejected. Exit code 0;
+  `--strict` returns 1 on a mismatch, an integrity error or an unrebuildable run; offending rows carry their reason. No
+  production code and no persisted field changes (the script loads only the leaf modules it needs). New
+  `tests/test_verify_prompt_audit.py`; the tool is documented in `docs/modules/observability.md`.
+
 - **Wire records on the DCCL, refusal, policy, speculative and retrieval rows (prompt externalization, step A4b-4..6; `KNOWN_GAPS` is now empty).**
   The DCCL `evaluate`, `safety_override` and `draft_revalidate` rows, the contract-regeneration, speculative (internal and
   upstream), benign / fast / safe-complete / deliberative / soft-revision policy rows, the critic `quick_check` row, the

@@ -742,6 +742,83 @@ meaning of any existing field: it describes the exact `messages` list sent, stor
   `llm.call.jsonl`, and asserts the gap report equals `KNOWN_GAPS`: a new gap fails it, and so does a fixed gap that is
   still listed.
 
+### Prompt-audit verifier (Phase A, step A4c)
+
+`scripts/verify_prompt_audit.py` is a read-only, offline, free check that the prompt audit is consistent with the
+packaged catalog. It can be run on any existing database (a pre-feature DB is classified, not rejected).
+
+```bash
+python scripts/verify_prompt_audit.py --db moralstack.db [--run-id ID ...] [--jsonl-dir DIR] [--json] [--strict]
+```
+
+- **Read-only.** SQLite is opened with `file:<path>?mode=ro` plus `PRAGMA query_only`; JSONL files are only read. No
+  network, no LLM call. On a WAL-mode database `mode=ro` may still create the `-wal` / `-shm` sidecar files when it reads (the
+  main database file's bytes, size and mtime stay unchanged; run it on a copy if even that matters). `immutable=1` is
+  deliberately not used: it skips locking and ignores the WAL, so it would read a stale or torn view of a live database.
+  The script imports only `moralstack.prompts.catalog`, `moralstack.observability.wire` and the risk signal
+  registry/renderer, and it registers `moralstack.observability` and `moralstack.models.risk(.signals)` as empty
+  placeholder packages first (inside the script only; no production change) so their `__init__` never runs: the risk
+  estimator, `moralstack.orchestration` and the observability service (queue, sinks) are not loaded, nor any HTTP
+  library, thread or logging handler.
+  `--jsonl-dir` alone makes the JSONL channel the data source (`llm.call.jsonl`, `run.started.jsonl`,
+  `request.upserted.jsonl`, `request.meta_updated.jsonl`, plus rotated `<event>.*.jsonl`; other files such as the
+  `file_only` benchmark orphan `benchmark_<run_id>.json` are ignored); with `--db` it only supplies the run
+  `prompt_config` and the request link when the DB lacks them. A second `run.started` line for the same run id
+  (written after the guard evicted the id) is ignored: the first line wins.
+- **Per run.** `prompt_config` is read from `runs.meta_json` (or `run.started`), checked for its schema keys and hash
+  formats, and `default_fingerprint` is compared with the packaged defaults. If they match, the effective set is rebuilt
+  as the default set plus the recorded per-fragment overridden `text` / `when` (through the public loader on a temporary
+  `prompts_dir`), and both `set_fingerprint` and every per-fragment `sha256` / `when` must reproduce
+  (`config_status: mismatch` otherwise). If the defaults differ, the run is `defaults_differ` and its rows are `unknown`
+  (not re-rendered). `safety_fragments_overridden` is listed per run. A run without `prompt_config` is
+  `no prompt_config (pre-feature)` and its rows are checked against the current packaged defaults.
+- **Per row.** Each `llm_calls` row (or `llm.call` envelope) gets one status. The code checks in this order: `synthetic`
+  first; then a wire record that fails integrity (`wire_integrity`); then, if the run's set is not checkable or the
+  `(module, action)` has no matcher, `unknown`; then a row with no system prompt at all (`no_wire` without a wire record,
+  `missing` with one); then `mismatch` when a recorded system prompt is not an expected one; otherwise `ok`.
+  - `synthetic`: not a chat completion, no record by design (orchestration notes, reused drafts, `leakage_detected*`,
+    `timeout_warning`, `pre_cycle_check`, calibration guard, `* (SKIPPED|GATED|DISABLED|ERROR)`, `embedder/embed`,
+    `upstream_provider/generate final response`, `billable_provider_call = 0`, a refusal with `attempts = 0`).
+  - `wire_integrity`: a `wire` / `wire_calls` record (holder: the summary when it holds one, else `parsed_json`, which
+    is where the critic keeps it) does not decode, an `n` or a `ref` does not resolve (every `ref` needs a non-empty
+    column), or `wire_sha256(decode_wire(...))` differs from the record's `sha256`. Each record of `wire_calls` is
+    checked separately against the shared `wire_strings`.
+  - `mismatch` / `ok`: the row's `system_prompt` column, and the leading system message of every wire record, must each
+    be one the effective set renders for `(module, action)`. Context-aware compositions are tried for all four
+    contexts; the policy system prompt is checked structurally per action (optional contract prefix, `policy.system` +
+    language rules + anti-leak rules + the mandatory `§REF_<8 hex>§` canary line; `rewrite` / `soft_revision` must then end
+    with `policy.rewrite.constraints` (or be the rewrite default system plus the constraints), `generate` actions must not
+    carry them; the runtime never puts a safe-complete / constrained instruction in the system prompt, so it is not
+    accepted); the prefilter system prompt is matched as its template; only the perspectives row aggregates its system
+    column (per-call systems joined by `\n---\n`, matched piece by piece). Retry-failed
+    rows, whose system prompt is inlined in the wire and whose column is empty, are checked on the wire system message.
+  - `unknown`: no matcher for the `(module, action)`, or the run's set cannot be re-rendered.
+  - `no_wire`: no system prompt recorded and no wire record (pre-feature rows, retry-failed rows written before the wire).
+  - `missing`: a wire record exists but carries no system message and the column is empty.
+- **Informational, never an error.** Column equality (`system_prompt` equals the decoded system message, `prompt` is
+  among the decoded user messages) is false by design for the G13 and retry-failed rows, `dccl/generate`,
+  `speculative/messages`, the preface and retry-suffix rows and any prefix/suffix `ref`; it is reported as a count.
+  `branch` counts are reported and never failed on: `branch=generate` is only proven for `OpenAIPolicy` and
+  `UpstreamDraftGenerator`, and `rewrite` / `soft_revision` wires are adapter-attested (the adapter's own
+  `prompt_used` / `system_used`).
+- **Per request.** `requests.meta_json.prompt_set.ps` must equal the run's `prompt_config.ps` (`ok`, `missing` when the
+  link is absent, `mismatch`); in a pre-feature run requests are counted as `pre-feature`. In JSONL mode the request side
+  is `scripts/consolidate_jsonl_meta.consolidate` over `request.upserted` and `request.meta_updated`.
+- **Output and exit code.** A per-run summary, then a per-module table of `ok / missing / mismatch / unknown / synthetic /
+  no_wire / wire_integrity` counts with the offending row ids (and `with_wire`); `--json` prints the same plus the legend.
+  Each offending row id comes with its reason (`--json`: `offending_row_details`, keyed by row id; text: a short reason
+  next to each id, capped). Row ids are `llm_calls.id` with `--db` and the envelope `event_id` in JSONL mode.
+  Exit code 0; with `--strict`, 1 when any row is a `mismatch` or `wire_integrity`, or any run (`mismatch`, `malformed`,
+  `unrebuildable`) or request is a `mismatch` (a missing link alone does not fail); 2 on an unreadable input or a usage
+  error. An `unrebuildable` run (the recorded overrides do not form a valid set) fails strict, while `defaults_differ`
+  (an older packaged-defaults version) does not.
+- **DB versus JSONL status (N8).** A run created with empty meta has no `prompt_config` in `runs.meta_json`; the
+  DB-only run is then `pre-feature`, while the same run read from `run.started.jsonl` (or from `--db` plus `--jsonl-dir`,
+  which falls back to it) may carry one. The two modes can therefore classify the same run differently, by design.
+- **What `ok` means.** "What the effective catalog would have produced", for the shapes the tool knows. It does not prove
+  the model received it for rows without a wire record, and it says nothing about a `(module, action)` it has no matcher
+  for (`unknown`). Tests: `tests/test_verify_prompt_audit.py`.
+
 ### Worked example: `request.meta_updated`
 
 A single request goes through five state transitions, producing five envelopes
