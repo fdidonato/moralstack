@@ -164,6 +164,13 @@ simulator_domain_guidance: |
   - Potential for misinterpretation of medical terminology by non-experts
 ```
 
+**Precedence.** An overlay's non-empty `simulator_domain_guidance` always wins over the simulator's built-in
+per-domain guidance (the `simulator.domain_guidance.*` prompt fragments, which are keyed by the domain name, with
+`simulator.domain_guidance.default` for any other domain). The built-in text is used only when the overlay leaves the
+field empty (`build_simulator_prompt` in `moralstack/prompts/simulator_prompt.py`). Overriding a
+`simulator.domain_guidance.*` fragment through `prompts_dir` (see `docs/prompt_overrides.md`) therefore has no effect
+on a domain whose overlay defines its own guidance.
+
 ---
 
 ## Step-by-Step Workflow

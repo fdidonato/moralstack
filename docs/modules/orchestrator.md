@@ -106,6 +106,10 @@ rows hold the rendered string. With `prompt_set=None` every wire and persisted r
 pre-externalization behaviour (`tests/prompts_golden`); the module constants (`POLICY_SYSTEM_PROMPT`, ...) stay
 importable as default re-exports. Nothing builds a non-default set yet (that is step A3); `DefaultPersistence` does
 not receive the set until the audit step (A4).
+Since A5 (2026-10-21) `DeliberationRunner` and `OpenAIPolicy.rewrite` read `self._prompt_set` directly, with no
+fallback to the default set: both constructors set it first, and no production caller uses these methods on an
+object that skipped `__init__`. `_controller_prompt_set(self)` in `controller.py` and the `isinstance` fallback in
+`final_revalidation.py` remain only because existing tests call those methods on `SimpleNamespace` stand-ins.
 
 **`POLICY_SYSTEM_PROMPT` branch 4 — text change, 2026-08-19.** The constant also
 lives in `_policy_helpers.py`, but its contract is documented in

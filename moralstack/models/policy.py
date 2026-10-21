@@ -445,9 +445,7 @@ class OpenAIPolicy:
         supports it: the existing draft is provided as a prediction hint so
         that unchanged portions are generated significantly faster.
         """
-        # getattr: test doubles borrow this method (``OpenAIPolicy.rewrite(fake, ...)``) without running __init__.
-        candidate = getattr(self, "_prompt_set", None)
-        ps = candidate if isinstance(candidate, PromptSet) else default_prompt_set()
+        ps = self._prompt_set
         rewrite_prompt = ps.format("policy.rewrite.user", prompt=prompt, draft=draft, guidance=guidance)
         rewrite_system = system or ps.text("policy.rewrite.default_system")
 

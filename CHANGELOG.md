@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Approved-prompts gate and deployer guide (prompt externalization, step A5).**
+  `tests/prompts_golden/snapshot_cb0d8b7.json` is now `approved_prompts.json` with a sidecar `approved_prompts.sha256`;
+  `python -m tests.prompts_golden.capture --approve` is the only way to change it and prints the key diff (the A0 write
+  path is gone). `test_prompt_golden.py` now fails once, with the keys named, when a packaged default changes
+  (`test_prompt_defaults_match_approved_snapshot`), plus `test_approved_snapshot_sidecar_hash` and
+  `test_every_known_prompt_name_is_in_snapshot`; the per-key and per-section comparisons and the A0-only guards are
+  removed, the capture-determinism and oracle-robustness tests stay. The six persisted-row keys that the A0 snapshot did
+  not have (critic `quick_check` and hindsight single retry-failed rows, added in 2026-10-20 fixes) are folded in; no
+  other key changed. The prompt-override deployer guide (`docs/prompt_overrides.md`) now has the complete fragment table,
+  the coherent `when` groups and the block-scalar rules; `docs/creating_overlays.md` states that an overlay's
+  `simulator_domain_guidance` takes precedence over `simulator.domain_guidance.*`. The stand-in fallbacks that read a
+  missing `_prompt_set` are removed from `DeliberationRunner` and `OpenAIPolicy.rewrite`. No prompt byte changes.
+
 - **Prompt-audit verifier (prompt externalization, step A4c).**
   New `scripts/verify_prompt_audit.py`: a read-only, offline, free command-line check of a database (`--db`) and/or a JSONL
   directory (`--jsonl-dir`). It validates each run's `prompt_config` (schema, hashes, `default_fingerprint` against the

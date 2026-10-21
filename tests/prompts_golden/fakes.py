@@ -120,6 +120,13 @@ class RecordingPolicy:
             self.wire.append(WireCall(label=label, kind="messages", messages=[dict(m) for m in messages]))
         return GenResult(text=self._respond(label, system, user))
 
+    @property
+    def _prompt_set(self) -> Any:
+        """The packaged default set, read at call time: ``OpenAIPolicy.rewrite`` is run unbound on this fake."""
+        from moralstack.prompts.catalog import default_prompt_set
+
+        return default_prompt_set()
+
     def rewrite(self, *args: Any, **kwargs: Any) -> GenResult:
         """Run the REAL ``OpenAIPolicy.rewrite`` composition on top of the recorded ``generate``."""
         from moralstack.models.policy import OpenAIPolicy

@@ -1,12 +1,12 @@
-"""Golden byte-identity oracle for every LLM-facing prompt (prompt externalization, Phase A, step A0).
+"""Approved-prompts gate for every LLM-facing prompt (prompt externalization, Phase A, step A5).
 
-``snapshot_cb0d8b7.json`` holds the bytes of every prompt constant, builder output and module/orchestrator
-wire as they were at commit ``cb0d8b7``, BEFORE any externalization code existed. It is never regenerated
-during Phase A: every later step (A1..A5) must keep these tests green with zero edits to the snapshot.
+``approved_prompts.json`` holds the bytes of every prompt constant, builder output and module/orchestrator wire,
+first frozen at commit ``cb0d8b7`` (the A0 migration oracle) and approved since then only through
+``python -m tests.prompts_golden.capture --approve``. ``approved_prompts.sha256`` is its sidecar hash.
 
-Failure messages name the key, both lengths and the first differing offset. They never dump a full string.
-
-Tier 2 (see the plan's test policy). At A5 this file is converted to the approved-prompts gate.
+Tier 2 of the plan's test policy: a deliberate change of a packaged default fails exactly one aggregate test,
+``test_prompt_defaults_match_approved_snapshot`` (never one test per key), with the keys named and the command to run.
+Failure messages never dump a full string.
 """
 
 from __future__ import annotations
@@ -19,9 +19,6 @@ from typing import Any
 import pytest
 
 from tests.prompts_golden import capture
-
-# sha256 of snapshot_cb0d8b7.json with CRLF folded to LF (git's autocrlf must not move the pin).
-SNAPSHOT_SHA256 = "f83dcf00af4fbda9924686c843f527950fe544ba3125d2af2601f46278bc9f8c"
 
 # Hand-written (NOT derived from the snapshot or from the live code): the prompt names that must always be
 # captured. A name vanishing from the capture (renamed, moved, forgotten) fails here instead of silently
@@ -195,7 +192,6 @@ KNOWN_NAMES = frozenset(
 )
 
 _TABLE: dict[str, Any] = capture.load_table()
-_CONST_KEYS = sorted(k for k in _TABLE["keys"] if capture.section_of(k) == "constants")
 
 
 # --------------------------------------------------------------------------------------
@@ -207,67 +203,18 @@ def _expected(key: str) -> Any:
     return capture.resolve(_TABLE, key)
 
 
-def _first_diff(a: str, b: str) -> int:
-    for i, (x, y) in enumerate(zip(a, b, strict=False)):
-        if x != y:
-            return i
-    return min(len(a), len(b)) if len(a) != len(b) else -1
-
-
-def _mismatch(key: str, expected: Any, live: str) -> str | None:
-    """One-line description of a mismatch (key, lengths, first differing offset), or None when equal."""
-    if isinstance(expected, dict):  # wire value stored as {"sha256", "len"} (Q4, snapshot > 5 MB)
-        live_hash = hashlib.sha256(live.encode("utf-8")).hexdigest()
-        if live_hash == expected["sha256"] and len(live) == expected["len"]:
-            return None
-        return (
-            f"{key}: expected len={expected['len']} sha256={expected['sha256'][:12]}.., "
-            f"live len={len(live)} sha256={live_hash[:12]}.."
-        )
-    if expected == live:
-        return None
-    return f"{key}: expected len={len(expected)}, live len={len(live)}, first differing offset={_first_diff(expected, live)}"
-
-
-# Live keys absent from the frozen snapshot that are approved. ONLY ``*/persisted/*`` keys (the audit rows a call writes
-# to ``llm_calls``, never a prompt-wire byte) can be listed; each entry needs a reason. The snapshot itself stays frozen.
-_NEW2_REASON = "NEW-2 fix 2026-10-20: critic quick_check call now persisted; not a prompt-byte change"
-_NEW3_REASON = "NEW-3 fix 2026-10-20: hindsight single-path retry-failed row now persisted; not a prompt-byte change"
-APPROVED_LIVE_ADDITIONS: dict[str, str] = {
-    "wire/e2e/fast_path_single_turn_nocontract/persisted/critic.quick_check#0/prompt": _NEW2_REASON,
-    "wire/e2e/fast_path_single_turn_nocontract/persisted/critic.quick_check#0/system_prompt": _NEW2_REASON,
-    "wire/e2e/fast_path_multi_turn_contract_history/persisted/critic.quick_check#0/prompt": _NEW2_REASON,
-    "wire/e2e/fast_path_multi_turn_contract_history/persisted/critic.quick_check#0/system_prompt": _NEW2_REASON,
-    "wire/hindsight/single_retry/persisted/hindsight.retry_failed_attempt_1#0/prompt": _NEW3_REASON,
-    "wire/hindsight/single_retry/persisted/hindsight.retry_failed_attempt_1#0/system_prompt": _NEW3_REASON,
-}
-
-
 def _compare_section(name: str, live: dict[str, str]) -> list[str]:
     expected_keys = {k for k in _TABLE["keys"] if capture.section_of(k) == name}
     problems: list[str] = []
     for key in sorted(expected_keys - live.keys()):
-        problems.append(f"{key}: in the snapshot but no longer captured")
+        problems.append(f"{key}: in the approved snapshot but no longer captured")
     for key in sorted(live.keys() - expected_keys):
-        if key in APPROVED_LIVE_ADDITIONS:
-            continue
-        problems.append(f"{key}: captured now but absent from the snapshot")
+        problems.append(f"{key}: captured now but absent from the approved snapshot")
     for key in sorted(expected_keys & live.keys()):
-        problem = _mismatch(key, _expected(key), live[key])
+        problem = capture.mismatch(key, _expected(key), live[key])
         if problem:
             problems.append(problem)
     return problems
-
-
-def _assert_section(name: str, live: dict[str, str]) -> None:
-    problems = _compare_section(name, live)
-    shown = "\n  ".join(problems[:15])
-    assert not problems, f"{len(problems)} {name} key(s) differ from the cb0d8b7 snapshot (first 15):\n  {shown}"
-
-
-@pytest.fixture(scope="module")
-def live_constants() -> dict[str, str]:
-    return capture.build_section("constants")
 
 
 @pytest.fixture(scope="module")
@@ -286,33 +233,29 @@ def live_e2e() -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------------------
-# regeneration guards
+# the gate
 # --------------------------------------------------------------------------------------
 
 
-def test_snapshot_file_hash_pinned() -> None:
-    """The frozen file cannot be edited or regenerated without this pin (and the review) noticing."""
-    raw = capture.SNAPSHOT_PATH.read_bytes().replace(b"\r\n", b"\n")
-    digest = hashlib.sha256(raw).hexdigest()
-    assert digest == SNAPSHOT_SHA256, (
-        f"snapshot_cb0d8b7.json changed (sha256 {digest[:16]}.. != pinned {SNAPSHOT_SHA256[:16]}..). "
-        "The A0 snapshot is frozen during Phase A and is never regenerated."
+def test_prompt_defaults_match_approved_snapshot() -> None:
+    """ONE aggregate comparison of every captured key (constants, builders, module wires, e2e wires)."""
+    changed, added, removed = capture.diff_against_table(_TABLE, capture.build_snapshot())
+    differing = [*changed, *added, *removed]
+    assert not differing, (
+        f"prompt defaults changed: {len(differing)} keys differ ({', '.join(differing[:5])}"
+        f"{', ...' if len(differing) > 5 else ''}). "
+        "Run: python -m tests.prompts_golden.capture --approve and review the diff."
     )
 
 
-def test_snapshot_base_commit_is_cb0d8b7() -> None:
-    meta = _TABLE["_meta"]
-    assert meta["base_commit"] == "cb0d8b7"
-    assert meta["key_count"] == len(_TABLE["keys"])
-    assert meta["size_bytes"] == len(capture.SNAPSHOT_PATH.read_bytes().replace(b"\r\n", b"\n"))
-    assert all(0 <= idx < len(_TABLE["strings"]) for idx in _TABLE["keys"].values())
-
-
-def test_snapshot_serialization_is_canonical() -> None:
-    """Re-serializing the loaded table gives back the file: sorted keys, ASCII-only, one trailing newline."""
-    raw = capture.SNAPSHOT_PATH.read_bytes().replace(b"\r\n", b"\n").decode("ascii")
-    assert raw.endswith("\n") and not raw.endswith("\n\n")
-    assert json.dumps(json.loads(raw), sort_keys=True, ensure_ascii=True) + "\n" == raw
+def test_approved_snapshot_sidecar_hash() -> None:
+    """The sidecar catches a hand edit of the approved file (CRLF folded to LF, as git may rewrite line endings)."""
+    expected = capture.APPROVED_SHA_PATH.read_text(encoding="utf-8").split()[0]
+    digest = capture.file_sha256(capture.APPROVED_PATH.read_bytes())
+    assert digest == expected, (
+        f"{capture.APPROVED_PATH.name} changed by hand (sha256 {digest[:16]}.. != sidecar {expected[:16]}..). "
+        "Run: python -m tests.prompts_golden.capture --approve and review the diff."
+    )
 
 
 def test_every_known_prompt_name_is_in_snapshot() -> None:
@@ -320,104 +263,51 @@ def test_every_known_prompt_name_is_in_snapshot() -> None:
     assert not missing, f"{len(missing)} known prompt name(s) missing from the snapshot, first: {missing[:5]}"
 
 
-def test_write_guards_refuse_off_commit_and_overwrite(
+def test_approved_snapshot_is_canonical_and_self_consistent() -> None:
+    """Re-serializing the loaded table gives back the file (sorted keys, ASCII-only, one trailing newline)."""
+    raw = capture.APPROVED_PATH.read_bytes().replace(b"\r\n", b"\n")
+    text = raw.decode("ascii")
+    assert text.endswith("\n") and not text.endswith("\n\n")
+    assert json.dumps(json.loads(text), sort_keys=True, ensure_ascii=True) + "\n" == text
+    meta = _TABLE["_meta"]
+    assert meta["key_count"] == len(_TABLE["keys"])
+    assert meta["size_bytes"] == len(raw)
+    assert all(0 <= idx < len(_TABLE["strings"]) for idx in _TABLE["keys"].values())
+
+
+def test_approve_writes_file_and_sidecar_and_prints_the_key_diff(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """--write needs the acknowledgement flag, HEAD == cb0d8b7 and --force-overwrite to replace the file.
+    """--approve reports added/changed/removed keys, then writes the file and a matching sidecar (tmp_path only)."""
+    approved = tmp_path / "approved_prompts.json"
+    sidecar = tmp_path / "approved_prompts.sha256"
+    first = {"const/a.ONE": "same", "const/a.TWO": "old text", "const/a.GONE": "x"}
+    monkeypatch.setattr(capture, "build_snapshot", lambda: first)
+    assert capture.approve(approved, sidecar) == 0
+    assert "0 keys differ" in capsys.readouterr().out
 
-    ``SNAPSHOT_PATH`` is redirected to ``tmp_path`` for the whole test, so no branch of it can write into the repo.
-    """
-    fake_snapshot = tmp_path / "snapshot_cb0d8b7.json"
-    fake_snapshot.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(capture, "SNAPSHOT_PATH", fake_snapshot)
+    second = {"const/a.ONE": "same", "const/a.TWO": "new text", "const/a.NEW": "added"}
+    monkeypatch.setattr(capture, "build_snapshot", lambda: second)
+    assert capture.approve(approved, sidecar) == 0
+    out = capsys.readouterr().out
+    assert "3 keys differ" in out and "1 changed, 1 added, 1 removed" in out
+    assert "~ const/a.TWO" in out and "+ const/a.NEW" in out and "- const/a.GONE" in out
+    assert capture.file_sha256(approved.read_bytes()) == sidecar.read_text(encoding="utf-8").split()[0]
+    assert capture.diff_against_table(capture.load_table(approved), second) == ([], [], [])
 
-    with pytest.raises(SystemExit) as no_ack:
-        capture.main(["--write"])
-    assert no_ack.value.code == 2
-
-    monkeypatch.setattr(capture, "_git_head", lambda: "f" * 40)
-    assert capture.main(["--write", "--i-know-this-is-cb0d8b7", "--force-overwrite"]) == 2
-
-    monkeypatch.setattr(capture, "_git_head", lambda: capture.BASE_COMMIT + "0" * 33)
-    assert capture.main(["--write", "--i-know-this-is-cb0d8b7"]) == 3  # file exists, no --force-overwrite
-    capsys.readouterr()
-    assert fake_snapshot.read_text(encoding="utf-8") == "{}"
-    # the real snapshot was never in reach of this test
-    assert capture.load_table(Path(__file__).with_name("snapshot_cb0d8b7.json"))["_meta"]["base_commit"] == "cb0d8b7"
+    assert capture.approve(approved, sidecar) == 0
+    assert "0 keys differ" in capsys.readouterr().out
 
 
-def test_approve_is_not_implemented_in_a0() -> None:
+def test_cli_requires_the_approve_flag() -> None:
     with pytest.raises(SystemExit) as exc:
-        capture.main(["--approve"])
+        capture.main([])
     assert exc.value.code == 2
 
 
 # --------------------------------------------------------------------------------------
-# (a) constants
+# Capture determinism (no clock, uuid or thread order leaks into a snapshotted string)
 # --------------------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("key", _CONST_KEYS)
-def test_module_level_constants_match_snapshot(key: str, live_constants: dict[str, str]) -> None:
-    assert key in live_constants, f"{key}: in the snapshot but no longer defined (a removed name is a failure by design)"
-    problem = _mismatch(key, _expected(key), live_constants[key])
-    assert problem is None, problem
-
-
-def test_constant_names_match_snapshot_exactly(live_constants: dict[str, str]) -> None:
-    _assert_section("constants", live_constants)
-
-
-# --------------------------------------------------------------------------------------
-# (b) builders, (c) module wires, (d) orchestrator end-to-end
-# --------------------------------------------------------------------------------------
-
-
-def test_builders_match_snapshot(live_builders: dict[str, str]) -> None:
-    _assert_section("builders", live_builders)
-
-
-def test_module_wire_capture_matches_snapshot(live_module_wires: dict[str, str]) -> None:
-    _assert_section("module_wires", live_module_wires)
-
-
-def test_orchestrator_e2e_wire_matches_snapshot(live_e2e: dict[str, str]) -> None:
-    _assert_section("e2e", live_e2e)
-
-
-def test_approved_live_additions_are_persisted_row_keys_with_a_reason() -> None:
-    for key, reason in APPROVED_LIVE_ADDITIONS.items():
-        assert "/persisted/" in key, f"{key}: only persisted-row keys may be allowlisted, never a prompt wire"
-        assert reason.strip(), key
-        assert key not in _TABLE["keys"], f"{key}: already in the snapshot, drop it from the allowlist"
-
-
-def test_approved_live_additions_are_all_still_produced_live(
-    live_module_wires: dict[str, str], live_e2e: dict[str, str]
-) -> None:
-    """Stale-entry check: an allowlisted key that is no longer captured must be removed from the allowlist."""
-    live_keys = live_module_wires.keys() | live_e2e.keys()
-    stale = sorted(set(APPROVED_LIVE_ADDITIONS) - live_keys)
-    assert not stale, f"allowlisted but no longer captured: {stale}"
-
-
-def test_snapshot_matches_live(
-    live_constants: dict[str, str],
-    live_builders: dict[str, str],
-    live_module_wires: dict[str, str],
-    live_e2e: dict[str, str],
-) -> None:
-    """Aggregate: every differing key of every section in ONE failure (A5 turns this into the approved gate)."""
-    problems: list[str] = []
-    for name, live in (
-        ("constants", live_constants),
-        ("builders", live_builders),
-        ("module_wires", live_module_wires),
-        ("e2e", live_e2e),
-    ):
-        problems.extend(_compare_section(name, live))
-    shown = "\n  ".join(problems[:15])
-    assert not problems, f"{len(problems)} prompt key(s) differ from the cb0d8b7 snapshot (first 15):\n  {shown}"
 
 
 def test_e2e_capture_is_repeatable(live_e2e: dict[str, str]) -> None:
@@ -508,9 +398,7 @@ def test_one_byte_change_in_a_module_system_prompt_surfaces_as_a_key_mismatch(
     assert all("critic" in p for p in problems), problems[:3]
     assert any("critic.full#0/m0/content" in p and "first differing offset=" in p for p in problems), problems[:3]
     # the section is complete: same key set as the pinned one, only values differ
-    assert live.keys() - APPROVED_LIVE_ADDITIONS.keys() == {
-        k for k in _TABLE["keys"] if capture.section_of(k) == "module_wires"
-    }
+    assert live.keys() == {k for k in _TABLE["keys"] if capture.section_of(k) == "module_wires"}
 
 
 # --------------------------------------------------------------------------------------
@@ -557,28 +445,30 @@ def test_contract_and_history_only_add_context_never_rewrite_the_policy_base() -
     assert history_system == base
 
 
-def test_risk_system_prompts_match_frozen_legacy_copies() -> None:
-    """Cross-check against the human-written frozen copies in the DC interpretation test (head rule, rstrip)."""
-    from tests import test_estimator_developer_contract_interpretation as legacy
+def test_risk_system_prompts_match_frozen_legacy_heads() -> None:
+    """Cross-check against the sha256 of the human-written frozen heads (before the DC section, trailing newlines
+    stripped) that ``tests/test_estimator_developer_contract_interpretation.py`` holds as ``_LEGACY_*`` copies.
 
+    The hashes are pinned here so this gate does not import a Tier-3 test module that Phase B may migrate."""
     cases = (
         (
             "const/models.risk.prompts.INTENT_CONTEXT_SYSTEM_PROMPT",
             "\n\n6. DEVELOPER CONTRACT — PRIORITY OVER ALL OTHER FRAMINGS.",
-            legacy._LEGACY_INTENT_CONTEXT_SYSTEM_PROMPT,
+            "ba0e15cf7e8927b931d2f13719c29da5e8e142036cdc3aa8b74a5109ba65d648",
         ),
         (
             "const/models.risk.prompts.HARM_SIGNAL_SYSTEM_PROMPT",
             "\n\n4. DEVELOPER CONTRACT SCOPE.",
-            legacy._LEGACY_HARM_SIGNAL_SYSTEM_PROMPT,
+            "c7b7c87b5dab4f1ae219fde83e33c5fbd855fd5580b577de3ce163dfdb5fdc94",
         ),
         (
             "const/models.risk.prompts.OPERATIONAL_RISK_SYSTEM_PROMPT",
             "\n\n7. DEVELOPER CONTRACT SCOPE.",
-            legacy._LEGACY_OPERATIONAL_RISK_SYSTEM_PROMPT,
+            "7c513d954970dfbc54cc125fafe8d4618d35b679dc86230aaa174bcf0bba1b19",
         ),
     )
-    for key, marker, frozen in cases:
+    for key, marker, frozen_sha in cases:
         head, sep, tail = _expected(key).partition(marker)
         assert sep and tail, f"{key}: partition marker missing"
-        assert head == frozen.rstrip("\n"), f"{key}: head differs from the frozen legacy copy"
+        digest = hashlib.sha256(head.encode("utf-8")).hexdigest()
+        assert digest == frozen_sha, f"{key}: head differs from the frozen legacy copy"
