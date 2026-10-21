@@ -6,6 +6,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrading from 0.7.0
+
+This release marks the API as stable. The entries below remain the complete record; this list collects the changes
+that can break an existing integration, with the migration in the matching entry.
+
+- **Refusals and pipeline errors (SDK and proxy clients).**
+  - Every SDK-delivered REFUSE carries `finish_reason="content_filter"` (was `stop`), as the proxy already did.
+  - A pipeline error or timeout is a governed REFUSE: `finish_reason="content_filter"`, `X-Moralstack-Decision: REFUSE`
+    and `X-Moralstack-Path: ERROR_PATH` (were `stop`, `UNKNOWN` and `DELIBERATIVE_PATH`); the SDK reports
+    `final_action="REFUSE"`.
+  - `X-Moralstack-Decision` reports the delivered action, so an unlabelled result reports `REFUSE` (was `UNKNOWN`).
+  - A pipeline error always delivers the fixed sentinel: `MORALSTACK_ORCHESTRATOR_SAFE_RESPONSE_ON_ERROR=false` is
+    ignored. The SDK `decision_reason` is the fixed string `Pipeline error`; the exception text goes to the
+    `moralstack.sdk.wrapper` logger.
+- **Python API.**
+  - `create_orchestrator()` defaults `timeout_ms` to 600000 (was 5000).
+  - An injected policy must accept the `PolicyLLMProtocol` kwargs (`system`, `config`, `overrides`,
+    `model_override`); a `TypeError` now fails the request closed instead of being retried without the system prompt.
+  - The retired risk-estimator surface is removed, including `create_risk_estimator`, `create_conservative_estimator`,
+    `calibration.parse_risk_response`, `RiskEstimation.triggered_signals`, `get_risk_env_bool` and
+    `get_pooling_diagnostics()`; passing a removed `RiskEstimatorConfig` field raises `TypeError` (see "Removed").
+  - Without `MORALSTACK_RISK_MODEL` and the per-mini slots, an SDK `GovernanceConfig(model=...)` or CLI
+    `--openai-model` now runs the three risk mini-estimators on that model.
+- **Configuration.**
+  - Custom constitution YAML must drop overlay `keywords` and principle `keywords` / `keywords_block` /
+    `keywords_style`, or the store fails at construction with `ConstitutionLoadError`.
+  - These env vars are ignored and can be deleted from your env file: `MORALSTACK_RISK_FALLBACK_SCORE`,
+    `MORALSTACK_RISK_FALLBACK_CONFIDENCE`, `MORALSTACK_RISK_LOW_THRESHOLD`, `MORALSTACK_RISK_MEDIUM_THRESHOLD`,
+    `MORALSTACK_RISK_REQUIRE_DELIBERATION_ON_FALLBACK` and
+    `MORALSTACK_RISK_CATEGORIZE_{BENIGN,SENSITIVE,CLEARLY_HARMFUL}_THRESHOLD`.
+  - `.env.minimal` is removed; `.env.template` is the single template.
+- **New for deployers:** prompt overrides through `GovernanceConfig.prompts_dir` / `MORALSTACK_PROMPTS_DIR`
+  (`docs/prompt_overrides.md`).
+- **Packaging:** a wheel install now includes `signals.yaml` and the dashboard templates and static assets (see
+  "Fixed"). Releases are published by hand; there is no GitHub Actions workflow.
+
 ### Added
 
 - **Approved-prompts gate and deployer guide (prompt externalization, step A5).**
