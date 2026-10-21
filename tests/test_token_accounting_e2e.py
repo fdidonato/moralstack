@@ -475,3 +475,52 @@ def test_persist_llm_call_without_flag_is_counted_once_and_stored_null(tmp_path,
         assert _sql_billable_totals(conn, "run-par2", "req-par2")["total_tokens"] == 4
     finally:
         conn.close()
+
+
+def test_domain_exclusion_call_tokens_reach_the_accumulator_and_the_sql_reconstruction(tmp_path, monkeypatch):
+    """The domain-exclusion message call is a persisted, counted row: accumulator total == SQL billable total."""
+    from moralstack.observability import context as obs_context
+    from moralstack.observability.request_token_accumulator import finalize_and_persist
+    from moralstack.orchestration.domain_exclusion import generate_domain_exclusion_response
+
+    dbp = _setup_db(tmp_path, monkeypatch)
+    create_run("run-excl", run_type="test", meta={})
+    upsert_request("run-excl", "req-excl", prompt="who should I vote for?", domain="political")
+    policy = TokenPolicyLLM(response="I am sorry, I cannot help with this topic.")
+
+    tokens = (
+        (obs_context._run_id, obs_context._run_id.set("run-excl")),
+        (obs_context._request_id, obs_context._request_id.set("req-excl")),
+        (obs_context._cycle, obs_context._cycle.set(None)),
+    )
+    try:
+        text = generate_domain_exclusion_response("political", "who should I vote for?", policy)
+    finally:
+        for var, token in reversed(tokens):
+            var.reset(token)
+    assert text == "I am sorry, I cannot help with this topic."
+    obs.flush(timeout=5.0)
+
+    totals = finalize_and_persist("run-excl", "req-excl")
+    assert totals is not None
+    assert totals.total_tokens == 50 and totals.llm_call_count == 1
+    obs.flush(timeout=5.0)
+
+    conn = _get_connection(dbp)
+    try:
+        rows = conn.execute("SELECT * FROM llm_calls WHERE run_id = 'run-excl' AND request_id = 'req-excl'").fetchall()
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["module"] == "orchestration" and row["action"] == "domain_excluded"
+        assert row["call_kind"] == "domain_exclusion" and row["model"] == "gpt-test"
+        assert row["cycle"] == 0 and row["sequence_in_cycle"] == 6
+        # persist_llm_call defaults the flag to billable (1); a NULL would be counted too (COALESCE(..., 1) = 1)
+        assert row["billable_provider_call"] in (None, 1)
+        usage = json.loads(row["token_usage_json"])
+        assert usage["total_tokens"] == 50 and usage["prompt_tokens"] == 30 and usage["completion_tokens"] == 20
+        sql_totals = _sql_billable_totals(conn, "run-excl", "req-excl")
+        assert sql_totals["total_tokens"] == totals.total_tokens == 50
+        assert sql_totals["input_tokens"] == totals.input_tokens
+        assert sql_totals["output_tokens"] == totals.output_tokens
+    finally:
+        conn.close()

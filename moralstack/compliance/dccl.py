@@ -42,6 +42,7 @@ from moralstack.compliance.types import (
     StructuredRule,
     TriggerType,
 )
+from moralstack.observability.wire import generate_wire_summary, safe_encode_wire
 from moralstack.prompts.catalog import PromptSet, default_prompt_set
 
 _LOG = logging.getLogger(__name__)
@@ -262,7 +263,14 @@ class DeveloperContractComplianceLayer:
                     "prompt": user_prompt,
                     "system_prompt": system_prompt,
                     "raw_response": getattr(result, "text", "") or "",
-                    "parsed_summary_json": json.dumps({"check": "safety_override"}, ensure_ascii=False),
+                    "parsed_summary_json": json.dumps(
+                        {
+                            "check": "safety_override",
+                            # The classifier calls ``policy.generate(prompt=user_prompt, system=system_prompt)``.
+                            **generate_wire_summary(user_prompt, system_prompt),
+                        },
+                        ensure_ascii=False,
+                    ),
                     "token_usage_json": (result.token_usage_json() if hasattr(result, "token_usage_json") else None),
                     "sequence_in_cycle": -6,
                     "call_kind": "compliance_layer",
@@ -446,13 +454,17 @@ class DeveloperContractComplianceLayer:
 
             llm_start = time.perf_counter()
             wall_start_ms = int(time.time() * 1000)
+            # Exact messages handed to the policy, for the row's wire record (telemetry, never raises).
+            row_prompt = messages[-1]["content"] if messages else prompt
             if hasattr(self._policy, "generate_messages"):
+                wire = safe_encode_wire(messages, prompt_col=row_prompt, system_prompt_col=system_prompt, branch="messages")
                 result = self._policy.generate_messages(
                     messages=messages,
                     config=config,
                     model_override=self._llm_model,
                 )
             else:
+                wire = generate_wire_summary(prompt, system_prompt, prompt_col=row_prompt).get("wire")
                 result = self._policy.generate(
                     prompt=prompt,
                     system=system_prompt,
@@ -476,7 +488,7 @@ class DeveloperContractComplianceLayer:
                         "model": self._llm_model,
                         "started_at": wall_start_ms,
                         "duration_ms": llm_elapsed_ms,
-                        "prompt": messages[-1]["content"] if messages else prompt,
+                        "prompt": row_prompt,
                         "system_prompt": system_prompt,
                         "raw_response": getattr(result, "text", "") or "",
                         "parsed_summary_json": json.dumps(
@@ -498,6 +510,7 @@ class DeveloperContractComplianceLayer:
                                     if conversation_context is not None
                                     else {}
                                 ),
+                                **({"wire": wire} if wire else {}),
                             },
                             ensure_ascii=False,
                         ),
@@ -715,13 +728,7 @@ class DeveloperContractComplianceLayer:
                 continue
 
             if self._safety_override_strict:
-                override_cat = classify_safety_override(
-                    rule.action_payload,
-                    policy=self._policy,
-                    use_llm=True,
-                    model=self._safety_override_model,
-                    prompt_set=self._prompt_set,
-                )
+                override_cat = self._classify_safety_override(rule.action_payload)
                 if override_cat is not None:
                     rejected.append((rule.rule_id, f"safety_override:{override_cat}"))
                     continue

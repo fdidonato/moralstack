@@ -8,6 +8,7 @@ import time
 from moralstack.core.types import PolicyLLMProtocol
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.risk import RiskPolicyAction
+from moralstack.observability.wire import wire_summary_json
 from moralstack.orchestration.diagnostics import orch_debug_log
 from moralstack.orchestration.event_emitter import EventEmitter
 from moralstack.orchestration.overlay_policy import get_constitution_safe
@@ -162,6 +163,7 @@ class RefusalHandler:
             sequence_in_cycle=6,
             token_usage_json=refusal_result.token_usage.to_json(),
             billable_provider_call=refusal_result.attempts > 0,
+            parsed_summary_json=wire_summary_json(getattr(refusal_result, "wire_calls", None)),
         )
         try:
             self._events.emit_decision_trace(

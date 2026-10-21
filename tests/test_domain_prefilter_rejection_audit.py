@@ -975,7 +975,7 @@ def test_persist_kwargs_do_not_contain_new_keys(events, real_env):
     pf, rows, _, _ = real_env([json.dumps({"domains": ["sports"], "confidence": 0.9})])
     pf.filter_domains(Q, AVAIL)
     assert set(rows[0]) == _LLM_ROW_KEYS
-    assert set(json.loads(rows[0]["parsed_summary_json"])) == {"module", "retrieval_phase", "parse_contract"}
+    assert set(json.loads(rows[0]["parsed_summary_json"])) == {"module", "retrieval_phase", "parse_contract", "wire"}
 
 
 # --------------------------------------------------------------------------------------

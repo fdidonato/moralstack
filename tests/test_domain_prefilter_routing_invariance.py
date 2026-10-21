@@ -217,4 +217,4 @@ def test_real_call_openai_does_not_change_llm_calls_row() -> None:
     assert row["sequence_in_cycle"] == -10
     assert row["phase"] == "constitution_retrieval"
     summary = json.loads(row["parsed_summary_json"])
-    assert set(summary) == {"module", "retrieval_phase", "parse_contract"}
+    assert set(summary) == {"module", "retrieval_phase", "parse_contract", "wire"}

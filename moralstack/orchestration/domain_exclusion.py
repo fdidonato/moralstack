@@ -9,9 +9,12 @@ user's language. Domain exclusion is decided earlier by constitution overlay
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Protocol
 
 from moralstack.models.base import GenerationConfig
+from moralstack.observability.token_usage import TokenUsage
+from moralstack.observability.wire import generate_wire_summary, wire_summary_json
 from moralstack.prompts.catalog import PromptSet, default_prompt_set
 
 logger = logging.getLogger(__name__)
@@ -35,6 +38,48 @@ class _LLMGenerateProtocol(Protocol):
     """Minimal protocol: generate(prompt, system, config)."""
 
     def generate(self, prompt: str, system: str = "", config: Any = None) -> Any: ...
+
+
+def _persist_exclusion_call(
+    llm_client: Any,
+    result: Any,
+    text: str,
+    user_msg: str,
+    system: str,
+    started_at_ms: int,
+    duration_ms: float,
+) -> None:
+    """Persist the exclusion-message call as an ``llm_calls`` row (cycle 0), so its prompt and tokens are auditable.
+
+    Best-effort observability (PROJECT_SPEC invariant 6): it never raises and never changes the response. Without a
+    request scope (a direct call outside a request) nothing is written.
+    """
+    try:
+        from moralstack.orchestration.persistence_helpers import record_llm_call
+
+        record_llm_call(
+            None,
+            None,
+            {
+                "cycle": 0,
+                "phase": "domain_exclusion",
+                "module": "orchestration",
+                "action": "domain_excluded",
+                "model": str(getattr(llm_client, "model", "") or ""),
+                "started_at": started_at_ms,
+                "duration_ms": duration_ms,
+                "prompt": user_msg,
+                "system_prompt": system,
+                "raw_response": text,
+                "parsed_summary_json": wire_summary_json(generate_wire_summary(user_msg, system)),
+                "token_usage_json": TokenUsage.from_generation_result(result).to_json(),
+                "attempts": 1,
+                "sequence_in_cycle": 6,
+                "call_kind": "domain_exclusion",
+            },
+        )
+    except Exception:
+        logger.debug("domain exclusion llm call persist skipped", exc_info=True)
 
 
 def generate_domain_exclusion_response(
@@ -68,8 +113,13 @@ def generate_domain_exclusion_response(
 
     try:
         gen_config = GenerationConfig(max_tokens=_DOMAIN_EXCLUSION_MAX_TOKENS)
+        started_at_ms = int(time.time() * 1000)
+        started = time.perf_counter()
         result = llm_client.generate(prompt=user_msg, system=system, config=gen_config)
         text = getattr(result, "text", None) or (str(result) if result else "")
+        _persist_exclusion_call(
+            llm_client, result, text, user_msg, system, started_at_ms, (time.perf_counter() - started) * 1000
+        )
         text = (text or "").strip()
         if len(text) > 15:
             return text

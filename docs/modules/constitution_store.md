@@ -344,7 +344,7 @@ principle titles, so title-only changes do not invalidate the agent cache.
 Selection above); legacy `DomainAgent`
 uses an object wrapper `{"principle_ids": [...]}` (root arrays are not valid for `json_object` mode).
 Tolerant regex / `extract_json` fallbacks remain for observability and compatibility. When persistence
-context is active, `llm_calls` rows include `parse_contract` metadata (see `moralstack/utils/llm_parse_contract.py`).
+context is active, `llm_calls` rows include `parse_contract` metadata (see `moralstack/utils/llm_parse_contract.py`). Since A4b-6 the prefilter, enhanced and legacy domain-agent rows also carry a `wire` record (branch `messages`, the exact `[system, user]` list passed to the client) next to it in `parsed_summary_json`; `_persist_constitution_llm_call(..., messages=)` builds it.
 
 ## Principle Retrieval (LLM-based)
 

@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Wire records on the DCCL, refusal, policy, speculative and retrieval rows (prompt externalization, step A4b-4..6; `KNOWN_GAPS` is now empty).**
+  The DCCL `evaluate`, `safety_override` and `draft_revalidate` rows, the contract-regeneration, speculative (internal and
+  upstream), benign / fast / safe-complete / deliberative / soft-revision policy rows, the critic `quick_check` row, the
+  refusal rows (`wire_calls` for every attempt, including the anti-leak retry that no row recorded) and the constitution
+  retriever rows now carry the exact messages sent in `parsed_summary_json`. Two additive rows/calls: the domain-exclusion
+  message call is now persisted as an `llm_calls` row (`action="domain_excluded"`; it adds that call's tokens to the request
+  totals, which previously missed it), and `validate_contract` classifies through the persisting wrapper (a row only when it
+  runs in a request scope). UI effect: the policy, refusal, draft-match and G13 rows, whose `parsed_summary_json` was
+  NULL, now show a raw wire JSON block and a `wire: {...}` preview in the request view (no UI code change). No existing
+  field changes meaning; the DCCL legacy-branch and speculative native-branch
+  `prompt` columns keep their value and the wire is the authority there. New `tests/test_wire_batch3.py`.
+
 - **Wire records on the estimator, critic, simulator, hindsight and perspectives rows (prompt externalization, step A4b-1..3).**
   The estimator mini rows, the critic, the simulator (batch and seeded), hindsight (batch and single) and perspectives rows, and
   every retry-failed row of those modules, now carry the exact messages sent: `wire` (or `wire_calls` + `wire_strings` for the

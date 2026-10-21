@@ -25,6 +25,7 @@ from moralstack.constitution.retrieval_result import PrincipleRetrievalResult
 from moralstack.constitution.schema import Overlay, Principle
 from moralstack.observability.emit_helpers import persist_llm_call, persist_orchestration_event
 from moralstack.observability.token_usage import TokenUsage
+from moralstack.observability.wire import safe_encode_wire
 from moralstack.prompts.catalog import PromptSet, default_prompt_set
 from moralstack.utils.llm_parse_contract import (
     merge_parse_contract_into_summary,
@@ -70,12 +71,14 @@ def _persist_constitution_llm_call(
     cycle: int | None = 0,
     sequence_in_cycle: int | None = None,
     domain: str | None = None,
+    messages: list[ChatCompletionMessageParam] | None = None,
 ) -> None:
     """
     Best-effort persistence for constitution retrieval LLM calls (parse metadata in parsed_summary_json).
 
     ``domain`` names the domain agent that made the call (per-domain agents); it is
-    omitted for the shared prefilter call. Skips silently when no DB context.
+    omitted for the shared prefilter call. Skips silently when no DB context. ``messages`` are the exact chat
+    messages sent to the client; they become the row's ``wire`` record.
     """
     try:
         if sequence_in_cycle is None:
@@ -86,6 +89,15 @@ def _persist_constitution_llm_call(
         summary_base: dict[str, Any] = {"module": "constitution_retriever", "retrieval_phase": retrieval_phase}
         if domain:
             summary_base["domain"] = domain
+        if messages:
+            wire = safe_encode_wire(
+                [{"role": m["role"], "content": str(m["content"])} for m in messages],
+                prompt_col=prompt,
+                system_prompt_col=system_prompt,
+                branch="messages",
+            )
+            if wire:
+                summary_base["wire"] = wire
         summary = merge_parse_contract_into_summary(summary_base, parse_contract)
         persist_llm_call(
             phase="constitution_retrieval",
@@ -885,12 +897,10 @@ class DomainPrefilter:
             client = self._openai_http_client
             t0 = time.time()
             started_ms = int(t0 * 1000)
+            sent_messages = _domain_agent_messages(system_prompt, prompt)
             response = client.chat.completions.create(
                 model=self.openai_config.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
+                messages=sent_messages,
                 temperature=0.1,
                 response_format=response_format or _json_object_response_format(),
                 **completion_tokens_param(self.openai_config.model, self.PREFILTER_MAX_OUTPUT_TOKENS),
@@ -981,6 +991,7 @@ class DomainPrefilter:
                 retrieval_phase=retrieval_phase,
                 cycle=cycle_val,
                 sequence_in_cycle=seq_val,
+                messages=sent_messages,
             )
             return data
 
@@ -1111,9 +1122,10 @@ class EnhancedDomainAgent:
             sys_msg = self._prompt_set.text("retrieval.agent.enhanced.system")
             t0 = time.time()
             started_ms = int(t0 * 1000)
+            sent_messages = _domain_agent_messages(sys_msg, prompt)
             response = client.chat.completions.create(
                 model=self.openai_config.model,
-                messages=_domain_agent_messages(sys_msg, prompt),
+                messages=sent_messages,
                 temperature=_DOMAIN_AGENT_TEMPERATURE,
                 response_format=_json_object_response_format(),
                 **completion_tokens_param(self.openai_config.model, _ENHANCED_DOMAIN_AGENT_MAX_OUTPUT_TOKENS),
@@ -1177,6 +1189,7 @@ class EnhancedDomainAgent:
                 token_usage_json=token_usage.to_json(),
                 retrieval_phase=retrieval_phase,
                 domain=self.domain_name,
+                messages=sent_messages,
             )
             return data
 
@@ -1273,9 +1286,10 @@ class DomainAgent:
             sys_msg = self._prompt_set.text("retrieval.agent.legacy.system")
             t0 = time.time()
             started_ms = int(t0 * 1000)
+            sent_messages = _domain_agent_messages(sys_msg, prompt)
             response = client.chat.completions.create(
                 model=self.openai_config.model,
-                messages=_domain_agent_messages(sys_msg, prompt),
+                messages=sent_messages,
                 temperature=_DOMAIN_AGENT_TEMPERATURE,
                 response_format=_json_object_response_format(),
                 **completion_tokens_param(self.openai_config.model, _LEGACY_DOMAIN_AGENT_MAX_OUTPUT_TOKENS),
@@ -1313,6 +1327,7 @@ class DomainAgent:
                 token_usage_json=token_usage.to_json(),
                 retrieval_phase=retrieval_phase,
                 domain=self.domain_name,
+                messages=sent_messages,
             )
             return ids
 

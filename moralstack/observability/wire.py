@@ -199,6 +199,41 @@ def safe_encode_wire_calls(
         return None
 
 
+def generate_wire_summary(
+    prompt: str,
+    system: str,
+    *,
+    prompt_col: str | None = None,
+    system_prompt_col: str | None = None,
+) -> dict[str, Any]:
+    """``{"wire": ...}`` for a call made as ``policy.generate(prompt=prompt, system=system)``, or ``{}``: never raises.
+
+    The messages are rebuilt from the exact ``(prompt, system)`` arguments passed to the policy and encoded against the
+    columns persisted with the row (by default the row stores ``prompt`` / ``system`` unchanged; pass the column values
+    when they differ). Empty when the record cannot be built, so callers can merge it unconditionally.
+    """
+    try:
+        record = safe_encode_wire(
+            generate_messages_for(prompt, system),
+            prompt_col=prompt if prompt_col is None else prompt_col,
+            system_prompt_col=system if system_prompt_col is None else system_prompt_col,
+            branch="generate",
+        )
+    except Exception:
+        logger.debug("generate wire summary not built", exc_info=True)
+        return {}
+    return {"wire": record} if record else {}
+
+
+def wire_summary_json(summary: Any) -> str | None:
+    """JSON text for a ``parsed_summary_json`` column that holds only wire keys; None when empty. Never raises."""
+    try:
+        return json.dumps(summary, ensure_ascii=False) if isinstance(summary, dict) and summary else None
+    except Exception:
+        logger.debug("wire summary not serialisable", exc_info=True)
+        return None
+
+
 def inline_wire_summary(sent: tuple[list[dict[str, str]], str] | None, retry_prompt: str) -> dict[str, Any]:
     """``{"wire": ...}`` for a retry-failed row, or ``{}``: never raises.
 

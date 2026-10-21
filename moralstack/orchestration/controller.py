@@ -34,6 +34,12 @@ from moralstack.observability.context import (
 from moralstack.observability.conversation_events import emit_conversation_state_updated
 from moralstack.observability.request_token_accumulator import finalize_and_persist
 from moralstack.observability.token_usage import TokenUsage
+from moralstack.observability.wire import (
+    generate_messages_for,
+    generate_wire_summary,
+    safe_encode_wire,
+    wire_summary_json,
+)
 from moralstack.orchestration.conversation_context import evaluate_delivery_context_guard
 from moralstack.orchestration.conversation_state import ConversationGovernanceState, TurnDecisionSummary
 from moralstack.orchestration.conversational_fast_path import (
@@ -1121,19 +1127,25 @@ class OrchestrationController:
             # the handler below, which drops the speculative draft so the route falls
             # back to internal governed regeneration. A retry would be a second,
             # ungoverned call without system prompt / history.
+            # Exact messages handed to the generator, kept for the row's wire record.
+            sent_messages: list[dict[str, str]]
+            sent_branch: str
             if messages is not None and hasattr(gen, "generate_messages"):
+                sent_messages, sent_branch = messages, "messages"
                 result = gen.generate_messages(
                     messages=messages,
                     overrides=getattr(request, "generation_overrides", None),
                 )
             else:
+                system_sent = effective_system_for_request(
+                    base=self._protected_system_prompt,
+                    request=request,
+                    mode="normal",
+                )
+                sent_messages, sent_branch = generate_messages_for(prompt_text, system_sent), "generate"
                 result = gen.generate(
                     prompt=prompt_text,
-                    system=effective_system_for_request(
-                        base=self._protected_system_prompt,
-                        request=request,
-                        mode="normal",
-                    ),
+                    system=system_sent,
                     overrides=getattr(request, "generation_overrides", None),
                 )
             elapsed = (time.time() - start) * 1000
@@ -1171,6 +1183,11 @@ class OrchestrationController:
                 ),
                 "message_sections": message_sections,
             }
+            wire = safe_encode_wire(
+                sent_messages, prompt_col=prompt_used, system_prompt_col=system_used or "", branch=sent_branch
+            )
+            if wire:
+                parsed_summary["wire"] = wire
             persist_kwargs: dict[str, Any] = {
                 "cycle": 0,
                 "phase": "speculative_generate",
@@ -1452,6 +1469,10 @@ class OrchestrationController:
                     "duration_ms": elapsed_ms,
                     "prompt": user,
                     "raw_response": text,
+                    # This row persists no system_prompt column: the wire carries the system message as sent.
+                    "parsed_summary_json": wire_summary_json(
+                        generate_wire_summary(user, system, prompt_col=user, system_prompt_col="")
+                    ),
                     "token_usage_json": (result.token_usage_json() if hasattr(result, "token_usage_json") else None),
                     "sequence_in_cycle": 1,
                     "call_kind": "compliance_regenerate",
@@ -1531,6 +1552,7 @@ class OrchestrationController:
                     "prompt": prompt,
                     "system_prompt": draft_match_system,
                     "raw_response": raw_text,
+                    "parsed_summary_json": wire_summary_json(generate_wire_summary(prompt, draft_match_system)),
                     "token_usage_json": (result.token_usage_json() if hasattr(result, "token_usage_json") else None),
                     "sequence_in_cycle": -4,
                     "call_kind": "compliance_draft_revalidate",

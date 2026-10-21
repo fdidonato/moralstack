@@ -205,7 +205,10 @@ The prompt texts are catalog fragments read from the layer's `PromptSet`
 `compliance.dccl.fallback_user`, `compliance.dccl.no_draft` and the transcript
 note/fallback fragments, plus `compliance.safety_classifier.system` for the safety
 classifier. The classifier text is a safety fragment (`SAFETY_FRAGMENT_IDS`): an override
-is recorded in the audit summary. All DCCL call sites (`_classify_safety_override`,
+is recorded in the audit summary. Since A4b-4/5 the `evaluate`, `safety_override` and `draft_revalidate` rows carry the exact messages sent as `wire` in
+`parsed_summary_json` (on the legacy `generate()` branch the row `prompt` keeps the native trailer while the wire holds the
+fallback user prompt that was sent); `validate_contract` now classifies through `_classify_safety_override`, so its call is
+persisted when it runs inside a request scope. All DCCL call sites (`_classify_safety_override`,
 `validate_contract`) forward the same set to `classify_safety_override(..., prompt_set=)`;
 this changes only where the text comes from, never a decision path. The persisted
 `llm_calls.system_prompt` is the rendered string. `_DCCL_LLM_SYSTEM_PROMPT`,

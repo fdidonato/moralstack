@@ -548,6 +548,9 @@ legacy `generate()` pair, `branch` says which; format in `docs/modules/observabi
 `Violations: N, Guidance: ...`. A failed parse attempt's retry-failed row carries the failed attempt's messages inline.
 Building the record is best-effort and never changes the report.
 
+The `quick_check` row (A4b-6) carries its record differently: its `parsed_summary_json` is already a JSON object
+(`{passed, violated, principle_id}`), so the `wire` key is added there, not to `parsed_json`.
+
 ## See Also
 
 - [Constitution Store](./constitution_store.md) - Ethical principle management

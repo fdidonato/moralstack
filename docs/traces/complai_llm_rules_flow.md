@@ -78,6 +78,10 @@ In MoralStack terms:
    English keyword pre-filter was removed) and runs on a small model
    (`MORALSTACK_DCCL_SAFETY_OVERRIDE_MODEL`, default `gpt-4o-mini`); its call is
    persisted to `llm_calls` (`module=compliance_layer`, `action=safety_override`).
+   Since A4b (2026-10-21) the DCCL `evaluate`, `safety_override` and `draft_revalidate` rows carry the exact
+   messages sent under `wire` in `parsed_summary_json` (format in `docs/modules/observability.md`), and
+   `validate_contract` classifies through the same persisting wrapper `_classify_safety_override` (same
+   classifier and inputs; a row is written only inside a request scope, so contract loading writes none).
    The classifier and DCCL system prompts are read from the layer's `PromptSet`
    (`compliance.safety_classifier.system`, `compliance.dccl.system`), threaded through
    `classify_safety_override(..., prompt_set=)`; the default set gives the same bytes as

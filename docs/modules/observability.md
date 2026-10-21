@@ -697,10 +697,34 @@ meaning of any existing field: it describes the exact `messages` list sent, stor
 - **Not changed, on purpose.** `prompt` does not start to include the preface, `message_sections` is not truncated to
   the window sent, the `"Retry reason: ..."` prompt of retry-failed rows stays (the failed attempt's wire is added next
   to it, with its system prompt inlined because those rows have no `system_prompt`), and aggregated rows are not split.
-- **Status.** The estimator mini rows, the critic, simulator (batch and seeded), hindsight (batch and single) and
-  perspectives rows (and their retry-failed rows) carry the record (A4b-1..3). The DCCL, draft-match, contract-regeneration,
-  speculative, refusal and policy rows do not yet. Each A4b step adds it to one group of rows and removes its entries from
-  `KNOWN_GAPS` in `tests/test_persistence_fidelity.py`.
+- **Status.** A4b is complete: every chat-completion LLM-call row carries the record, and `KNOWN_GAPS` in
+  `tests/test_persistence_fidelity.py` is empty. Two rows carry none by design: `embedder/embed` (an embeddings call,
+  not a chat completion) and `upstream_provider/generate final response` (no caller records it). Batch 2: estimator mini rows, critic, simulator (batch and seeded),
+  hindsight and perspectives rows (and their retry-failed rows). Batch 3: the DCCL `evaluate`, `safety_override` and
+  `draft_revalidate` rows; the contract-regeneration (`generate (compliance-regenerate)`) row, which has no `system_prompt`
+  column so its wire inlines the system message; the speculative draft row (internal and upstream); the policy rows
+  (`generate` on the benign / fast / safe-complete / deliberative paths, `rewrite` and soft revision); the critic
+  `quick_check` row; the refusal rows (`wire_calls`, one record per attempt, on the existing row); the constitution
+  retriever rows (prefilter, enhanced and legacy domain agents). A new row is persisted for the domain-exclusion message
+  call (`module="orchestration"`, `action="domain_excluded"`, `phase="domain_exclusion"`, `call_kind="domain_exclusion"`),
+  which was not recorded before. A domain-exclusion call that raises leaves no row (unlike refusal, which records the
+  attempt): the response falls back to the marker and nothing is persisted for the failed call; `DeveloperContractComplianceLayer.validate_contract` now classifies through
+  `_classify_safety_override`, so its classifier call is persisted too (only when it runs inside a request scope: at
+  contract-loading time there is none, so nothing is written).
+- **Columns that differ from the wire on purpose.** Two rows keep a `prompt` column that is not among the bytes sent,
+  because changing it would change an existing field: the DCCL row on the legacy `generate()` branch (it keeps the native
+  trailer, the fallback user prompt was sent) and the speculative row on the native branch (it keeps the language-prefixed
+  prompt, the raw final user message was sent). The wire is the authority for both; `test_persistence_fidelity.py` lists
+  them in `_PROMPT_COLUMN_DIVERGES_BY_DESIGN`. A third case is not exempted because the shipped adapters cannot reach it:
+  a speculative row on the legacy branch with a developer contract encodes the system message as a `ref` plus a `prefix`
+  (the contract is prepended to the system prompt), so the decoded system differs from the `system_prompt` column.
+  Likewise, prefix/suffix refs and inlined system messages (the G13 contract-regeneration row and the retry-failed rows,
+  which have no `system_prompt` column) are by design: decoded system == `system_prompt` column is not an integrity rule,
+  the integrity rule is that the decoded record equals the messages sent.
+- **UI effect.** Policy, refusal, draft-match and G13 rows, whose `parsed_summary_json` was NULL before, now carry a
+  JSON summary, so the request view shows a raw wire JSON block and a `wire: {...}` preview on their cards. No UI code
+  changed. `rewrite` rows record the adapter's own `prompt_used` / `system_used` (the
+  rewrite prompt is composed inside the policy) and carry no wire when the adapter recorded none.
 - **Where each module puts it.** Estimator mini rows, simulator, hindsight and perspectives rows: `parsed_summary_json`
   (`wire`, or `wire_calls` + `wire_strings` for the seeded simulator, the perspectives row and a multi-consequence
   hindsight row). **Critic rows: `parsed_json`** (`{"wire": {...}}`), because the critic's `parsed_summary_json` is the plain text
@@ -709,7 +733,11 @@ meaning of any existing field: it describes the exact `messages` list sent, stor
   seeded simulator's `wire_calls` lists every call of the row including failed attempts (its joined `prompt` does); the
   perspectives row lists the successful calls, in the order of its joined prompts. The module result objects carry the
   record in an additive optional field (`CriticReport.wire`, `SimulationResult.wire`/`wire_calls`,
-  `HindsightResult.wire`/`wire_calls`, `EnsembleResult.wire_calls`); a cache hit clears it. That test drives every module and path
+  `HindsightResult.wire`/`wire_calls`, `EnsembleResult.wire_calls`, `RefusalGenerationResult.wire_calls`); a cache hit
+  clears it. Batch-3 rows whose summary is a JSON object (DCCL, safety classifier, speculative, critic `quick_check`)
+  add `wire` next to their existing keys; rows with no summary before (policy, draft-match, contract regeneration, refusal,
+  domain exclusion) get a summary holding only the wire keys (`wire_summary_json`); retriever rows add `wire` to the
+  summary that already holds `parse_contract`. That test drives every module and path
   with recording fake policies against a real SQLite DB in `dual` mode, reconstructs each call from its row and from
   `llm.call.jsonl`, and asserts the gap report equals `KNOWN_GAPS`: a new gap fails it, and so does a fixed gap that is
   still listed.

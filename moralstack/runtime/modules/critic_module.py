@@ -21,7 +21,12 @@ from moralstack.core.types import PolicyLLMProtocol, Turn, Violation
 from moralstack.models.base import GenerationConfig
 from moralstack.models.delib_context import DelibContext
 from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
-from moralstack.observability.wire import generate_messages_for, inline_wire_summary, safe_encode_wire
+from moralstack.observability.wire import (
+    generate_messages_for,
+    generate_wire_summary,
+    inline_wire_summary,
+    safe_encode_wire,
+)
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.catalog import PromptContext, PromptSet, default_prompt_set
 from moralstack.prompts.critic_prompt import CRITIC_FULL_SYSTEM_PROMPT  # noqa: F401 - default re-export, kept importable
@@ -647,6 +652,13 @@ class LLMConstitutionalCritic:
                 # Built here, inside the swallowing helper: formatting the error must never raise into the request.
                 error_text = str(error)[:200]
                 summary = {"passed": None, "error": error_text, "error_type": type(error).__name__}
+
+            # The summary is a JSON object, so the wire goes in it (unlike the full critique row). quick_check calls
+            # ``policy.generate(prompt=prompt, system=system_prompt)``; the record never raises.
+            summary = {
+                **(summary or {}),
+                **generate_wire_summary(prompt, system_prompt),
+            }
 
             async_persist_llm_call(
                 phase="critic",

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from moralstack.observability.token_usage import TokenUsage
+from moralstack.observability.wire import generate_messages_for, safe_encode_wire_calls
 from moralstack.orchestration.refusal_context import RefusalContext
 from moralstack.prompts.catalog import PromptSet, default_prompt_set
 
@@ -35,6 +36,9 @@ class RefusalGenerationResult:
         attempts: Number of LLM calls actually issued (1 or 2 with retry).
         leak_retried: Whether the anti-leak guardrail forced a second attempt.
         leaked_terms: Terms detected as leaks in the first attempt (empty when none).
+        wire_calls: ``{"wire_calls": [...], "wire_strings": [...]}`` (``observability/wire.py``): the exact messages
+            of EVERY attempt issued, in order, encoded against ``user_prompt`` / ``system_prompt`` (the persisted
+            columns describe only the final attempt). None when no call was made.
     """
 
     text: str
@@ -44,6 +48,7 @@ class RefusalGenerationResult:
     leak_retried: bool = False
     leaked_terms: tuple[str, ...] = field(default_factory=tuple)
     token_usage: TokenUsage = field(default_factory=lambda: TokenUsage(0, 0, 0, "missing"))
+    wire_calls: dict[str, Any] | None = None
 
 
 # Language-agnostic: structural marker when LLM fails or unavailable.
@@ -471,6 +476,7 @@ def generate_llm_safe_refusal_detailed(
             token_usage=TokenUsage(0, 0, 0, "missing"),
         )
 
+    sent_calls = [(generate_messages_for(user_msg, system), "generate")]
     text, first_usage = _llm_refusal_call(llm_client=llm_client, system=system, user_msg=user_msg)
     token_usages: list[TokenUsage] = [first_usage]
     attempts = 1
@@ -500,6 +506,7 @@ def generate_llm_safe_refusal_detailed(
             leak_avoidance_terms=leaked_terms,
             prompt_set=ps,
         )
+        sent_calls.append((generate_messages_for(retry_user_msg, system), "generate"))
         retry_text, retry_usage = _llm_refusal_call(llm_client=llm_client, system=system, user_msg=retry_user_msg)
         token_usages.append(retry_usage)
         attempts += 1
@@ -521,6 +528,7 @@ def generate_llm_safe_refusal_detailed(
             leak_retried=leak_retried,
             leaked_terms=leaked_terms,
             token_usage=TokenUsage.combine(token_usages),
+            wire_calls=safe_encode_wire_calls(sent_calls, prompt_col=final_user_msg, system_prompt_col=system),
         )
 
     return RefusalGenerationResult(
@@ -531,6 +539,7 @@ def generate_llm_safe_refusal_detailed(
         leak_retried=leak_retried,
         leaked_terms=leaked_terms,
         token_usage=TokenUsage.combine(token_usages),
+        wire_calls=safe_encode_wire_calls(sent_calls, prompt_col=final_user_msg, system_prompt_col=system),
     )
 
 

@@ -430,7 +430,7 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `emit_request_meta_updated` right after the request upsert.
 - `wire.py` — pure wire codec (prompt externalization A4b): `encode_wire` /
   `decode_wire` / `encode_wire_calls` / `wire_sha256` / `generate_messages_for`,
-  plus the never-raising `safe_encode_wire*` and `inline_wire_summary` (retry-failed rows).
+  plus the never-raising `safe_encode_wire*`, `inline_wire_summary` (retry-failed rows), `generate_wire_summary` and `wire_summary_json` (rows whose summary holds only the wire; A4b batch 3).
   Record v1 stores the exact messages sent as column references plus a string
   table, under `parsed_summary_json["wire"]` (or `["wire_calls"]` +
   `["wire_strings"]` for aggregated rows; `parsed_json["wire"]` for the critic's

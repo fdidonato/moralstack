@@ -792,6 +792,8 @@ def _row_family(row: dict[str, Any]) -> tuple[str, str] | None:
         return (module, "retry" if retry_failed else "")
     if module == "orchestration" and action.startswith("refuse"):
         return ("refusal", "")
+    if module == "orchestration" and action == "domain_excluded":
+        return ("domain_exclusion", "")
     if module == "constitution_retriever":
         family = {
             "domain_prefilter": "prefilter",
@@ -1141,6 +1143,15 @@ def _policy_module(row: dict[str, Any]) -> str:
     return "policy"
 
 
+# Rows whose persisted ``prompt`` column is, by decision, NOT among the bytes sent (plan §13.3 "explicitly not done":
+# no change to the meaning of an existing field). The wire record is the authority there; the column stays as it was.
+#  - dccl / generate: the row keeps ``messages[-1]`` (the native trailer) although the legacy ``generate()`` sent the
+#    long fallback user prompt (G6).
+#  - speculative / messages: the row keeps the language-prefixed prompt although the native path sent the raw final
+#    user message (NEW-4).
+_PROMPT_COLUMN_DIVERGES_BY_DESIGN = frozenset({("dccl", "generate"), ("speculative", "messages")})
+
+
 def _compare_group(
     observed: Observed,
     index_sets: list[list[int]],
@@ -1184,8 +1195,11 @@ def _compare_group(
         if not out and not aggregated and len(calls) == 1:
             # Column tripwire: the record must reference every non-empty column of its row. A column the record does
             # not use means the wire no longer proves what the column holds (G1/G3 would otherwise go unnoticed).
-            refs = _wire_refs(_wire_holder(row))
-            if (system_prompt and REF_SYSTEM not in refs) or (prompt and REF_PROMPT not in refs):
+            holder = _wire_holder(row)
+            refs = _wire_refs(holder)
+            branch = (holder or {}).get("wire", {}).get("branch")
+            prompt_by_design = (module, branch) in _PROMPT_COLUMN_DIVERGES_BY_DESIGN
+            if (system_prompt and REF_SYSTEM not in refs) or (prompt and REF_PROMPT not in refs and not prompt_by_design):
                 out.add((module, COLUMN_NOT_REFERENCED))
         return out
 
@@ -1301,9 +1315,8 @@ def report(env: Env) -> dict[GapKey, str]:
 # One row per (gap id, module, gap kind) with the paths and contexts it was observed on. Each A4b fix removes its own
 # rows (or narrows their paths/contexts); at the end of A4b the table is empty. G1-G9 are the plan's ids.
 #
-# A4b-1..3 (estimator, critic, simulator, hindsight, perspectives) are done: their rows are gone. What is left belongs to
-# batch 3: DCCL (G6), contract regeneration (G1), the safety classifier and domain exclusion (G8), the refusal (G9) and
-# the speculative draft (NEW-4).
+# A4b-1..6 are done: every row of the table is gone and KNOWN_GAPS is empty, which is the end state of A4b. The ids
+# below stay documented because a future regression is reported under them.
 #
 # History of the ids that are not the plan's: NEW-1 (failed attempts of the risk minis and of parallel perspectives were
 # dropped: bare ThreadPoolExecutor workers carry no observability context), NEW-2 (the critic quick check was never
@@ -1314,23 +1327,7 @@ _CTX_ANY = ("contract", "history", "contract_history")  # any context but none
 _CTX_HISTORY = ("history", "contract_history")
 _CTX_CONTRACT = ("contract", "contract_history")
 _CTX_NONE = ("nocontext",)
-_KNOWN_GAP_TABLE: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], ...] = (
-    ("G6", "dccl", "missing_developer", ("llm_fallback/native",), _CTX_CONTRACT),
-    (
-        "G6",
-        "dccl",
-        "user_mismatch",
-        ("legacy/first", "legacy/retry", "llm_fallback/legacy", "llm_fallback/native"),
-        _CTX_CONTRACT,
-    ),
-    ("G8", "domain_exclusion", "unpersisted_call", ("domain_excluded",), CONTEXTS),
-    ("G1", "g13", "system_mismatch", ("legacy/first", "legacy/retry", "native/first", "native/retry"), _CTX_CONTRACT),
-    ("G9", "refusal", "unpersisted_call", ("refuse/leak_retry",), CONTEXTS),
-    ("G8", "safety_classifier", "unpersisted_call", ("validate_contract",), _CTX_CONTRACT),
-    ("G7", "speculative", "branch_unrecorded", ("speculative/legacy",), _CTX_HISTORY),
-    ("NEW-4", "speculative", "system_mismatch", ("speculative/legacy",), ("contract_history",)),
-    ("NEW-4", "speculative", "user_mismatch", ("speculative/native",), _CTX_HISTORY),
-)
+_KNOWN_GAP_TABLE: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], ...] = ()
 
 KNOWN_GAPS: dict[GapKey, str] = {
     (module, path, context, kind): gap_id
@@ -1526,6 +1523,35 @@ def test_a_row_carrying_a_wire_record_closes_its_gaps_and_a_wrong_one_is_reporte
     # An exact record that never references the row's columns is reported: the columns are no longer proven.
     unreferenced = encode_wire(sent, prompt_col="", system_prompt_col="", branch="messages")
     assert analyse(observed_with(unreferenced)) == {("critic", COLUMN_NOT_REFERENCED)}
+
+
+def test_exempt_pair_still_fails_on_an_unreferenced_system_column():
+    from moralstack.observability.wire import encode_wire
+
+    sent = [{"role": "system", "content": "S"}, {"role": "user", "content": "the fallback user prompt"}]
+    call = _call("dccl", sent)
+
+    def observed_with(system_col: str) -> Observed:
+        # The row keeps its native trailer in ``prompt`` (exempt for dccl/generate); the wire is encoded against it.
+        wire = encode_wire(sent, prompt_col="native trailer", system_prompt_col=system_col, branch="generate")
+        row = _row("compliance_layer", "evaluate", "native trailer", "S", summary=json.dumps({"wire": wire}))
+        return _observed([call], [row])
+
+    # prompt column unreferenced is tolerated for this pair, system referenced: no gap
+    assert analyse(observed_with("S")) == set()
+    # the system column is still checked: the wire does not use the non-empty ``system_prompt`` column
+    assert analyse(observed_with("")) == {("dccl", COLUMN_NOT_REFERENCED)}
+
+
+def test_non_exempt_module_with_an_unreferenced_prompt_is_still_flagged():
+    from moralstack.observability.wire import encode_wire
+
+    sent = _M
+    call = _call("critic.full", sent)
+    # the same unreferenced prompt that is exempt for dccl/generate is a gap for a module that is not exempt
+    wire = encode_wire(sent, prompt_col="", system_prompt_col="S", branch="messages")
+    row = _row("critic", "critique", "P", "S", summary=json.dumps({"wire": wire}))
+    assert analyse(_observed([call], [row])) == {("critic", COLUMN_NOT_REFERENCED)}
 
 
 def test_diff_against_known_fails_on_a_new_gap_and_on_a_stale_entry():

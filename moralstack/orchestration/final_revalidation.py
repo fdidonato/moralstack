@@ -10,6 +10,7 @@ from difflib import SequenceMatcher
 from typing import Any, Literal
 
 from moralstack.observability.emit_helpers import persist_orchestration_event
+from moralstack.observability.wire import wire_summary_json
 from moralstack.orchestration.orchestration_event_taxonomy import (
     PROXY_FINAL_REVALIDATION_BLOCKED,
     PROXY_FINAL_REVALIDATION_ERROR,
@@ -598,6 +599,7 @@ def _generate_post_revalidation_refusal(
                 "call_kind": "final_revalidation_refusal",
                 "token_usage_json": refusal_result.token_usage.to_json(),
                 "billable_provider_call": refusal_result.attempts > 0,
+                "parsed_summary_json": wire_summary_json(getattr(refusal_result, "wire_calls", None)),
             },
         )
     except Exception:

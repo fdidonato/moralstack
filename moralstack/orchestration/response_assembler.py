@@ -11,6 +11,7 @@ import time
 from moralstack.core.types import PolicyLLMProtocol
 from moralstack.models.decision_explanation import DecisionExplanation
 from moralstack.models.risk import RiskPolicyAction
+from moralstack.observability.wire import wire_summary_json
 from moralstack.orchestration.persistence_helpers import record_llm_call
 from moralstack.orchestration.refusal_context import build_refusal_context
 from moralstack.orchestration.safe_refusal_generator import (
@@ -362,6 +363,7 @@ class ResponseAssembler:
                             "attempts": refusal_result.attempts,
                             "sequence_in_cycle": _SEQ_REFUSAL_OR_FINALIZE,
                             "token_usage_json": refusal_result.token_usage.to_json(),
+                            "parsed_summary_json": wire_summary_json(getattr(refusal_result, "wire_calls", None)),
                         },
                     )
                 except Exception as _persist_e:

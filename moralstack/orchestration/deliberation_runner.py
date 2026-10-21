@@ -20,6 +20,7 @@ from moralstack.models.delib_context import DelibContext
 from moralstack.models.risk.categories import OperationalRisk, RiskCategory, RiskPolicyAction
 from moralstack.observability.context import set_current_cycle
 from moralstack.observability.emit_helpers import persist_orchestration_event
+from moralstack.observability.wire import generate_wire_summary, wire_summary_json
 from moralstack.orchestration._policy_helpers import sanitize_policy_output
 from moralstack.orchestration.convergence import (
     build_raw_outcome_for_log,
@@ -428,6 +429,28 @@ def _wire_parsed_json(result: Any) -> str | None:
         return json.dumps(keys, ensure_ascii=False) if keys else None
     except Exception:
         return None
+
+
+def _policy_wire_json(prompt: str, system: str, *, prompt_col: str, system_col: str) -> str | None:
+    """``parsed_summary_json`` text (wire only) for a policy row produced by ``policy.generate(prompt, system)``.
+
+    ``prompt`` / ``system`` are the exact arguments passed to the policy. None when no record can be built."""
+    return wire_summary_json(generate_wire_summary(prompt, system, prompt_col=prompt_col, system_prompt_col=system_col))
+
+
+def _policy_result_wire_json(result: Any, *, prompt_col: str, system_col: str) -> str | None:
+    """Same for a ``policy.rewrite(...)`` row. The rewrite prompt is composed inside the policy adapter, so the sent
+    ``(prompt, system)`` are the adapter's own record (``prompt_used`` / ``system_used``); None when it recorded none."""
+    sent_prompt = getattr(result, "prompt_used", None)
+    if not isinstance(sent_prompt, str) or not sent_prompt:
+        return None
+    sent_system = getattr(result, "system_used", None)
+    return _policy_wire_json(
+        sent_prompt,
+        sent_system if isinstance(sent_system, str) else "",
+        prompt_col=prompt_col,
+        system_col=system_col,
+    )
 
 
 def _token_usage_json_from_result(result: Any) -> str | None:
@@ -1070,11 +1093,12 @@ class DeliberationRunner:
                         prompt_set=_runner_prompt_set(self),
                     )
                     start_gen = time.time()
+                    system_sent = effective_system_for_request(
+                        base=self._protected_system_prompt, request=request, mode="normal"
+                    )
                     result = self.policy.generate(
                         prompt=prompt_text,
-                        system=effective_system_for_request(
-                            base=self._protected_system_prompt, request=request, mode="normal"
-                        ),
+                        system=system_sent,
                         overrides=getattr(request, "generation_overrides", None),
                     )
                     elapsed = (time.time() - start_gen) * 1000
@@ -1101,6 +1125,9 @@ class DeliberationRunner:
                             "prompt": prompt_used,
                             "system_prompt": system_used or "",
                             "raw_response": response_text,
+                            "parsed_summary_json": _policy_wire_json(
+                                prompt_text, system_sent, prompt_col=prompt_used, system_col=system_used or ""
+                            ),
                             "sequence_in_cycle": SEQ_POLICY,
                             "token_usage_json": result.token_usage_json(),
                         },
@@ -1285,6 +1312,9 @@ class DeliberationRunner:
                     "prompt": prompt_used,
                     "system_prompt": system_used or "",
                     "raw_response": response_text,
+                    "parsed_summary_json": _policy_wire_json(
+                        safe_prompt, safe_system, prompt_col=prompt_used, system_col=system_used or ""
+                    ),
                     "sequence_in_cycle": persist_sequence,
                     "token_usage_json": result.token_usage_json(),
                 },
@@ -1712,11 +1742,12 @@ class DeliberationRunner:
                         request.prompt,
                         prompt_set=_runner_prompt_set(self),
                     )
+                    system_sent = effective_system_for_request(
+                        base=self._protected_system_prompt, request=request, mode="normal"
+                    )
                     result = self.policy.generate(
                         prompt=prompt_text,
-                        system=effective_system_for_request(
-                            base=self._protected_system_prompt, request=request, mode="normal"
-                        ),
+                        system=system_sent,
                         overrides=getattr(request, "generation_overrides", None),
                     )
                     elapsed = (time.time() - start_gen) * 1000
@@ -1782,6 +1813,9 @@ class DeliberationRunner:
                             "prompt": prompt_used,
                             "system_prompt": system_used or "",
                             "raw_response": response_text,
+                            "parsed_summary_json": _policy_wire_json(
+                                prompt_text, system_sent, prompt_col=prompt_used, system_col=system_used or ""
+                            ),
                             "sequence_in_cycle": SEQ_POLICY,
                             "token_usage_json": result.token_usage_json(),
                         },
@@ -3580,6 +3614,9 @@ class DeliberationRunner:
                     "prompt": prompt_used,
                     "system_prompt": system_used or "",
                     "raw_response": response_text,
+                    "parsed_summary_json": _policy_result_wire_json(
+                        result, prompt_col=prompt_used, system_col=system_used or ""
+                    ),
                     "sequence_in_cycle": SEQ_POLICY,
                     "token_usage_json": result.token_usage_json(),
                 },
@@ -3778,6 +3815,13 @@ class DeliberationRunner:
                     "prompt": prompt_used,
                     "system_prompt": system_used or "",
                     "raw_response": response_text,
+                    "parsed_summary_json": (
+                        _policy_wire_json(
+                            policy_user_prompt, system_prompt, prompt_col=prompt_used, system_col=system_used or ""
+                        )
+                        if action == "generate"
+                        else _policy_result_wire_json(result, prompt_col=prompt_used, system_col=system_used or "")
+                    ),
                     "sequence_in_cycle": SEQ_POLICY,
                     "token_usage_json": result.token_usage_json(),
                 },
