@@ -304,6 +304,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **PyPI classifier `Development Status :: 5 - Production/Stable`** (was `4 - Beta`), for the 1.0.0 release.
 - **Proxy `X-Moralstack-Decision` now reports the delivered action (behaviour).** The proxy builds
   the governance headers after `finalize_delivery` and passes `final_action=delivery.final_action`
   to `build_governance_headers` (new keyword-only argument, default `None` keeps the legacy
