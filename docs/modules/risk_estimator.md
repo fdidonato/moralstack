@@ -384,7 +384,7 @@ configuration is the single source of configuration — no CLI or code path over
 > (see [orchestrator.md](orchestrator.md); read in `orchestration/config_loader.py`).
 >
 > Earlier versions of this page said that `MORALSTACK_RISK_LOW_THRESHOLD` and
-> `MORALSTACK_RISK_MEDIUM_THRESHOLD` drove the Fast Path, and `.env.minimal` shipped them with non-default values
+> `MORALSTACK_RISK_MEDIUM_THRESHOLD` drove the Fast Path, and the former `.env.minimal` template (since removed) shipped them with non-default values
 > (0.25 / 0.65). That was wrong: they never affected routing. They were removed together with
 > `MORALSTACK_RISK_REQUIRE_DELIBERATION_ON_FALLBACK` and `MORALSTACK_RISK_CATEGORIZE_{BENIGN,SENSITIVE,CLEARLY_HARMFUL}_THRESHOLD`
 > (and the matching `RiskEstimatorConfig` fields). If they are still set in your environment they are

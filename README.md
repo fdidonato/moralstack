@@ -85,7 +85,7 @@ cd moralstack
 python -m venv venv
 source venv/bin/activate
 pip install -e ".[dev,ui]"
-cp .env.minimal .env    # then set OPENAI_API_KEY
+cp .env.template .env    # then set OPENAI_API_KEY
 ```
 
 Optional extras: `moralstack[ui]` (admin dashboard), `moralstack[server]` (HTTP proxy).
@@ -377,10 +377,10 @@ existing env vars (`override=True`); optional empty values are purged after load
 | `MORALSTACK_POLICY_REWRITE_MODEL` | same as `OPENAI_MODEL` | Model for deliberative `rewrite()` at cycle 2+. The templates set it to `gpt-4o` (no downgrade); set a lighter model id for lower rewrite latency |
 | `OPENAI_TIMEOUT_MS` | `60000` | Per-call timeout in milliseconds |
 | `OPENAI_MAX_RETRIES` | `3` | Retry count on transient errors |
-| `OPENAI_TEMPERATURE` | `0.1` | Temperature for all modules |
-| `OPENAI_TOP_P` | `0.8` | Top-p sampling parameter |
+| `OPENAI_TEMPERATURE` | `0.7` (`.env.template` ships `1`) | Default temperature of the governed answer (generate / rewrite / speculative draft) |
+| `OPENAI_TOP_P` | `0.9` (`.env.template` ships `1`) | Default top-p of the governed answer |
 | `MORALSTACK_OBSERVABILITY_DB_PATH` | *(unset)* | Enables SQLite persistence |
-| `MORALSTACK_OBSERVABILITY_MODE` | `file_only` | `db_only` · `dual` · `file_only` |
+| `MORALSTACK_OBSERVABILITY_MODE` | `db_only` if a DB path is set, else `file_only` | `db_only` · `dual` · `file_only` |
 | `MORALSTACK_OBSERVABILITY_JSONL_DIR` | `logs/observability` | JSONL output directory |
 | `MORALSTACK_DB_PATH` / `MORALSTACK_PERSIST_MODE` | — | Deprecated aliases — still work |
 | `MORALSTACK_ORCHESTRATOR_BORDERLINE_REFUSE_UPPER` | `0.95` | Upper boundary for the borderline-refuse zone |
@@ -434,10 +434,10 @@ MoralStack makes deliberate trade-offs:
   decoding, parallel risk estimation, lighter per-module models, structured JSON output
   enforcement, and soft-revision prompt constraints; early-exit and context-mode switching are
   planned.
-- **Multi-model cost** — a single deliberative request makes 7–9 LLM calls. `.env.minimal` keeps
-  rewrite and simulator on `OPENAI_MODEL` and uses `gpt-4o-mini` only for perspectives; set
-  `MORALSTACK_POLICY_REWRITE_MODEL` / `MORALSTACK_SIMULATOR_MODEL` to a lighter model for a
-  cost-conscious profile.
+- **Multi-model cost** — a single deliberative request makes 7–9 LLM calls. `.env.template` keeps
+  rewrite and simulator on `OPENAI_MODEL` and uses `gpt-4o-mini` only for perspectives and
+  hindsight; set `MORALSTACK_POLICY_REWRITE_MODEL` / `MORALSTACK_SIMULATOR_MODEL` to a lighter
+  model for a cost-conscious profile.
 - **LLM non-determinism** — despite low temperatures, outputs can vary between runs;
   deterministic in-code guardrails bound the variance, but perfect reproducibility is not
   guaranteed.

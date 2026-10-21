@@ -496,6 +496,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a tightening as well as an exception. Set `MORALSTACK_CRITIC_MAX_RULE_LEN=180` to
   restore the historical window. The `.env.minimal` template now ships the variable
   explicitly at `512`, so a fresh `.env` copied from it matches the shipped default.
+- **One explicit environment template: `.env.template` (`.env.minimal` removed).** The
+  template now lists every variable the program reads, each with an explicit value: the
+  tuned value the templates shipped (`.env.minimal` won where the two differed), with
+  `(code default: X)` noted wherever it differs from the code. Secrets, URLs, paths and
+  opt-in keys stay commented; keys that take precedence over a `GovernanceConfig` field or
+  a CLI flag (`MORALSTACK_GENERATION_MODE`, `MORALSTACK_LEDGER_ENABLED` /
+  `_SIMILARITY_THRESHOLD` / `_MAX_ENTRIES`, `MORALSTACK_EMBEDDER_PROVIDER`,
+  `MORALSTACK_BENCHMARK_BASELINE_MODEL` / `_JUDGE_MODEL`) are commented with a warning.
+  Dropped the keys nothing reads (`MORALSTACK_DOMAIN_PREFILTER_MODEL`,
+  `MORALSTACK_OPENAI_COMPATIBLE_MAX_INFLIGHT`, `MORALSTACK_OPENAI_COMPATIBLE_RETRY_AFTER_SECONDS`);
+  added 12 keys that were read but undocumented there (`MORALSTACK_GENERATION_MODE`,
+  `MORALSTACK_OBSERVABILITY_BATCH_MAX_ITEMS` / `_MAX_DELAY_MS`, `MORALSTACK_DECISION_TRACE_PATH`,
+  `MORALSTACK_EMBEDDER_PROVIDER`, `MORALSTACK_LOCAL_EMBEDDING_MODEL`, `OPENAI_EMBEDDING_MODEL`,
+  `MORALSTACK_PRINCIPAL_HMAC_SECRET`, `MORALSTACK_CORRELATION_TTL_SECONDS` / `_MAX_ENTRIES`,
+  `MORALSTACK_PHASE0_TIMING` / `_JSONL`). Docs corrected: `README.md` / `INSTALL.md` now give
+  the code defaults of `OPENAI_TEMPERATURE` / `OPENAI_TOP_P` (0.7 / 0.9; the template ships
+  1 / 1, the values of the benchmark runs), `MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS` (4), the derived
+  `MORALSTACK_OBSERVABILITY_MODE` default and FIFO ledger eviction, and no longer list the dead
+  keys. Template values are the ones used for the benchmark runs (e.g.
+  `MORALSTACK_HISTORY_MAX_CHARS_PER_TURN=1500`, code default 200). No runtime code changed.
 
 ### Removed
 

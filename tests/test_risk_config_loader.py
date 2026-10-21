@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -266,10 +267,28 @@ class TestLoadRiskEstimatorConfigFromEnv:
         assert cfg.operational_model == "custom-op"
 
 
+# Keys no code path reads any more: the single shipped template must not list them, not even commented.
+_DEAD_TEMPLATE_KEYS = (
+    "MORALSTACK_RISK_LOW_THRESHOLD",
+    "MORALSTACK_RISK_MEDIUM_THRESHOLD",
+    "MORALSTACK_RISK_CATEGORIZE_BENIGN_THRESHOLD",
+    "MORALSTACK_RISK_CATEGORIZE_SENSITIVE_THRESHOLD",
+    "MORALSTACK_RISK_CATEGORIZE_CLEARLY_HARMFUL_THRESHOLD",
+    "MORALSTACK_RISK_REQUIRE_DELIBERATION_ON_FALLBACK",
+    "MORALSTACK_DOMAIN_PREFILTER_MODEL",
+    "MORALSTACK_OPENAI_COMPATIBLE_MAX_INFLIGHT",
+    "MORALSTACK_OPENAI_COMPATIBLE_RETRY_AFTER_SECONDS",
+)
+
+
 def test_env_templates_have_no_removed_risk_vars():
-    """The shipped templates no longer advertise the removed no-LLM fallback vars (templates only)."""
+    """The shipped template no longer advertises removed or dead env vars (template only)."""
     root = Path(__file__).resolve().parent.parent
-    for name in (".env.template", ".env.minimal"):
-        text = (root / name).read_text(encoding="utf-8")
-        assert "MORALSTACK_RISK_FALLBACK_SCORE" not in text, name
-        assert "MORALSTACK_RISK_FALLBACK_CONFIDENCE" not in text, name
+    name = ".env.template"
+    text = (root / name).read_text(encoding="utf-8")
+    assert "MORALSTACK_RISK_FALLBACK_SCORE" not in text, name
+    assert "MORALSTACK_RISK_FALLBACK_CONFIDENCE" not in text, name
+    # Whole-name match: MORALSTACK_ORCHESTRATOR_RISK_LOW_THRESHOLD is live and must not count as a hit.
+    listed = set(re.findall(r"[A-Z][A-Z0-9_]+", text))
+    dead_listed = sorted(set(_DEAD_TEMPLATE_KEYS) & listed)
+    assert not dead_listed, f"{name} lists dead keys: {dead_listed}"

@@ -129,7 +129,7 @@ All configuration can be managed via a `.env` file in the project root.
 
 ### Quick Setup
 
-Copy .env.minimal to .env end configure your API key in OPENAI_API_KEY
+Copy .env.template to .env and set your API key in OPENAI_API_KEY
 
 ### Customized Setup
 
@@ -153,35 +153,33 @@ See [docs/modules/openai_params.md](docs/modules/openai_params.md) for details a
 |--------------------------------|---------------------------|----------------------------------------------------------------|
 | OPENAI_API_KEY                 | -                         | OpenAI API key (required)                                      |
 | OPENAI_MODEL                   | gpt-4o                    | Governed answer model: first-pass / speculative / compliance generation. Plan 1 (governed delivery): this **is** the model that produces the delivered answer; the `model=` passed to `chat.completions.create(...)` is only a requested alias and does not select the answer model (see README SDK model resolution section). |
-| MORALSTACK_POLICY_REWRITE_MODEL | - (same as OPENAI_MODEL) | Model for governed revisions (`policy.rewrite()`, cycle 2+). Fallback: the resolved policy model. `.env.template` uses `gpt-4.1-nano`; set any lighter model to reduce latency (see [policy.md](docs/modules/policy.md)) |
+| MORALSTACK_POLICY_REWRITE_MODEL | - (same as OPENAI_MODEL) | Model for governed revisions (`policy.rewrite()`, cycle 2+). Fallback: the resolved policy model. `.env.template` uses `gpt-4o`; set any lighter model to reduce latency (see [policy.md](docs/modules/policy.md)) |
 | OPENAI_BASE_URL                | -                         | Base URL (proxy/enterprise)                                    |
 | OPENAI_TIMEOUT_MS              | 60000                     | Timeout in milliseconds                                        |
 | OPENAI_MAX_RETRIES             | 3                         | Retries on 429/503                                             |
-| OPENAI_TEMPERATURE             | 0.7 (fallback)            | Generation temperature (`.env.template` starter: 0.1)         |
-| OPENAI_TOP_P                   | 0.9 (fallback)            | Nucleus sampling parameter (`.env.template` starter: 0.8)     |
+| OPENAI_TEMPERATURE             | 0.7 (code default)        | Generation temperature (`.env.template` ships 1)              |
+| OPENAI_TOP_P                   | 0.9 (code default)        | Nucleus sampling parameter (`.env.template` ships 1)          |
 | MORALSTACK_OBSERVABILITY_DB_PATH    | -                      | SQLite DB path (enables persistence)                           |
 | MORALSTACK_OBSERVABILITY_MODE       | db_only if DB set      | db_only \| dual \| file_only                                   |
 | MORALSTACK_OBSERVABILITY_JSONL_DIR  | logs/observability     | JSONL output directory (file_only and dual modes)              |
 | MORALSTACK_LEDGER_ENABLED          | true                   | Enable SemanticDecisionLedger fast-path (`false` disables)    |
 | MORALSTACK_LEDGER_SIMILARITY_THRESHOLD | 0.92              | Cosine similarity threshold for ledger cache hit              |
-| MORALSTACK_LEDGER_MAX_ENTRIES      | 1000                   | Max in-memory ledger entries (LRU)                             |
+| MORALSTACK_LEDGER_MAX_ENTRIES      | 1000                   | Max in-memory ledger entries (FIFO: oldest-inserted evicted first) |
 | MORALSTACK_LEDGER_EMBEDDING_MODEL  | (embedder default)     | Override embedding model; else `OPENAI_EMBEDDING_MODEL` / small |
 | MORALSTACK_DB_PATH             | -                         | Deprecated alias for MORALSTACK_OBSERVABILITY_DB_PATH          |
 | MORALSTACK_PERSIST_MODE        | -                         | Deprecated alias for MORALSTACK_OBSERVABILITY_MODE             |
 | MORALSTACK_UI_PORT             | 8765                      | Web UI port                                                    |
 | MORALSTACK_UI_USERNAME         | -                         | Basic Auth for UI (required when running moralstack-ui)        |
 | MORALSTACK_UI_PASSWORD         | -                         | Basic Auth for UI                                              |
-| MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS | 2          | Parallel domain agents for constitution retrieval              |
+| MORALSTACK_CONSTITUTION_MAX_PARALLEL_AGENTS | 4          | Parallel domain agents for constitution retrieval |
 | MORALSTACK_PROMPTS_DIR         | -                         | Directory of prompt override `*.yaml` files (deployer-side, can weaken governance; see [docs/prompt_overrides.md](docs/prompt_overrides.md)) |
-| MORALSTACK_OPENAI_COMPATIBLE_MAX_INFLIGHT | 8           | OpenAI-compatible bridge max in-flight requests before HTTP 503 |
-| MORALSTACK_OPENAI_COMPATIBLE_RETRY_AFTER_SECONDS | 10  | Retry-After seconds returned by OpenAI-compatible bridge overload responses |
-| MORALSTACK_VERBOSE             | -                         | Set to 1 for verbose output                                    |
+| MORALSTACK_VERBOSE             | -                         | Any non-empty value prints file-removal errors during `--clean-start` |
 
 **Risk Estimator**: Optional overrides (e.g. `MORALSTACK_RISK_MODEL`,
 `MORALSTACK_RISK_INTENT_MODEL`, `MORALSTACK_RISK_SIGNALS_MODEL`, `MORALSTACK_RISK_OPERATIONAL_MODEL`,
 `MORALSTACK_RISK_TOP_K`, `MORALSTACK_RISK_MAX_RETRIES`, …) are listed in
-`.env.template` and fully documented in [docs/modules/risk_estimator.md](docs/modules/risk_estimator.md#environment-variables). Leave them commented to use
-built-in defaults (the risk estimator uses the primary model unless `MORALSTACK_RISK_MODEL` is set). Each
+`.env.template` and fully documented in [docs/modules/risk_estimator.md](docs/modules/risk_estimator.md#environment-variables). They are set explicitly in `.env.template` to the tuned values (each comment notes the code default where it
+differs); delete a line to fall back to the built-in default (the risk estimator uses the primary model unless `MORALSTACK_RISK_MODEL` is set). Each
 optional `MORALSTACK_RISK_*_MODEL` slot falls back to `MORALSTACK_RISK_MODEL` if set,
 otherwise to that primary model. **In
 both CLI run and benchmark, risk configuration is read only from the environment (`.env`); there is no CLI override —
@@ -189,29 +187,29 @@ env is the single source of configuration.**
 
 **Perspective**: Optional overrides (e.g. `MORALSTACK_PERSPECTIVES_MODEL`, `MORALSTACK_PERSPECTIVES_MAX_RETRIES`,
 `MORALSTACK_PERSPECTIVES_MAX_TOKENS`, …) are listed in `.env.template` and fully documented
-in [docs/modules/perspectives.md](docs/modules/perspectives.md#environment-variables). Leave them commented to use
-built-in defaults (perspectives use the same model as `OPENAI_MODEL` when `MORALSTACK_PERSPECTIVES_MODEL` is not set). *
+in [docs/modules/perspectives.md](docs/modules/perspectives.md#environment-variables). They are set explicitly in `.env.template` to the tuned values (each comment notes the code default where it
+differs); delete a line to fall back to the built-in default (perspectives use the same model as `OPENAI_MODEL` when `MORALSTACK_PERSPECTIVES_MODEL` is not set). *
 *In both CLI run and benchmark, perspective configuration is read only from the environment (`.env`); there is no CLI
 override — env is the single source of configuration.**
 
 **Critic**: Optional overrides (e.g. `MORALSTACK_CRITIC_MODEL`, `MORALSTACK_CRITIC_MAX_RETRIES`,
 `MORALSTACK_CRITIC_MAX_TOKENS`, …) are listed in `.env.template` and fully documented
-in [docs/modules/critic.md](docs/modules/critic.md#environment-variables). Leave them commented to use built-in
-defaults (critic uses the same model as `OPENAI_MODEL` when `MORALSTACK_CRITIC_MODEL` is not set). **In both CLI run and
+in [docs/modules/critic.md](docs/modules/critic.md#environment-variables). They are set explicitly in `.env.template` to the tuned values (each comment notes the code default where it
+differs); delete a line to fall back to the built-in default (critic uses the same model as `OPENAI_MODEL` when `MORALSTACK_CRITIC_MODEL` is not set). **In both CLI run and
 benchmark, critic configuration and model are read only from the environment (`.env`); there is no CLI override — env is
 the single source of configuration.**
 
 **Simulator**: Optional overrides (e.g. `MORALSTACK_SIMULATOR_MODEL`, `MORALSTACK_SIMULATOR_MAX_RETRIES`,
 `MORALSTACK_SIMULATOR_MAX_TOKENS`, …) are listed in `.env.template` and fully documented
-in [docs/modules/simulator.md](docs/modules/simulator.md#environment-variables). Leave them commented to use built-in
-defaults (simulator uses the same model as `OPENAI_MODEL` when `MORALSTACK_SIMULATOR_MODEL` is not set). **In both CLI
+in [docs/modules/simulator.md](docs/modules/simulator.md#environment-variables). They are set explicitly in `.env.template` to the tuned values (each comment notes the code default where it
+differs); delete a line to fall back to the built-in default (simulator uses the same model as `OPENAI_MODEL` when `MORALSTACK_SIMULATOR_MODEL` is not set). **In both CLI
 run and benchmark, simulator configuration and model are read only from the environment (`.env`); there is no CLI
 override — env is the single source of configuration.**
 
 **Hindsight**: Optional overrides (e.g. `MORALSTACK_HINDSIGHT_MODEL`, `MORALSTACK_HINDSIGHT_MAX_RETRIES`,
 `MORALSTACK_HINDSIGHT_MAX_TOKENS`, …) are listed in `.env.template` and fully documented
-in [docs/modules/hindsight.md](docs/modules/hindsight.md#environment-variables). Leave them commented to use built-in
-defaults (hindsight evaluator uses the same model as `OPENAI_MODEL` when `MORALSTACK_HINDSIGHT_MODEL` is not set). **In
+in [docs/modules/hindsight.md](docs/modules/hindsight.md#environment-variables). They are set explicitly in `.env.template` to the tuned values (each comment notes the code default where it
+differs); delete a line to fall back to the built-in default (hindsight evaluator uses the same model as `OPENAI_MODEL` when `MORALSTACK_HINDSIGHT_MODEL` is not set). **In
 both CLI run and benchmark, hindsight configuration and model are read only from the environment (`.env`); there is no
 CLI override — env is the single source of configuration.**
 
@@ -224,8 +222,8 @@ CLI override — env is the single source of configuration.**
 `MORALSTACK_ORCHESTRATOR_CYCLE1_EARLY_CONVERGENCE_MIN_PER_PERSPECTIVE_APPROVAL`,
 `MORALSTACK_ORCHESTRATOR_ENABLE_SIMULATOR_GATING`, `MORALSTACK_ORCHESTRATOR_SIMULATOR_GATE_SKIP_MAX_PRIOR_SEMANTIC_HARM`, …)
 are listed in `.env.template` and fully documented in
-[docs/modules/orchestrator.md](docs/modules/orchestrator.md#environment-variables). Leave them commented to use built-in
-defaults. **In both CLI run and benchmark, orchestrator configuration is read only from the environment (`.env`); there
+[docs/modules/orchestrator.md](docs/modules/orchestrator.md#environment-variables). They are set explicitly in `.env.template` to the tuned values (each comment notes the code default where it
+differs); delete a line to fall back to the built-in default. **In both CLI run and benchmark, orchestrator configuration is read only from the environment (`.env`); there
 is no CLI override — env is the single source of configuration.**
 
 **Benchmark**: Optional overrides (e.g. `MORALSTACK_BENCHMARK_OUTPUTS`, `MORALSTACK_BENCHMARK_BASELINE_MODEL`,
