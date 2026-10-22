@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`suite_record.py check` no longer mismatches after committing, staging or `git rm` of unchanged content.** Tracked and untracked files are hashed as one set (`content_sha256`, `file_count`); schema-1 records are rejected once.
 - **The request page shows the DCCL and the steps around it in the order the code runs them.** DCCL rows persisted
   with `cycle=NULL` were drawn as a second "Initial assessment" group before retrieval and risk, `safety_override`
   came before `evaluate`, and the fast-path refusal was drawn "parallel" with the hard-signal gate and before path

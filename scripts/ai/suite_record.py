@@ -6,7 +6,8 @@
                                          reusable record with the current fingerprint exists.
 
 The fingerprint covers everything the suite can read: the raw working-tree content of
-every tracked file, the content of every untracked non-ignored file, the interpreter and
+every file git tracks or would track (tracked and untracked non-ignored files as one set;
+a deleted tracked file counts as absent), the interpreter and
 all installed packages, the pytest arguments and the test-relevant environment. Any
 mismatch means "run again". A FAILED or non-reusable record is never reused, and partial
 runs (``-k``, ``--lf``, file paths, config overrides, ...) are refused so they can never
@@ -37,7 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SCHEMA = 1
+SCHEMA = 2
 MARKER_REL = ".claude/.suite-result.json"
 EXIT_NOT_REUSABLE = 10
 
@@ -125,8 +126,6 @@ def _norm_root(root: Path) -> str:
 
 def _file_digest(path: Path) -> str:
     try:
-        if not path.exists():
-            return "<missing>"
         with open(path, "rb") as handle:
             return hashlib.file_digest(handle, "sha256").hexdigest()
     except OSError:
@@ -147,14 +146,18 @@ def _split_z(raw: bytes) -> list[str]:
     return [os.fsdecode(part) for part in raw.split(b"\0") if part]
 
 
-def _tracked_content_digest(root: Path) -> str:
-    """Hash of the raw working-tree bytes of every tracked file (deletions change it)."""
-    return _digest_entries(root, _split_z(_git(root, "ls-files", "-z")))
+def _content_digest(root: Path, exclude: frozenset[str]) -> tuple[str, int]:
+    """Hash of the raw working-tree bytes of every present file git tracks or would track.
 
-
-def _untracked_digest(root: Path, exclude: frozenset[str]) -> tuple[str, int]:
-    entries = [e for e in _split_z(_git(root, "ls-files", "--others", "--exclude-standard", "-z")) if e not in exclude]
-    return _digest_entries(root, entries), len(entries)
+    Tracked and untracked non-ignored paths form ONE deduplicated set (unmerged stages
+    included), so add/commit/rm --cached of identical content keep the digest. A tracked
+    path missing from the working tree is skipped, exactly as after ``git rm``. ``exclude``
+    (the harness's own marker) applies to tracked entries too: it is never suite input.
+    """
+    listed = set(_split_z(_git(root, "ls-files", "-z")))
+    listed.update(_split_z(_git(root, "ls-files", "--others", "--exclude-standard", "-z")))
+    present = [e for e in listed if e not in exclude and os.path.lexists(root / e)]
+    return _digest_entries(root, present), len(present)
 
 
 def _runtime() -> dict[str, Any]:
@@ -198,13 +201,12 @@ def _env_digest(env: dict[str, str]) -> tuple[str, list[str]]:
 def compute(root: Path, args: list[str], env: dict[str, str]) -> tuple[str, dict[str, Any], list[str]]:
     """Return ``(fingerprint, components, env_names)``. ``git_head`` is display-only."""
     exclude = frozenset({MARKER_REL, MARKER_REL + ".tmp"})
-    untracked, untracked_count = _untracked_digest(root, exclude)
+    content, file_count = _content_digest(root, exclude)
     components: dict[str, Any] = {
         "schema": SCHEMA,
         "git_head": _git(root, "rev-parse", "HEAD").decode("ascii", "replace").strip(),
-        "tracked_content_sha256": _tracked_content_digest(root),
-        "untracked_sha256": untracked,
-        "untracked_count": untracked_count,
+        "content_sha256": content,
+        "file_count": file_count,
         "runtime": _runtime(),
         "packages_sha256": hashlib.sha256("\n".join(_package_lines()).encode("utf-8")).hexdigest(),
         "args": list(args),

@@ -117,8 +117,9 @@ def test_compute_is_deterministic(repo):
         lambda r: (r / "sub" / "b.txt").write_bytes(b"beta2\n"),
         lambda r: (r / "a.txt").unlink(),
         lambda r: _git(r, "mv", "a.txt", "renamed.txt"),
+        lambda r: (r / "a.txt").rename(r / "renamed.txt"),
     ],
-    ids=["edit", "whitespace", "crlf", "binary", "subdir", "delete", "rename"],
+    ids=["edit", "whitespace", "crlf", "binary", "subdir", "delete", "rename", "rename_unstaged"],
 )
 def test_tracked_change_changes_fingerprint(repo, mutate):
     before = fp(repo)
@@ -171,11 +172,68 @@ def test_untracked_nested_dir_changes_fingerprint(repo):
     assert fp(repo) != before
 
 
-def test_git_add_of_new_file_changes_fingerprint(repo):
+def test_git_add_of_new_file_keeps_fingerprint(repo):
     (repo / "new.txt").write_bytes(b"x\n")
     before = fp(repo)
     _git(repo, "add", "new.txt")
-    assert fp(repo) != before
+    assert fp(repo) == before
+
+
+def test_git_rm_cached_round_trip_keeps_fingerprint(repo):
+    before = fp(repo)
+    _git(repo, "rm", "--cached", "-q", "a.txt")
+    assert fp(repo) == before
+    _git(repo, "commit", "-q", "-m", "untrack")
+    assert fp(repo) == before
+    _git(repo, "add", "a.txt")
+    _git(repo, "commit", "-q", "-m", "retrack")
+    assert fp(repo) == before
+
+
+def test_worktree_deletion_matches_committed_deletion(repo):
+    _, comp_before, _ = sr.compute(repo, [], {})
+    before = fp(repo)
+    (repo / "a.txt").unlink()
+    deleted, comp_deleted, _ = sr.compute(repo, [], {})
+    assert deleted != before
+    assert comp_deleted["file_count"] == comp_before["file_count"] - 1
+    _git(repo, "rm", "-q", "a.txt")
+    assert fp(repo) == deleted
+    _git(repo, "commit", "-q", "-m", "delete")
+    assert fp(repo) == deleted
+
+
+def test_unignored_file_appearing_changes_fingerprint(repo):
+    before = fp(repo)
+    exclude = repo / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    with open(exclude, "a", encoding="utf-8") as handle:
+        handle.write("excl.txt\n")
+    (repo / "excl.txt").write_bytes(b"hidden\n")
+    fp_a = fp(repo)
+    assert fp_a == before
+    exclude.write_text("", encoding="utf-8")
+    assert fp(repo) != fp_a
+
+
+def test_conflicted_merge_paths_are_deduplicated(repo):
+    _git(repo, "checkout", "-q", "-b", "other")
+    (repo / "a.txt").write_bytes(b"other\n")
+    _git(repo, "commit", "-q", "-am", "other edit")
+    _git(repo, "checkout", "-q", "main")
+    (repo / "a.txt").write_bytes(b"main\n")
+    _git(repo, "commit", "-q", "-am", "main edit")
+    proc = subprocess.run(["git", *_GIT_ID, "-C", str(repo), "merge", "other"], check=False, capture_output=True)
+    assert proc.returncode == 1  # conflict: a.txt is listed once per stage
+    conflicted, comp, _ = sr.compute(repo, [], {})
+    assert comp["file_count"] == 4
+    _git(repo, "add", "a.txt")
+    assert fp(repo) == conflicted
+
+
+def test_unreadable_entry_hashes_sentinel():
+    assert sr._file_digest(_SCRIPT.parent) == "<unreadable>"
+    assert "<missing>" not in _SCRIPT.read_text(encoding="utf-8")
 
 
 def test_ignored_marker_and_tmp_do_not_change_fingerprint(repo):
@@ -291,9 +349,52 @@ def test_check_after_edit_names_changed_component_and_revert_restores(repo, monk
     (repo / "a.txt").write_bytes(b"changed\n")
     capsys.readouterr()
     assert sr.cmd_check([]) == 1
-    assert "tracked_content_sha256" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "changed components: content_sha256;" in out
+    assert "untracked" not in out
     (repo / "a.txt").write_bytes(b"alpha\n")
     assert sr.cmd_check([]) == 0
+
+
+def test_check_after_adding_file_names_content_and_count(repo, monkeypatch, capsys):
+    _stub_pytest(monkeypatch)
+    sr.cmd_run([])
+    (repo / "new.txt").write_bytes(b"x\n")
+    capsys.readouterr()
+    assert sr.cmd_check([]) == 1
+    assert "changed components: content_sha256, file_count;" in capsys.readouterr().out
+
+
+def test_check_reuses_record_after_committing_new_file(repo, monkeypatch):
+    _stub_pytest(monkeypatch)
+    (repo / "new.txt").write_bytes(b"x\n")
+    (repo / "sub" / "n.txt").write_bytes(b"n\n")
+    assert sr.cmd_run([]) == 0
+    _, comp_before, _ = sr.compute(repo, [], {})
+    commit_all(repo)
+    # The marker is now tracked by git yet must stay out of the fingerprint.
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "ls-files"], check=True, capture_output=True, text=True
+    ).stdout.splitlines()
+    assert sr.MARKER_REL in listed
+    assert sr.cmd_check([]) == 0
+    _, comp_after, _ = sr.compute(repo, [], {})
+    assert comp_after["content_sha256"] == comp_before["content_sha256"]
+    assert comp_after["file_count"] == comp_before["file_count"]
+    assert comp_after["git_head"] != comp_before["git_head"]
+
+
+def test_schema_1_record_is_rejected_cleanly(repo, monkeypatch, capsys):
+    _stub_pytest(monkeypatch)
+    sr.cmd_run([])
+    data = json.loads(_marker(repo).read_text(encoding="utf-8"))
+    data["schema"] = 1
+    data["components"] = {"tracked_content_sha256": "x", "untracked_sha256": "y", "untracked_count": 0}
+    _marker(repo).write_text(json.dumps(data), encoding="utf-8")
+    capsys.readouterr()
+    assert sr.cmd_check([]) == 1
+    out = capsys.readouterr().out
+    assert "schema mismatch" in out and "Traceback" not in out
 
 
 def test_check_different_args_names_args(repo, monkeypatch, capsys):
@@ -349,7 +450,7 @@ def test_record_with_other_schema_is_rejected(repo, monkeypatch, capsys):
     _stub_pytest(monkeypatch)
     sr.cmd_run([])
     data = json.loads(_marker(repo).read_text(encoding="utf-8"))
-    data["schema"] = 2
+    data["schema"] = sr.SCHEMA + 1
     _marker(repo).write_text(json.dumps(data), encoding="utf-8")
     capsys.readouterr()
     assert sr.cmd_check([]) == 1
