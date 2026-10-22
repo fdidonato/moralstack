@@ -45,6 +45,20 @@ Steps:
    `Agent(subagent_type: "adversarial-reviewer", description: "Review diff <slug>", prompt: "<composed request>")`.
    - Do **not** pass `model:` — the agent definition pins the reviewer model;
      overriding it here would collapse the model separation.
+   - Effort: **lean** → pass `effort: "high"` only if the plan says `Lane: lean`
+     **and** every changed file in the diff is on the lean allowlist
+     (`docs/ai/AGENTIC_WORKFLOW.md` → "Lanes"); **full** (or no `Lane:` line, or
+     any file off the allowlist) → pass nothing, the frontmatter's `xhigh`
+     applies. On a mismatch, tell the user the change is misrouted.
+   - The **pre-commit-verifier** may run in parallel (same message), but it can
+     write (auto-fixes, `pre-commit run -a`) while the reviewer reads. When both
+     have finished: if the verifier reports any fix applied, or
+     `git status --short` differs from the collected snapshot, re-collect the
+     diff and re-run this review on the delta before finalize; the reviewer's
+     read-only `git status` trace is then compared net of the verifier's
+     reported edits. If the review leads to code changes, the verifier runs
+     again on the new tree (`suite_record.py check` only reuses an identical
+     tree).
    - Wait for it to complete and return exactly what it produces; do not
      paraphrase it away.
 5. Save the sub-agent's verbatim response to
@@ -56,7 +70,10 @@ Steps:
    classify findings **BLOCKING / NON_BLOCKING / SUGGESTION / QUESTION** per
    `docs/ai/REVIEW_POLICY.md`. Surface deviations from the plan explicitly.
 7. If there are BLOCKING items: state that implementation must be fixed (back
-   to `/ai-implement` with an updated handoff) before finalize.
+   to `/ai-implement` with a fix handoff — see its "Fix passes") before
+   finalize. If a **second** re-review still has BLOCKING items, stop and
+   escalate to the user with the open blockers; never drop or downgrade a
+   blocker to end the loop.
 
 Next step to tell the user: `/ai-finalize $ARGUMENTS`.
 

@@ -184,3 +184,103 @@ def test_testing_rule_leads_with_suite_record_and_documents_slow_and_mode_residu
     assert "ONE record" in text
     assert "file-mode" in text
     assert "large directory selection" in text
+
+
+def _frontmatter(text: str) -> dict[str, str]:
+    head = text.split("---", 2)[1]
+    return dict(line.split(":", 1) for line in head.strip().splitlines() if ":" in line and not line.startswith(" "))
+
+
+def test_reviewer_pins_effort_in_frontmatter(repo_root):
+    """E5: the reviewer's effort is pinned, not inherited from the global setting.
+    Claude Code silently ignores unknown frontmatter keys, so the key name itself is
+    locked here."""
+    text = (repo_root / ".claude" / "agents" / "adversarial-reviewer.md").read_text(encoding="utf-8")
+    fm = {k.strip(): v.strip() for k, v in _frontmatter(text).items()}
+    assert fm.get("effort") == "xhigh"
+    assert fm.get("model") == "claude-fable-5-1"
+
+
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+@pytest.mark.parametrize("rel", [".claude/commands/ai-review-plan.md", ".claude/commands/ai-review-diff.md"])
+def test_review_commands_lower_effort_only_on_a_checked_lean_lane(repo_root, rel):
+    text = _flat((repo_root / rel).read_text(encoding="utf-8"))
+    assert 'lean** → pass `effort: "high"` only if the plan says `Lane: lean` **and** every' in text
+    assert "on the lean allowlist" in text
+    assert "any path off the allowlist" in text or "any file off the allowlist" in text
+    assert "→ pass nothing, the frontmatter's `xhigh` applies" in text
+    assert "never drop or downgrade a blocker" in text.lower()
+
+
+_LEAN_ALLOWLIST = {
+    ".claude/agents/**",
+    ".claude/commands/**",
+    ".claude/hooks/**",
+    "scripts/ai/**",
+    "scripts/setup_env.ps1",
+    "tests/harness/**",
+    "docs/ai/**",
+    "ai/prompts/*-template.md",
+    "CHANGELOG.md",
+}
+
+
+def test_lean_allowlist_is_locked_and_excludes_governance_paths(repo_root):
+    """The lean lane lowers the reviewer's effort and skips mapping/test design, so its
+    allowlist is locked here: widening it must be a deliberate, reviewed test change."""
+    workflow = (repo_root / "docs" / "ai" / "AGENTIC_WORKFLOW.md").read_text(encoding="utf-8")
+    para = workflow.split("**Lean allowlist**", 1)[1].split("\n\n", 1)[0]
+    allowed, excluded = para.split("Anything else", 1)
+    listed = set(re.findall(r"`([^`]+)`", allowed))
+    assert listed == _LEAN_ALLOWLIST
+    assert "`.claude/hooks/**` except the guards" in allowed
+    for entry in listed:
+        assert not entry.startswith(("moralstack", ".claude/rules", "examples")), entry
+        assert entry == "tests/harness/**" or not entry.startswith("tests/"), entry
+        static = entry.split("*", 1)[0].rstrip("/")
+        assert static and (repo_root / static).exists(), entry
+    assert "scripts/**" not in listed and "docs/**" not in listed and ".claude/**" not in listed
+    # Harness enforcement and secret/release handling stay full (guards, hook wiring, commit gates, skills).
+    for full in (
+        ".claude/hooks/guard_*.py",
+        ".claude/settings*.json",
+        ".claude/skills/**",
+        "scripts/check_*_updated.py",
+    ):
+        assert f"`{full}`" in excluded, full
+    for guard in (".claude/hooks/guard_dangerous_git.py", ".claude/hooks/guard_secrets.py"):
+        assert (repo_root / guard).is_file(), guard
+
+
+def test_lane_rules_keep_every_gate_and_force_full_on_governance(repo_root):
+    plan_cmd = _flat((repo_root / ".claude" / "commands" / "ai-plan.md").read_text(encoding="utf-8"))
+    assert "only if **every** file the change touches is on the lean allowlist" in plan_cmd
+    assert "always when the change touches `moralstack/**`, any other `tests/**`" in plan_cmd
+    assert "When in doubt, full." in plan_cmd
+    workflow = _flat((repo_root / "docs" / "ai" / "AGENTIC_WORKFLOW.md").read_text(encoding="utf-8"))
+    assert "Both lanes keep every quality gate" in workflow
+    assert "The lane is checked, not trusted" in workflow
+    for rel in ("ai/prompts/plan-review-template.md", "ai/prompts/diff-review-template.md"):
+        assert "is BLOCKING" in _flat((repo_root / rel).read_text(encoding="utf-8")).split("a wrong lane", 1)[1], rel
+
+
+def test_parallel_verifier_edits_force_a_re_review(repo_root):
+    text = _flat((repo_root / ".claude" / "commands" / "ai-review-diff.md").read_text(encoding="utf-8"))
+    assert "re-collect the diff and re-run this review on the delta before finalize" in text
+
+
+def test_finalize_runs_the_verifier_in_both_lanes(repo_root):
+    text = _flat((repo_root / ".claude" / "commands" / "ai-finalize.md").read_text(encoding="utf-8"))
+    assert "ensure verification actually happened, in both lanes" in text
+
+
+def test_implementer_context_economy_keeps_the_evidence_rules(repo_root):
+    """E2 must not erode PROJECT_SPEC §1/§10: the full-region read and the failure
+    traceback stay mandatory next to the context-economy guidance."""
+    text = _flat((repo_root / ".claude" / "agents" / "claude-implementer.md").read_text(encoding="utf-8"))
+    assert "Read a file in full (or the complete relevant region) before editing it" in text
+    assert "never hide a failure" in text
+    assert "re-run the failing node(s) with the full traceback" in text

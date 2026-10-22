@@ -16,7 +16,9 @@ Look for:
 - security problems (input validation, secrets, authz);
 - performance problems;
 - dead code;
-- needless complexity.
+- needless complexity;
+- a wrong lane: if the plan says `Lane: lean`, any changed file that is not on
+  the lean allowlist in `docs/ai/AGENTIC_WORKFLOW.md` → "Lanes" is BLOCKING.
 
 This is the MoralStack governance engine. Explicitly verify the diff does not
 break the invariants in PROJECT_SPEC.md section 5 / `.claude/rules/`

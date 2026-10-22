@@ -17,7 +17,10 @@ Look hard for:
 - architectural risks and hidden coupling not considered if present;
 - security problems (input validation, secret handling, authz);
 - performance problems;
-- a materially better alternative the author missed if necessary.
+- a materially better alternative the author missed if necessary;
+- a wrong lane: a plan marked `Lane: lean` whose files are not all on the lean
+  allowlist in `docs/ai/AGENTIC_WORKFLOW.md` → "Lanes", or that has more than one
+  viable design, is BLOCKING.
 
 This is the MoralStack governance engine: its decisions gate whether an LLM is
 allowed to answer. Treat changes as safety-relevant. Explicitly check the plan

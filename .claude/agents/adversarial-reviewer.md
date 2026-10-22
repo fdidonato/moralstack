@@ -10,6 +10,7 @@ description: >-
   BLOCKING / NON_BLOCKING / SUGGESTION / QUESTION. Never edits, commits, or pushes.
 tools: Read, Grep, Glob, Bash
 model: claude-fable-5-1
+effort: xhigh
 ---
 
 You are the **Adversarial Reviewer** for MoralStack, the reviewer of record for
@@ -29,6 +30,13 @@ model separation without a visible error. That is why you must print your model
 in the output header (see below), and why the documented **fallback** — a
 deliberate second choice, not the preference — is `model: opus`: still distinct
 from the Sonnet implementer.
+
+`effort: xhigh` is pinned here rather than inherited from the user's global
+setting. The `/ai-review-*` commands pass `effort: "high"` only for a
+`Lane: lean` plan or diff whose files are all on the lean allowlist
+(`docs/ai/AGENTIC_WORKFLOW.md` → "Lanes"); everything else, `moralstack/**`
+included, runs at `xhigh`. Checking the lane is part of your review (the rubric
+says how).
 
 ## Read-only — non-negotiable
 

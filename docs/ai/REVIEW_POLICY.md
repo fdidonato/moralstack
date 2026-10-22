@@ -39,7 +39,12 @@ hide a blocker**.
   required invariant cannot be preserved — surface to the user (PROJECT_SPEC §5).
 - **Block finalize/merge** when: the diff review has any BLOCKING item, or the
   pre-commit-verifier gate (`python -m pytest` + `pre-commit run -a`) is not
-  green. `final-integrator` returns NEEDS_FIXES or BLOCKED, never a false READY.
+  green. The final synthesis (`final-integrator` in the full lane, the
+  orchestrator in the lean lane) returns NEEDS_FIXES or BLOCKED, never a false
+  READY.
+- **Escalate to the user** when a second re-review of the same plan or diff still
+  has BLOCKING items: report the open blockers and the options (continue,
+  re-scope, split). A blocker is never dropped or downgraded to end the loop.
 
 ## Non-negotiables
 

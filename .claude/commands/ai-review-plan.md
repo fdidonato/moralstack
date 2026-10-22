@@ -36,6 +36,11 @@ Steps:
    `Agent(subagent_type: "adversarial-reviewer", description: "Review plan <slug>", prompt: "<composed request>")`.
    - Do **not** pass `model:` — the agent definition pins the reviewer model;
      overriding it here would collapse the model separation.
+   - Effort: **lean** → pass `effort: "high"` only if the plan says `Lane: lean`
+     **and** every path in its "Files to modify" is on the lean allowlist
+     (`docs/ai/AGENTIC_WORKFLOW.md` → "Lanes"); **full** (or no `Lane:` line, or
+     any path off the allowlist) → pass nothing, the frontmatter's `xhigh`
+     applies. On a mismatch, tell the user the plan is misrouted.
    - Wait for it to complete and return exactly what it produces; do not
      paraphrase it away.
 4. Save the sub-agent's verbatim response to
@@ -49,7 +54,14 @@ Steps:
 6. If the verdict is **BLOCK** or there are unresolved **BLOCKING** items:
    update the plan file in place to address them (you may re-engage
    architect-planner / test-strategist), and note in the plan what changed and
-   why. Then say the plan should be re-reviewed.
+   why. Then say the plan should be re-reviewed. Edit the affected body
+   sections in place (handoffs copy the revised body) and add a short
+   "Revision N" changelog of what changed and why — do not append a second
+   copy of the design.
+   If a **second** re-review still has BLOCKING items, stop and escalate to the
+   user with the open blockers and the options: the user decides whether to
+   continue, re-scope, or split. Never drop or downgrade a blocker to end the
+   loop.
 7. If **APPROVE** / **APPROVE_WITH_CHANGES** with only non-blocking items: fold
    the agreed non-blocking fixes into the plan, mark it approved, and tell the
    user the next step:

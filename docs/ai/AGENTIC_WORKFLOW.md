@@ -23,6 +23,52 @@ USER REQUEST
   → Claude produces the final synthesis     (final-integrator)                     → READY / NEEDS_FIXES / BLOCKED
 ```
 
+## Lanes
+
+`/ai-plan` picks a lane and records it as `Lane: full` / `Lane: lean` on the
+plan's first line after the title; the later commands read it. Both lanes keep
+every quality gate: plan review, diff review, pre-commit-verifier green.
+
+| | **full** | **lean** |
+| --- | --- | --- |
+| When | Everything not lean, and always: `moralstack/**`, any `tests/**` outside `tests/harness/**`, a persisted payload or public API, a PROJECT_SPEC §5 invariant (including its text in `.claude/rules/**`, `PROJECT_SPEC.md`, `CLAUDE.md`), two or more viable designs. When in doubt, full. | Every touched file is on the lean allowlist below and there is a single viable design |
+| Mapping / tests design | `codebase-cartographer` + `test-strategist` | the `architect-planner` alone |
+| Reviewer effort | `xhigh` (frontmatter) | `high` (per-invocation `effort`) |
+| Final synthesis | `final-integrator` | the orchestrator, same structure and evidence rules |
+
+**Lean allowlist** (the only files a lean change may touch):
+`.claude/agents/**`, `.claude/commands/**`, `.claude/hooks/**` except the guards,
+`scripts/ai/**`, `scripts/setup_env.ps1`, `tests/harness/**`, `docs/ai/**`,
+`ai/prompts/*-template.md`, plus the `CHANGELOG.md` entry that goes with the
+change. Anything else is full, including the harness's own enforcement and
+secret/release handling — `.claude/hooks/guard_*.py`, `.claude/settings*.json`
+(hook wiring, permissions), `.claude/skills/**`, `scripts/check_*_updated.py`
+(commit gates) — and the rest of `scripts/**` (benchmarks, `mstack_run.py`,
+COMPL-AI probes), `examples/**`, and every other `docs/**`.
+
+The lane is checked, not trusted: the review commands pick the reviewer's effort
+from the files themselves (the plan's "Files to modify", the diff's changed
+files), not from the `Lane:` line, and the reviewer classifies a lean plan or diff
+that touches a file off the allowlist as BLOCKING.
+
+Rules for both lanes, from the measured cost of past tracks (implementer
+contexts of 250-370k tokens, the plan re-read 3-6 times per run, sub-agent prompt
+cache of 5 minutes):
+
+- All user decisions in one question round, before planning.
+- Plan at or under ~20 KB; revisions edited in place plus a short "Revision N"
+  changelog; nothing that affects
+  correctness is cut, background goes to "Follow-ups".
+- Review loops: after a second re-review that still has BLOCKING items, escalate
+  to the user — never drop or downgrade a blocker to end the loop.
+- One self-contained handoff per coherent slice, plan sections copied verbatim.
+- Fix passes run a new implementer on a fix handoff; resume the old one only
+  within 5 minutes of its last activity.
+- The diff review and the pre-commit-verifier may run in parallel; if the
+  verifier edited the tree (fixes applied, or `git status --short` differs from
+  the reviewed snapshot), the diff is re-collected and the delta re-reviewed
+  before finalize.
+
 ## Claude commands (slash commands)
 
 | Command | Does |
@@ -72,6 +118,7 @@ sub-agent.
 # 2. Review the plan with the isolated reviewer sub-agent (independent)
 /ai-review-plan ai/plans/proxy-openai-model-streaming.md
 #    → if BLOCK, Claude revises the plan; re-run until APPROVE/APPROVE_WITH_CHANGES
+#      (still BLOCKING after the second re-review → escalate to the user)
 
 # 3. Implement with the Claude Sonnet sub-agent
 /ai-implement ai/plans/proxy-openai-model-streaming.md

@@ -22,10 +22,19 @@ Steps:
 2. Write a complete handoff to `ai/handoffs/<slug>-handoff.md` (slug =
    `$ARGUMENTS` basename without extension), building on
    `ai/prompts/claude-implementation-template.md`. Fill in: context, objective,
-   approved plan (inline or referenced), **files allowed to modify**, **files NOT
+   approved plan, **files allowed to modify**, **files NOT
    to modify**, invariants (PROJECT_SPEC §5 in play + how to keep them),
    checklist, required tests, acceptance criteria, risks, and the required output
    format.
+   - **Self-contained:** copy the plan sections this slice needs **verbatim**
+     (design steps, files, tests, acceptance criteria, the review findings folded
+     into them) — never a paraphrase. Name the plan path plus the exact sections
+     the handoff did not copy, so the implementer can consult the plan once if
+     something is ambiguous instead of re-reading it in full.
+   - **One coherent slice per handoff:** if the plan spans several independent
+     steps (e.g. phases A1, A2a…), write one handoff per slice and run one
+     implementer per slice. A slice is complete on its own: its tests, its docs,
+     its verification.
 3. Snapshot HEAD (`git rev-parse HEAD`) so you can detect any commit afterwards.
    Then launch the implementer sub-agent:
    `Agent(subagent_type: "claude-implementer", model: "sonnet", prompt: "Implement the handoff at ai/handoffs/<slug>-handoff.md. Read it in full first, implement only what it allows, and return your required-output report.")`.
@@ -39,6 +48,17 @@ Steps:
    sub-agent must not commit), or any out-of-scope change.
 6. Report: files changed, deviations from plan, tests run + real results (from
    the sub-agent report), the handoff path, and the diff path.
+
+**Fix passes** (after a diff review asks for changes): write
+`ai/handoffs/<slug>-fix<N>-handoff.md` with the review findings to fix
+**verbatim**, the files allowed, the files NOT to modify and the invariants
+section copied verbatim from the original handoff, the original handoff and
+implementation report paths, and the tests that must stay/become green; then
+launch a **new**
+`claude-implementer` on it. Resume the previous implementer (`SendMessage`)
+only if its last activity is under 5 minutes old: sub-agent prompt cache lives
+5 minutes, so a later resume re-writes its whole (often 200-400k) context, while
+a fresh agent re-reads only what the fix needs.
 
 Next step to tell the user: `/ai-review-diff $ARGUMENTS`.
 

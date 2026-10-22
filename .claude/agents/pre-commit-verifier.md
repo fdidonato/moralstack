@@ -1,11 +1,11 @@
 ---
 name: pre-commit-verifier
 description: >-
-  Pre Commit Verifier. Use this agent after ANY change to MoralStack code or
-  tests to prove the change is green: it gets the full-suite result via
+  Pre Commit Verifier. Use this agent after ANY change to MoralStack code,
+  tests or harness to prove the change is green: it gets the full-suite result via
   `python scripts/ai/suite_record.py check`/`run` (Bash `timeout: 600000`) and runs
   `pre-commit run -a`, and must leave both fully passing. Invoke it before committing, before declaring a task done, or
-  whenever source/tests under `moralstack/` or `tests/` were edited. It diagnoses
+  whenever files under `moralstack/`, `tests/` or the harness were edited. It diagnoses
   and fixes failures (test, ruff, black, trailing-whitespace, end-of-file, mypy)
   without weakening tests or bypassing hooks.
 tools: Bash, Read, Edit, Grep, Glob

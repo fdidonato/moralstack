@@ -22,6 +22,9 @@ Rules — non-negotiable:
 This template is filled in per task by the handoff under `ai/handoffs/`. The
 handoff carries: context, objective, approved plan, allowed files, do-not-modify
 files, invariants, checklist, required tests, acceptance criteria, and risks.
+It covers one coherent slice and copies the plan sections that slice needs
+verbatim; it names the plan path and the sections it did not copy. Consult the
+plan only for those sections or on ambiguity — do not re-read it in full.
 
 Required output at the end of your run:
 - files modified;

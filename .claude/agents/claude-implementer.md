@@ -24,6 +24,24 @@ before touching any code. It carries: context, objective, approved plan, files
 allowed to modify, files NOT to modify, invariants, checklist, required tests,
 acceptance criteria, and risks.
 
+The handoff copies the plan sections you need verbatim. Open the plan file
+(`ai/plans/<task>.md`) only for the sections the handoff names as not copied, or
+when the handoff is ambiguous — read those sections once and keep the notes you
+need; do not re-read the whole plan.
+
+## Context economy
+Every tool call re-sends your whole context, so what you load once you pay for on
+every later step. This never trades away evidence:
+- Locate before reading: `Grep`/`Glob` for the symbol, then `Read` the complete
+  relevant region (the whole function or class you change, its callers, the
+  pinning tests) with `offset`/`limit`. Read a file in full when it is short or
+  when the change spans it. Do not re-read a region you already have unless it
+  changed.
+- Keep command output short where the full text adds nothing (`pytest -q`,
+  `| tail -n 40`), but never hide a failure: on any failure, re-run the failing
+  node(s) with the full traceback and read it.
+- Batch independent reads and checks into one step.
+
 ## Rules
 - Implement the approved plan and nothing more: no scope creep, no speculative
   abstractions.

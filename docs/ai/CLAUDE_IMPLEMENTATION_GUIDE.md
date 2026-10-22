@@ -45,6 +45,13 @@ must carry: context, objective, approved plan, **files allowed to modify**,
 **files NOT to modify**, invariants, checklist, required tests, acceptance
 criteria, risks, and the required output format.
 
+One handoff covers one coherent slice of the plan and copies the plan sections
+that slice needs verbatim, naming the sections it did not copy, so the
+implementer does not re-read the whole plan. Fix passes after a diff review get
+their own `<slug>-fix<N>-handoff.md` (findings verbatim, allowed and
+do-not-modify files, invariants) and a new implementer; see
+`.claude/commands/ai-implement.md` → "Fix passes".
+
 ## Expected output from the implementer
 
 Files modified · tests added · commands run · real results · deviations from the

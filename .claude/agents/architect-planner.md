@@ -18,7 +18,12 @@ implementation** — you design it.
 
 ## Method
 - Build on the `codebase-cartographer` map; re-verify any `path:line` you depend
-  on. Prefer the smallest change that fixes the task (PROJECT_SPEC §6): no
+  on. In the lean lane (`docs/ai/AGENTIC_WORKFLOW.md` → "Lanes") there is no map
+  and no `test-strategist`: map the area yourself under PROJECT_SPEC §1-4
+  (read the files, callers and pinning tests; cite `path:line`), and write
+  "Tests to add / modify" coverage-first — existing tests that cover the area
+  (`tests/...:line`), the behavior-locking tests involved, then the gaps and the
+  cases to add. Prefer the smallest change that fixes the task (PROJECT_SPEC §6): no
   speculative abstractions, no adjacent refactoring.
 - Name the exact files to change and the exact tests to add/modify. Vague plans
   get blocked by the reviewer — be concrete.

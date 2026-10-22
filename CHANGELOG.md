@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit `-n` still wins. `scripts/ai/suite_record.py run|check` fingerprints the working tree and reuses a PASSED
   full-suite record for an identical state, never a FAILED or stale one. Agent instructions that launch the full suite
   now say to use the Bash tool `timeout: 600000`.
+- **The `ai-*` agent workflow has a full and a lean lane.** Lean is allowed only when every touched file is on an
+  explicit harness/`docs/ai/` allowlist (`docs/ai/AGENTIC_WORKFLOW.md`); it skips the cartographer, test-strategist and
+  final-integrator and runs the reviewer at effort `high`. Everything else, `moralstack/**` and non-harness tests
+  included, stays full with the reviewer pinned at `xhigh`. Both lanes keep the plan review, the diff review and the
+  pre-commit-verifier. Handoffs are one self-contained slice each, fix passes start a new implementer, and a review
+  still BLOCKING after its second re-run is escalated to the user.
 - **DCCL `llm_calls` rows are persisted in cycle 0.** The `evaluate` (`sequence_in_cycle` -5) and `safety_override`
   (-6) rows written by `moralstack/compliance/dccl.py` now carry `cycle=0` instead of `NULL`, in SQLite and in the
   JSONL envelope; sequence numbers are unchanged. Readers that treated NULL as "pre-cycle" should read cycle 0 with
