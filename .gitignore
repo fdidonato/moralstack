@@ -21,6 +21,7 @@ benchmark_outputs/
 *.bak
 # Dated backup copies (moralstack<YYYYMMDD>bkp.db) and the SQLite sidecars of any
 # backup: same content, same reason. The exact-path patterns above do not match them.
+moralstack*.db
 moralstack*bkp.db
 moralstack*bkp.db-shm
 moralstack*bkp.db-wal
