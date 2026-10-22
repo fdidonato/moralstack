@@ -7,6 +7,7 @@ no prompt text is hardcoded here.
 
 from __future__ import annotations
 
+import gc
 import importlib.util
 import json
 import os
@@ -1063,11 +1064,17 @@ def test_wal_database_main_file_is_not_modified(tmp_path, capsys):
         assert conn.execute("PRAGMA journal_mode=WAL").fetchone()[0].lower() == "wal"
     add_run(db, "run-wal", ps.audit_summary())
     seed_standard_rows(db, "run-wal", ps)
+    # The seeding helpers never close their connections (`with sqlite3.connect(...)` only commits) and a Connection
+    # sits in a reference cycle, so the cyclic GC closes them at an arbitrary moment; closing a WAL connection
+    # checkpoints the -wal into the main file. Close them before the snapshot, or the checkpoint can land between
+    # `before` and `after` (flaky under xdist).
+    gc.collect()
     os.utime(db, (1_700_000_000, 1_700_000_000))
     before_bytes = db.read_bytes()
     before = db.stat()
 
     code, report = tool_json(capsys, "--db", str(db), "--strict")
+    gc.collect()  # the tool's own connection objects, too, must leave the main file alone once collected
 
     assert code == 0 and run_entry(report, "run-wal")["rows"]["ok"] == 6
     after = db.stat()
