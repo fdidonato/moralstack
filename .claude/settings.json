@@ -3,6 +3,7 @@
   "permissions": {
     "allow": [
       "Bash(python -m pytest:*)",
+      "Bash(python scripts/ai/suite_record.py:*)",
       "Bash(pytest:*)",
       "Bash(python -m ruff:*)",
       "Bash(ruff:*)",

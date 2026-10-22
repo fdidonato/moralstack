@@ -100,8 +100,11 @@ when you open the relevant files — the headline below is only the reminder.
 
 ## 7. Testing expectations
 
-- Run the relevant subset for any change, and the full suite before declaring a
-  task done: `python -m pytest` (or a scoped `python -m pytest tests/test_<area>.py`).
+- Run the relevant subset for any change (`python -m pytest tests/test_<area>.py`,
+  serial automatically), and the full suite before declaring a task done:
+  `python scripts/ai/suite_record.py check` first (it reuses a PASSED record of the same
+  tree state), `python scripts/ai/suite_record.py run` (= `python -m pytest`) on a
+  mismatch, with the Bash tool `timeout: 600000` (the suite takes ~3-5 min).
   Tests are offline/mocked; keep new tests deterministic.
 - Do **not** weaken or delete a test to make a change pass. If a test must change,
   justify why in the PR/commit message (see §8).

@@ -28,6 +28,7 @@ turn. They are plain Python (no third-party imports) and unit-tested in
 | `.docs-stub.md` | `stop_gate` | human/Claude | Touched-symbols → likely docs targets; review, promote, delete. |
 | `.context-snapshot.md` | `precompact` | `session_start`, `user_prompt_submit` | Pre-compaction context digest. |
 | `session-diary.md` | `session_end` | human | Append-only UNVERIFIED digests to promote (never a verified fact, §4). |
+| `.suite-result.json` | `scripts/ai/suite_record.py run` | `suite_record.py check` (pre-commit-verifier, final-integrator, orchestrator, reviewer) | Last full-suite record: fingerprint, outcome, counts, versions, args; env var names only (secret names included), never values. The fingerprint hashes file content only: file-mode changes are not detected (accepted residual). |
 
 ## Stop-gate specifics
 

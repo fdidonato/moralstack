@@ -11,7 +11,8 @@ pip install -e .[dev]
 ## Tools
 
 - **pytest** — Run tests: `pytest` (parallel by default via **pytest-xdist**: `addopts` in `pyproject.toml`
-  sets `-n auto --maxprocesses=8 --dist worksteal`; use `pytest -n 0` for a serial run, e.g. with `--pdb`)
+  sets `-n auto --maxprocesses=8 --dist worksteal`; use `pytest -n 0` for a serial run, e.g. with `--pdb`; targeted runs — files, directories,
+  node ids or `-k` — are serial automatically, and an explicit `-n auto` forces parallel)
 - **pytest-cov** — Coverage reports: `pytest --cov=moralstack --cov-report=xml --cov-report=term`
 - **ruff** — Linting and formatting: `ruff check .` / `ruff format .`
 - **black** — Format check: `black --check .` (or `black .` to reformat)

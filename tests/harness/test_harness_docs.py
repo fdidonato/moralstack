@@ -134,3 +134,53 @@ def test_testing_rule_points_to_manual_slow_run(repo_root):
     assert "-m slow" in text
     assert "CI runs" not in text
     assert not (repo_root / ".github" / "workflows").exists()
+
+
+_FULL_SUITE_TIMEOUT_FILES = [
+    ".claude/agents/pre-commit-verifier.md",
+    ".claude/agents/claude-implementer.md",
+    ".claude/agents/final-integrator.md",
+    ".claude/agents/test-strategist.md",
+    ".claude/commands/ai-finalize.md",
+    ".claude/rules/testing.md",
+    ".claude/skills/improve-moralstack-ui/SKILL.md",
+    "PROJECT_SPEC.md",
+]
+
+
+@pytest.mark.parametrize("rel", _FULL_SUITE_TIMEOUT_FILES)
+def test_full_suite_instructions_carry_bash_timeout(repo_root, rel):
+    """S3: every instruction that launches the full suite names the Bash tool timeout
+    (the default 120 s kills a 3-5 min run and pushes it into background polling)."""
+    text = (repo_root / rel).read_text(encoding="utf-8")
+    assert "timeout: 600000" in text, rel
+
+
+@pytest.mark.parametrize("rel", [r for r in _FULL_SUITE_TIMEOUT_FILES if "SKILL" not in r])
+def test_full_suite_instructions_point_to_suite_record(repo_root, rel):
+    text = (repo_root / rel).read_text(encoding="utf-8")
+    assert "suite_record.py" in text, rel
+
+
+def test_reviewer_is_read_only_on_the_suite_record(repo_root):
+    text = (repo_root / ".claude" / "agents" / "adversarial-reviewer.md").read_text(encoding="utf-8")
+    assert "suite_record.py check" in text
+    assert "Never run the full suite" in text
+    assert "suite_record.py run" not in text
+
+
+def test_project_spec_keeps_the_no_weakening_rule_and_hooks_readme_lists_the_marker(repo_root):
+    assert "Do **not** weaken or delete a test" in (repo_root / "PROJECT_SPEC.md").read_text(encoding="utf-8")
+    readme = (repo_root / ".claude" / "hooks" / "README.md").read_text(encoding="utf-8")
+    row = next(line for line in readme.splitlines() if ".suite-result.json" in line)
+    assert "never values" in row
+    assert "file-mode" in row
+
+
+def test_testing_rule_leads_with_suite_record_and_documents_slow_and_mode_residual(repo_root):
+    text = (repo_root / ".claude" / "rules" / "testing.md").read_text(encoding="utf-8")
+    first_bullet = text.split("\n- ", 2)[1]
+    assert "suite_record.py" in first_bullet and "timeout: 600000" in first_bullet
+    assert "ONE record" in text
+    assert "file-mode" in text
+    assert "large directory selection" in text

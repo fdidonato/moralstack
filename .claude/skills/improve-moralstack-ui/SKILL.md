@@ -123,6 +123,8 @@ that can regress (follow the existing fixtures in `tests/test_ui_conversation_vi
 python .claude/skills/improve-moralstack-ui/scripts/verify.py
 ```
 
+Launch `verify.py --full` (it runs the full suite) with the Bash tool `timeout: 600000`.
+
 Then delegate browser and semantic verification to `moralstack-ui-verifier`, which
 re-runs the affected scenarios at both viewports and can veto a green script run.
 

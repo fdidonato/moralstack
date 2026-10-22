@@ -64,8 +64,9 @@ the code.
 - Frontmatter: `tools: Read, Grep, Glob, Bash` — no `Edit`, no `Write`. File
   edits through the file tools are impossible, not merely forbidden.
 - Body: `Bash` is write-capable, so it is constrained by **instruction**:
-  reading only (`git diff/show/log/status`, `rg`, `ls`, running
-  `python -m pytest ...` for evidence); any mutating command —
+  reading only (`git diff/show/log/status`, `rg`, `ls`, running targeted
+  `python -m pytest <files>` for evidence; `scripts/ai/suite_record.py check` for the
+  full-suite state); any mutating command —
   `git add/commit/checkout/stash/reset/restore/mv/rm`, `pre-commit run` (it
   auto-fixes files), redirections, `sed -i` — is forbidden, and a check that
   would need a write must be raised as a `QUESTION` instead. The only

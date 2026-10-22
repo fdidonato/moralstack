@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Targeted test runs are serial, and the full suite is recorded per tree state.** Selecting part of the suite
+  (files, directories, node ids or `-k`) no longer starts up to 8 xdist workers; the full suite stays parallel and an
+  explicit `-n` still wins. `scripts/ai/suite_record.py run|check` fingerprints the working tree and reuses a PASSED
+  full-suite record for an identical state, never a FAILED or stale one. Agent instructions that launch the full suite
+  now say to use the Bash tool `timeout: 600000`.
 - **DCCL `llm_calls` rows are persisted in cycle 0.** The `evaluate` (`sequence_in_cycle` -5) and `safety_override`
   (-6) rows written by `moralstack/compliance/dccl.py` now carry `cycle=0` instead of `NULL`, in SQLite and in the
   JSONL envelope; sequence numbers are unchanged. Readers that treated NULL as "pre-cycle" should read cycle 0 with

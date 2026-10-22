@@ -51,5 +51,6 @@ Boundary/adversarial inputs to cover.
 
 ## Commands to run
 Exact commands (scoped + full), e.g.
-`python -m pytest tests/test_<area>.py` then the full `python -m pytest`, plus
+`python -m pytest tests/test_<area>.py` (serial automatically) then the full suite via
+`python scripts/ai/suite_record.py run` (Bash tool `timeout: 600000`), plus
 `pre-commit run -a`.

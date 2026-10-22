@@ -15,8 +15,9 @@ Steps:
    (`ai/reviews/diff-after-*.md`).
 2. Before declaring READY, ensure verification actually happened: if MoralStack
    code/tests changed, run (or have the user run) the **pre-commit-verifier**
-   agent — full `python -m pytest` + `pre-commit run -a` — and cite the real
-   outcome. Do not claim green you did not observe (PROJECT_SPEC §10).
+   agent — full suite via `python scripts/ai/suite_record.py check` (reuses a PASSED
+   record of the same tree state), `run` on a mismatch with the Bash tool
+   `timeout: 600000`, plus `pre-commit run -a` — and cite the real outcome. Do not claim green you did not observe (PROJECT_SPEC §10).
 3. Produce the final synthesis: what was planned, what the reviewer contested,
    what was corrected, what the implementer produced, what the diff shows, what
    the reviewer found in the diff review, the verification result, and the final

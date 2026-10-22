@@ -5,15 +5,20 @@ paths:
 # Testing expectations
 
 - Tests live in `tests/` and are extensive. Run the relevant subset for any
-  change, and the full suite before declaring a task done: `python -m pytest` (or a
-  scoped `python -m pytest tests/test_<area>.py`).
+  change (a scoped `python -m pytest tests/test_<area>.py`), and the full suite before
+  declaring a task done through `python scripts/ai/suite_record.py check` (reuse) or
+  `run` (record a new one), launched with the Bash tool `timeout: 600000`.
 - Tests marked `@pytest.mark.slow` (performance benchmarks, e.g.
   `test_persistence_load.py::test_throughput_new_not_slower_than_legacy`) are **excluded
   from the default run** via `-m 'not slow'` in `addopts` (`pyproject.toml`). The
   default `python -m pytest` therefore does not run them; opt in with `python -m pytest
   -m slow` (or `-m ""` to run everything). There is no CI in this repository (workflows
   removed 2026-08-27): run them by hand with `python -m pytest -n 0 -m slow` when a
-  persistence/perf change warrants it.
+  persistence/perf change warrants it. That slow-only run is unrecorded: the
+  `suite_record.py` marker holds ONE record, so `suite_record.py run -m ""` (everything)
+  or `run -m slow` overwrite the default-run record and the final gate, `suite_record.py
+  check` with no args, would mismatch on `args`. `run -m slow` records only the slow
+  subset, so a `check -m slow` exit 0 is not full-suite evidence.
 - Behavior-locking tests exist for: byte-equality
   (`test_system_prompt_byte_equality.py`), governance invariants
   (`tests/governance_invariants/`), decision policy (`test_decide_action.py`,
@@ -29,6 +34,17 @@ paths:
   fixed ports, no reliance on test order or on state left by another test. Serial run:
   `python -m pytest -n 0` (`-p no:xdist` fails: `-n` in addopts becomes unrecognized); use it
   for `-m slow` perf benchmarks and for `--pdb`.
+- Targeted selections (files/dirs/node ids under `tests/`, or `-k`) run serially on their
+  own through `tests/conftest.py:pytest_xdist_auto_num_workers`. The full suite
+  (`python -m pytest`, also with flags only such as `-q -x -m slow -rf --lf`, or
+  `python -m pytest tests/`) stays parallel. An explicit `-n N`/`-n auto` (CLI or
+  `PYTEST_ADDOPTS`) or `PYTEST_XDIST_AUTO_NUM_WORKERS` wins; `-n auto` forces parallel on a
+  large `-k` or a large directory selection (e.g. `python -m pytest tests/harness -n auto`).
+- Full-suite runs use the Bash tool `timeout: 600000`. `python scripts/ai/suite_record.py
+  check` reuses a PASSED record of the same tree state (marker `.claude/.suite-result.json`);
+  `run` records a new one. FAILED or non-reusable records are never reused; any fingerprint
+  mismatch means re-run. Residual: file-mode (permission bit) changes are not
+  fingerprinted, only content; a tracked file whose mode alone changed is reused.
 - `tests/conftest.py` carries test-only speed patches (shared httpx SSL context, shared
   Jinja bytecode cache for the UI, `PRAGMA synchronous=OFF` on every new SQLite
   connection). A test that asserts SQLite's production fsync default must be marked

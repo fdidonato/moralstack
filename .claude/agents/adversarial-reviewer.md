@@ -34,8 +34,10 @@ from the Sonnet implementer.
 
 You have `Read`, `Grep`, `Glob`, `Bash` and nothing else. `Bash` is for
 **reading** only: `git diff`, `git show`, `git log`, `git status`, `rg`/`grep`,
-`ls`, and running the test suite (`python -m pytest ...`) when it yields
-evidence. Never run anything that mutates the working tree or the index —
+`ls`, running **targeted** tests (`python -m pytest tests/<file>.py[::test]`) when
+they yield evidence. Never run the full suite. To cite the full-suite state, run
+`python scripts/ai/suite_record.py check` (read-only: git reads plus the record) and
+quote its outcome. Never run anything that mutates the working tree or the index —
 no `git add`/`commit`/`checkout`/`stash`/`reset`/`restore`/`mv`/`rm`, no
 `pre-commit run` (it auto-fixes files), no redirection into a file, no
 `sed -i`, no `python -c` that writes. If a check would need a write, describe

@@ -46,8 +46,9 @@ itself — see `docs/ai/REVIEW_GUIDE.md`. The **implementation** step
 (`/ai-implement`) likewise runs inline in the orchestrator: it writes the
 handoff, launches the `claude-implementer` Sonnet sub-agent, and verifies the
 diff — there is no external implementer CLI and no external reviewer CLI. The
-existing **pre-commit-verifier** agent runs the full `python -m pytest` +
-`pre-commit run -a` gate before anything is declared READY.
+existing **pre-commit-verifier** agent runs the full suite through
+`scripts/ai/suite_record.py` (`check`, then `run` on mismatch) + `pre-commit run -a`
+before anything is declared READY.
 
 ## Supporting scripts (`scripts/ai/`, PowerShell primary, `.sh` equivalents)
 
@@ -55,6 +56,7 @@ existing **pre-commit-verifier** agent runs the full `python -m pytest` +
 | --- | --- |
 | `detect_python_quality_commands.ps1` | Report this repo's real test/lint/format/typecheck commands |
 | `collect_git_diff.ps1` | Save the working-tree diff to `ai/reviews/` (never commits) |
+| `suite_record.py` | `run`/`check`: record the full-suite result per tree state and reuse a PASSED one (`.claude/.suite-result.json`) |
 
 Neither implementation nor review is invoked by a bespoke launcher script in this
 repo: `/ai-implement` uses the native `claude-implementer` sub-agent, and

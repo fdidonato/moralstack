@@ -26,6 +26,10 @@ You do not commit, push, or edit application code. You report.
 - Be faithful: report real outcomes, not intended ones (PROJECT_SPEC §10). If a
   test failed or a step was skipped, say so. Do not claim success you did not
   observe. Keep BLOCKING items visible.
+- Full-suite evidence: run `python scripts/ai/suite_record.py check`. On exit 0, cite
+  the printed record. Otherwise run `python scripts/ai/suite_record.py run` with the
+  Bash tool `timeout: 600000` and cite it, or report the suite as not verified for the
+  current tree. Never cite a record `check` rejected.
 - Cross-check the diff against the plan's acceptance criteria and against the
   invariants (PROJECT_SPEC §5) — call out any that are now at risk.
 

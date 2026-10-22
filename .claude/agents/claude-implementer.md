@@ -38,7 +38,10 @@ acceptance criteria, and risks.
 - Read a file in full (or the complete relevant region) before editing it
   (PROJECT_SPEC §1). Read the call sites and the pinning tests first.
 - Run the verification commands the handoff lists and report their actual output.
-  Do not claim green you did not observe (PROJECT_SPEC §10).
+  Do not claim green you did not observe (PROJECT_SPEC §10). Run the handoff's full
+  `python -m pytest` as `python scripts/ai/suite_record.py run` (same suite, recorded
+  so later agents reuse it) with the Bash tool `timeout: 600000`. Targeted runs
+  (`python -m pytest tests/<file>.py`) are serial automatically.
 - If the plan is ambiguous or you hit a blocking architectural problem, stop and
   report the blocker instead of working around it (PROJECT_SPEC §9).
 - Don't `git add`, commit, push, or delete files outside your own edits:
