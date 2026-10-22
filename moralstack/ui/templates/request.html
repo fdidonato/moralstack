@@ -1323,7 +1323,8 @@
                 <div class="flow-node-title-area">
                     <div class="flow-node-title">INPUT &middot; request</div>
                     <div class="flow-node-meta">
-                        {% if input_anchor_info and input_anchor_info.developer_contract_present %}
+                        {# Chip and body agree: also lit when the contract text was resolved without a STARTED event. #}
+                        {% if input_contract or (input_anchor_info and input_anchor_info.developer_contract_present) %}
                         <span class="badge badge-type" title="A developer contract constrains this request">developer contract</span>
                         {% endif %}
                         {% if input_anchor_info and input_anchor_info.conversation_chip %}

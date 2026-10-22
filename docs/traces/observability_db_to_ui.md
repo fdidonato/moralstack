@@ -403,7 +403,9 @@ reconstructs:
   as `input_contract`; the INPUT node body shows it under "Full prompt" as a collapsed "Developer contract" `<details>`
   (length, `sent by the client as role=system` when it was a system message, identity note, full text in `<pre>`). When
   `input_anchor_info.developer_contract_present` is true but nothing was resolved, a muted line says the text could not be
-  identified; without a contract the node shows nothing.
+  identified; without a contract the node shows nothing. The header chip "developer contract" is lit by
+  `input_contract` OR `input_anchor_info.developer_contract_present` (request page only), so chip and body agree even when
+  no `COMPLIANCE_LAYER_STARTED` event was persisted; the conversation spine keeps the event-derived chip.
 - **Markdown exports**: per-request, per-run benchmark, and per-conversation
   AI Act art. 12 audit (`/conversations/{id}/export.md` →
   `reports/conversation_export.export_conversation_to_markdown`).

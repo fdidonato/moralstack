@@ -745,6 +745,9 @@ def test_input_anchor_shows_the_request_contract(ui_client):
     assert "{{ 7 * 7 }}" in block and "49" not in block.replace("{{ 7 * 7 }}", "")
     assert "café — never give medical diagnoses." in block
     assert "sent by the client as role=system" in block  # evaluate recorded it among the system messages
+    # The seed persists no COMPLIANCE_LAYER_STARTED event: the header chip follows the resolved contract anyway.
+    header = anchor[: anchor.index("flow-node-body")]
+    assert '<span class="badge badge-type" title="A developer contract constrains this request">' in header
 
 
 def test_input_anchor_without_a_contract_shows_nothing(ui_client):

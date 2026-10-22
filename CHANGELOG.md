@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The INPUT node of the request page shows the request's developer contract.** Before, it only carried a
   "developer contract" chip and the full prompt; the contract text was visible only inside the module nodes. The node
   now has a collapsed "Developer contract" section with the text, its length and the identity check; when a contract
-  was attached but its text cannot be identified, the node says so.
+  was attached but its text cannot be identified, the node says so. The "developer contract" chip on the node is lit
+  whenever the section is shown.
 
 ### Fixed
 
