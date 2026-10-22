@@ -8,7 +8,7 @@ turn. They are plain Python (no third-party imports) and unit-tested in
 
 | Hook | Event | Blocks? | Purpose |
 | --- | --- | --- | --- |
-| `guard_dangerous_git.py` | PreToolUse(Bash) | yes | Blocks git shortcuts forbidden by §9: no-verify (long and `-n`), no-gpg-sign, force-push (all forms, with-lease included), removal of test files/dirs. Does **not** block a hard `git reset` (destructive-but-confirmable; the user's confirmation rule applies, and a hook cannot ask). |
+| `guard_dangerous_git.py` | PreToolUse(Bash) | yes | Blocks git shortcuts forbidden by §9: no-verify (long and `-n`), no-gpg-sign, force-push (all forms, with-lease included), removal of test files/dirs (an `rm`/`git rm` and a `tests/` path in the same `;`/`&&`/`\|\|`/newline segment — a pipe does not split, so `ls tests/… \| xargs rm` is blocked — or any `rm` after `cd`/`pushd tests`; `rm -f x && pytest tests/…` is allowed). Does **not** block a hard `git reset` (destructive-but-confirmable; the user's confirmation rule applies, and a hook cannot ask). |
 | `guard_secrets.py` | PreToolUse(Bash/Edit/Write) | yes | Blocks secret exposure in commands/edits. |
 | `format_on_edit.py` | PostToolUse(Edit/Write/MultiEdit) | no | Records edited paths → `.session-edits.json`; ruff+black on the file. |
 | `stop_gate.py` | Stop | docs-gate only | Non-blocking verify (deduped) + blocking docs-gate with nudge cap + docs stub. |

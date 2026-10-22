@@ -28,11 +28,31 @@ def _command(data: dict) -> str:
     return command if isinstance(command, str) else ""
 
 
+_RM = re.compile(r"(?:^|\s|\|)\s*(?:git\s+)?rm\b")
+_TESTS_PATH = re.compile(r"\btests/[^\s]*test[^\s]*\.py|(?:^|\s)tests/?(?:\s|$)")
+_CD_TESTS = re.compile(r"(?:^|\s)(?:cd|pushd)\s+(?:\S*/)?tests/?(?:\s|$)")
+# Command-list separators. A pipe is deliberately NOT a separator: in
+# `ls tests/test_x.py | xargs rm` the path and the rm belong to one pipeline.
+_SEGMENT_SEP = re.compile(r"&&|\|\||;|\n")
+
+
+def _deletes_tests(cmd: str) -> bool:
+    """True when an rm and a test path share a segment, or the command cds into tests/.
+
+    Scoping to the segment stops `rm -f out.db && pytest tests/test_x.py` from being
+    read as a test deletion; the cd rule keeps `cd tests && rm test_x.py` blocked.
+    """
+    if not _RM.search(cmd):
+        return False
+    if _CD_TESTS.search(cmd):
+        return True
+    return any(_RM.search(seg) and _TESTS_PATH.search(seg) for seg in _SEGMENT_SEP.split(cmd))
+
+
 def _violations(cmd: str) -> list[str]:
     found: list[str] = []
     is_commit = re.search(r"git\s+commit\b", cmd) is not None
     is_push = re.search(r"git\s+push\b", cmd) is not None
-    has_rm = re.search(r"(?:^|\s|;|&&|\|)\s*(?:git\s+)?rm\b", cmd) is not None
 
     if is_commit and re.search(r"(?:^|\s)--no-verify\b", cmd):
         found.append("`git commit --no-verify` bypasses pre-commit hooks (§9).")
@@ -49,7 +69,7 @@ def _violations(cmd: str) -> list[str]:
     if is_push and re.search(r"(?:^|\s)-f(?:\s|$)", cmd):
         found.append("`git push -f` (force) is forbidden (§9 invariant).")
 
-    if has_rm and (re.search(r"\btests/[^\s]*test[^\s]*\.py", cmd) or re.search(r"(?:^|\s)tests/?(?:\s|$)", cmd)):
+    if _deletes_tests(cmd):
         found.append("deleting test files/dirs is forbidden — fix the root " "cause, never delete a failing test (§9).")
     return found
 

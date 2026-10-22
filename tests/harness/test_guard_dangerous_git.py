@@ -26,6 +26,13 @@ BLOCK_CASES = [
     "git push --force-with-lease origin main",
     "rm tests/test_foo.py",
     "rm -rf tests/",
+    "rm -rf tests",
+    "git rm tests/test_foo.py",
+    "echo ok && rm tests/test_foo.py",
+    # pipe is not a segment separator: the path feeds the rm
+    "ls tests/test_*.py | xargs rm",
+    "cd tests && rm test_foo.py",
+    "find tests -name 'test_*.py' -exec rm {} \\;",
 ]
 
 ALLOW_CASES = [
@@ -33,6 +40,11 @@ ALLOW_CASES = [
     "git push origin feature-branch",
     "rm -rf build/",
     "git status",
+    # P6: rm and a test path in different segments is not a test deletion
+    "rm -f out.db && python -m pytest tests/test_foo.py",
+    "python -m pytest tests/test_foo.py; rm -rf .tmp_session",
+    "rm -f a.log\npython -m pytest tests/",
+    "python -m pytest tests/test_a.py || rm -f a.lock",
 ]
 
 
