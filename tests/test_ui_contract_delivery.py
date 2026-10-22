@@ -24,6 +24,7 @@ from moralstack.observability.service import get_obs  # noqa: E402
 from moralstack.observability.wire import encode_wire, encode_wire_calls  # noqa: E402
 from moralstack.orchestration.contract import DeveloperContract  # noqa: E402
 from moralstack.orchestration.orchestration_event_taxonomy import (  # noqa: E402
+    COMPLIANCE_LAYER_STARTED,
     COMPLIANCE_LAYER_VERDICT_MATCH,
 )
 from moralstack.ui.app import _attach_contract_delivery, _build_module_io_annotations  # noqa: E402
@@ -548,9 +549,21 @@ def test_attach_without_a_contract_changes_nothing():
         _row("risk_estimator", messages=[{"role": "user", "content": "q"}], sections={"developer_messages": []})
     )
     before = json.dumps(risk["io_annotations"], sort_keys=True)
-    _attach_contract_delivery([risk], [])
+    assert _attach_contract_delivery([risk], []) is None
     assert json.dumps(risk["io_annotations"], sort_keys=True) == before
     assert not risk.get("contract_delivery")
+
+
+def test_attach_returns_the_resolved_request_contract():
+    risk = _annotated(
+        _row(
+            "risk_estimator",
+            messages=[{"role": "developer", "content": CONTRACT}],
+            sections={"developer_messages": [CONTRACT]},
+        )
+    )
+    contract = _attach_contract_delivery([risk], [_verdict_event(CONTRACT)])
+    assert contract == {"text": CONTRACT.strip(), "verified": True, "client_role_system": False}
 
 
 # --------------------------------------------------------------------------------------
@@ -710,4 +723,46 @@ def test_page_survives_a_corrupt_wire_row(ui_client):
         parsed_json=json.dumps({"wire": {"v": 1, "messages": [{"role": "developer", "s": 99}]}}),
     )  # fmt: skip
     body = _render(ui_client, run_id, request_id)
-    assert '<details class="contract-delivery"' in body  # the healthy rows still show it
+    # The healthy module rows still show it (the INPUT anchor emits the same marker, so check a module node).
+    assert '<details class="contract-delivery"' in _node_chunks(body)["estimate_intent"]
+
+
+def _input_anchor(body: str) -> str:
+    """HTML of the INPUT anchor node of the execution graph (up to the first pipe after it)."""
+    start = body.index("flow-node--input")
+    return body[start : body.index('<div class="flow-pipe">', start)]
+
+
+def test_input_anchor_shows_the_request_contract(ui_client):
+    run_id, request_id = "run-cd-input", "req-cd-input"
+    _seed_contract_page(run_id, request_id, contract=PAGE_CONTRACT)
+    anchor = _input_anchor(_render(ui_client, run_id, request_id))
+    block = anchor[anchor.index('<details class="contract-delivery"') :]
+    block = block[: block.index("</details>")]
+    assert f"{len(PAGE_CONTRACT.strip())} chars" in block
+    assert "Identity verified by contract_hash." in block
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in block and "<script>alert(1)</script>" not in block
+    assert "{{ 7 * 7 }}" in block and "49" not in block.replace("{{ 7 * 7 }}", "")
+    assert "café — never give medical diagnoses." in block
+    assert "sent by the client as role=system" in block  # evaluate recorded it among the system messages
+
+
+def test_input_anchor_without_a_contract_shows_nothing(ui_client):
+    run_id, request_id = "run-cd-input-no", "req-cd-input-no"
+    _seed_contract_page(run_id, request_id, contract=None)
+    anchor = _input_anchor(_render(ui_client, run_id, request_id))
+    assert "Developer contract" not in anchor
+    assert "developer contract" not in anchor  # no presence chip either
+
+
+def test_input_anchor_flags_a_present_but_unidentified_contract(ui_client):
+    run_id, request_id = "run-cd-input-unk", "req-cd-input-unk"
+    _seed_contract_page(run_id, request_id, contract=None)
+    persist_orchestration_event(
+        run_id=run_id, request_id=request_id, cycle=0, stage="COMPLIANCE", component="compliance_layer",
+        event_type=COMPLIANCE_LAYER_STARTED, started_at=T0 + 100, payload={"has_contract": True},
+    )  # fmt: skip
+    get_obs().flush()
+    anchor = _input_anchor(_render(ui_client, run_id, request_id))
+    assert "contract-delivery" not in anchor
+    assert "Developer contract present, but its text could not be identified" in anchor

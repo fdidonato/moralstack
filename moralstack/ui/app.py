@@ -564,19 +564,22 @@ def _build_module_io_annotations(call: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _attach_contract_delivery(llm_calls: list[dict[str, Any]], orchestration_events: list[dict[str, Any]]) -> None:
+def _attach_contract_delivery(
+    llm_calls: list[dict[str, Any]], orchestration_events: list[dict[str, Any]]
+) -> dict[str, Any] | None:
     """Annotate real ``llm_calls`` rows with how they received the developer contract (read-only, never raises).
 
     Real rows only: synthetic nodes (downgrade, deferred, calibration, routing, ledger) never get a contract io-row.
     A failure degrades to "no contract section" (PROJECT_SPEC §5.6).
+    Returns the resolved request contract (``resolve_request_contract``) so the INPUT anchor can show it, or ``None``.
     """
     try:
         contract = resolve_request_contract(llm_calls, orchestration_events)
     except Exception:
         _LOG.debug("developer contract resolution failed", exc_info=True)
-        return
+        return None
     if contract is None:
-        return
+        return None
     for call in llm_calls:
         if not isinstance(call, dict):
             continue
@@ -597,6 +600,7 @@ def _attach_contract_delivery(llm_calls: list[dict[str, Any]], orchestration_eve
         except Exception:
             _LOG.debug("developer contract delivery failed for one llm call", exc_info=True)
             call["contract_delivery"] = None
+    return contract
 
 
 # Deliberation-cycle visual tiers (cycle >= 1).  SEQ_SIMULATOR=3 and SEQ_PERSPECTIVES=4
@@ -4143,7 +4147,7 @@ button:hover{opacity:0.9}
             # Keep the normalization visible: the persisted row carried cycle NULL.
             call["semantic_badges"] = [*call["semantic_badges"], "legacy row: cycle NULL shown as 0"]
         # Which real rows received the developer contract (and how); synthetic nodes are never annotated.
-        _attach_contract_delivery(llm_calls, orchestration_events)
+        request_contract = _attach_contract_delivery(llm_calls, orchestration_events)
 
         all_flow_calls = list(llm_calls)
         if synthetic_constitution is not None:
@@ -4347,6 +4351,7 @@ button:hover{opacity:0.9}
                     "final_revalidation_info": final_revalidation_info,
                     "conversation_context": conversation_context,
                     "input_anchor_info": input_anchor_info,
+                    "input_contract": request_contract,
                     "token_usage": token_usage,
                     "domain_retrieval": domain_retrieval,
                     "pipeline_failure": pipeline_failure,

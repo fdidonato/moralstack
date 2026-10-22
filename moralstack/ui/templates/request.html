@@ -1337,6 +1337,17 @@
             <div class="flow-node-body">
                 <span class="meta-label">Full prompt</span>
                 <pre class="block">{{ req.prompt }}</pre>
+                {# The request's developer contract as identified by ui/contract_delivery.py (input_contract); each
+                   module node shows separately how much of it that call received. #}
+                {% if input_contract %}
+                <details class="contract-delivery">
+                    <summary>Developer contract <span class="muted">&middot; {{ input_contract.text | length }} chars{% if input_contract.client_role_system %} &middot; sent by the client as role=system{% endif %}</span></summary>
+                    <pre class="block">{{ input_contract.text }}</pre>
+                    <div class="muted">{% if input_contract.verified %}Identity verified by contract_hash.{% else %}Identity not verified by contract_hash.{% endif %}</div>
+                </details>
+                {% elif input_anchor_info and input_anchor_info.developer_contract_present %}
+                <div class="muted">Developer contract present, but its text could not be identified from the recorded messages.</div>
+                {% endif %}
             </div>
         </div>
 

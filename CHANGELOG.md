@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The INPUT node of the request page shows the request's developer contract.** Before, it only carried a
+  "developer contract" chip and the full prompt; the contract text was visible only inside the module nodes. The node
+  now has a collapsed "Developer contract" section with the text, its length and the identity check; when a contract
+  was attached but its text cannot be identified, the node says so.
+
 ### Fixed
 
 - **The request page shows the DCCL and the steps around it in the order the code runs them.** DCCL rows persisted

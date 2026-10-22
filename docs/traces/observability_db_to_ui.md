@@ -399,6 +399,11 @@ reconstructs:
   (e.g. simulator rows record `system_messages` while the wire carries a developer message). Data exposure: the critic's
   `parsed_json` is read by the page for the first time, decoded only to find the contract; only the contract excerpt is
   rendered, never the full wire; the page stays behind `_require_session` and Jinja autoescape is on.
+  *INPUT anchor (2026-10-22)*: `_attach_contract_delivery` returns the resolved request contract, passed to the template
+  as `input_contract`; the INPUT node body shows it under "Full prompt" as a collapsed "Developer contract" `<details>`
+  (length, `sent by the client as role=system` when it was a system message, identity note, full text in `<pre>`). When
+  `input_anchor_info.developer_contract_present` is true but nothing was resolved, a muted line says the text could not be
+  identified; without a contract the node shows nothing.
 - **Markdown exports**: per-request, per-run benchmark, and per-conversation
   AI Act art. 12 audit (`/conversations/{id}/export.md` →
   `reports/conversation_export.export_conversation_to_markdown`).
