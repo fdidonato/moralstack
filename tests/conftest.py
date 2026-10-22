@@ -9,6 +9,11 @@ suite never writes to the configured `moralstack.db` / `logs/observability`.
 from __future__ import annotations
 
 import os
+import re
+import shlex
+import sys
+from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
@@ -160,6 +165,75 @@ def _sqlite3_connect_without_fsync(*args, **kwargs):  # type: ignore[no-untyped-
 
 
 sqlite3.connect = _sqlite3_connect_without_fsync  # type: ignore[assignment]
+
+# --- Serial run for targeted selections (harness speed only) ---
+#
+# `addopts` starts up to 8 xdist workers on every run; each worker re-imports this
+# conftest, so a run of a few files pays ~10 s of startup for ~1 s of tests. When the
+# command selects part of the suite (paths/node ids that do not cover a testpaths root,
+# or `-k`), `-n auto` resolves to 0 workers. The full suite stays parallel. An explicit
+# `-n`/`--numprocesses` (CLI or PYTEST_ADDOPTS) or PYTEST_XDIST_AUTO_NUM_WORKERS wins.
+# `--lf`/`--ff`/`--sw`/`--deselect`/`--ignore`/`-m` are not selection (the size is
+# unknown at parse time). `optionalhook`: the hookspec is absent under `-p no:xdist`.
+_NUMPROCESSES_SHORT_RE = re.compile(r"^-n(\d+|auto|logical)$")
+
+
+def _explicit_numprocesses(tokens: Sequence[str]) -> bool:
+    """True when ``tokens`` carry an explicit ``-n`` / ``--numprocesses`` option."""
+    for token in tokens:
+        if token in ("-n", "--numprocesses") or token.startswith("--numprocesses="):
+            return True
+        if _NUMPROCESSES_SHORT_RE.match(token):
+            return True
+    return False
+
+
+def _norm_path(path: Path) -> Path:
+    return Path(os.path.normcase(os.path.realpath(path)))
+
+
+def _is_targeted_selection(
+    args: Sequence[str],
+    keyword: str | None,
+    rootpath: Path,
+    invocation_dir: Path,
+    testpaths: Sequence[str],
+) -> bool:
+    """True when the command selects part of the suite (so it should run serially)."""
+    if keyword:
+        return True
+    roots = [_norm_path(Path(rootpath) / p) for p in testpaths] or [_norm_path(Path(rootpath))]
+    for arg in args:
+        candidate = Path(str(arg).split("::", 1)[0])
+        if not candidate.is_absolute():
+            candidate = Path(invocation_dir) / candidate
+        resolved = _norm_path(candidate)
+        if any(root == resolved or root.is_relative_to(resolved) for root in roots):
+            return False  # this arg covers the whole suite -> full run
+    return True
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_auto_num_workers(config: pytest.Config) -> int | None:
+    """Resolve ``-n auto`` to 0 workers for targeted selections; never raises."""
+    try:
+        if os.environ.get("PYTEST_XDIST_AUTO_NUM_WORKERS"):
+            return None  # xdist's own implementation honours it
+        cli = [*config.invocation_params.args, *shlex.split(os.environ.get("PYTEST_ADDOPTS", ""))]
+        if _explicit_numprocesses([str(t) for t in cli]):
+            return None  # the user asked for `-n auto` explicitly
+        if _is_targeted_selection(
+            config.args,
+            config.option.keyword,
+            config.rootpath,
+            config.invocation_params.dir,
+            config.getini("testpaths"),
+        ):
+            return 0
+        return None
+    except Exception as exc:  # fail toward the default parallel behaviour
+        sys.stderr.write(f"[tests/conftest] xdist auto-worker hook failed, keeping default: {exc!r}\n")
+        return None
 
 
 @pytest.fixture(autouse=True)
