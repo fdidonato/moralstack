@@ -781,7 +781,7 @@ class LLMBasedRiskEstimator:
         Runs 3 LLM mini-calls in parallel via ThreadPoolExecutor.
 
         LLM 1 (estimate_intent): detected_language, intent_*, request_type, harm_type, rationale (intent)
-        LLM 2 (estimate_signals): q1-q13, domain_sensitivity
+        LLM 2 (estimate_signals): q1-q17, domain_sensitivity
         LLM 3 (estimate_operational): operational_risk, risk_score, confidence, misuse_plausibility, ..., rationale (risk)
 
         Aggregates the results with merge_mini_estimator_results() and processes them with

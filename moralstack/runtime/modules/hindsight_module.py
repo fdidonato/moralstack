@@ -198,17 +198,16 @@ class AggregatedHindsight:
 
         Args:
             evaluations: List of HindsightEvaluation
-            refuse_threshold: expected_value threshold for refuse (default -0.5)
-            revise_threshold: expected_value threshold for revise (default -0.25)
+            refuse_threshold: expected_value threshold for refuse (default -0.5 here;
+                the evaluator passes HindsightConfig.refuse_threshold, default -0.7)
 
         Returns:
             AggregatedHindsight with aggregated metrics
 
         Decision Logic:
             - expected_value >= 0.0: PROCEED (overall beneficial response)
-            - expected_value >= -0.25: REVISE (slight improvement possible)
-            - expected_value >= -0.5: REVISE (needs improvement)
-            - expected_value < -0.5: REFUSE (clearly negative consequences)
+            - expected_value >= refuse_threshold: REVISE (needs improvement)
+            - expected_value < refuse_threshold: REFUSE (clearly negative consequences)
         """
         if not evaluations:
             return cls()
@@ -453,8 +452,8 @@ class HindsightConfig:
 
     # Thresholds for recommendation (calibrated to avoid false positives)
     # NOTE: thresholds lowered to be less conservative on legitimate discussions
-    refuse_threshold: float = -0.7  # worst_case < this -> refuse (was -0.5)
-    revise_threshold: float = 0.0  # expected_value < this -> revise (was 0.3)
+    refuse_threshold: float = -0.7  # expected_value < this -> refuse (was -0.5)
+    revise_threshold: float = 0.0  # not read: the REVISE band is fixed at expected_value < 0.0 (was 0.3)
 
     # If True, evaluates all scenarios in a single call
     use_batch_evaluation: bool = True

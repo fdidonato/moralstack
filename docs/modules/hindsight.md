@@ -109,11 +109,14 @@ class AggregatedHindsight:
 
 ### HindsightRecommendation
 
-| Value     | When                | Action              |
-|-----------|---------------------|---------------------|
-| `PROCEED` | Total score ≥ 0.7   | Acceptable response |
-| `REVISE`  | Total score 0.3-0.7 | Needs improvement   |
-| `REFUSE`  | Total score < 0.3   | Should be refused   |
+The aggregated recommendation is derived from `expected_value` (`AggregatedHindsight.from_evaluations`), with
+`refuse_threshold` taken from `HindsightConfig` (default `-0.7`):
+
+| Value     | When                                          | Action              |
+|-----------|-----------------------------------------------|---------------------|
+| `PROCEED` | `expected_value ≥ 0.0`                        | Acceptable response |
+| `REVISE`  | `refuse_threshold ≤ expected_value < 0.0`     | Needs improvement   |
+| `REFUSE`  | `expected_value < refuse_threshold`           | Should be refused   |
 
 ---
 
@@ -348,7 +351,8 @@ Hindsight evaluation uses OpenAI's `json_object` response format (`response_form
 
 - **Default**: `0.0`
 - **Type**: float (-1 to 1)
-- **Description**: Expected value below this threshold triggers a REVISE recommendation.
+- **Description**: Loaded into `HindsightConfig.revise_threshold` but not read by the aggregation: the REVISE band
+  is fixed at `expected_value < 0.0` (see [Recommendations](#recommendations)).
 
 ### Evaluation mode
 

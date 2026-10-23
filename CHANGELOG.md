@@ -94,6 +94,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`examples/README.md` lists every example.** It pointed to a non-existent `examples/.env.example` (now the
   repo-root `.env.template`), counted 19 overlays (there are 21) and left out the proxy, multi-turn and AIR-Bench
   regression examples, which now have their own table.
+- **Hindsight and risk-estimator docs match the code.** `docs/modules/hindsight.md` described the recommendation
+  as total score ≥ 0.7 / 0.3–0.7 / < 0.3; the code reads `expected_value`: `PROCEED` at ≥ 0, `REVISE` down to
+  `refuse_threshold` (default −0.7), `REFUSE` below. `MORALSTACK_HINDSIGHT_REVISE_THRESHOLD` is documented as loaded
+  but not read. The `HindsightConfig` comments and the `from_evaluations` docstring no longer cite `worst_case` or a
+  non-existent `revise_threshold` argument, and the risk estimator docstring names q1–q17 instead of q1–q13. No
+  behavior change.
 
 ## 1.0.0 — 2026-10-21
 
