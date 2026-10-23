@@ -79,6 +79,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multilingual test inputs, prompt and constitution YAML, golden fixtures, and quotes of them.
   `docs/architecture_spec.md` is excluded until its English rewrite. The new `tests/harness/test_english_only.py` fails
   on Italian in Markdown, comments and docstrings; `PROJECT_SPEC.md` §6 now requires English.
+- **`docs/architecture_spec.md` is rewritten in English against the current code.** The old "Engineering
+  Specification v1.0" described components that do not exist (a Mistral-7B LoRA policy model, a DeBERTa hindsight
+  reward model, a training reward formula, a `/v1/chat` REST API, a `MoralStackClient` SDK, a `config/moralstack.yaml`
+  file, a Kubernetes deployment). The new document follows the real request lifecycle (speculative overlap, DCCL,
+  routing, deliberative loop, decision bounds, delivery guards), the LLM-based modules, the constitution, multi-turn
+  governance, the SDK and proxy surfaces, failure handling, observability and configuration, with Mermaid diagrams and
+  tables, and lists the gaps observed in the code (unused config fields, placeholder `moralstack-server`). The spec is
+  no longer exempt from `tests/harness/test_english_only.py`. Documentation only: no behavior change.
 
 ## 1.0.0 — 2026-10-21
 

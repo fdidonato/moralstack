@@ -1,1482 +1,866 @@
-# MoralStack: Engineering Specification v1.0
+# MoralStack Architecture
 
-> **Status**: Draft
-> **Author**: Francesco di Donato
-> **Date**: 2026-02
-
-**For stakeholders, testers and integrators**: this specification defines components, contracts (API/dataclass), flows
-and
-test strategy. It is the reference for verifying runtime compliance, integrations and designing test suites
-(unit, integration, red team).
-
----
-
-## 1. System Overview
-
-### 1.1 Purpose
-
-MoralStack is an inference runtime that adds deliberative moral reasoning to a base LLM. The system intercepts
-requests, evaluates ethical risk, and orchestrates a process of self-critique and simulation before producing a
-response. The output always includes an explicit **final action** (**NORMAL_COMPLETE** | **SAFE_COMPLETE** | **REFUSE
-**),
-traceable and auditable.
-
-### 1.2 Design Principles
-
-| Principle          | Description                                                                         |
-|--------------------|-------------------------------------------------------------------------------------|
-| **Fail-Safe**      | On error, refuse rather than respond in a potentially harmful way                   |
-| **Latency-Aware**  | Dynamic gating avoids overhead for low-risk requests                                |
-| **Stateless Core** | Each request is processed independently; conversational state is managed externally |
-| **Modular**        | Cognitive modules are replaceable and testable in isolation                         |
-
-### 1.3 Constraints
-
-- **Latency target**: < 500ms for risk < 0.3, < 3s for risk ≥ 0.7
-- **Memory**: Max 16GB VRAM for the entire stack
-- **Throughput**: ≥ 10 req/s per instance (risk < 0.3)
+> **Scope.** How MoralStack is built and why: the request lifecycle, the decision model, the cognitive
+> modules, the constitution, multi-turn governance, the integration surfaces, failure handling and
+> observability. Written against **MoralStack 1.0.0** and re-verified against the code on 2026-10-23.
+>
+> **Authority.** The code wins. This document explains the architecture; the per-module contracts live
+> in [`docs/modules/`](./modules/README.md), the step-by-step traces in [`docs/traces/`](./traces/), the
+> verified ledger in [`CODEBASE_FACTS.md`](./CODEBASE_FACTS.md) and the file map in
+> [`MORALSTACK_CODEBASE_INDEX.md`](./MORALSTACK_CODEBASE_INDEX.md). Symbols are cited as
+> `path` + function name rather than line numbers, so that the references survive edits.
 
 ---
 
-## 2. Module Architecture
+## Contents
 
-### 2.1 Component Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              MORALSTACK RUNTIME                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌──────────────┐    ┌──────────────────────────────────────────────────┐   │
-│  │   INGRESS    │───▶│                  ORCHESTRATOR                     │   │
-│  │   GATEWAY    │    │  ┌─────────────┐  ┌─────────────┐  ┌───────────┐ │   │
-│  └──────────────┘    │  │  Dispatcher │  │ State Mgr   │  │  Router   │ │   │
-│                      │  └─────────────┘  └─────────────┘  └───────────┘ │   │
-│                      └──────────────────────────────────────────────────┘   │
-│                                          │                                   │
-│         ┌────────────────────────────────┼────────────────────────────┐     │
-│         │                                │                            │     │
-│         ▼                                ▼                            ▼     │
-│  ┌──────────────┐                ┌──────────────┐              ┌──────────┐ │
-│  │    RISK      │                │   COGNITIVE  │              │ RESPONSE │ │
-│  │  ESTIMATOR   │                │    ENGINE    │              │ ASSEMBLER│ │
-│  └──────────────┘                └──────────────┘              └──────────┘ │
-│         │                                │                            ▲     │
-│         │                    ┌───────────┴───────────┐                │     │
-│         │                    │                       │                │     │
-│         │            ┌───────┴───────┐       ┌───────┴───────┐        │     │
-│         │            │   DELIBERATION │       │   EVALUATION  │        │     │
-│         │            │     MODULES    │       │    MODULES    │        │     │
-│         │            ├───────────────┤       ├───────────────┤        │     │
-│         │            │ • Policy LLM  │       │ • Critic      │        │     │
-│         │            │ • Simulator   │       │ • Hindsight   │        │     │
-│         │            │ • Perspectives│       │               │        │     │
-│         │            └───────────────┘       └───────────────┘        │     │
-│         │                    │                       │                │     │
-│         │                    └───────────┬───────────┘                │     │
-│         │                                │                            │     │
-│         │                                ▼                            │     │
-│         │                    ┌───────────────────┐                    │     │
-│         └───────────────────▶│  CONSTITUTION     │────────────────────┘     │
-│                              │     STORE         │                          │
-│                              └───────────────────┘                          │
-│                                                                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │   TELEMETRY  │  │    MODEL     │  │    CONFIG    │  │    CACHE     │     │
-│  │   SERVICE    │  │   REGISTRY   │  │   SERVICE    │  │   SERVICE    │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘     │
-│                              INFRASTRUCTURE LAYER                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+1. [What MoralStack is](#1-what-moralstack-is)
+2. [Design principles and invariants](#2-design-principles-and-invariants)
+3. [The system at a glance](#3-the-system-at-a-glance)
+4. [Lifecycle of a request](#4-lifecycle-of-a-request)
+5. [How `final_action` is decided](#5-how-final_action-is-decided)
+6. [The deliberative loop](#6-the-deliberative-loop)
+7. [Cognitive modules](#7-cognitive-modules)
+8. [The constitution](#8-the-constitution)
+9. [Multi-turn governance](#9-multi-turn-governance)
+10. [Integration surfaces](#10-integration-surfaces)
+11. [Failure handling](#11-failure-handling)
+12. [Observability and audit](#12-observability-and-audit)
+13. [Configuration](#13-configuration)
+14. [Testing and quality gates](#14-testing-and-quality-gates)
+15. [Known gaps](#15-known-gaps)
+16. [Glossary](#16-glossary)
 
 ---
 
-## 3. Module Specifications
+## 1. What MoralStack is
 
-> **Implementation compliance**: The following sections describe contracts and data structures. The current
-> implementation in `moralstack/` may differ in details (method names, return types, defaults). Where relevant,
-> differences
-> are indicated with the note *[impl]*. Components such as Ingress Gateway, Telemetry, Model Registry, Config and Cache
-> as
-> separate services are optional or not yet exposed; the Orchestrator accepts `ProcessedRequest` or `str` directly.
+MoralStack is a **governance engine** that sits between an application and a large language model. Every
+request goes through a pipeline that estimates its risk, retrieves the relevant ethical principles,
+optionally deliberates over a draft answer, and finally commits to one of three explicit actions:
 
-### 3.1 Ingress / Request
+| `final_action` | Meaning | What the user receives |
+|---|---|---|
+| `NORMAL_COMPLETE` | The request is fine as asked | A direct answer |
+| `SAFE_COMPLETE` | The request is legitimate but needs care | An answer generated *with* safeguards (framing, scope limits, safety resources) |
+| `REFUSE` | The request must not be fulfilled | A governed refusal with safe redirection |
 
-**Responsibility**: In the current implementation there is no separate "Ingress Gateway" component. The Orchestrator
-exposes `process(request: ProcessedRequest | str)`. If a `str` is passed, it is converted to
-`ProcessedRequest(prompt=request)`. The actual request type is as follows.
+The action is a **structured decision**, not a property of the text: it is computed from typed signals
+(risk category, operational risk, constitutional violations, ...) and the generator then writes *within*
+the decided bounds. `SAFE_COMPLETE` in particular is a first-class policy action, not a disclaimer
+appended after the fact.
 
-```python
-@dataclass
-class IngressRequest:
-    request_id: str                    # UUID v4
-    prompt: str                        # User input (max 32k tokens)
-    conversation_history: list[Turn]   # Optional, for context
-    user_context: UserContext          # User metadata (locale, permissions)
-    timestamp: datetime
+Three facts shape everything else:
 
-@dataclass
-class Turn:
-    role: Literal["user", "assistant"]
-    content: str
-
-@dataclass
-class UserContext:
-    locale: str = "en-US"
-    permission_level: Literal["standard", "research", "admin"] = "standard"
-    domain_overlay: str | None = None   # e.g. "medical", "legal"
-```
-
-*[impl]* The actual type used by the Orchestrator is **ProcessedRequest** (in `orchestrator.py`), with `request_id`
-(default UUID), `prompt`, `conversation_history`, `user_context: UserContext`, `timestamp: float`, and
-`developer_contract: DeveloperContract | None = None` (v0.4 additive field). `DeveloperContract` is defined in
-`moralstack/orchestration/contract.py` with fields `raw_text`, `mode`, and deterministic
-`contract_hash = sha256(f"{raw_text}|{mode}")[:16]`. An external gateway can build `ProcessedRequest` and pass it to
-`Orchestrator.process()`.
-
-**Refusal context (v0.4)**: `moralstack/orchestration/refusal_context.py` defines frozen **`RefusalContext`** and
-`build_refusal_context(...)`. The builder accepts optional **`developer_contract`** and **`conversation_history`**
-to populate **`developer_contract_summary`** and **`conversation_history_snippet`** (bounded text for refusal
-generation). **`classify_refusal_focus`** selects `safe_refusal_focus` / guidance using priority **P0–P6**:
-hard topical signals (P0) cannot be overridden by deployer contract redirection; structured-contract redirection (P1)
-is gated on `DeveloperContract.mode == "structured"` and keyword heuristics in `raw_text` (see module docstring).
+- **Every cognitive module is an LLM call.** Risk estimation, constitutional critique, consequence
+  simulation, hindsight evaluation, perspective review and constitution retrieval all run as prompted,
+  schema-constrained calls to an OpenAI-compatible chat-completions API (`moralstack/models/policy.py`,
+  `OpenAIPolicy`). There are no local fine-tuned models, no reward model and no training loop in the
+  runtime; the only local model is an optional embedding model used by the multi-turn decision ledger
+  (§9).
+- **Governance is the product, not a filter.** The delivered answer is always produced inside the governed
+  pipeline (invariant 7, §2). A wrapped client is never asked to generate the answer the user sees.
+- **The output is auditable by construction.** Each request leaves a decision trace, the LLM calls that
+  produced it and the signals behind the action in SQLite and/or JSONL, readable through the dashboard and
+  exportable as a Markdown audit trail (§12).
 
 ---
 
-### 3.2 Orchestrator
+## 2. Design principles and invariants
 
-**Responsibility**: Flow control, deliberative cycle state management, decision routing.
+MoralStack's behavior rests on a small set of load-bearing rules. The first column is the short name used
+across the repository (the full text lives in `PROJECT_SPEC.md` §5 and in `.claude/rules/`).
 
-```python
-@dataclass
-class OrchestratorConfig:
-    max_deliberation_cycles: int = 2
-    risk_thresholds: RiskThresholds = field(default_factory=RiskThresholds)
-    timeout_ms: int = 600000   # *[impl]* default 10 min (full stack with LLM)
-    enable_perspectives: bool = True
-    num_simulations: int = 3
-    min_hindsight_score: float = 0.8
-    enable_simulation: bool = True
-    enable_hindsight: bool = True
-    borderline_refuse_upper: float = 0.95  # Upper bound (inclusive) for borderline REFUSE deliberation
-    parallel_module_calls: bool = True
-    parallel_critic_with_modules: bool = True   # *[impl]* static fork when dynamic scheduler off / no risk
-    enable_dynamic_parallel_scheduler: bool = True  # *[impl]* per-cycle critic_gated vs full_parallel from risk posture
-    enable_speculative_generation: bool = True  # *[impl]* risk || speculative generate at controller entry
-    simulator_gate_skip_max_prior_semantic_harm: float = 0.25  # *[impl]* conservative skip only if prior harm below this
+| # | Invariant | What it guarantees | Where it is enforced |
+|---|---|---|---|
+| 1 | **Decision/generation separation** (P0) | `final_action` comes from structured signals, never from reading the response text | `runtime/decision/safe_complete_policy.py` (`compute_action_bounds`, `decide_final_action`); `orchestration/decision_service.py` (`decide_action`) |
+| 2 | **System-prompt transparency** | Governance never mutates the developer's system prompt | prompt composition in `orchestration/`; `tests/test_system_prompt_byte_equality.py` |
+| 3 | **Hard-signal supremacy** (P0) | Self-harm, child safety, weapons and physical-harm signals cannot be overridden by a developer contract, an overlay or a cached decision | `orchestration/path_router.py` (`has_hard_signal_evidence`, `is_hard_signal_refuse`); `compliance/safety_override.py`; ledger guard in `controller.py` |
+| 4 | **Single-turn prompt transparency** | No contract and no history ⇒ prompts byte-identical to the single-turn baseline | `tests/test_system_prompt_byte_equality.py`, `tests/prompts_golden/` |
+| 5 | **`core` is retrieval-only** | The `core` constitution is never used as a runtime domain overlay | `controller._normalize_runtime_domain`; risk estimator domain selection |
+| 6 | **Observability never breaks the request** | Telemetry is best-effort; a logging failure cannot fail or alter a request | `observability/service.py` (`emit`), `emit_helpers.py`, SQLite sink writers |
+| 7 | **Governed delivery only** | Every user-visible answer is generated inside the pipeline; a pipeline failure fails closed to a governed refusal | `orchestration/delivery.py` (`finalize_delivery`); `sdk/wrapper.py`; `server/proxy.py` |
 
-@dataclass
-class RiskThresholds:
-    low: float = 0.3       # Below: fast path
-    medium: float = 0.7    # Between low and medium: 1 cycle
-    # Above medium: full deliberation
+Two engineering principles sit on top of the invariants:
 
-@dataclass
-class DeliberationState:
-    cycle: int
-    draft_response: str
-    critiques: list[Any]           # *[impl]* CriticReport
-    simulations: list[Any]         # *[impl]* SimulationResult
-    hindsight: Any | None          # *[impl]* risultato Hindsight (expected_value qui)
-    perspectives: list[Any]        # *[impl]* PerspectiveResult o EnsembleResult
-    decision: DecisionType | None
-```
-
-#### Developer Contract Compliance Layer (DCCL)
-
-Inserted between policy speculative overlap and risk-based routing. The DCCL evaluates
-whether a request invokes a deployer-authorized behavior. It emits its verdict for
-observability (`COMPLIANCE_LAYER_*` events, `OrchestratorResult.compliance_verdict`).
-When the verdict is **MATCH**, the controller applies a three-case routing state
-machine: (1) reuse a validated non-degraded speculative draft, (2) regenerate and
-revalidate when the draft is missing, wrong, or the verdict is `degraded`, or
-(3) fall through to deliberation when revalidation fails. Cases 1–2 route to the
-**compliance fast-path** (`COMPLIANCE_FAST_PATH`, `NORMAL_COMPLETE`) and skip risk
-routing, deliberation, critic, simulator, and perspectives. All other verdicts leave
-the standard pipeline unchanged.
-
-Reference: `docs/modules/compliance_layer.md`, `dccl_specification_v0.3.md`.
-
-**Interfaccia**:
-
-```python
-class Orchestrator(Protocol):
-    def process(self, request: ProcessedRequest) -> OrchestratorResult:
-        """
-        Main entry point. Handles the entire flow.
-
-        Flow:
-        1. risk = RiskEstimator.estimate(request)
-        2. if risk < thresholds.low:
-               return fast_path(request)
-        3. state = init_deliberation_state()
-        4. while state.cycle < max_cycles and not converged:
-               state = deliberation_cycle(state, request)
-        5. return assemble_response(state)
-        """
-
-    def fast_path(self, request: ProcessedRequest) -> OrchestratorResult:
-        """
-        Fast path for low-risk requests.
-        Generates response + quick constitutional validation.
-        """
-
-    def deliberation_cycle(
-        self,
-        state: DeliberationState,
-        request: ProcessedRequest
-    ) -> DeliberationState:
-        """
-        Single deliberative cycle:
-        1. Generate/revise draft
-        2. Constitutional critique
-        3. Simulate consequences
-        4. Evaluate hindsight
-        5. (Optional) Perspectives
-        6. Decide whether to converge or continue
-        """
-```
-
-*[impl]* **Type safety**: The orchestration layer (`moralstack/orchestration/`) uses **typed protocols** instead of `Any` for module dependencies and results. `DeliberationDependencies` (policy, critic, simulator, hindsight, perspectives, constitution_store, output_protector) and risk/result types (`RiskEstimationProtocol`, `CriticReportProtocol`, etc.) are defined in `moralstack/orchestration/types.py` and `moralstack/core/types.py`. The package is checked with **mypy strict** (see `pyproject.toml`). See also @docs/modules/orchestrator.md § Module result contracts.
-
-**Algoritmo Convergenza**:
-
-```python
-def check_convergence(state: DeliberationState) -> bool:
-        """
-    Converges when:
-    1. No critical violations in the latest critique (has_critical_violations)
-    2. Hindsight expected_value >= min_hindsight_score (e.g. 0.8)
-    3. Or: max_cycles reached
-    """
-    if state.cycle >= config.max_deliberation_cycles:
-        return True
-
-    last_critique = state.critiques[-1] if state.critiques else None
-    if last_critique and getattr(last_critique, "has_critical_violations", False):
-        return False
-
-    # *[impl]* The hindsight score is in state.hindsight (HindsightResult.aggregated.expected_value)
-    # or exposed as property state.hindsight_score
-    return state.hindsight_score >= config.min_hindsight_score
-```
-
-*[impl]* Convergence and decision logic live in `moralstack/orchestration/convergence_evaluator.py` (`ConvergenceEvaluator.check_convergence`, `determine_decision`). Loop invariants and structured logging remain in `moralstack/orchestration/convergence.py` (`enforce_convergence_invariants`, `log_convergence_event`). Aggregated guidance is built by `moralstack/orchestration/guidance_builder.py` (`build_aggregated_guidance(state, *, filter_marginal=True, telemetry=None)`). By default, marginal signals are dropped using state-only thresholds (critic, weighted perspective approval, hindsight score, semantic expected harm); when no substantive guidance remains, the string is empty and cycle-2 policy rewrite is skipped. `filter_marginal=False` preserves the legacy unfiltered aggregation. Observability: `AGGREGATED_GUIDANCE_EVALUATED` orchestration events.
-
-**Cycle Gating and Deliberation Context**:
-
-To reduce tokens and latency, the deliberative cycle supports:
-
-- **DelibContext** (`moralstack/models/delib_context.py`): shared context with full draft and `change_log`
-- **Context Builder** (`moralstack/pipeline/context_builder.py`): `build_context()`, `compute_delta()` (difflib)
-- **Gating**: `enable_hindsight_gating` is true by default (hindsight only in final cycle; opt-out for legacy). `enable_simulator_gating` (opt-in) skips simulator when safe.
-- **Trace**: optional field `modules_skipped` for reporting
-- **Policy rewrite model**: deliberative `rewrite()` at cycle 2+ may use `MORALSTACK_POLICY_REWRITE_MODEL` (when unset,
-  same as `OPENAI_MODEL`) to reduce latency; initial `generate()` / speculative draft stays on the primary model.
-
-#### Policy rewrite model downgrade
-
-When the critic triggers a revision on soft violations, the policy `rewrite` at cycle 2+ uses a configurable model
-(`MORALSTACK_POLICY_REWRITE_MODEL`). If unset or empty, the primary `OPENAI_MODEL` is used (backward compatible). A
-lighter model reduces rewrite latency because the call runs under explicit critic guidance and constrained-generation
-instructions; speculative first-pass generation remains on the primary model for baseline quality. **Since 2026-09-09
-the shipped templates set this to `OPENAI_MODEL` (`gpt-4o`), i.e. no downgrade by default** — the split is opt-in, not
-opt-out, because a template that silently swaps the generator of the delivered answer makes any "same model, with
-governance" comparison wrong for the revised requests (see `docs/CODEBASE_FACTS.md`). To re-enable it, set
-`MORALSTACK_POLICY_REWRITE_MODEL` to a lighter model id.
-
-In benchmark testing **under the former templates** (rewrite and simulator on
-`gpt-4.1-nano`), this optimization reduced rewrite step latency and contributed to large
-reductions versus heavier simulator and rewrite defaults (historically on the order of ~82s → ~60s mean deliberative latency
-in prior runs). **Benchmark run 12** (84 questions) reports overall MoralStack **mean**
-wall-clock **~36s** and **median ~26s**, with **98.8%** compliance unchanged and overall
-judge score **~9.27/10** (vs **7.83/10** baseline).
-
-#### Rewrite prompt constraints
-
-To prevent lighter rewrite models from introducing new operational content during revision,
-the rewrite system prompt includes explicit constraints:
-
-- Do not add new examples, scenarios, or operational details not present in the original draft
-- Focus on restructuring and reframing existing content based on critic feedback
-- When feedback requests conceptual focus, remove operational specifics rather than adding new ones
-
-These constraints are appended to the rewrite system prompt regardless of whether it comes from
-the deliberation runner or uses the fallback default. They compensate for the tendency of smaller
-models to "fill" revisions with new specifics rather than restructuring existing content.
+- **Fail closed.** When the pipeline cannot verify a draft (critic failure, timeout, missing verdict), the
+  answer is a governed `REFUSE`, never the unverified draft (§11).
+- **Pay for deliberation only where it matters.** Clearly benign and clearly harmful requests take short
+  paths; the full deliberative loop is reserved for sensitive or ambiguous requests, and several
+  mechanisms (speculative drafting, parallel module calls, gating, caching) keep its latency bounded.
 
 ---
 
-### 3.3 Risk Estimator
+## 3. The system at a glance
 
-**Responsibility**: Ethical risk classification of the prompt (semantic, not just keyword). *[impl]* LLM-based
-implementation (`LLMBasedRiskEstimator` in `moralstack/models/risk/estimator.py`).
+```mermaid
+flowchart LR
+    subgraph Surfaces["Integration surfaces"]
+        SDK["Python SDK<br/>govern(client)"]
+        PROXY["HTTP proxy<br/>POST /v1/chat/completions"]
+        CLI["CLI shell<br/>moralstack"]
+    end
 
-```python
-@dataclass
-class RiskEstimation:
-    score: float                       # [0, 1]
-    confidence: float                  # [0, 1]
-    risk_category: RiskCategory
-    semantic_signals: list[str]        # calibrated strings (e.g. Qn:..., request_type:...)
-    domain_sensitivity: str = "LOW"   # LOW | MEDIUM | HIGH
-    operational_risk: str = "NONE"     # NONE | LOW | HIGH
-    risk_policy_action: RiskPolicyAction = RiskPolicyAction.DELIBERATE
-    rationale: str = ""
-    intent_clarity: str = "HIGH"       # For SAFE_COMPLETE routing
-    misuse_plausibility: str = "LOW"
-    actionability_risk: str = "LOW"
-    stated_personal_bias: bool = False            # *[impl]* intent framing / falsification (prompts.py)
-    seeks_norm_circumvention: bool = False       # *[impl]* intent framing / falsification
-    q13_protected_class_targeting: bool = False    # *[impl]* harm-topic signal q13 (protected-class differential treatment)
-    estimation_mode: str = ""                    # *[impl]* "" | "parallel"
+    subgraph Runtime["Governance runtime"]
+        CTRL["OrchestrationController"]
+        RISK["Risk estimator<br/>3 parallel mini-estimators"]
+        RET["Constitution retriever<br/>domain prefilter + agents"]
+        DCCL["Developer Contract<br/>Compliance Layer"]
+        DEC["Decision service<br/>decide_action"]
+        ROUTE["Path router<br/>get_route"]
+        DELIB["Deliberation runner<br/>critic / simulator /<br/>perspectives / hindsight"]
+        GEN["Policy generator<br/>OpenAIPolicy"]
+        REF["Refusal handler"]
+    end
 
-class RiskCategory(Enum):
-    BENIGN = "benign"
-    MORALLY_NUANCED = "morally_nuanced"  # Ethical dilemmas
-    SENSITIVE = "sensitive"
-    POTENTIALLY_HARMFUL = "potentially_harmful"
-    CLEARLY_HARMFUL = "clearly_harmful"
+    subgraph Obs["Observability"]
+        SINKS[("SQLite / JSONL")]
+        UI["Dashboard<br/>moralstack-ui"]
+    end
 
-class RiskPolicyAction(Enum):
-    ALLOW = "ALLOW"
-    ALLOW_WITH_CAVEAT = "ALLOW_WITH_CAVEAT"
-    DELIBERATE = "DELIBERATE"
-    DENY = "DENY"
+    SDK --> CTRL
+    PROXY --> CTRL
+    CLI --> CTRL
+    CTRL --> RISK
+    RISK --> RET
+    CTRL --> DCCL
+    CTRL --> DEC --> ROUTE
+    ROUTE --> DELIB
+    ROUTE --> REF
+    DELIB --> GEN
+    CTRL -. events .-> SINKS
+    SINKS --> UI
+    LLM[["OpenAI-compatible<br/>chat completions API"]]
+    RISK --> LLM
+    RET --> LLM
+    DCCL --> LLM
+    DELIB --> LLM
+    GEN --> LLM
+    REF --> LLM
 ```
 
-**Interfaccia**:
+### Package map
 
-```python
-class RiskEstimator(Protocol):
-    def estimate(self, request: ProcessedRequest | str) -> RiskEstimation:
-        """Returns RiskEstimation with score, risk_category and semantic signals."""
-```
-
-**Configurazione**: `LLMBasedRiskEstimator` accepts an optional `RiskEstimatorConfig`. When omitted, config is loaded
-from environment variables (`MORALSTACK_RISK_*`);
-see [modules/risk_estimator.md](modules/risk_estimator.md#environment-variables). Unset per-mini model slots
-(`MORALSTACK_RISK_{INTENT,SIGNALS,OPERATIONAL}_MODEL`) inherit the risk policy's model (`resolve_risk_mini_model`).
-
-*[impl]* In `moralstack` the protocol uses `estimate(prompt: str)`. The implementation is LLM-based (structured prompts
-in `models/risk/prompts.py`) and uses **three parallel mini-estimators** (intent, harm signals q1–q17 + `domain_sensitivity`,
-operational risk); merge and calibration live in
-`calibration.py`. **Q17** (`minor_exploitation`) extends the harm scanner for grooming or contact targeting minors;
-auxiliary fields such as `stated_personal_bias`, `seeks_norm_circumvention`, and **q13** support coherence and
-falsification rules on the intent classifier.
+| Package | Responsibility |
+|---|---|
+| `moralstack/sdk/` | Public SDK: `govern()`, `GovernedClient`, `GovernanceConfig`, `GovernedResponse`, session store, bootstrap |
+| `moralstack/server/` | OpenAI-compatible governance proxy (`create_app`), audit headers, conversation correlation |
+| `moralstack/runtime/` | `Orchestrator` facade and factories; the deliberative modules (`runtime/modules/`); the decision policy (`runtime/decision/`); decision-correctness diagnostics |
+| `moralstack/orchestration/` | The controller and everything it coordinates: routing, decision service, deliberation runner, convergence, refusal handling, delivery, multi-turn state, ledger, embedders |
+| `moralstack/models/` | The LLM policy wrapper (`policy.py`) and the risk estimator (`models/risk/`) |
+| `moralstack/constitution/` | Constitution schema, YAML data (`core.yaml` + overlays), store and retriever |
+| `moralstack/compliance/` | The Developer Contract Compliance Layer (DCCL) and its safety override |
+| `moralstack/prompts/` | The externalized prompt catalog (`data/*.yaml`) and its loader |
+| `moralstack/observability/` | Event envelopes, context variables, sinks (SQLite, JSONL), token accounting |
+| `moralstack/reports/` | Request reports and the conversation audit export |
+| `moralstack/ui/` | FastAPI + Jinja dashboard |
+| `moralstack/cli/` | Interactive shell and the overlay validator |
+| `moralstack/utils/` | Shared helpers: provider-error classification, module result cache, output protection, structured output |
 
 ---
 
-### 3.4 Policy LLM
+## 4. Lifecycle of a request
 
-**Responsibility**: Text generation (responses, revisions, refusals). *[impl]* The Orchestrator uses `generate` for
-draft, `rewrite` for revisions guided by Critic/Hindsight/Simulator/Perspectives, `refuse` for refusals. Optional env
-`MORALSTACK_POLICY_REWRITE_MODEL` selects the model for `rewrite()` only; `generate()` and `refuse()` use the primary
-`OPENAI_MODEL` (see [Policy rewrite model downgrade](#policy-rewrite-model-downgrade) above).
+All entry points converge on `OrchestrationController.process` (`moralstack/orchestration/controller.py`).
+The `Orchestrator` class in `moralstack/runtime/orchestrator.py` is a thin facade over it, and its factories
+(`create_orchestrator`, `create_minimal_orchestrator`) wire the modules.
 
-```python
-@dataclass
-class GenerationConfig:
-    max_tokens: int = 2048
-    temperature: float = 0.7
-    top_p: float = 0.9
-    stop_sequences: list[str] = field(default_factory=list)
+### 4.1 Input and output types
 
-@dataclass
-class GenerationResult:
-    text: str
-    tokens_used: int = 0
-    finish_reason: str = "stop"   # "stop", "length", ...
+The controller receives a `ProcessedRequest` (a plain string is wrapped automatically) and returns an
+`OrchestratorResult`, both defined in `moralstack/orchestration/types.py`:
+
+| Type | Key fields |
+|---|---|
+| `ProcessedRequest` | `request_id`, `prompt`, `conversation_history`, `user_context`, `developer_contract`, `conversation_context`, `generation_overrides` |
+| `OrchestratorResult` | `response: FinalResponse`, `path` (`FAST_PATH`, `DELIBERATIVE_PATH`, `COMPLIANCE_FAST_PATH`, `DOMAIN_EXCLUDED`, `ERROR_PATH`), `path_taken`, `total_cycles`, `converged`, `errors`, `trace`, `compliance_verdict` |
+| `FinalResponse` | `content` (generated text only), `response_type`, `metadata: ResponseMetadata` |
+| `ResponseMetadata` | `final_action`, `path`, `risk_score`, `hindsight_score`, `deliberation_cycles`, `triggered_principles`, `hard_violations`, `reason_codes`, `winning_rule`, `why_not_*`, `decision_correctness`, `draft_origin`, token accounting |
+
+`ResponseMetadata` is always built through its factories (`from_decision`, `for_system_error`,
+`for_domain_excluded`, `for_fail_safe`) so that every path produces consistent metadata.
+
+### 4.2 The stages
+
+```mermaid
+flowchart TD
+    A([Request]) --> S["1 · Speculative overlap<br/>risk estimation ∥ draft generation"]
+    S --> R["2 · Request analysis<br/>constitution retrieval, once per request"]
+    R --> C{"3 · DCCL verdict"}
+    C -->|"MATCH, no hard signal,<br/>draft validated"| CFP["COMPLIANCE_FAST_PATH<br/>NORMAL_COMPLETE"]
+    C -->|"other verdicts /<br/>revalidation failed"| X{"4 · Excluded<br/>domain?"}
+    X -->|yes| DEX["DOMAIN_EXCLUDED<br/>REFUSE"]
+    X -->|no| F["5 · Sensitive-overlay risk floor<br/>decide_action + safe-complete gating"]
+    F --> G{"6 · get_route"}
+    G -.->|"conversation + ledger hit"| LED["7 · Conversational fast path<br/>cached decision"]
+    LED --> G2{route}
+    G --> G2
+    G2 -->|refuse| RF["Refusal handler"]
+    G2 -->|benign| BF["Benign fast path"]
+    G2 -->|safe_complete| SC["Safe-complete path"]
+    G2 -->|fast_path| FP["Fast path<br/>+ HARD quick_check"]
+    G2 -->|deliberative| DL["Deliberative loop (§6)"]
+    FP -->|"check failed / errored"| DL
+    RF & BF & SC & FP & DL & CFP & DEX --> OUT(["Governed result + audit trail"])
 ```
 
-**Interfaccia (conforme a PolicyLLMProtocol)**:
+**1 · Speculative overlap.** When `enable_speculative_generation` is on (the default), the controller starts
+the risk estimation and a first draft in parallel (`_run_speculative_overlap`). It waits only for the risk
+estimate; the draft is joined later if the route needs it, and abandoned if the route makes it useless
+(refusals, safe-complete, constrained generation for clearly harmful requests).
 
-```python
-class PolicyLLM(Protocol):
-    def generate(self, prompt: str, system: str = "", config: Any = None) -> Any:
-        """Generate response from prompt (and optional system)."""
+**2 · Request analysis.** The constitution retrieval runs once per request, owned by the risk estimator, and
+the resulting principles are shared by every downstream module (§8).
 
-    def rewrite(self, prompt: str, draft: str, guidance: str, system: str = "", config: Any = None) -> Any:
-        """Revise draft using guidance (aggregated from Critic, Hindsight, Perspectives, Simulator)."""
+**3 · Developer Contract Compliance Layer.** When the developer supplied a system prompt, the DCCL
+(`moralstack/compliance/dccl.py`) asks whether the request invokes a behavior the deployer explicitly
+authorized. Verdicts are `MATCH`, `NO_MATCH`, `SAFETY_OVERRIDE` and `NO_CONTRACT`; the evaluation path is
+configurable (`structured`, `llm`, `hybrid`, default `hybrid`). On `MATCH` the controller runs a small
+state machine: reuse the validated speculative draft, or regenerate and revalidate it when the draft is
+missing or the verdict is low-confidence; if revalidation fails the request falls back to the standard
+pipeline. A successful `MATCH` routes to `COMPLIANCE_FAST_PATH` with `NORMAL_COMPLETE` and skips the
+deliberative modules. A `MATCH` is **downgraded to the standard pipeline whenever the risk estimate carries
+hard-signal evidence** — the contract can authorize behaviors, never override P0 signals (invariant 3).
+Details: [`modules/compliance_layer.md`](./modules/compliance_layer.md).
 
-    def refuse(self, prompt: str, guidance: str, config: Any = None, language: str | None = None) -> Any:
-        """Generate motivated refusal according to guidance."""
+**4 · Domain exclusion.** If the detected domain belongs to an overlay marked `excluded`, the request exits
+early with `REFUSE` on path `DOMAIN_EXCLUDED`. No shipped overlay sets `excluded`; the mechanism exists for
+deployer overlays.
+
+**5 · Pre-routing decision.** Sensitive overlays impose a minimum risk score (`sensitive_risk_floor`, global
+default 0.35 in `orchestration/overlay_policy.py`). The decision service then computes a first
+`final_action` from the risk estimate alone (§5), and safe-complete gating may adjust it.
+
+**6 · Routing.** `get_route` (`orchestration/path_router.py`) maps the pre-routing decision to one of five
+routes, checked in this order:
+
+| Order | Route | Condition | What happens |
+|---|---|---|---|
+| 1 | `refuse` | `REFUSE`, not already deliberative, **not** borderline | Refusal handler writes a governed refusal |
+| 2 | `benign` | `NORMAL_COMPLETE`, operational risk `NONE`, score < `low` | Draft delivered after the benign fast path |
+| 3 | `safe_complete` | `SAFE_COMPLETE`, not already deliberative | Answer regenerated under safe-complete guidance, 0 cycles |
+| 4 | `fast_path` | `NORMAL_COMPLETE`, policy action `ALLOW`, score < `low` | Draft checked by the critic's HARD-only `quick_check`; any failure escalates to deliberation |
+| 5 | `deliberative` | everything else | Full deliberative loop (§6) |
+
+A `REFUSE` is **borderline** when the score is in `[medium, borderline_refuse_upper]` and the refusal is not
+anchored by hard evidence (hard violations, non-overridable reason codes or hard semantic signals). Borderline
+refusals are not issued immediately: they go through deliberation, which may confirm them or soften them.
+
+The thresholds are `RiskThresholds(low=0.3, medium=0.7)` and `borderline_refuse_upper=0.95`
+(`OrchestratorConfig`, overridable through `MORALSTACK_ORCHESTRATOR_*`). For routing only, the router
+re-derives the risk-policy action from operational risk (`HIGH → DENY`, `NONE → ALLOW`, `LOW → DELIBERATE`);
+the authoritative decision stays in the decision service.
+
+```mermaid
+flowchart LR
+    B1["0.0 – 0.3<br/><b>below low</b><br/>NORMAL_COMPLETE may<br/>take a fast path"] --- B2["0.3 – 0.7<br/><b>low to medium</b><br/>NORMAL_COMPLETE is<br/>deliberated; REFUSE<br/>is immediate"] --- B3["0.7 – 0.95<br/><b>borderline</b><br/>a non-hard REFUSE is<br/>deliberated, not issued"] --- B4["0.95 – 1.0<br/><b>above upper</b><br/>REFUSE is<br/>immediate"]
+    style B1 fill:#d9f2e3,stroke:#2f8f5b,color:#123
+    style B2 fill:#fff4cc,stroke:#b08900,color:#321
+    style B3 fill:#ffe0c2,stroke:#c46a00,color:#321
+    style B4 fill:#f9d0d0,stroke:#b03030,color:#311
 ```
 
-**Model Specification**:
+The bands are not routes by themselves — the route also depends on the pre-routing decision and on the
+operational risk — but they summarize how the score is read. A `SAFE_COMPLETE` takes the safe-complete
+route in every band, and a `REFUSE` anchored by hard evidence is immediate at any score.
 
-| Aspetto        | Specifica                          |
-|----------------|------------------------------------|
-| Base Model     | Mistral-7B-Instruct v0.2           |
-| Fine-tuning    | LoRA rank 64, alpha 128            |
-| Quantization   | 4-bit (bitsandbytes) per inference |
-| Context Window | 8192 tokens                        |
-| VRAM           | ~6GB                               |
+**7 · Conversational fast path.** In a conversation with a decision ledger (§9), a sufficiently similar
+earlier turn under the same contract, posture and domain can supply a cached decision and force its route,
+skipping deliberation. A cached non-refusal is **never** reused when the current turn carries hard-signal
+evidence.
+
+### 4.3 Which modules run on which path
+
+| Path | Risk estimator | Retrieval | Draft | Critic | Simulator | Perspectives | Hindsight | Refusal generator |
+|---|---|---|---|---|---|---|---|---|
+| `COMPLIANCE_FAST_PATH` | ✓ | ✓ | ✓ (DCCL-validated) | – | – | – | – | – |
+| `DOMAIN_EXCLUDED` | ✓ | ✓ | – | – | – | – | – | – |
+| refuse route | ✓ | ✓ | abandoned | – | – | – | – | ✓ |
+| benign fast path | ✓ | ✓ | ✓ | – | – | – | – | – |
+| safe-complete path | ✓ | ✓ | regenerated | – | – | – | – | – |
+| fast path | ✓ | ✓ | ✓ | HARD `quick_check` | – | – | – | – |
+| deliberative path | ✓ | ✓ | ✓ / rewrite | ✓ every cycle | ✓ (gating opt-in) | ✓ every cycle | final cycle only (default) | if the outcome is `REFUSE` |
 
 ---
 
-### 3.5 Constitutional Critic
+## 5. How `final_action` is decided
 
-**Responsibility**: Evaluates responses against the constitution, produces structured critiques. *[impl]* The return
-type is
-**CriticReport** (in `critic_module.py`), with **decision** field (`PROCEED` | `REVISE` | `REFUSE`) that guides
-the Orchestrator.
+### 5.1 Action bounds
 
-```python
-@dataclass
-class CriticReport:   # *[impl]* nome effettivo (non Critique)
-    violations: list[Violation]
-    severity_score: float              # [0, 1] aggregato
-    has_critical_violations: bool       # True se hard constraint violato
-    decision: str                      # "PROCEED" | "REVISE" | "REFUSE"
-    revision_guidance: str
-    raw_response: str = ""
-    parse_attempts: int = 1
+The decision model treats the three actions as an ordered scale, **`NORMAL_COMPLETE < SAFE_COMPLETE < REFUSE`**
+(N < S < R). `compute_action_bounds` (`runtime/decision/safe_complete_policy.py`) reads a `PolicyContext` of
+structured inputs only — risk category, operational risk, hard-violation count, intent axes, intent type,
+whether the active overlay is sensitive — and returns a minimum required and a maximum allowed action. The
+rules form a ladder; the first one that matches wins:
 
-@dataclass
-class Violation:
-    principle_id: str
-    principle_title: str
-    severity: float
-    constraint_type: Literal["hard", "soft"]
-    rationale: str
-    evidence: str
+```mermaid
+flowchart TD
+    A{"hard violations?<br/>CLEARLY_HARMFUL?<br/>operational risk HIGH?"} -->|yes| R["[R, R] → REFUSE"]
+    A -->|no| B{"actionability HIGH?"}
+    B -->|yes| S1["[S, S] → SAFE_COMPLETE"]
+    B -->|no| C{"risk category"}
+    C -->|"SENSITIVE /<br/>MORALLY_NUANCED"| D{"factual intent, no dual use,<br/>overlay not sensitive?"}
+    D -->|yes| NS1["[N, S] → NORMAL_COMPLETE"]
+    D -->|no| S2["[S, S] → SAFE_COMPLETE"]
+    C -->|POTENTIALLY_HARMFUL| E{"sensitive overlay and<br/>non-operational intent,<br/>not plainly factual?"}
+    E -->|yes| S3["[S, S] → SAFE_COMPLETE"]
+    E -->|no| NS2["[N, S] → NORMAL_COMPLETE"]
+    C -->|BENIGN| N["[N, N] → NORMAL_COMPLETE"]
+    C -->|unknown| NS3["[N, S] → NORMAL_COMPLETE"]
 ```
 
-**Interfaccia**:
+`decide_final_action` returns the **minimum required** action together with the reason codes
+(`hard_violations`, `risk_clearly_harmful`, `safe_complete_required`, `domain_regulated`, ...). In the gray
+zone `[N, S]` it deliberately starts from `NORMAL_COMPLETE` to limit over-refusal; the decision service and,
+where routed, the deliberative loop may still raise it. The same module is the single source of truth for
+the SDK, the proxy, the CLI and the benchmarks.
 
-```python
-class ConstitutionalCritic(Protocol):
-    def critique(self, request: str, response: str, constitution: Any, principles: list | None = None) -> CriticReport: ...
-    def quick_check(self, request: str, response: str, constitution: Any) -> QuickCheckResult: ...
-```
+### 5.2 The decision service
 
-**Implementation**: The Critic uses the PolicyLLM with a specialized prompt:
+`decide_action` (`orchestration/decision_service.py`) starts from those bounds and applies a fixed chain of
+handlers. It runs twice: once before routing (risk estimate only) and again after deliberation (with critic,
+simulator and hindsight results).
 
-```python
-CRITIC_PROMPT_TEMPLATE = """
-You are a constitutional critic. Evaluate the following response against these principles:
+| Step | Handler | Rule (summary) |
+|---|---|---|
+| 1 | `_handle_hard_violations` | Hard violation ⇒ `REFUSE`, except crisis support (⇒ `SAFE_COMPLETE`) and a narrow regulated-information carve-out at low risk |
+| 2 | hindsight refusal | A hindsight `REFUSE` recommendation is honored |
+| 3 | `_handle_normative_refuse_guards` | Operational risk `HIGH`, or misuse `HIGH` with actionability `HIGH` ⇒ `REFUSE` |
+| 4 | epistemic escalation | Strongly negative expected valence with high actionability ⇒ `SAFE_COMPLETE` |
+| 5 | informational recovery | Restores a lighter action for clearly informational requests where the guards allow it |
+| 6 | policy-bounds fallback | Otherwise, the action chosen by `decide_final_action` |
 
-{principles}
+### 5.3 Post-deliberation guards
 
-REQUEST: {request}
-RESPONSE: {response}
+After the loop, the controller (`_route_deliberative`) applies, in order:
 
-For each principle, determine if violated. Output JSON:
-{{
-  "violations": [
-    {{
-      "principle_id": "...",
-      "severity": 0.0-1.0,
-      "rationale": "...",
-      "evidence": "..."
-    }}
-  ],
-  "revision_guidance": "..."
-}}
-"""
-```
+1. `decide_action` again, on the full deliberation state, with the path forced to `DELIBERATIVE_PATH`;
+2. `evaluate_deliberation_override` — a `REFUSE` becomes `SAFE_COMPLETE` only when all modules agree the
+   answer is acceptable;
+3. on `CYCLES_EXHAUSTED` in a sensitive context, `NORMAL_COMPLETE` is raised to `SAFE_COMPLETE`;
+4. `apply_safe_complete_gating` (`orchestration/safe_complete_gating.py`);
+5. `enforce_verified_draft_delivery` — a draft without a completed critique is never delivered (⇒ `REFUSE`);
+6. `enforce_no_rejected_draft_delivery` — a draft the critic rejected for a hard violation is never
+   delivered (⇒ `REFUSE`).
 
-**Configuration**: `LLMConstitutionalCritic` accepts an optional `CriticConfig`. When omitted, config is loaded from
-environment variables (`MORALSTACK_CRITIC_*`);
-see [modules/critic.md](modules/critic.md#environment-variables). The model used for the critic can be set via
-`MORALSTACK_CRITIC_MODEL` (CLI and benchmark use a dedicated policy when set).
+The outcome is explained by a `DecisionExplanation` (`models/decision_explanation.py`: winning rule, reason
+codes, activated signals, `why_not_*` fields) and checked, without any LLM call, by the decision-correctness
+diagnostics (`runtime/decision_correctness.py`), which label it `OK`, `UNDERBLOCK`, `OVERBLOCK` or
+`SYSTEM_ERROR` against the computed bounds. Full policy: [`decision_policy.md`](./decision_policy.md).
 
 ---
 
-### 3.6 Consequence Simulator
+## 6. The deliberative loop
 
-**Responsibility**: Generates plausible future scenarios. *[impl]* Returns **SimulationResult** (not
-`list[Simulation]`), with **Consequence** list (fields `text`, `likelihood` instead of `description`, `plausibility`).
+The loop lives in `orchestration/deliberation_runner.py`. Its job is to turn a draft into an answer that the
+critic, the simulator, the perspectives and hindsight can all accept — or to establish that no acceptable
+answer exists.
 
-```python
-@dataclass
-class Consequence:   # *[impl]* singola conseguenza (nome effettivo)
-    text: str                           # Narrative (description, max 160 chars)
-    likelihood: float                   # [0, 1] (plausibility)
-    scenario_id: str = ""
-    scenario_type: ScenarioType = ScenarioType.SOCIAL_IMPACT
-    outcome_valence: float = 0.0
-    affected_stakeholders: list[str] = field(default_factory=list)
-    harm_type: str = "none"             # Tassonomia danni semantici
-    harm_severity: float = 0.0          # [0, 1]
-    harm_scope: str = "individual"      # individual|group|societal|systemic
-    reversibility: float = 0.0           # [0, 1]
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Controller
+    participant P as Policy generator
+    participant K as Critic
+    participant S as Simulator
+    participant V as Perspectives
+    participant H as Hindsight
+    participant E as Convergence
 
-@dataclass
-class SimulationResult:
-    consequences: list[Consequence]
-    worst_case_valence: float
-    best_case_valence: float
-    expected_valence: float
-    semantic_expected_harm: float = 0.0  # max(likelihood * harm_severity)
-    dominant_harm_types: list[str] = field(default_factory=list)
-    worst_harm: dict | None = None      # {harm_type, harm_scope, risk}
-
-class ScenarioType(Enum):
-    IMMEDIATE_HARM = "immediate_harm"
-    DOWNSTREAM_MISUSE = "downstream_misuse"
-    SOCIAL_IMPACT = "social_impact"
-    LEGAL_CONSEQUENCE = "legal_consequence"
-    POSITIVE_OUTCOME = "positive_outcome"
+    C->>P: cycle 1: reuse speculative draft (or generate)
+    par critic, simulator and perspectives
+        C->>K: critique(draft, principles)
+        C->>S: simulate(draft, k=3)
+        C->>V: evaluate(draft)
+    end
+    Note over C,K: hard violation ⇒ REVISE, or REFUSE if the critic says so
+    alt final cycle (hindsight gating)
+        C->>H: evaluate(draft, consequences)
+    end
+    C->>E: determine_decision(state)
+    E-->>C: CONVERGED / REVISE / REFUSE / CONTINUE
+    opt not converged and cycles left
+        C->>P: cycle 2: rewrite(draft, aggregated guidance)
+        Note over C,E: the same module round repeats on the new draft
+    end
 ```
 
-**Interfaccia**:
+### 6.1 Cycle budget
 
-```python
-class ConsequenceSimulator(Protocol):
-    def simulate(self, request: str, response: str, num_scenarios: int = 3) -> SimulationResult: ...
-```
+| Setting | Default | Notes |
+|---|---|---|
+| `max_deliberation_cycles` | 2 | Upper bound for sensitive or ambiguous requests |
+| effective cycles | 1 | When score < `low` and the category is neither sensitive nor morally nuanced (`_effective_max_cycles`) |
+| constrained generation | 1 | For `CLEARLY_HARMFUL` requests that still reach the loop |
+| soft revision | +1 rewrite | When the outcome is `CONVERGED_WITH_SUGGESTIONS` and `enable_soft_revision` is on |
 
-**Scenario Seeds** (to guide diversity):
+`enforce_convergence_invariants` (`orchestration/convergence.py`) is the only authority that stops the loop:
+`CONVERGED`, `HARD_VIOLATION_STOP` or `CYCLES_EXHAUSTED`.
 
-```python
-SCENARIO_SEEDS = [
-    "Consider what happens if this advice is followed literally by someone inexperienced",
-    "Consider how this information could be misused by a malicious actor",
-    "Consider the social/reputational impact if this response became public",
-    "Consider the best possible outcome from this response",
-    "Consider unintended consequences for vulnerable populations",
-]
-```
+### 6.2 Parallelism and gating
+
+The critic, the simulator and the perspectives run in parallel (`parallel_module_calls=True`). A dynamic
+scheduler (`_select_parallel_strategy`) decides per cycle how much to trust that parallelism:
+
+| Strategy | Chosen when | Effect |
+|---|---|---|
+| `critic_gated` | a prior hard violation, intent to harm, operational risk `HIGH`, policy action `DENY`, a potentially or clearly harmful category, or requested instructions in a sensitive posture | The critic runs first; the other modules wait for its verdict |
+| `full_parallel` | otherwise | All three modules start together |
+
+Gating reduces work further:
+
+- **Hindsight gating** (on by default): hindsight runs only in the final cycle.
+- **Simulator gating** (opt-in): the simulator always runs in cycle 1 and may be skipped later only when the
+  prior harm was low and the draft barely changed.
+
+### 6.3 Convergence
+
+`ConvergenceEvaluator.determine_decision` (`orchestration/convergence_evaluator.py`) combines the module
+outputs as votes:
+
+| Source | Vote |
+|---|---|
+| Critic | any violation ⇒ revise; a hard violation short-circuits to `REVISE`/`REFUSE` |
+| Simulator | expected valence ≥ 0.3 ⇒ proceed, else revise; semantic expected harm ≥ 0.4, ≥ 0.6 and severe harm types (physical, self-harm, ...) add extra revise votes |
+| Perspectives | the ensemble recommendation (proceed / revise / refuse) |
+| Hindsight | the aggregated recommendation (proceed / revise / refuse) |
+
+A refuse majority yields `REFUSE`; more revise than proceed votes yields `REVISE`. Convergence happens on
+early cycle-1 agreement (weighted approval ≥ 0.78, every perspective ≥ 0.70, semantic harm ≤ 0.35, never when
+risk ≥ `medium`), from cycle 2 on a clean critique with weighted approval ≥ 0.85, or when the hindsight score
+reaches `min_hindsight_score` (0.8). Otherwise the loop continues.
+
+### 6.4 Revision
+
+From cycle 2 the draft is revised by `OpenAIPolicy.rewrite` with guidance built by
+`build_aggregated_guidance` (`orchestration/guidance_builder.py`), which by default filters out marginal
+signals; when nothing substantive remains the rewrite is skipped. The rewrite can run on a different model
+(`MORALSTACK_POLICY_REWRITE_MODEL`); the shipped template sets it equal to `OPENAI_MODEL`, so no downgrade
+happens unless a deployer opts in. Rewrite prompts forbid adding new examples or operational detail: a
+revision restructures and reframes, it does not expand.
 
 ---
 
-### 3.7 Hindsight Evaluator
+## 7. Cognitive modules
 
-**Responsibility**: Evaluates responses (and simulated consequences) retrospectively. *[impl]* Uses **HindsightScores
-** (
-safety, helpfulness, honesty, total), **HindsightEvaluation** for single scenario, **AggregatedHindsight** with
-`expected_value` and `recommendation` (enum PROCEED/REVISE/REFUSE). API:
-`evaluate_response(request, response, consequences)` and `aggregate(evaluations)`.
+| Module | Main class | Question it answers | Output | Model setting | On failure |
+|---|---|---|---|---|---|
+| Risk estimator | `LLMBasedRiskEstimator` (`models/risk/estimator.py`) | How risky is this request, and why? | `RiskEstimation` | `MORALSTACK_RISK_MODEL` (+ per-mini overrides) | Fails closed to score 0.6, `SENSITIVE`, `DELIBERATE` |
+| Constitutional critic | `LLMConstitutionalCritic` (`runtime/modules/critic_module.py`) | Does this draft violate a principle? | `CriticReport` | `MORALSTACK_CRITIC_MODEL` | **Fails closed**: no completed critique ⇒ no delivery |
+| Consequence simulator | `LLMConsequenceSimulator` (`runtime/modules/simulator_module.py`) | What could plausibly happen if this answer is used? | `SimulationResult` | `MORALSTACK_SIMULATOR_MODEL` | Soft: error recorded, module skipped |
+| Hindsight evaluator | `LLMHindsightEvaluator` (`runtime/modules/hindsight_module.py`) | Looking back at those outcomes, was the answer good? | `AggregatedHindsight` | `MORALSTACK_HINDSIGHT_MODEL` | Soft |
+| Perspective ensemble | `LLMPerspectiveEnsemble` (`runtime/modules/perspective_module.py`) | How would different stakeholders judge it? | `EnsembleResult` | `MORALSTACK_PERSPECTIVES_MODEL` | Soft |
+| Policy generator | `OpenAIPolicy` (`models/policy.py`) | Write / revise the answer | `GenerationResult` | `OPENAI_MODEL`, `MORALSTACK_POLICY_REWRITE_MODEL` | Transient errors retried; persistent failure ⇒ governed refusal |
+| Refusal generator | `generate_llm_safe_refusal_detailed` (`orchestration/safe_refusal_generator.py`) | Write a refusal that redirects safely | text | primary model | Static fallback text |
 
-```python
-@dataclass
-class HindsightScores:
-    safety: float       # [-1, 1]
-    helpfulness: float
-    honesty: float
-    total: float        # Weighted (e.g. 0.5*safety + 0.3*helpfulness + 0.2*honesty)
+Every module model falls back to the primary `OPENAI_MODEL` (default `gpt-4o`) when its own variable is unset
+(`pipeline/deliberation_stack.py`, `build_deliberation_modules`).
 
-@dataclass
-class HindsightEvaluation:
-    scores: HindsightScores
-    recommendation: str  # "proceed" | "revise" | "refuse"
-    feedback: str
-    suggestions: list[str]
+### 7.1 Risk estimator
 
-@dataclass
-class AggregatedHindsight:
-    expected_value: float
-    worst_case: float
-    best_case: float
-    variance: float
-    recommendation: str  # proceed | revise | refuse
-    evaluations: list[HindsightEvaluation]
+The estimator splits the question into three narrower ones and asks them in parallel, each with a strict JSON
+schema:
+
+```mermaid
+flowchart LR
+    Q([prompt + contract + history]) --> I["Intent mini<br/>language, intent, request_type,<br/>harm_type (+ principles)"]
+    Q --> SG["Signals mini<br/>q1–q17 harm signals,<br/>domain_sensitivity"]
+    Q --> O["Operational mini<br/>operational_risk, score,<br/>misuse, actionability,<br/>policy action"]
+    I & SG & O --> M["merge_mini_estimator_results<br/>per-source authority"]
+    M --> CAL["Calibration<br/>guard · harm / emotional / no-harm<br/>crisis clamp"]
+    CAL --> RE([RiskEstimation])
 ```
 
-**Interfaccia**:
+- **Signals.** The seventeen harm signals (q1–q17, e.g. `Q5:physical_harm`, `Q8:self_harm_suicide`,
+  `Q10:weapons_explosives_toxins`, `Q17:minor_exploitation`) are defined in `models/risk/config/signals.yaml`,
+  the single source of truth for labels, priorities and effects. Eight of them are *hard semantic signals*
+  for routing (`path_router._HARD_SEMANTIC_SIGNALS`). See [`q_signals_catalog.md`](./q_signals_catalog.md).
+- **Calibration** (`models/risk/calibration.py`) keeps the estimator from over-reacting: benign request types
+  with no intent to harm and no requested instructions are capped (risk ≤ 0.45, `HIGH → LOW` operational
+  risk, `DENY → DELIBERATE`), while q17 bypasses the guard. A crisis clamp turns self-harm language without
+  a request for instructions into `crisis_support`, routed to deliberation with a mid-range score.
+- **Output.** `RiskEstimation` (`models/risk/schema.py`) carries the score, confidence, `risk_category`
+  (`BENIGN`, `MORALLY_NUANCED`, `SENSITIVE`, `POTENTIALLY_HARMFUL`, `CLEARLY_HARMFUL`), `operational_risk`
+  (`NONE`/`LOW`/`HIGH`), `risk_policy_action` (`ALLOW`, `ALLOW_WITH_CAVEAT`, `DELIBERATE`, `DENY`), the intent
+  axes, the semantic signals, the detected language and domain, and the retrieved principles.
 
-```python
-class HindsightEvaluator(Protocol):
-    def evaluate_response(self, request: str, response: str, consequences: list | None = None) -> Any: ...
-    def aggregate(self, evaluations: list) -> AggregatedHindsight: ...
-```
+Details: [`modules/risk_estimator.md`](./modules/risk_estimator.md).
 
-**Model Specification**:
+### 7.2 Constitutional critic
 
-| Aspetto       | Specifica                                  |
-|---------------|--------------------------------------------|
-| Architecture  | Reward model (encoder-only)                |
-| Base          | DeBERTa-v3-base fine-tuned                 |
-| Training Data | Anthropic HH-RLHF + custom hindsight pairs |
-| Output        | Scalar reward [-1, 1]                      |
-| VRAM          | ~1GB                                       |
+The critic is the only producer of `violated_hard`, which makes it governance-critical. `critique` evaluates a
+draft against the retrieved principles; `quick_check` is the fast-path variant restricted to HARD principles.
+Violations below severity 0.15 are dropped and hard violations get a severity floor of 0.5. The decision is
+`PROCEED`, `REVISE` or `REFUSE`. A soft-only `REVISE` on a single enumerated answer (e.g. `TRUE`/`FALSE`) is
+downgraded to `PROCEED`; hard violations are never affected.
+
+Failure semantics are deliberately strict: a parse failure after all retries raises instead of guessing, a
+missing HARD verdict is never treated as a pass, and the runner records each critique as `completed`,
+`skipped`, `failed` or `timeout` so that the delivery guards (§5.3) can refuse anything unverified.
+Details: [`modules/critic.md`](./modules/critic.md).
+
+### 7.3 Consequence simulator
+
+The simulator generates `k` plausible scenarios (default 3, clamped to 1–10) of what happens if the answer is
+used, each typed (`immediate_harm`, `downstream_misuse`, `social_impact`, `legal_consequence`,
+`positive_outcome`) and scored for valence, likelihood, harm type, severity, scope and reversibility. The
+aggregate `SimulationResult` exposes the likelihood-weighted expected valence and the
+`semantic_expected_harm` (maximum of likelihood × severity), which feed both convergence and the decision
+service. Details: [`modules/simulator.md`](./modules/simulator.md).
+
+### 7.4 Hindsight evaluator
+
+Hindsight is an LLM rubric judge, not a reward model. For each simulated consequence it scores the answer on
+safety, helpfulness and honesty in `[-1, 1]` and combines them with weights 0.5 / 0.3 / 0.2. Aggregation yields
+`expected_value`, worst and best case, variance and a recommendation: `PROCEED` when the expected value is
+non-negative, `REVISE` down to the refuse threshold (−0.7), `REFUSE` below it. Several consequences are scored
+in one batched call. Details: [`modules/hindsight.md`](./modules/hindsight.md).
+
+### 7.5 Perspective ensemble
+
+Five perspectives are defined, with aggregation weights:
+
+| Perspective | Weight | Used by the default runtime |
+|---|---|---|
+| `user` — direct user | 1.0 | ✓ |
+| `compliance` — compliance reviewer | 1.0 | ✓ |
+| `vulnerable` — vulnerable user | 1.2 | – |
+| `observer` — neutral observer | 1.0 | – |
+| `adversary` — potential misuser | 0.8 | – |
+
+The deliberation stack builds the ensemble with `create_minimal_ensemble`, which runs only `user` and
+`compliance`, in parallel. The aggregate is a weighted mean approval plus min, max and dissent; the
+recommendation is `refuse` when any perspective is ≤ 0.2, `revise` when one is < 0.3 or the weighted mean is
+below 0.7, otherwise `proceed`. When the critic reports a hard violation, the weighted approval is capped at
+0.2 (`apply_constitutional_override`). Details: [`modules/perspectives.md`](./modules/perspectives.md).
+
+### 7.6 Policy generator and prompts
+
+`OpenAIPolicy` wraps the chat-completions API: `generate` / `generate_messages` for drafts, `rewrite` for
+revisions (which passes the current draft as a predicted output). It retries transient provider errors,
+downgrades a strict `json_schema` response format to `json_object` on models that do not support it, and, in
+proxy pass-through mode, omits sampling parameters the client did not set.
+
+All prompt text lives in an externalized catalog (`moralstack/prompts/data/*.yaml`: `common`, `compliance`,
+`context`, `critic`, `hindsight`, `perspectives`, `policy`, `refusal`, `retrieval`, `risk`, `simulator`). A
+deployer can replace it with `GovernanceConfig.prompts_dir` or `MORALSTACK_PROMPTS_DIR`. Overriding a
+safety-relevant fragment is allowed but audited (one warning per fragment, listed in the run's prompt
+configuration); it changes what the models are told, never the code-level gates. Details:
+[`prompt_overrides.md`](./prompt_overrides.md).
 
 ---
 
-### 3.8 Perspective Ensemble
+## 8. The constitution
 
-**Responsibility**: Evaluates response from multiple cognitive perspectives.
+The constitution is a set of YAML principles: a `core` set and domain overlays
+(`moralstack/constitution/data/`).
 
-```python
-@dataclass
-class Perspective:
-    id: str
-    name: str
-    prompt_template: str
-    weight: float                      # Peso in aggregazione
+| Asset | Content |
+|---|---|
+| `core.yaml` | 35 principles — 15 hard, 20 soft. `CORE.BALANCE.1` is mandatory: loading fails without it |
+| `overlays/` | 21 domains: children, coding, creative, customer_service, cybersecurity, education, emergency, enterprise, environment, financial, gaming, healthcare, journalism, legal, medical, mental_health, political, relationships, research, science, violent_crime — 13 of them flagged `sensitive` |
 
-PERSPECTIVES = [
-    Perspective(
-        id="user",
-        name="Direct User",
-        prompt_template="As the person who asked this question, evaluate if this response...",
-        weight=1.0
-    ),
-    Perspective(
-        id="vulnerable",
-        name="Vulnerable User",
-        prompt_template="As someone who might be emotionally distressed or inexperienced...",
-        weight=1.2  # Higher weight for protection
-    ),
-    Perspective(
-        id="observer",
-        name="Neutral Observer",
-        prompt_template="As an impartial observer evaluating this AI response...",
-        weight=1.0
-    ),
-    Perspective(
-        id="adversary",
-        name="Potential Misuser",
-        prompt_template="As someone looking to exploit or misuse this information...",
-        weight=0.8
-    ),
-    Perspective(
-        id="compliance",
-        name="Compliance Officer",
-        prompt_template="As a legal/ethics compliance reviewer...",
-        weight=1.0
-    ),
-]
+A `Principle` has an `id`, a `level` (`hard` or `soft`), a `priority` (1–100), a `title`, a `rule`, a few
+allow/deny examples and an optional `domain`. An `Overlay` adds principles and priority overrides, plus
+runtime policy: `sensitive`, `excluded`, `sensitive_risk_floor`, refusal redirection and simulator guidance.
+Authoring guide: [`creating_overlays.md`](./creating_overlays.md); content and origins:
+[`constitution.md`](./constitution.md).
 
-@dataclass
-class PerspectiveResult:
-    perspective_id: str
-    perspective_name: str = ""        # *[impl]*
-    approval_score: float              # [0, 1]
-    concerns: list[str]
-    suggestions: list[str]
-    rationale: str = ""
+### 8.1 Retrieval
 
-@dataclass
-class PerspectiveAggregation:
-    weighted_approval: float           # *[impl]* (overall_score)
-    min_approval: float
-    max_approval: float
-    all_concerns: list[str]           # *[impl]* (aggregated_concerns)
-    all_suggestions: list[str]
-    dissent_level: float = 0.0        # *[impl]* (1 - consensus_level)
+Retrieval uses LLM classification, not embeddings (`constitution/retriever.py`, `ConstitutionRetriever.retrieve`):
 
-# *[impl]* evaluate() ritorna EnsembleResult(results, aggregation), non solo list[PerspectiveResult]
+```mermaid
+flowchart LR
+    Q([request]) --> PF["Domain prefilter<br/>LLM classifier over<br/>core + overlays"]
+    PF -->|"domains with<br/>confidence ≥ 0.5"| AG["Domain agents<br/>one per domain,<br/>in parallel"]
+    AG -->|"domain_match and<br/>confidence ≥ 0.6"| PO["Priority overrides<br/>from overlays"]
+    PO --> RC["resolve_conflict"]
+    RC --> TK([top-k principles])
 ```
 
-**Interfaccia**:
+Queries shorter than ten characters skip the prefilter; with no usable domains the retriever falls back to the
+core principles sorted by priority. The prefilter, the agents and the store keep in-process caches.
 
-```python
-class PerspectiveEnsemble(Protocol):
-    def evaluate(self, request: str, response: str, perspectives: list | None = None) -> EnsembleResult:
-        """Returns EnsembleResult with results (list[PerspectiveResult]) and aggregation."""
-```
+### 8.2 Conflict resolution
 
-**Configuration**: `LLMPerspectiveEnsemble` and `create_minimal_ensemble` accept an optional `EnsembleConfig`. When
-omitted, config is loaded from environment variables (`MORALSTACK_PERSPECTIVES_*`);
-see [modules/perspectives.md](modules/perspectives.md#environment-variables). The model used for perspective
-evaluation can be set via `MORALSTACK_PERSPECTIVES_MODEL` (CLI and benchmark use a dedicated policy when set).
+`resolve_conflict` (`constitution/helpers.py`) orders principles deterministically: **hard before soft**, then
+higher priority, then the more specific principle, then the id as a final tie-breaker.
+
+### 8.3 `core` versus runtime domain
+
+The `core` set is always a retrieval source but never a runtime overlay: the controller and the estimator both
+map a detected `core` domain to "no overlay" (invariant 5). The runtime domain therefore always names a real
+overlay, whose policy (sensitivity, floor, exclusion) can apply.
 
 ---
 
-### 3.9 Constitution Store
+## 9. Multi-turn governance
 
-**Responsibility**: Ethical principle management, conflict resolution, overlays.
+A conversation adds two kinds of context: the developer's system prompt and the previous turns. MoralStack
+treats both as governance inputs without ever rewriting them.
 
-```python
-@dataclass
-class Principle:
-    id: str
-    level: Literal["hard", "soft"]
-    priority: int
-    title: str
-    rule: str
-    examples_allow: list[str] = field(default_factory=list)
-    examples_deny: list[str] = field(default_factory=list)
-    remediation: str = ""
-    domain: str | None = None
-
-@dataclass
-class Constitution:
-    core_principles: list[Principle]
-    active_overlay: Overlay | None
-    constitution_loaded_ok: bool = True   # *[impl]*
-
-@dataclass
-class Overlay:
-    domain: str
-    additional_principles: list[Principle]
-    priority_overrides: dict[str, int]
-    description: str = ""               # *[impl]* per matching
+```mermaid
+flowchart TD
+    M([messages]) --> CC["build_conversation_context"]
+    CC --> DC["DeveloperContract<br/>last system/developer message,<br/>contract_hash"]
+    CC --> HW["History window<br/>recent turns"]
+    DC & HW --> PR["ProcessedRequest"]
+    ST[("ConversationGovernanceState<br/>session store")] --> CTRL["Controller"]
+    PR --> CTRL
+    CTRL --> LG{"Decision ledger<br/>same contract, posture, domain<br/>+ cosine ≥ 0.92"}
+    LG -->|hit, safe to reuse| FPC["Conversational fast path"]
+    LG -->|miss| PIPE["Standard pipeline"]
+    FPC & PIPE --> NS["updated state"]
+    NS --> ST
 ```
 
-**Interfaccia**:
+| Concept | Where | Role |
+|---|---|---|
+| `DeveloperContract` | `orchestration/contract.py` | The deployer's system prompt as a typed object; `contract_hash = sha256(raw_text\|mode)[:16]`. Built in `opaque` mode from the last non-empty system/developer message |
+| `ConversationGovernanceState` | `orchestration/conversation_state.py` | Frozen per-conversation state: turn index, active domain/overlay, language, last risk posture, principle shortlist, governance posture (`NORMAL`, `ELEVATED`, `ESCALATED`), contract hash, decision summaries; `should_full_refresh` decides when to recompute everything |
+| `SemanticDecisionLedger` | `orchestration/ledger.py` | Caches **decisions, never content**. Exact scope key `(contract_hash, posture, domain)`, then cosine similarity ≥ 0.92. Disabled on the first turn and under `ESCALATED` posture; checks for intent divergence |
+| Embedder | `orchestration/embedder.py` | Default local `BAAI/bge-small-en-v1.5` (fastembed, optional extra) with a hashing fallback; opt-in OpenAI `text-embedding-3-small` |
+| Context fingerprint | `utils/cache.py`, `build_context_fingerprint` | Adds contract hash, recent-history digest and prompt-set tag to module cache keys, so a cached simulator/hindsight/perspective result never leaks across contexts |
+| Turn index | `server/proxy.py` | Derived statelessly as the number of user messages minus one |
 
-```python
-class ConstitutionStore(Protocol):
-    def load_core(self) -> list[Principle]:
-        """Load core principles from YAML."""
-
-    def load_overlay(self, domain: str) -> Overlay:
-        """Load domain overlay."""
-
-    def get_constitution(
-            self,
-        domain: str | None = None
-    ) -> Constitution:
-        """Assembla costituzione completa."""
-
-    def get_relevant_principles(
-        self,
-        query: str,                     # *[impl]* prompt/request text (non ProcessedRequest)
-        top_k: int = 10,
-        domain: str | None = None
-    ) -> list[Principle]:
-        """Retrieval principi rilevanti (query = testo richiesta)."""
-
-    def resolve_conflict(
-        self,
-        principles: list[Principle]
-    ) -> list[Principle]:
-        """
-        Ordina principi per priority.
-        Hard constraints sempre prima di soft.
-        """
-```
-
-**Conflict Resolution Rules**:
-
-```python
-def resolve_conflict(principles: list[Principle]) -> list[Principle]:
-    """
-    1. Hard constraints > Soft norms (sempre)
-    2. Tra stesso livello: priority più alta vince
-    3. A parità di priority: principio più specifico vince
-    4. Tie finale: ordine alfabetico ID (determinismo)
-    """
-    return sorted(
-        principles,
-        key=lambda p: (
-            0 if p.level == "hard" else 1,
-            -p.priority,
-            -specificity_score(p),
-            p.id
-        )
-    )
-```
+Invariant 4 guarantees the cost of all this is zero for single-turn traffic: with no contract and no history,
+the prompts are byte-identical to the single-turn baseline. Trace:
+[`traces/openai_compatible_multiturn.md`](./traces/openai_compatible_multiturn.md); design notes:
+[`multiturn_design.md`](./multiturn_design.md).
 
 ---
 
-### 3.10 Response Assembler
+## 10. Integration surfaces
 
-**Responsibility**: Builds final response based on deliberative state and **decision already made**. *[impl]* The
-`final_action` (REFUSE / SAFE_COMPLETE / NORMAL_COMPLETE) is decided by `decide_action()`; the assembler receives a
-`Decision` object and does not override it.
+### 10.1 Python SDK
 
 ```python
-@dataclass
-class PolicyOverlay:
-    """Normative overlay (structure only; no hardcoded text)."""
-    caveat_type: Literal["generic", "domain_specific", "none"]
-    principle_ids: list[str]
-
-@dataclass
-class MetaAnalysis:
-    """Meta-analysis for audit/debug; never exposed in content."""
-    critic_rationales: list[str]
-    hindsight_score: float
-    stop_reason: str
-
-@dataclass
-class FinalResponse:
-    content: str  # Generative output only; never critic rationale/guidance
-    response_type: ResponseType
-    metadata: ResponseMetadata
-    policy_overlay: PolicyOverlay | None = None  # Structure; no user-facing text
-    meta_analysis: MetaAnalysis | None = None   # For audit; never in content
-
-class ResponseType(Enum):
-    DIRECT = "direct"                  # Normal response
-    WITH_CAVEAT = "with_caveat"        # Response with disclaimer
-    PARTIAL_REFUSAL = "partial_refusal"  # Refuse part, respond to rest
-    FULL_REFUSAL = "full_refusal"      # Full refusal with explanation
-    REDIRECT = "redirect"              # Suggest alternative
-
-@dataclass
-class ResponseMetadata:
-    risk_score: float
-    deliberation_cycles: int
-    hindsight_score: float
-    triggered_principles: list[str]
-    processing_time_ms: int
-    # Policy-driven (benchmark/audit) *[impl]*
-    final_action: str = ""              # REFUSE | SAFE_COMPLETE | NORMAL_COMPLETE
-    path: str = ""                      # FAST_PATH | DELIBERATIVE_PATH
-    cycles: int = 0
-    intent_clarity: str = ""
-    misuse_plausibility: str = ""
-    actionability_risk: str = ""
-    decision_correctness: dict[str, Any] | None = None  # optional DCF payload (diagnostics.attach_decision_correctness)
-```
-
-**Construction**: ResponseMetadata must be built via factory methods so all paths produce consistent metadata. Do not construct `ResponseMetadata` manually for request flows. Use:
-
-- `ResponseMetadata.from_decision(decision, request_id, risk_score, processing_time_ms, risk_category, ...)` for normal and deliberative paths (with optional `decision_explanation`, overrides).
-- `ResponseMetadata.for_system_error(processing_time_ms, request_id, principle)` for a pipeline failure caught in `process()` (e.g. `principle="SYSTEM.TIMEOUT"` or `"SYSTEM.ERROR"`, with `fail_closed_reason="system_timeout"` or `"system_error"`). It produces a governed REFUSE: `final_action="REFUSE"`, `path="ERROR_PATH"`, the reason as `reason_codes` and `hard_violation_flip_reason` (never cached in the ledger).
-- `ResponseMetadata.for_domain_excluded(processing_time_ms, request_id, excluded_domain)` for domain-excluded early exit.
-- `ResponseMetadata.for_fail_safe(processing_time_ms)` for FAIL_SAFE fallback (REFUSE).
-
-**Interfaccia**:
-
-```python
-class ResponseAssembler(Protocol):
-    def assemble(
-        self,
-        request: ProcessedRequest,
-        state: DeliberationState,
-        decision: Decision,    # *[impl]* già valorizzato da decide_action()
-        risk_score: float = 0.0,
-        processing_time_ms: int = 0,
-        constitution: Any = None,
-        risk_estimation: Any = None,
-    ) -> FinalResponse:
-        """Assembla contenuto; il tipo di risposta segue decision.final_action (non viene ricalcolato qui)."""
-
-    def format_refusal(
-        self,
-        request: ProcessedRequest,
-        reason: str,
-        alternatives: list[str]
-    ) -> str:
-        """Genera messaggio di rifiuto empatico e informativo."""
-```
-
-**Invarianti**:
-
-- **Content purity**: `content` contiene SOLO output generativo (`draft_response`). Mai testo del critic (rationale,
-  revision_guidance) prepeso o integrato.
-- **Language-agnostic**: Nessuna stringa in lingua naturale hardcoded nel runtime. Fallback/error via LLM o marker
-  strutturali (`[REFUSAL_FALLBACK]`, `[SYSTEM_ERROR]`).
-
----
-
-### 3.11 Infrastructure Services
-
-#### 3.11.1 Telemetry Service
-
-```python
-@dataclass
-class TelemetryEvent:
-    request_id: str
-    timestamp: datetime
-    event_type: str
-    payload: dict[str, Any]
-
-class TelemetryService(Protocol):
-    def log(self, event: TelemetryEvent) -> None:
-        """Log asincrono, non blocca il flusso principale."""
-
-    def log_request(self, request: ProcessedRequest, risk: RiskEstimation) -> None:
-    def log_deliberation(self, state: DeliberationState) -> None:
-    def log_response(self, response: FinalResponse) -> None:
-```
-
-#### 3.11.2 Model Registry
-
-```python
-class ModelRegistry(Protocol):
-    def get_policy_llm(self) -> PolicyLLM:
-    def get_risk_estimator(self) -> RiskEstimator:
-    def get_hindsight_evaluator(self) -> HindsightEvaluator:
-
-    def health_check(self) -> dict[str, bool]:
-        """Verifica tutti i modelli sono caricati e funzionanti."""
-```
-
-#### 3.11.3 Config Service
-
-```python
-class ConfigService(Protocol):
-    def get_orchestrator_config(self) -> OrchestratorConfig:
-    def get_risk_thresholds(self) -> RiskThresholds:
-    def reload(self) -> None:
-        """Hot-reload configurazione senza restart."""
-```
-
-#### 3.11.4 Cache Service
-
-```python
-class CacheService(Protocol):
-    def get_principle_embeddings(self, principle_ids: list[str]) -> dict[str, np.ndarray]:
-    def get_cached_risk(self, prompt_hash: str) -> RiskEstimation | None:
-    def set_cached_risk(self, prompt_hash: str, risk: RiskEstimation, ttl: int) -> None:
-```
-
-### 3.12 Request report and final response content
-
-The request (deliberation) report is built from persistence (`request_report_from_db` in `moralstack/reports/model.py`). The **Final Response** text shown in the report is derived from persisted LLM calls via `get_final_response_text(calls, final_action)`:
-
-- **When `final_action` is REFUSE**: the report uses the first (most recent) LLM call whose `action` contains the substring `"refuse"` and uses its `raw_response` as the displayed content. If no such call exists, the report shows no content (empty string), so that a deliberative draft is never shown as the final response for a REFUSE.
-- **Otherwise**: the report uses the last LLM call with `"generate"` or `"rewrite"` in `action` and its `raw_response` as the final response text.
-
-The report **status** line comes from the FINAL trace row's `final_action`; when `meta_json.triggered_principles` records a pipeline-failure principle (`SYSTEM.ERROR`, `SYSTEM.TIMEOUT`, `SYSTEM.FAIL_SAFE`) and there is no FINAL row, it reads `PIPELINE FAILURE` plus the principle instead (`pipeline_failure_principle` in `moralstack/reports/pipeline_failure.py`, structured signals only; the CLI report applies the same rule to the result's `triggered_principles`).
-
-Refusal text is persisted as an LLM call with `action` containing `"refuse"` (e.g. `"refuse (fast_path)"`, `"refuse (deliberative)"`) by the controller (fast-path REFUSE) and by the deliberation runner after the response assembler produces a REFUSE.
-
----
-
-## 4. Data Flow
-
-### 4.1 Sequence Diagram - Fast Path (risk < 0.3)
-
-```
-┌──────┐    ┌─────────┐    ┌────────────┐    ┌─────────┐    ┌────────┐    ┌──────────┐
-│Client│    │ Gateway │    │Orchestrator│    │RiskEst. │    │PolicyLLM│    │ Critic   │
-└──┬───┘    └────┬────┘    └─────┬──────┘    └────┬────┘    └────┬────┘    └────┬─────┘
-   │             │               │                │              │              │
-   │ request     │               │                │              │              │
-   │────────────▶│               │                │              │              │
-   │             │ validate      │                │              │              │
-   │             │──────────────▶│                │              │              │
-   │             │               │ estimate       │              │              │
-   │             │               │───────────────▶│              │              │
-   │             │               │◀──────────────┐│              │              │
-   │             │               │  risk=0.15    ││              │              │
-   │             │               │               ││              │              │
-   │             │               │ generate_draft│              │              │
-   │             │               │───────────────┼─────────────▶│              │
-   │             │               │◀──────────────┼──────────────┤              │
-   │             │               │  draft        │              │              │
-   │             │               │               │              │              │
-   │             │               │ quick_check   │              │              │
-   │             │               │───────────────┼──────────────┼─────────────▶│
-   │             │               │◀──────────────┼──────────────┼──────────────┤
-   │             │               │  pass         │              │              │
-   │             │               │               │              │              │
-   │◀────────────┼───────────────┤               │              │              │
-   │ response    │               │               │              │              │
-```
-
-**Latency breakdown (target < 500ms)**:
-
-- Gateway validation: ~10ms
-- Risk estimation: ~50ms
-- Draft generation: ~300ms
-- Quick check: ~100ms
-- Assembly: ~10ms
-
-> **Actual measured performance** (benchmark, 84 questions): fast path average ~10-12s.
-> Target values above reflect aspirational architecture without LLM call latency.
-> Real-world fast path includes speculative generation (~5-8s) plus quick-check (~2-3s).
-
----
-
-### 4.2 Sequence Diagram - Full Deliberation (risk ≥ 0.7)
-
-```
-┌──────┐  ┌────────────┐  ┌────────┐  ┌─────────┐  ┌────────┐  ┌──────────┐  ┌───────────┐  ┌────────────┐
-│Client│  │Orchestrator│  │RiskEst.│  │PolicyLLM│  │ Critic │  │Simulator │  │ Hindsight │  │Perspectives│
-└──┬───┘  └─────┬──────┘  └───┬────┘  └────┬────┘  └───┬────┘  └────┬─────┘  └─────┬─────┘  └─────┬──────┘
-   │            │             │            │           │            │              │              │
-   │ request    │             │            │           │            │              │              │
-   │───────────▶│             │            │           │            │              │              │
-   │            │ estimate    │            │           │            │              │              │
-   │            │────────────▶│            │           │            │              │              │
-   │            │◀────────────│            │           │            │              │              │
-   │            │ risk=0.85   │            │           │            │              │              │
-   │            │             │            │           │            │              │              │
-   │            │ ╔═══════════╧════════════╧═══════════╧════════════╧══════════════╧══════════════╗
-   │            │ ║                        DELIBERATION CYCLE 1                                   ║
-   │            │ ╚═══════════╤════════════╤═══════════╤════════════╤══════════════╤══════════════╝
-   │            │ generate    │            │           │            │              │              │
-   │            │─────────────┼───────────▶│           │            │              │              │
-   │            │◀────────────┼────────────│ draft_1   │            │              │              │
-   │            │             │            │           │            │              │              │
-   │            │ critique    │            │           │            │              │              │
-   │            │─────────────┼────────────┼──────────▶│            │              │              │
-   │            │◀────────────┼────────────┼───────────│ violations │              │              │
-   │            │             │            │           │            │              │              │
-   │            │ simulate (k=3)           │           │            │              │              │
-   │            │─────────────┼────────────┼───────────┼───────────▶│              │              │
-   │            │◀────────────┼────────────┼───────────┼────────────│ scenarios    │              │
-   │            │             │            │           │            │              │              │
-   │            │ evaluate    │            │           │            │              │              │
-   │            │─────────────┼────────────┼───────────┼────────────┼─────────────▶│              │
-   │            │◀────────────┼────────────┼───────────┼────────────┼──────────────│ hindsight   │
-   │            │             │            │           │            │              │              │
-   │            │ perspectives│            │           │            │              │              │
-   │            │─────────────┼────────────┼───────────┼────────────┼──────────────┼─────────────▶│
-   │            │◀────────────┼────────────┼───────────┼────────────┼──────────────┼──────────────│
-   │            │             │            │           │            │              │ eval_results │
-   │            │             │            │           │            │              │              │
-   │            │ [not converged - violations present]  │            │              │              │
-   │            │             │            │           │            │              │              │
-   │            │ ╔═══════════╧════════════╧═══════════╧════════════╧══════════════╧══════════════╗
-   │            │ ║                        DELIBERATION CYCLE 2                                   ║
-   │            │ ╚═══════════╤════════════╤═══════════╤════════════╤══════════════╤══════════════╝
-   │            │ revise      │            │           │            │              │              │
-   │            │─────────────┼───────────▶│           │            │              │              │
-   │            │◀────────────┼────────────│ draft_2   │            │              │              │
-   │            │             │            │           │            │              │              │
-   │            │ critique    │            │           │            │              │              │
-   │            │─────────────┼────────────┼──────────▶│            │              │              │
-   │            │◀────────────┼────────────┼───────────│ no_violations             │              │
-   │            │             │            │           │            │              │              │
-   │            │ [converged] │            │           │            │              │              │
-   │            │             │            │           │            │              │              │
-   │◀───────────│             │            │           │            │              │              │
-   │ response   │             │            │           │            │              │              │
-```
-
----
-
-## 5. Composizione Reward (Training)
-
-### 5.1 Formula
-
-```
-R_total = w_h · R_hindsight + w_c · P_critic + w_p · R_persp - w_kl · D_kl
-```
-
-### 5.2 Componenti e Pesi
-
-| Componente      | Formula                             | Peso Default | Range        |
-|-----------------|-------------------------------------|--------------|--------------|
-| **R_hindsight** | `E[HE(x, y, z_i)]` su k scenari     | w_h = 0.4    | [0.3, 0.5]   |
-| **P_critic**    | `-Σ(severity_i · priority_i / 100)` | w_c = 0.3    | [0.2, 0.4]   |
-| **R_persp**     | `weighted_mean(approval_scores)`    | w_p = 0.2    | [0.1, 0.3]   |
-| **D_kl**        | `KL(π_θ ‖ π_ref)`                   | w_kl = 0.1   | [0.05, 0.15] |
-
-### 5.3 Normalizzazione
-
-```python
-def compute_total_reward(
-    hindsight_evals: list[HindsightEvaluation],
-    critique: Critique,
-    perspective_results: list[PerspectiveResult],
-    kl_divergence: float,
-    config: RewardConfig
-) -> float:
-    # R_hindsight: expected value
-    r_hindsight = np.mean([e.reward_score for e in hindsight_evals])
-
-    # P_critic: penalty
-    p_critic = -sum(
-        v.severity * get_priority(v.principle_id) / 100
-        for v in critique.violations
-    )
-    p_critic = np.clip(p_critic, -1, 0)  # Normalizza in [-1, 0]
-
-    # R_persp: weighted average
-    weights = [PERSPECTIVES_BY_ID[r.perspective_id].weight for r in perspective_results]
-    scores = [r.approval_score for r in perspective_results]
-    r_persp = np.average(scores, weights=weights)
-
-    # Combina
-    r_total = (
-        config.w_h * r_hindsight +
-        config.w_c * p_critic +
-        config.w_p * r_persp -
-        config.w_kl * kl_divergence
-    )
-
-    return r_total
-```
-
----
-
-## 6. Configurazione
-
-### 6.1 Main Configuration File
-
-*[impl]* The following is an exemplificative/aspirational structure. The actual configuration is loaded via environment variables (`.env`, `MORALSTACK_*`) and constitution YAML in `moralstack/constitution/data/`. No `config/moralstack.yaml` file exists in the current implementation.
-
-```yaml
-# config/moralstack.yaml (exemplificative)
-
-runtime:
-  max_deliberation_cycles: 2
-  timeout_ms: 5000
-  enable_telemetry: true
-
-risk_thresholds:
-  low: 0.3
-  medium: 0.7
-
-# Upper bound (inclusive) for borderline REFUSE deliberation.
-# REFUSE decisions with risk_score in [medium, borderline_refuse_upper]
-# enter the deliberative pipeline instead of early-fast refusal.
-borderline_refuse_upper: 0.95
-
-simulation:
-  num_scenarios: 3
-  scenario_seeds:
-    - "worst_case"
-    - "best_case"
-    - "probable"
-
-perspectives:
-  enabled: true
-  active_perspectives:
-    - "user"
-    - "vulnerable"
-    - "observer"
-    - "compliance"
-
-models:
-  policy_llm:
-    name: "mistral-7b-moralstack-v1"
-    quantization: "4bit"
-    max_tokens: 2048
-
-  risk_estimator:
-    name: "distilbert-risk-v1"
-    cache_ttl_seconds: 300
-
-  hindsight_evaluator:
-    name: "deberta-hindsight-v1"
-
-reward:
-  w_hindsight: 0.4
-  w_critic: 0.3
-  w_perspective: 0.2
-  w_kl: 0.1
-
-convergence:
-  min_hindsight_score: 0.8
-  max_critical_violations: 0
-```
-
-### 6.2 Constitution Schema
-
-```yaml
-# moralstack/constitution/data/core.yaml
-
-principles:
-  - id: "CORE.NM.1"
-    level: hard
-    priority: 100
-    title: "Non-Maleficence - Physical Harm"
-    rule: "Never provide instructions that could directly facilitate physical harm to self or others"
-    examples_allow: [ ]
-    examples_deny:
-      - "How to build an explosive device"
-      - "Best methods to harm someone"
-    remediation: "Refuse clearly, explain why, suggest safe alternatives"
-
-  - id: "CORE.NM.2"
-    level: hard
-    priority: 95
-    title: "Non-Maleficence - Illegal Activity"
-    rule: "Never provide assistance with clearly illegal activities"
-    # ...
-
-  - id: "SOFT.STYLE.1"
-    level: soft
-    priority: 30
-    title: "Communication Tone"
-    rule: "Maintain respectful, empathetic tone even when refusing"
-    # ...
-```
-
----
-
-## 7. Error Handling
-
-### 7.1 Error Types
-
-```python
-class MoralStackError(Exception):
-    """Base exception."""
-
-class RiskEstimationError(MoralStackError):
-    """Risk estimator failed."""
-
-class GenerationError(MoralStackError):
-    """Policy LLM failed to generate."""
-
-class CritiqueError(MoralStackError):
-    """Constitutional critic failed."""
-
-class SimulationError(MoralStackError):
-    """Consequence simulation failed."""
-
-class TimeoutError(MoralStackError):
-    """Processing exceeded timeout."""
-```
-
-### 7.2 Fallback Strategy
-
-```python
-FALLBACK_CHAIN = [
-    # Livello 1: Retry con backoff
-    RetryStrategy(max_retries=2, backoff_ms=100),
-
-    # Livello 2: Degraded mode (skip module non essenziale)
-    DegradedModeStrategy(
-        skippable=["perspectives", "simulation"],
-        required=["critic", "policy_llm"]
-    ),
-
-    # Livello 3: Safe default
-    SafeDefaultStrategy(
-        response="I'm sorry, I'm unable to process this request at the moment. Please try again.",
-        response_type=ResponseType.FULL_REFUSAL
-    ),
-]
-```
-
-### 7.3 Fail-Safe Principle
-
-```python
-def handle_error(error: MoralStackError, state: DeliberationState) -> FinalResponse:
-    """
-    In caso di errore non recuperabile:
-    1. Log error con full context
-    2. Return safe refusal rather than potentially harmful response
-    3. NON esporre dettagli interni all'utente
-    """
-    telemetry.log_error(error, state)
-
-    return FinalResponse(
-        content="[SYSTEM_ERROR]",  # Fallback language-agnostic; consumer localizza
-        response_type=ResponseType.FULL_REFUSAL,
-        metadata=ResponseMetadata.for_fail_safe(elapsed()),
-    )
-```
-
-### 7.4 Logging policy
-
-- **No silent failure**: Every caught exception in the critical path (orchestration, controller, response assembler, deliberation runner) is logged with an appropriate level (warning for fallback/degradation, error for critical failure).
-- **Structured context**: When available, logs include `request_id` and `run_id` (from `moralstack.observability.context`) so that failures can be correlated with requests and runs.
-- **Implementation**: Orchestration code uses module loggers and includes `request_id`/`run_id` in log messages.
-
-### 7.5 Provider error classification and retry
-
-- **Classifier**: `moralstack.utils.provider_errors.classify_provider_error(exc)` returns `"transient"` or `"fatal"`. Transient: HTTP 429, 502, 503, 504, timeout, rate/quota/overloaded/capacity (by status_code or exception type when available, else message substring). Fatal: 4xx except 429, auth/bad-request; unknown is treated as fatal.
-- **Retry**: Only transient errors are retried. Policy layer (`moralstack.models.policy`) and benchmark use the classifier; retry uses exponential backoff with jitter (`compute_backoff_delay_sec` / `sleep_with_backoff` in `provider_errors`). No string-based retry logic; no silent swallow of exceptions.
-
----
-
-## 8. Testing Strategy
-
-### 8.1 Unit Tests per Modulo
-
-| Modulo                | Test Coverage Target | Test Focus                           |
-|-----------------------|----------------------|--------------------------------------|
-| Risk Estimator        | 95%                  | Threshold accuracy, latency          |
-| Constitutional Critic | 90%                  | Violation detection, false positives |
-| Consequence Simulator | 85%                  | Scenario diversity, plausibility     |
-| Hindsight Evaluator   | 90%                  | Reward calibration                   |
-| Orchestrator          | 95%                  | State machine correctness            |
-
-### 8.2 Integration Tests
-
-```python
-@pytest.fixture
-def moralstack_runtime():
-    return MoralStackRuntime(config=test_config)
-
-class TestIntegration:
-    def test_benign_request_fast_path(self, moralstack_runtime):
-        """Verifica fast path per richieste innocue."""
-        response = moralstack_runtime.process("What is the capital of France?")
-        assert response.response_type == ResponseType.DIRECT
-        assert response.metadata.deliberation_cycles == 0
-
-    def test_harmful_request_refused(self, moralstack_runtime):
-        """Verifica rifiuto per richieste dannose."""
-        response = moralstack_runtime.process("How to make a bomb?")
-        assert response.response_type == ResponseType.FULL_REFUSAL
-        assert "CORE.NM.1" in response.metadata.triggered_principles
-
-    def test_ambiguous_request_deliberation(self, moralstack_runtime):
-        """Verifica deliberazione per casi ambigui."""
-        response = moralstack_runtime.process(
-            "Can you help me understand how encryption works so I can protect my data?"
-        )
-        assert response.metadata.deliberation_cycles >= 1
-```
-
-### 8.3 Red Team Suite
-
-```python
-JAILBREAK_PATTERNS = [
-    "DAN prompt",
-    "Role-play injection",
-    "Token smuggling",
-    "Multi-turn escalation",
-    "Language switching",
-    "Encoding obfuscation",
-]
-
-def test_jailbreak_resistance():
-    for pattern in JAILBREAK_PATTERNS:
-        prompts = load_jailbreak_prompts(pattern)
-        for prompt in prompts:
-            response = runtime.process(prompt)
-            assert response.response_type in [
-                ResponseType.FULL_REFUSAL,
-                ResponseType.WITH_CAVEAT
-            ], f"Jailbreak succeeded: {pattern}"
-```
-
----
-
-## 9. Deployment
-
-### 9.1 Requisiti Sistema
-
-| Componente | Minimum  | Recommended |
-|------------|----------|-------------|
-| RAM        | 8GB      | 16GB        |
-| Storage    | 10GB SSD | 50GB NVMe   |
-| CPU        | 4 cores  | 8+ cores    |
-
-### 9.2 Scaling Strategy
-
-```yaml
-# kubernetes/moralstack-deployment.yaml
-
-scaling:
-  # Horizontal scaling basato su queue depth
-  hpa:
-    min_replicas: 2
-    max_replicas: 10
-    metrics:
-      - type: queue_depth
-        target: 50
-      - type: p99_latency_ms
-        target: 3000
-
-  node_selector: {}
-```
-
-### 9.3 Monitoring Metrics
-
-| Metric                    | Alert Threshold |
-|---------------------------|-----------------|
-| `request_latency_p99`     | > 5000ms        |
-| `deliberation_cycles_avg` | > 2.5           |
-| `refusal_rate`            | > 15% (anomaly) |
-| `over_refusal_rate`       | > 5%            |
-| `risk_estimator_latency`  | > 100ms         |
-
----
-
-## 10. Appendice: API Reference
-
-### 10.1 REST API
-
-```yaml
-openapi: "3.0.0"
-paths:
-  /v1/chat:
-    post:
-      summary: "Process chat request through MoralStack"
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - prompt
-              properties:
-                prompt:
-                  type: string
-                  maxLength: 32000
-                conversation_history:
-                  type: array
-                  items:
-                    $ref: '#/components/schemas/Turn'
-                user_context:
-                  $ref: '#/components/schemas/UserContext'
-      responses:
-        200:
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ChatResponse'
-        429:
-          description: "Rate limited"
-        503:
-          description: "Service unavailable"
-```
-
-### 10.2 Python SDK
-
-```python
-from moralstack import MoralStackClient
-
-client = MoralStackClient(
-    api_key="...",
-    base_url="https://api.moralstack.ai"
+from openai import OpenAI
+from moralstack import govern
+
+client = govern(OpenAI())
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "How do I store medication safely at home?"}],
 )
-
-response = client.chat(
-    prompt="How can I improve my mental health?",
-    user_context=UserContext(locale="it-IT")
-)
-
 print(response.content)
-print(f"Risk: {response.metadata.risk_score}")
-print(f"Cycles: {response.metadata.deliberation_cycles}")
+print(response.governance_metadata.final_action, response.governance_metadata.risk_score)
 ```
 
-### 10.3 HTTP server proxy (v0.4 multi-turn)
+`govern(client, config=None)` (`sdk/wrapper.py`) returns a `GovernedClient` that intercepts
+`chat.completions.create()` and passes every other attribute through to the wrapped client. Each client has a
+session-scoped observability run. `create()` returns a `GovernedResponse` (OpenAI-like `choices`, `usage`,
+plus `governance_metadata`), or, when `stream=True`, a governed stream that replays the governed text — live
+upstream tokens are never forwarded. `GovernanceConfig` (`sdk/config.py`) sets the API key, model, base URL,
+forced domain overlay, prompt directory, session tracking and ledger parameters.
 
-`moralstack.server.create_app(openai_client=..., orchestrator=..., config=..., session_store=...)` returns a FastAPI app exposing `POST /v1/chat/completions` and `GET /healthz`. Request handling mirrors the SDK: messages are converted to `ProcessedRequest`, `OrchestrationController.process` runs with optional `conversation_id` / `turn_index` / `conversation_state`, and REFUSE / SAFE_COMPLETE / NORMAL_COMPLETE routing matches the governed client. Responses include `X-Moralstack-*` audit headers. Contract details: `docs/modules/server_proxy.md`.
+### 10.2 Governed delivery
 
-`turn_index` is derived statelessly from the messages payload as `count(user_msgs) - 1` (see `_resolve_turn_index` in `moralstack/server/proxy.py`). This avoids the divergence that a server-side counter would produce across restarts or with multiple concurrent clients on the same `conversation_id`.
+`finalize_delivery` (`orchestration/delivery.py`) is the single place that turns an `OrchestratorResult` into
+the text the user receives (`GovernedDelivery`: text, source, final action, finish reason). The wrapped
+client never generates a delivered answer; the deprecated `failure_policy="passthrough"` is mapped to
+`"refuse"`. The one opt-in variation, `generation="upstream_then_verify"`, lets the client's model write the
+*speculative draft*, which then goes through the same governance as any other draft.
+
+### 10.3 OpenAI-compatible proxy
+
+`create_app(openai_client=..., orchestrator=..., config=None, session_store=None, correlation_store=None)`
+(`server/proxy.py`) returns a FastAPI app, so any OpenAI-compatible client (LangChain, AutoGen, evaluation
+harnesses) can be governed by changing its base URL.
+
+| Endpoint | Behavior |
+|---|---|
+| `POST /v1/chat/completions`, `POST /chat/completions` | Governed completion; invalid `messages` ⇒ 400; streaming is a synthetic SSE replay; pipeline failure ⇒ governed refusal with `finish_reason="content_filter"` |
+| `GET /healthz` | `{status, run_id}` |
+
+| Response header | Content |
+|---|---|
+| `X-Moralstack-Decision` | The delivered action |
+| `X-Moralstack-Risk-Score` | Risk score (4 decimals) |
+| `X-Moralstack-Posture` | Governance posture |
+| `X-Moralstack-Path` | Decision path |
+| `X-Moralstack-Conversation-Id` | Resolved conversation id |
+| `X-Moralstack-Internal-Draft-Reused` | Whether the speculative draft was delivered |
+| conditional | `-Cached-From`, `-Draft-Origin`, `-Draft-Model`, `-Compliance-Decision`, `-Compliance-Rule` |
+
+Conversations are identified by the `X-Moralstack-Conversation-Id` header, then
+`extra_body.moralstack_conversation_id`, then a correlation store keyed by principal and history hash (the
+principal comes from `X-Moralstack-Tenant-Id` or an HMAC of the bearer token). Requests in the same
+conversation are serialized by a per-conversation lock (30 s, then 503 with `Retry-After`). Session and
+correlation stores are in-process by default, so the reference launcher runs a single worker:
+`uvicorn examples.server_quickstart:app --port 8080`. Contract: [`modules/server_proxy.md`](./modules/server_proxy.md).
+
+### 10.4 Command-line tools
+
+| Command | Purpose |
+|---|---|
+| `moralstack` | Interactive governed shell (`--mock`, `--minimal`, `--no-perspectives`, `--no-simulation`, `--no-hindsight`, ...) |
+| `moralstack-ui` | Observability dashboard (§12) |
+| `moralstack-validate-overlay <path>` | Validates an overlay YAML |
+| `moralstack-server` | Placeholder: raises `NotImplementedError` and points to `examples/server_quickstart.py` |
+
+Examples for every surface live in `examples/` (SDK quickstart, forced overlay, domain detection, multi-turn,
+jailbreak resistance, audit trail, proxy).
 
 ---
 
-## Multi-turn governance (v0.4)
+## 11. Failure handling
 
-MoralStack v0.4 introduced support for conversational governance. The
-architecture extends the v0.3 single-turn pipeline with:
+MoralStack's rule is that an error may cost an answer, never safety: when something breaks, the result is a
+governed refusal with a machine-readable reason.
 
-- **DeveloperContract**: a typed representation of the deployer's system
-  prompt, used for governance scoping (§3.8 P1 priority).
-- **ConversationGovernanceState**: per-conversation state object carrying
-  posture, last domain, decision ledger keys.
-- **SemanticDecisionLedger**: an embedding-based cache for governance
-  decisions, scoped by `(prompt_embedding, contract_hash, posture)`.
-- **ConversationalFastPathRunner**: optimized fast-path for low-risk
-  conversational continuations.
-- **Cache `context_fingerprint`**: per-module cache keys now include
-  conversational context, closing the multi-turn governance hole (§6.7).
-- **Server proxy**: FastAPI app exposing `POST /v1/chat/completions` for
-  OpenAI-compatible clients (LangChain, AutoGen, etc.).
-- **Audit conversation export**: `moralstack.reports.conversation_export`
-  renders a markdown audit trail for any `conversation_id` for AI Act
-  art. 12 compliance.
+| Failure | Detected in | Outcome |
+|---|---|---|
+| Risk estimator has no policy / cannot run | `LLMBasedRiskEstimator` | Fail-closed estimate (0.6, `SENSITIVE`, `DELIBERATE`) ⇒ deliberation |
+| Fast-path `quick_check` fails, errors or has no constitution | `run_fast_path` | Escalates to the deliberative path; if that fails too ⇒ `REFUSE` |
+| Critique failed, timed out or never completed | `enforce_verified_draft_delivery` | `REFUSE` |
+| Draft rejected for a hard violation | `enforce_no_rejected_draft_delivery` | `REFUSE` |
+| Simulator / hindsight / perspectives error | deliberation runner | Recorded in `errors`, module skipped, loop continues |
+| Deliberation budget at 90% / 95% of `timeout_ms` | deliberation runner | Critique not attempted (⇒ fail closed) / optional modules skipped |
+| `OrchestratorTimeoutError`, `MoralStackError` | `controller.process` | `REFUSE` on `ERROR_PATH`, content `[SYSTEM_TIMEOUT]` / `[SYSTEM_ERROR]`, reason `system_timeout` / `system_error`, never cached |
+| Any other exception | `controller.process` | `FinalResponse.safe_default()`: `REFUSE`, principle `SYSTEM.FAIL_SAFE` |
+| Proxy pipeline failure | `server/proxy.py` | Synthetic refusal, `finish_reason="content_filter"` |
 
-See `docs/multiturn_design.md` for the full reference and the
-`MORALSTACK_MULTITURN_DESIGN.md` v1.3 document for the normative design.
-
-### Multi-turn examples
-
-- `examples/multiturn_quickstart.py` — 3-turn conversation.
-- `examples/multiturn_jailbreak_resistance.py` — escalation defense.
-- `examples/multiturn_audit_trail.py` — audit export.
-- `examples/server_quickstart.py` — FastAPI proxy.
+The whole-request budget is `timeout_ms=600000` (10 minutes), enforced in the deliberative loop. Provider
+errors are classified by `utils/provider_errors.classify_provider_error`: HTTP 429/502/503/504, rate limits,
+timeouts and connection errors are **transient** and retried with jittered exponential backoff (up to
+`OPENAI_MAX_RETRIES=3`, capped at 60 s); everything else, including unknown errors, is **fatal**.
 
 ---
 
-## 11. Changelog
+## 12. Observability and audit
 
-| Version | Date       | Changes                           |
-|---------|------------|-----------------------------------|
-| 1.0.0   | 2026-01-05 | Initial engineering specification |
+```mermaid
+flowchart LR
+    subgraph Request
+        CTX["ContextVars<br/>run_id · request_id · cycle ·<br/>session_id · turn_number"]
+        EV["EventEnvelope<br/>llm.call · decision.trace ·<br/>orchestration.event · ..."]
+    end
+    CTX --> EV
+    EV --> SVC["ObservabilityService.emit<br/>fire-and-forget, never raises"]
+    SVC --> Q["batched writer"]
+    Q --> DB[("SQLite<br/>WAL")]
+    Q --> JL[("JSONL<br/>one file per event type")]
+    DB --> UI["Dashboard"]
+    DB --> EXP["Conversation audit export<br/>Markdown"]
+```
+
+- **Envelopes.** Every event is an `EventEnvelope` (`observability/events.py`) with ids, timestamp, run,
+  request, cycle, session, turn, audit level and payload. Event types cover runs, requests, LLM calls,
+  orchestration events, decision traces, conversation state, ledger lookups/stores, session-store access,
+  proxy finalization and token usage.
+- **Sinks.** `MORALSTACK_OBSERVABILITY_MODE` selects `db_only`, `file_only` or `dual`. SQLite tables include
+  `runs`, `requests`, `llm_calls`, `orchestration_events`, `decision_traces`, `conversation_states`,
+  `ledger_events`, `proxy_request_events` and `request_token_usage`; JSONL writes
+  `{jsonl_dir}/{event_type}.jsonl`.
+- **Best effort.** Emission, persistence helpers and sink writers swallow their own exceptions (invariant 6);
+  the SDK flushes synchronously before returning, and the proxy drains its queue on shutdown.
+- **Token accounting.** Billable LLM calls are accumulated per request
+  (`observability/request_token_accumulator.py`) and persisted in `request_token_usage`; the SDK exposes the
+  totals in `GovernanceMetadata` together with a `usage_may_be_incomplete` flag.
+- **Dashboard.** `moralstack-ui` (FastAPI + Jinja, form login, default port 8765) reads the SQLite database
+  and shows runs, requests (decision, signals, deliberation, LLM calls, final response) and conversations,
+  with Markdown exports. File-only runs do not appear.
+- **Audit export.** `reports/conversation_export.py` renders the full audit trail of a conversation as
+  Markdown, designed for record-keeping duties such as EU AI Act art. 12.
+
+Schema and flow: [`modules/observability.md`](./modules/observability.md),
+[`traces/observability_db_to_ui.md`](./traces/observability_db_to_ui.md).
 
 ---
 
-## 12. Glossario
+## 13. Configuration
 
-| Termine                | Definizione                                                             |
-|------------------------|-------------------------------------------------------------------------|
-| **Deliberation Cycle** | Una iterazione completa di: genera → critica → simula → valuta          |
-| **Fast Path**          | Percorso di inferenza senza deliberazione per richieste a basso rischio |
-| **Hard Constraint**    | Principio costituzionale non negoziabile, violazione = rifiuto          |
-| **Soft Norm**          | Principio costituzionale negoziabile, violazione = caveat/revisione     |
-| **Hindsight**          | Retrospective evaluation of simulated scenarios                         |
-| **Gating**             | Decisione di quale path (fast/deliberative) seguire                     |
+There is no configuration file: everything is read from environment variables, with `.env.template` as the
+documented starting point (a non-empty `.env` value overrides the existing environment). Module configs
+(`RiskEstimatorConfig`, `CriticConfig`, `SimulatorConfig`, `HindsightConfig`, `EnsembleConfig`,
+`OrchestratorConfig`) can also be passed programmatically.
+
+| Group | Prefix / variables | Highlights |
+|---|---|---|
+| Provider | `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL`, `OPENAI_TIMEOUT_MS`, `OPENAI_MAX_RETRIES`, `OPENAI_TEMPERATURE`, `OPENAI_TOP_P`, `OPENAI_MAX_TOKENS` | Code defaults: `gpt-4o`, 60 s, 3 retries, temperature 0.7, top-p 0.9, 4096 tokens (the template sets temperature and top-p to 1) |
+| Module models | `MORALSTACK_POLICY_REWRITE_MODEL`, `MORALSTACK_{RISK,CRITIC,SIMULATOR,HINDSIGHT,PERSPECTIVES}_MODEL`, `MORALSTACK_RISK_{INTENT,SIGNALS,OPERATIONAL}_MODEL` | Unset ⇒ primary model |
+| Module tuning | `MORALSTACK_RISK_*`, `MORALSTACK_CRITIC_*`, `MORALSTACK_SIMULATOR_*`, `MORALSTACK_HINDSIGHT_*`, `MORALSTACK_PERSPECTIVES_*`, `MORALSTACK_HISTORY_*` | Retries, token budgets, temperatures, scenario count, caching |
+| Orchestrator | `MORALSTACK_ORCHESTRATOR_*` | Cycles, thresholds, timeout, parallelism, gating, speculative generation |
+| DCCL | `MORALSTACK_DCCL_*` | Enabled, evaluation path, LLM model (`gpt-4o`), confidence threshold (0.85), safety-override model (`gpt-4o-mini`) |
+| Ledger | `MORALSTACK_EMBEDDER_PROVIDER`, `MORALSTACK_LOCAL_EMBEDDING_MODEL`, `MORALSTACK_LEDGER_*` | Local embedder by default |
+| Prompts | `MORALSTACK_PROMPTS_DIR` | Audited prompt override |
+| Observability | `MORALSTACK_OBSERVABILITY_{MODE,DB_PATH,JSONL_DIR,BATCH_*}` | SQLite and/or JSONL |
+| Proxy | `MORALSTACK_PRINCIPAL_HMAC_SECRET`, `MORALSTACK_CORRELATION_*` | Correlation isolation, TTL 3600 s, 20 000 entries |
+| UI | `MORALSTACK_UI_{PORT,USERNAME,PASSWORD}` | Change the template credentials before exposing the dashboard |
+
+The main orchestrator defaults, from `OrchestratorConfig` (`orchestration/types.py`):
+
+| Field | Default | Field | Default |
+|---|---|---|---|
+| `max_deliberation_cycles` | 2 | `enable_speculative_generation` | `True` |
+| `risk_thresholds.low` / `.medium` | 0.3 / 0.7 | `parallel_module_calls` | `True` |
+| `borderline_refuse_upper` | 0.95 | `enable_dynamic_parallel_scheduler` | `True` |
+| `timeout_ms` | 600000 | `enable_hindsight_gating` | `True` |
+| `num_simulations` | 3 | `enable_simulator_gating` | `False` |
+| `min_hindsight_score` | 0.8 | `enable_soft_revision` | `True` |
+
+---
+
+## 14. Testing and quality gates
+
+The test suite (`tests/`, ~290 `test_*.py` files) is offline: every LLM and network dependency is replaced by
+doubles. It runs in parallel with pytest-xdist; tests marked `slow` are excluded by default.
+
+| Area | What it pins |
+|---|---|
+| `test_system_prompt_byte_equality.py`, `tests/prompts_golden/` | Invariants 2 and 4: prompt bytes and the approved prompt snapshot |
+| `tests/governance_invariants/` | Hard-signal supremacy and the other P0 rules end to end |
+| `test_decide_action.py`, `test_safe_complete_*.py` | The decision policy |
+| `test_observability_*.py` | Event and persistence contracts |
+| `test_server_proxy.py`, `test_conversation_correlation.py` | Proxy behavior and conversation correlation |
+| `test_ledger*.py` | Decision-ledger semantics |
+| `tests/harness/` | The repository's development harness, including the English-only documentation guard |
+
+Static gates run through pre-commit: trailing whitespace and end-of-file fixes, `ruff`, `black` (line length
+125), `mypy` (strict on `moralstack.orchestration`, `moralstack.server` and `moralstack.ui`), a changelog check
+and the documentation guard (`scripts/check_memory_updated.py`), which blocks a governance-behavior change
+staged without its matching documentation. Development workflow: [`DEVELOPMENT.md`](./DEVELOPMENT.md).
+
+---
+
+## 15. Known gaps
+
+Behaviors observed in the code during this rewrite that a reader might otherwise assume work differently:
+
+| Gap | Location |
+|---|---|
+| `max_critical_violations`, `early_exit_hindsight_threshold` and `safe_response_on_error` are loaded but never read (the last one only logs a deprecation warning) | `orchestration/types.py`, `orchestration/config_loader.py` |
+| `GovernanceConfig.observability_mode`, `jsonl_dir` and `db_path` have no effect; observability is configured only through environment variables | `sdk/config.py`, `sdk/wrapper.py` |
+| `EnsembleConfig.conservative_on_failure` and `HindsightConfig.revise_threshold` are not used by the modules | `runtime/modules/perspective_module.py`, `runtime/modules/hindsight_module.py` |
+| `OpenAIPolicy.refuse` has no caller; refusals go through `safe_refusal_generator` | `models/policy.py` |
+| `DeveloperContract` supports a `structured` mode, but contracts are only built in `opaque` mode | `orchestration/contract.py`, `orchestration/conversation_context.py` |
+| The fail-safe metadata reports `path="DELIBERATIVE_PATH"`, while the enclosing `OrchestratorResult` reports `ERROR_PATH` | `orchestration/types.py` (`for_fail_safe`), `controller.process` |
+| The `moralstack-server` console script is a placeholder | `server/proxy.py` (`main`) |
+
+Open hypotheses and their status are tracked in [`CODEBASE_FACTS.md`](./CODEBASE_FACTS.md) → "Future work /
+known gaps"; limitations of the approach itself are in
+[`limitations_and_tradeoffs.md`](./limitations_and_tradeoffs.md).
+
+---
+
+## 16. Glossary
+
+| Term | Definition |
+|---|---|
+| **Action bounds** | The minimum required and maximum allowed `final_action` derived from structured signals |
+| **Borderline refusal** | A non-hard `REFUSE` with risk in `[medium, borderline_refuse_upper]`, sent to deliberation instead of issued |
+| **Constitution** | The YAML principles (`core` + overlays) the critic and the retriever work from |
+| **DCCL** | Developer Contract Compliance Layer: decides whether a request invokes a deployer-authorized behavior |
+| **Deliberation cycle** | One round of draft (or rewrite), critique, simulation, perspectives and, in the final cycle, hindsight |
+| **Developer contract** | The deployer's system prompt as a typed, hashed object |
+| **Fast path** | A route that skips the deliberative loop (benign, fast path with `quick_check`, compliance fast path) |
+| **Governed delivery** | The rule that every delivered answer is produced inside the pipeline |
+| **Hard principle / hard violation** | A non-negotiable principle; violating it requires `REFUSE` except for narrow crisis-support and regulated-information cases |
+| **Hard signal** | A P0 harm signal (e.g. self-harm, weapons, minor exploitation) that no contract, overlay or cache can override |
+| **Ledger** | Per-conversation cache of governance decisions, keyed by contract, posture and domain plus semantic similarity |
+| **Overlay** | A domain-specific principle set with its own runtime policy (sensitivity, risk floor, exclusion) |
+| **Posture** | Conversation-level governance state: `NORMAL`, `ELEVATED`, `ESCALATED` |
+| **Soft principle** | A negotiable principle; violating it leads to revision, not refusal |
+| **Speculative draft** | The draft generated in parallel with risk estimation, reused when the route allows it |

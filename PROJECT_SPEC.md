@@ -101,8 +101,7 @@ when you open the relevant files — the headline below is only the reminder.
   (`moralstack/constitution/data/**`), golden fixtures (`tests/prompts_golden/**`),
   and verbatim quotes of such data, of runtime strings or of historical artifacts
   (e.g. old commit messages), each listed in the test's line allowlist. Runtime
-  strings (logs, exceptions, CLI/print output) are not yet covered.
-  `docs/architecture_spec.md` is exempt until its English rewrite. Enforced by
+  strings (logs, exceptions, CLI/print output) are not yet covered. Enforced by
   `tests/harness/test_english_only.py`, a lexicon-based regression guard (it does
   not prove completeness). When translating, do not reword or reformat existing
   English text.

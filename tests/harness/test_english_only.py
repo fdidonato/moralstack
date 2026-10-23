@@ -76,10 +76,6 @@ PATH_ALLOWLIST: tuple[tuple[str, str], ...] = (
     ("tests/prompts_golden/approved_prompts.", "approved prompt snapshot and its hash"),
     (".claude/", "harness: English preferred, stray Italian accepted by user decision"),
     ("ai/prompts/", "harness templates: English preferred, stray Italian accepted by user decision"),
-    (
-        "docs/architecture_spec.md",
-        "# TEMPORARY: remove when the architecture_spec English rewrite track lands (follow-up of translate-docs-en)",
-    ),
 )
 
 # Line allowlist: {relpath: ((substring, reason), ...)}. The substring must be present in the file.
@@ -405,6 +401,6 @@ def test_every_line_allowlist_entry_would_flag() -> None:
             assert flagged_word(sub) is not None, (relpath, sub)
 
 
-def test_architecture_spec_entry_is_temporary() -> None:
-    reasons = dict(PATH_ALLOWLIST)
-    assert "TEMPORARY" in reasons["docs/architecture_spec.md"]
+def test_architecture_spec_is_not_exempt() -> None:
+    # The English rewrite landed: the spec is scanned like any other document.
+    assert not any("docs/architecture_spec.md".startswith(prefix) for prefix, _ in PATH_ALLOWLIST)
