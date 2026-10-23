@@ -18,7 +18,9 @@ scope, and find it before proposing new ones (PROJECT_SPEC §7).
 - Map current coverage for the area from `tests/` (cite `tests/...:line`).
   Identify the behavior-locking tests (byte-equality, governance invariants,
   decision policy, observability, proxy/correlation, ledger) per
-  `.claude/rules/testing.md`.
+  `.claude/rules/testing.md`. In the full lane start from
+  `ai/evidence/<slug>-impact.md` (`scripts/ai/impact_for_paths.py` output): every test
+  file it lists is regression surface the strategy must account for.
 - New tests must be deterministic and offline (mock API/DB/network). Never weaken
   or delete an existing test to make room.
 - Discover the real run commands instead of guessing: run

@@ -23,10 +23,16 @@ Steps:
      `PROJECT_SPEC.md`, `CLAUDE.md`). When in doubt, full.
    Collect every decision the user must take in **one** question round, before
    planning starts.
-1. **full only:** launch the **codebase-cartographer** agent to map the area the
-   request touches (modules, entry points, data flows, tests, risks,
-   dependencies). Read-only, evidence-cited. In the lean lane the planner maps
-   the area itself.
+1. **full only:** launch the **codebase-cartographer** agent to locate what the
+   request touches (reading list, callers, side effects, pinning tests, docs,
+   invariants, open questions). Read-only, evidence-cited. Save the map to
+   `ai/evidence/<slug>-map.md`, then run the map's `Impact command:` line yourself and
+   save its full output verbatim to `ai/evidence/<slug>-impact.md` (no `Impact command:`
+   line → run `python scripts/ai/impact_for_paths.py` on the map's production files).
+   Exit 2 means a path was not found (typo, wrong case, directory) or git failed: fix
+   the paths and re-run; never save an impact file that contains a "path not found"
+   section. Pass both files to the planner and the test-strategist. In the lean lane the planner
+   maps the area itself.
 2. Launch the **architect-planner** agent (with the map, if any) to design the
    change.
 3. **full only:** launch the **test-strategist** agent to design the test

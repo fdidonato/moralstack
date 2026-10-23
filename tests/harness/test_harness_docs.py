@@ -284,3 +284,36 @@ def test_implementer_context_economy_keeps_the_evidence_rules(repo_root):
     assert "Read a file in full (or the complete relevant region) before editing it" in text
     assert "never hide a failure" in text
     assert "re-run the failing node(s) with the full traceback" in text
+
+
+def test_cartographer_uses_lsp_and_the_plugin_is_enabled(repo_root):
+    """The cartographer's callers come from LSP `incomingCalls`; without `LSP` + `ToolSearch`
+    in its tools (LSP is a deferred tool) or with the plugin disabled it silently falls back
+    to Grep — measured: Haiku skips LSP unless loading it is step 0."""
+    import json
+
+    settings = json.loads((repo_root / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    assert settings["enabledPlugins"]["pyright-lsp@claude-plugins-official"] is True
+    text = (repo_root / ".claude" / "agents" / "codebase-cartographer.md").read_text(encoding="utf-8")
+    tools = {t.strip() for t in _frontmatter(text)["tools"].split(",")}
+    assert {"LSP", "ToolSearch", "Read", "Grep", "Glob"} <= tools
+    assert {"Edit", "Write"}.isdisjoint(tools)
+    assert _frontmatter(text)["model"].strip() == "haiku"  # Sonnet: same recall at ~17x cost (A/B 2026-10-22)
+    for section in (
+        "## Reading list",
+        "## Persisted / emitted side effects",
+        "## Invariants in play",
+        "## Open questions for the planner",
+    ):
+        assert section in text, section
+    body = _flat(text)
+    assert "Your **first** tool call is ToolSearch with query `select:LSP`" in body
+    assert "**`incomingCalls`**" in body
+    assert "**Bash** only for read-only `git`" in body
+    assert "Run `python scripts/ai/impact_for_paths.py <every production file on the reading list>`" in body
+    assert "**regression surface**" in body
+    assert "`Impact command: python scripts/ai/impact_for_paths.py <paths>`" in body
+    plan_cmd = _flat((repo_root / ".claude" / "commands" / "ai-plan.md").read_text(encoding="utf-8"))
+    assert "save its full output verbatim to `ai/evidence/<slug>-impact.md`" in plan_cmd
+    assert "Bash(python scripts/ai/impact_for_paths.py:*)" in settings["permissions"]["allow"]
+    assert "Executable not found in $PATH" in (repo_root / "docs" / "ai" / "AGENTIC_WORKFLOW.md").read_text(encoding="utf-8")

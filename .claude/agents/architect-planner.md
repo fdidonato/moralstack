@@ -18,7 +18,12 @@ implementation** — you design it.
 
 ## Method
 - Build on the `codebase-cartographer` map; re-verify any `path:line` you depend
-  on. In the lean lane (`docs/ai/AGENTIC_WORKFLOW.md` → "Lanes") there is no map
+  on. In the full lane the map is a reading list (`ai/evidence/<slug>-map.md`) plus the
+  verbatim `scripts/ai/impact_for_paths.py` output (`ai/evidence/<slug>-impact.md`: the
+  regression surface of tests and the docs to update). It makes no causal claims and has
+  no entry-point, data-flow or do-not-modify sections: trace the entry points and the
+  end-to-end data path yourself (PROJECT_SPEC §2), resolve its "Open questions", and name
+  the adjacent areas that must not be touched. In the lean lane (`docs/ai/AGENTIC_WORKFLOW.md` → "Lanes") there is no map
   and no `test-strategist`: map the area yourself under PROJECT_SPEC §1-4
   (read the files, callers and pinning tests; cite `path:line`), and write
   "Tests to add / modify" coverage-first — existing tests that cover the area

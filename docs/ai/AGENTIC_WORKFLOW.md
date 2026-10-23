@@ -96,6 +96,28 @@ existing **pre-commit-verifier** agent runs the full suite through
 `scripts/ai/suite_record.py` (`check`, then `run` on mismatch) + `pre-commit run -a`
 before anything is declared READY.
 
+## Code intelligence (prerequisite for the cartographer)
+
+`.claude/settings.json` enables the official `pyright-lsp@claude-plugins-official`
+plugin, which gives Claude Code's `LSP` tool (definitions, `incomingCalls`, symbols)
+for Python. The plugin does not ship the language server: install it once per
+machine, globally, so `pyright-langserver` is on the PATH of the shell that starts
+`claude` (`npm install -g pyright`; check with `pyright --version`). Plugins load at
+session start, so restart Claude Code after installing. Without the binary, per the
+Claude Code plugin docs (not observed on this machine), the plugin shows
+`Executable not found in $PATH` under `/plugin` → Errors; the `codebase-cartographer`
+is told to fall back to Grep and say so in its map's first line.
+
+Measured on three past tracks (a1, d10-h4, DCCL UI) against the files their commits
+actually changed: the locator cartographer plus the verbatim
+`scripts/ai/impact_for_paths.py` output took 2.4-3.7 min instead of 5.1-13.1, at about
+$0.04 a run, and found code 10/12 (same as before), tests 9/9 (same) and docs 16/18
+(before: 8/18). The test and doc lists come from the script, not from the model: Haiku
+dropped or globbed them when left to it. Sonnet gave the same recall in the same time at
+~17x the cost, so the cartographer stays on Haiku. `findReferences` under-reports in this
+repo; the cartographer uses `incomingCalls`, plus Grep for dynamic dispatch, templates and
+test patches.
+
 ## Supporting scripts (`scripts/ai/`, PowerShell primary, `.sh` equivalents)
 
 | Script | Does |
@@ -103,6 +125,7 @@ before anything is declared READY.
 | `detect_python_quality_commands.ps1` | Report this repo's real test/lint/format/typecheck commands |
 | `collect_git_diff.ps1` | Save the working-tree diff to `ai/reviews/` (never commits) |
 | `suite_record.py` | `run`/`check`: record the full-suite result per tree state and reuse a PASSED one (`.claude/.suite-result.json`) |
+| `impact_for_paths.py` | `[--rev REV] PATH...`: read-only, deterministic list of the tests that import/patch/re-import each module (or name each other file) and the docs it maps to (memory-guard map, `file:line` anchors, ledgers); used by the `codebase-cartographer` |
 
 Neither implementation nor review is invoked by a bespoke launcher script in this
 repo: `/ai-implement` uses the native `claude-implementer` sub-agent, and

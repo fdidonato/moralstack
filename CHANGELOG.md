@@ -49,6 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   included, stays full with the reviewer pinned at `xhigh`. Both lanes keep the plan review, the diff review and the
   pre-commit-verifier. Handoffs are one self-contained slice each, fix passes start a new implementer, and a review
   still BLOCKING after its second re-run is escalated to the user.
+- **The codebase cartographer is a locator built on the Python language server.** The project enables the official
+  `pyright-lsp` plugin (it needs `pyright-langserver` on PATH: `npm install -g pyright`). The cartographer finds
+  callers with LSP `incomingCalls`, searches with Grep/Read instead of shell `grep`/`sed`, and returns a reading list
+  (regions, callers, pinning tests, side effects, docs) with no causal claims. The new read-only
+  `scripts/ai/impact_for_paths.py PATH...` lists the tests that import, patch, re-import or name each file and the docs it
+  maps to (memory-guard map, `file:line` anchors, ledgers); `/ai-plan` saves its output verbatim next to the map. On
+  three past tracks this took 2.4-3.7 min instead of 5.1-13.1 and found the same code and tests and 16/18 docs instead
+  of 8/18.
 - **DCCL `llm_calls` rows are persisted in cycle 0.** The `evaluate` (`sequence_in_cycle` -5) and `safety_override`
   (-6) rows written by `moralstack/compliance/dccl.py` now carry `cycle=0` instead of `NULL`, in SQLite and in the
   JSONL envelope; sequence numbers are unchanged. Readers that treated NULL as "pre-cycle" should read cycle 0 with
