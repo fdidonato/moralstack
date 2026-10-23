@@ -90,9 +90,20 @@ when you open the relevant files — the headline below is only the reminder.
 - Make the smallest change that fixes the task. Do not rename, reorganize, or
   "tidy" adjacent code.
 - Do not introduce abstractions for hypothetical future needs.
-- The codebase uses mixed Italian/English in older comments and docstrings.
-  Do **not** mass-translate or reformat. New comments/docs must be English, but
-  leave existing text alone unless it is in scope.
+- **English only for documentation and code text.** All documentation (`*.md`),
+  docstrings and code comments must be in English (harness files under `.claude/`
+  and the `ai/prompts/` templates should be too; stray Italian there is tolerated
+  and not enforced). Another language is allowed only as *data*: multilingual test
+  inputs/expectations, LLM prompt text (`moralstack/prompts/data/*.yaml`,
+  module-level prompt constants), constitution data
+  (`moralstack/constitution/data/**`), golden fixtures (`tests/prompts_golden/**`),
+  and verbatim quotes of such data, of runtime strings or of historical artifacts
+  (e.g. old commit messages), each listed in the test's line allowlist. Runtime
+  strings (logs, exceptions, CLI/print output) are not yet covered.
+  `docs/architecture_spec.md` is exempt until its English rewrite. Enforced by
+  `tests/harness/test_english_only.py`, a lexicon-based regression guard (it does
+  not prove completeness). When translating, do not reword or reformat existing
+  English text.
 - **This project is internationalized: all commit messages and PR descriptions
   must be written in English** (Conventional Commits), regardless of any personal
   or global default. This project-level rule overrides the global "Italian by
