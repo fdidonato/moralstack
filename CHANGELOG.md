@@ -91,6 +91,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stays `json_object` everywhere: only the critic uses it, while the risk minis, simulator, hindsight, perspectives
   and domain prefilter use a strict `json_schema`. The console entry points are cited at `pyproject.toml:62-66` and
   `server/proxy.py:1016`, and the `moralstack/compliance/` section is titled as the DCCL instead of a COMPL-AI bridge.
+- **`examples/README.md` lists every example.** It pointed to a non-existent `examples/.env.example` (now the
+  repo-root `.env.template`), counted 19 overlays (there are 21) and left out the proxy, multi-turn and AIR-Bench
+  regression examples, which now have their own table.
 
 ## 1.0.0 — 2026-10-21
 

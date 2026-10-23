@@ -8,7 +8,7 @@ and contributors who want a quick map of the public API in practice.
 
 - Python >= 3.11
 - Install from repo root with `pip install -e .` (or `pip install moralstack` after publication)
-- Set `OPENAI_API_KEY` in your environment (`cp examples/.env.example .env` and fill values, or export directly)
+- Set `OPENAI_API_KEY` in your environment (copy the repo-root `.env.template` to `.env` and fill values, or export directly)
 - Cost warning: each deliberative call can use 7-9 OpenAI requests. Running all examples can use ~30-50 calls, and a single deliberative query is often around ~70s.
 
 ## Example Index
@@ -22,7 +22,19 @@ and contributors who want a quick map of the public API in practice.
 | `audit_export.py` | Export JSONL observability events to a Markdown audit report | ~5-20s (file processing) | 0 |
 | `custom_overlay/run_custom_overlay.py` | Temp-dir constitution pattern for a custom overlay | ~2-4 min | ~14-18 |
 
-**Important: overlays are always active.** MoralStack loads all 19 overlay YAML files at startup. For every query, the internal domain detector selects the most relevant overlay automatically. When an example "activates" an overlay, it is **forcing** a specific one via `GovernanceConfig(domain_overlay="healthcare")`, overriding the automatic detection. This is useful when:
+Proxy, multi-turn and regression examples:
+
+| File | What it shows |
+|---|---|
+| `server_quickstart.py` | OpenAI-compatible governance proxy (`create_app`); run with `uvicorn examples.server_quickstart:app --port 8080` and a single worker |
+| `multiturn_quickstart.py` | A 3-turn conversation on one `GovernedClient`, with the conversation id managed automatically |
+| `multiturn_jailbreak_resistance.py` | A conversation that escalates from benign to harmful is detected and refused |
+| `multiturn_audit_trail.py` | Export a conversation's audit trail as Markdown |
+| `multiturn_quickstart_withcacheaed_evaluation.py` | Semantic decision ledger hit: a later equivalent turn reuses the cached decision |
+| `multiturn_quickstart_gate_rejected.py` | Ledger safety gate: a similar cached decision is rejected and the turn is deliberated in full |
+| `airbench/run_regression.py` | Replays failed AIR-Bench / XSTest / CoCoNot cases through the proxy, checking decision and delivered text (see `airbench/README.md`) |
+
+**Important: overlays are always active.** MoralStack loads all 21 overlay YAML files at startup. For every query, the internal domain detector selects the most relevant overlay automatically. When an example "activates" an overlay, it is **forcing** a specific one via `GovernanceConfig(domain_overlay="healthcare")`, overriding the automatic detection. This is useful when:
 - You want a guaranteed overlay regardless of query wording (for example, a telemedicine app should always apply `healthcare`).
 - You are testing an overlay in isolation without relying on the LLM-based detector.
 
