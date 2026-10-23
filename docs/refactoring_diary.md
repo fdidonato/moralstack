@@ -29,9 +29,9 @@ Fill this section at the start of the first refactoring session (or when resetti
 - **Ruff format:** 80 files would be reformatted, 42 already formatted; run `ruff format --check .` for list.
 - **Black check:** 83 files would be reformatted, 42 would be left unchanged; run `black --check .` for full list.
 
-**Ruff check — conteggio per categoria (`ruff check . --statistics`):**
+**Ruff check — count per category (`ruff check . --statistics`):**
 
-| Categoria | Count | Regola | Descrizione                      |
+| Category  | Count | Rule   | Description                      |
 |-----------|-------|--------|----------------------------------|
 | E         | 950   | E501   | line-too-long                    |
 | E         | 44    | E402   | module-import-not-at-top-of-file |
@@ -43,9 +43,9 @@ Fill this section at the start of the first refactoring session (or when resetti
 | F         | 1     | F601   | multi-value-repeated-key-literal |
 | I         | 78    | I001   | unsorted-imports                 |
 
-**Ruff check — top 10 file più problematici:**
+**Ruff check — top 10 most problematic files:**
 
-| #  | File                                            | Errori |
+| #  | File                                            | Errors |
 |----|-------------------------------------------------|--------|
 | 1  | scripts/benchmark_moralstack.py                 | 308    |
 | 2  | moralstack/orchestration/deliberation_runner.py | 119    |
@@ -103,7 +103,7 @@ Command: `mypy moralstack` (from repo root). Target: package `moralstack` only (
 
 Note: Seven `import-not-found` errors are for optional dependencies (datasets in sft_builder; fastapi, uvicorn, starlette in ui/app). They can be silenced by installing optional extras or adding per-module overrides.
 
-**Interfacce candidate a Protocol/typing (solo analisi):**
+**Interfaces that are candidates for Protocol/typing (analysis only):**
 
 The following interfaces are good candidates for Protocol or improved typing in a later step. No code changes in this commit.
 
@@ -264,7 +264,7 @@ One row or block per refactoring step. Add rows as you go.
   `.claude/hooks/README.md`; `.gitignore` for the new markers + generated `ai/`
   artifacts. Tests in `tests/harness/`. Docs: `PROJECT_SPEC.md` §8,
   `.claude/rules/docs-maintenance.md`, `docs/ai/HARNESS_SESSION_LEARNINGS.md`.
-- **Why:** Fase-1 reconstruction found redundant Stop-verify runs, docs-nudge repeated
+- **Why:** Phase-1 reconstruction found redundant Stop-verify runs, docs-nudge repeated
   across chains, and silent loss of the in-flight plan on auto-compaction. All fixes are
   harness-only; no `moralstack/`/`tests/` product code touched.
 - **Risk:** low. Every hook is fail-open (malformed/empty stdin → exit 0); no governance

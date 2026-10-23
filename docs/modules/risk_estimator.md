@@ -340,18 +340,18 @@ configuration is the single source of configuration — no CLI or code path over
 #### MORALSTACK_RISK_MODEL
 
 - **Default**: *(none — uses the primary model of the stack: SDK `GovernanceConfig.model` / CLI `--openai-model` / `OPENAI_MODEL` / `gpt-4o`)*
-- **Tipo**: string (OpenAI model id)
-- **Significato**: OpenAI model used **only** for the risk estimator (semantic judge). When set and non-empty, the CLI
+- **Type**: string (OpenAI model id)
+- **Meaning**: OpenAI model used **only** for the risk estimator (semantic judge). When set and non-empty, the CLI
   and benchmark create a dedicated `OpenAIPolicy` with this model for the risk estimator (the main risk policy); the
   rest of the stack (critic, simulator, generation) keeps using the primary model. This variable is read only where
   the risk policy is chosen (builder, benchmark) and for report labels, not by the config loader. It serves mini calls
   whose slot equals it, and is the fallback policy when creating a pooled policy fails.
-- **Effetto della modifica**:
+- **Effect of changing it**:
     - **Set to a model id** (e.g. `gpt-4o`, `gpt-4o-mini`): The semantic judge uses that model. Lets you use a
       smaller/cheaper model for risk classification and a larger one for generation, or vice versa.
     - **Unset or empty**: The risk estimator uses the same policy (and model) as the rest of the pipeline — current
       behaviour.
-- **Esempio**: `MORALSTACK_RISK_MODEL=gpt-4o-mini` uses a smaller model for risk classification to reduce cost/latency
+- **Example**: `MORALSTACK_RISK_MODEL=gpt-4o-mini` uses a smaller model for risk classification to reduce cost/latency
   while keeping `OPENAI_MODEL=gpt-4o` for generation.
 - **Interaction with parallel mode**: Unset `MORALSTACK_RISK_INTENT_MODEL`, `MORALSTACK_RISK_SIGNALS_MODEL`, and
   `MORALSTACK_RISK_OPERATIONAL_MODEL` inherit the main risk policy's model (`resolve_risk_mini_model`):
@@ -362,20 +362,20 @@ configuration is the single source of configuration — no CLI or code path over
 #### MORALSTACK_RISK_INTENT_MODEL
 
 - **Default**: inherits `MORALSTACK_RISK_MODEL` if set, else the primary model
-- **Tipo**: string (OpenAI model id)
-- **Significato**: Model for the **intent / framing** mini-estimator (`estimate_intent`). Used when the id differs from the estimator’s primary policy model.
+- **Type**: string (OpenAI model id)
+- **Meaning**: Model for the **intent / framing** mini-estimator (`estimate_intent`). Used when the id differs from the estimator’s primary policy model.
 
 #### MORALSTACK_RISK_SIGNALS_MODEL
 
 - **Default**: inherits `MORALSTACK_RISK_MODEL` if set, else the primary model
-- **Tipo**: string (OpenAI model id)
-- **Significato**: Model for the **harm signal scanner** mini-estimator (`estimate_signals`), covering **q1–q17** and `domain_sensitivity`.
+- **Type**: string (OpenAI model id)
+- **Meaning**: Model for the **harm signal scanner** mini-estimator (`estimate_signals`), covering **q1–q17** and `domain_sensitivity`.
 
 #### MORALSTACK_RISK_OPERATIONAL_MODEL
 
 - **Default**: inherits `MORALSTACK_RISK_MODEL` if set, else the primary model
-- **Tipo**: string (OpenAI model id)
-- **Significato**: Model for the **operational risk** mini-estimator (`estimate_operational`).
+- **Type**: string (OpenAI model id)
+- **Meaning**: Model for the **operational risk** mini-estimator (`estimate_operational`).
 
 ### Thresholds and path routing
 
@@ -432,32 +432,32 @@ relying on the other two estimators to compensate.
 #### MORALSTACK_RISK_MAX_RETRIES
 
 - **Default**: `2`
-- **Tipo**: int (≥ 1)
-- **Significato**: Number of parse attempts for the semantic judge JSON response before using the conservative
+- **Type**: int (≥ 1)
+- **Meaning**: Number of parse attempts for the semantic judge JSON response before using the conservative
   fallback (e.g. `RiskEstimation.from_error`).
-- **Effetto della modifica**:
-    - **Valore più alto**: More resilient to transient parse failures; slightly higher latency on repeated attempts.
-    - **Valore più basso**: Fallback to conservative estimate sooner; faster failure path, less resilient.
+- **Effect of changing it**:
+    - **Higher value**: More resilient to transient parse failures; slightly higher latency on repeated attempts.
+    - **Lower value**: Fallback to conservative estimate sooner; faster failure path, less resilient.
 
 #### MORALSTACK_RISK_MAX_TOKENS
 
 - **Default**: `512`
-- **Tipo**: int (≥ 1)
-- **Significato**: Maximum tokens for the semantic judge LLM response. 512 is tuned to avoid truncating the JSON (
+- **Type**: int (≥ 1)
+- **Meaning**: Maximum tokens for the semantic judge LLM response. 512 is tuned to avoid truncating the JSON (
   q1–q17, rationale, etc.).
-- **Effetto della modifica**:
-    - **Valore più alto**: Longer responses possible; higher token cost and risk of truncation if the model outputs more
+- **Effect of changing it**:
+    - **Higher value**: Longer responses possible; higher token cost and risk of truncation if the model outputs more
       than expected.
-    - **Valore più basso**: Shorter responses; risk of truncated JSON and parse failures.
+    - **Lower value**: Shorter responses; risk of truncated JSON and parse failures.
 
 #### MORALSTACK_RISK_TEMPERATURE
 
 - **Default**: `0.1`
-- **Tipo**: float (0–2)
-- **Significato**: LLM temperature for the semantic judge. Low values favour consistent, deterministic classifications.
-- **Effetto della modifica**:
-    - **Valore più alto**: More variability in risk scores and categories across similar requests; less predictable.
-    - **Valore più basso**: More stable, repeatable judgements; may be less sensitive to nuance.
+- **Type**: float (0–2)
+- **Meaning**: LLM temperature for the semantic judge. Low values favour consistent, deterministic classifications.
+- **Effect of changing it**:
+    - **Higher value**: More variability in risk scores and categories across similar requests; less predictable.
+    - **Lower value**: More stable, repeatable judgements; may be less sensitive to nuance.
 
 ### Fallback when LLM is unavailable
 
@@ -477,56 +477,56 @@ cause is `RiskEstimationError("policy not set")`, caught in `_semantic_analysis`
 #### MORALSTACK_RISK_TOP_P
 
 - **Default**: `0.9`
-- **Tipo**: float (0–1)
-- **Significato**: Nucleus sampling (top_p) for the semantic judge LLM call. Controls diversity of token sampling.
-- **Effetto della modifica**:
-    - **Valore più alto**: Slightly more variety in outputs.
-    - **Valore più basso**: More deterministic, focused outputs.
+- **Type**: float (0–1)
+- **Meaning**: Nucleus sampling (top_p) for the semantic judge LLM call. Controls diversity of token sampling.
+- **Effect of changing it**:
+    - **Higher value**: Slightly more variety in outputs.
+    - **Lower value**: More deterministic, focused outputs.
 
 #### MORALSTACK_RISK_TOP_K
 
 - **Default**: `10`
-- **Tipo**: int (≥ 1)
-- **Significato**: Number of relevant constitution principles injected into the risk prompt. More principles give more
+- **Type**: int (≥ 1)
+- **Meaning**: Number of relevant constitution principles injected into the risk prompt. More principles give more
   context but increase prompt size and cost.
-- **Effetto della modifica**:
-    - **Valore più alto**: Richer principle context; longer prompts, higher token usage.
-    - **Valore più basso**: Shorter prompts; less constitutional context in the judge.
+- **Effect of changing it**:
+    - **Higher value**: Richer principle context; longer prompts, higher token usage.
+    - **Lower value**: Shorter prompts; less constitutional context in the judge.
 
 #### MORALSTACK_RISK_RULE_PREVIEW_LEN
 
 - **Default**: `200`
-- **Tipo**: int (≥ 1)
-- **Significato**: Maximum characters of each principle rule shown in the prompt (longer rules are truncated
+- **Type**: int (≥ 1)
+- **Meaning**: Maximum characters of each principle rule shown in the prompt (longer rules are truncated
   with "...").
-- **Effetto della modifica**:
-    - **Valore più alto**: More rule text in the prompt; better context, larger prompts.
-    - **Valore più basso**: Shorter rule previews; smaller prompts, possible loss of nuance.
+- **Effect of changing it**:
+    - **Higher value**: More rule text in the prompt; better context, larger prompts.
+    - **Lower value**: Shorter rule previews; smaller prompts, possible loss of nuance.
 
 ### Crisis / help-seeking post-processing
 
 #### MORALSTACK_RISK_CRISIS_CLAMP_LOW
 
 - **Default**: `0.35`
-- **Tipo**: float (0–1)
-- **Significato**: Lower bound of the score clamp applied to crisis_support requests (self-harm language without
+- **Type**: float (0–1)
+- **Meaning**: Lower bound of the score clamp applied to crisis_support requests (self-harm language without
   requested instructions or intent to harm). Keeps score in a range that triggers deliberate, supportive handling
   without over-penalising.
-- **Effetto della modifica**:
-    - **Valore più alto**: Crisis requests get a higher minimum score → more consistently treated as
+- **Effect of changing it**:
+    - **Higher value**: Crisis requests get a higher minimum score → more consistently treated as
       sensitive/deliberative.
-    - **Valore più basso**: Crisis requests can have a lower score → may approach Fast Path if combined with other
+    - **Lower value**: Crisis requests can have a lower score → may approach Fast Path if combined with other
       logic.
 
 #### MORALSTACK_RISK_CRISIS_CLAMP_HIGH
 
 - **Default**: `0.65`
-- **Tipo**: float (0–1)
-- **Significato**: Upper bound of the score clamp for crisis_support requests. Prevents such requests from being
+- **Type**: float (0–1)
+- **Meaning**: Upper bound of the score clamp for crisis_support requests. Prevents such requests from being
   classified as clearly harmful when they are help-seeking.
-- **Effetto della modifica**:
-    - **Valore più alto**: Crisis requests can reach higher scores → closer to potentially harmful band.
-    - **Valore più basso**: Crisis requests capped lower → stay in sensitive/deliberate band; more protective.
+- **Effect of changing it**:
+    - **Higher value**: Crisis requests can reach higher scores → closer to potentially harmful band.
+    - **Lower value**: Crisis requests capped lower → stay in sensitive/deliberate band; more protective.
 
 ---
 
