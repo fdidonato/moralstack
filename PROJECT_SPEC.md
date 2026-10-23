@@ -21,8 +21,10 @@ Treat every change as safety-relevant until proven otherwise.
   exercise it. The `tests/` directory is large and behavior-locking — assume a
   test pins the behavior you are about to change.
 - For any subsystem, start from the index: `docs/MORALSTACK_CODEBASE_INDEX.md`.
-  Confirm the file/function still exists before relying on it — the index is a
-  snapshot and the code is authoritative.
+  Read its §1 (repository layout) and Grep the section for your subsystem; never
+  read it or `docs/CODEBASE_FACTS.md` in full (~77 KB / ~150 KB). Confirm the
+  file/function still exists before relying on it — the index is a snapshot and
+  the code is authoritative.
 
 ## 2. Audit before you patch
 
@@ -132,18 +134,11 @@ COMPL-AI), `docs/modules/*.md` (module contract). Full mapping →
 `.claude/rules/docs-maintenance.md` (loads when you open `docs/**`). The hard gate is
 the `memory-guard` pre-commit hook (`scripts/check_memory_updated.py`): a staged change
 under a governance-behavior prefix without its matching doc blocks the commit. A `Stop`
-hook adds a best-effort session nudge: editing behavior code without touching the
-matching docs blocks the turn.
-When it blocks it stages a docs-update **stub** at `.claude/.docs-stub.md` (touched
-symbols → likely doc targets) — review and promote it, then delete it. The gate nudges
-at most once per session (`.claude/.nudge-count.json`); see `.claude/hooks/README.md`
-for the full hook + marker inventory. A `SessionEnd` hook also appends an **UNVERIFIED**
-session digest to `.claude/session-diary.md` (staging only, never the verified facts
-table — §4); promote relevant items by hand. The full capture→promote→prune cycle is
-the **memory contract** in `.claude/rules/memory-maintenance.md` (loads when you open
-`docs/CODEBASE_FACTS.md`); promotion of a staged item into the Verified facts table is a
-verified act — run the `memory-curator` agent (`.claude/agents/memory-curator.md`) at the
-end of a cycle. See `docs/ai/MEMORY_LIFECYCLE.md` for the narrative.
+hook adds a best-effort session nudge (and stages a `.claude/.docs-stub.md` to review,
+promote, then delete); hooks and markers → `.claude/hooks/README.md`. Session staging
+(`.claude/session-diary.md`) is **UNVERIFIED** — promotion into the Verified facts table
+is a verified act done by the `memory-curator` agent at the end of a cycle; full memory
+contract → `.claude/rules/memory-maintenance.md`, narrative → `docs/ai/MEMORY_LIFECYCLE.md`.
 
 ## 9. Error-correction protocol
 
