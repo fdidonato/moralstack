@@ -163,7 +163,7 @@ def test_potentially_harmful_max_allowed_safe_final_default_normal():
 
 
 def test_sensitive_no_domain_no_ambiguity_normal_to_safe_range():
-    """SENSITIVE (anche senza domain regolato/ambiguity) -> SAFE_COMPLETE REQUIRED (overlay)."""
+    """SENSITIVE (even without regulated domain/ambiguity) -> SAFE_COMPLETE REQUIRED (overlay)."""
     ctx = PolicyContext(
         domain="education",
         risk_category="sensitive",

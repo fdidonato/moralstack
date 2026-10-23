@@ -1,6 +1,6 @@
 """
-Test invarianti di convergenza: enforce_convergence_invariants.
-Nessun caso "continue" quando cycles_exhausted; converged => stop.
+Convergence invariants test: enforce_convergence_invariants.
+No "continue" case when cycles_exhausted; converged => stop.
 """
 
 from moralstack.orchestration.convergence import enforce_convergence_invariants
@@ -9,7 +9,7 @@ from moralstack.orchestration.types import DecisionType
 
 def test_cycles_exhausted_must_stop():
     """cycle >= max_cycles => should_continue=False, stop_reason=CYCLES_EXHAUSTED
-    anche se raw dice continue."""
+    even if raw says continue."""
     max_cycles = 3
     outcome = enforce_convergence_invariants(cycle=3, max_cycles=max_cycles, decision_type=DecisionType.CONTINUE)
     assert outcome.should_continue is False
@@ -20,7 +20,7 @@ def test_cycles_exhausted_must_stop():
 
 
 def test_cycles_exhausted_revise_must_stop():
-    """cycle >= max_cycles con REVISE => stesso risultato: stop."""
+    """cycle >= max_cycles with REVISE => same result: stop."""
     outcome = enforce_convergence_invariants(cycle=2, max_cycles=2, decision_type=DecisionType.REVISE)
     assert outcome.should_continue is False
     assert outcome.stop_reason == "CYCLES_EXHAUSTED"
@@ -70,7 +70,7 @@ def test_revise_with_cycles_remaining():
 
 
 def test_decision_none_treated_as_continue():
-    """decision_type None => trattato come CONTINUE."""
+    """decision_type None => treated as CONTINUE."""
     outcome = enforce_convergence_invariants(cycle=1, max_cycles=3, decision_type=None)
     assert outcome.should_continue is True
     assert outcome.stop_reason == "NONE"

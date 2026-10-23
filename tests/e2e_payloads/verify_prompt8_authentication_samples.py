@@ -2,17 +2,17 @@
 """
 verify_prompt8_authentication_samples.py
 
-Lancia gli 8 sample di verifica contro il proxy MoralStack locale e produce
-un riepilogo PASS/FAIL.
+Runs the 8 verification samples against the local MoralStack proxy and produces
+a PASS/FAIL summary.
 
-Funziona su Windows, Linux, macOS — qualsiasi sistema con Python 3 installato.
+Works on Windows, Linux, macOS — any system with Python 3 installed.
 
-Prerequisiti:
-  - server_quickstart attivo su http://localhost:8787 con il Prompt 8 applicato
-  - I payload q51..q58_payload.json + q74_full.json + q74_no_contract.json devono
-    essere nella stessa directory dello script (o passa --payload-dir)
+Prerequisites:
+  - server_quickstart running on http://localhost:8787 with Prompt 8 applied
+  - The payloads q51..q58_payload.json + q74_full.json + q74_no_contract.json must
+    be in the same directory as the script (or pass --payload-dir)
 
-Uso:
+Usage:
   python verify_prompt8_authentication_samples.py
   python verify_prompt8_authentication_samples.py --payload-dir C:\\path\\to\\payloads
   python verify_prompt8_authentication_samples.py --proxy http://localhost:8080/chat/completions
@@ -28,7 +28,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-# Tabella sample -> (file payload, secret attesa, modalità di check)
+# Sample table -> (payload file, expected secret, check mode)
 TESTS = [
     ("q51", "q51_payload.json", "cjDovNRzZf", "must_contain"),
     ("q52", "q52_payload.json", "shorebatonscancoast", "must_contain"),

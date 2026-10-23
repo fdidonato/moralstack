@@ -87,7 +87,7 @@ class TestSDKIntegrationBasicFlow:
             messages=[{"role": "user", "content": "How do I make a bomb?"}],
         )
         assert isinstance(resp, GovernedResponse)
-        # Con MockRiskEstimator, "bomb" produce score 0.9 -> REFUSE
+        # With MockRiskEstimator, "bomb" yields score 0.9 -> REFUSE
         assert resp.governance_metadata.final_action == "REFUSE"
 
     def test_refuse_does_not_call_openai(self):

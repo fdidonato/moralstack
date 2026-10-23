@@ -1,8 +1,8 @@
 """
-Test deterministici per la policy formale SAFE_COMPLETE (decision_policy).
+Deterministic tests for the formal SAFE_COMPLETE policy (decision_policy).
 
-Verifica le funzioni pure safe_complete_required e normal_complete_allowed
-e la derivazione intent_type da request_type.
+Verifies the pure functions safe_complete_required and normal_complete_allowed
+and the derivation of intent_type from request_type.
 """
 
 from moralstack.runtime.decision_policy import (
@@ -17,23 +17,23 @@ from moralstack.runtime.decision_policy import (
 
 
 def test_safe_complete_required_sensitive_support():
-    """risk_level SENSITIVE + intent_type SUPPORT → SAFE_COMPLETE richiesto."""
+    """risk_level SENSITIVE + intent_type SUPPORT → SAFE_COMPLETE required."""
     assert safe_complete_required("sensitive", "support", None) is True
     assert safe_complete_required("SENSITIVE", "SUPPORT", None) is True
 
 
 def test_safe_complete_required_sensitive_advice():
-    """risk_level SENSITIVE + intent_type ADVICE → SAFE_COMPLETE richiesto."""
+    """risk_level SENSITIVE + intent_type ADVICE → SAFE_COMPLETE required."""
     assert safe_complete_required("sensitive", "advice", None) is True
 
 
 def test_safe_complete_required_morally_nuanced_support():
-    """risk_level MORALLY_NUANCED + intent_type SUPPORT → SAFE_COMPLETE richiesto."""
+    """risk_level MORALLY_NUANCED + intent_type SUPPORT → SAFE_COMPLETE required."""
     assert safe_complete_required("morally_nuanced", "support", None) is True
 
 
 def test_safe_complete_required_healthcare_non_benign():
-    """domain_overlay healthcare + risk_level != BENIGN → SAFE_COMPLETE richiesto."""
+    """domain_overlay healthcare + risk_level != BENIGN → SAFE_COMPLETE required."""
     assert safe_complete_required("sensitive", "factual", "healthcare") is True
     assert safe_complete_required("morally_nuanced", None, "healthcare") is True
     assert safe_complete_required("potentially_harmful", "advice", "mental_health") is True
@@ -42,13 +42,13 @@ def test_safe_complete_required_healthcare_non_benign():
 
 
 def test_safe_complete_required_healthcare_benign_false():
-    """domain_overlay healthcare + risk_level BENIGN → non richiesto da questa regola
-    (benign gestito dopo)."""
+    """domain_overlay healthcare + risk_level BENIGN → not required by this rule
+    (benign handled later)."""
     assert safe_complete_required("benign", "factual", "healthcare") is False
 
 
 def test_safe_complete_required_sensitive_factual_no_domain_false():
-    """sensitive + factual + no domain → SAFE_COMPLETE non richiesto (NORMAL consentito)."""
+    """sensitive + factual + no domain → SAFE_COMPLETE not required (NORMAL allowed)."""
     assert safe_complete_required("sensitive", "factual", None) is False
     assert safe_complete_required("sensitive", "explanation", None) is False
 
@@ -59,26 +59,26 @@ def test_safe_complete_required_sensitive_factual_no_domain_false():
 
 
 def test_normal_complete_allowed_sensitive_factual_no_domain():
-    """sensitive + factual + domain None → NORMAL_COMPLETE consentito."""
+    """sensitive + factual + domain None → NORMAL_COMPLETE allowed."""
     assert normal_complete_allowed("sensitive", "factual", None) is True
     assert normal_complete_allowed("sensitive", "explanation", None) is True
     assert normal_complete_allowed("morally_nuanced", "factual", None) is True
 
 
 def test_normal_complete_allowed_with_domain_false():
-    """Con domain_overlay impostato → NORMAL_COMPLETE non consentito (per quella policy)."""
+    """With domain_overlay set → NORMAL_COMPLETE not allowed (for that policy)."""
     assert normal_complete_allowed("sensitive", "factual", "healthcare") is False
     assert normal_complete_allowed("sensitive", "factual", "legal") is False
 
 
 def test_normal_complete_allowed_support_false():
-    """intent_type support/advice → NORMAL_COMPLETE non nella banda allowed (min=S)."""
+    """intent_type support/advice → NORMAL_COMPLETE not in the allowed band (min=S)."""
     assert normal_complete_allowed("sensitive", "support", None) is False
     assert normal_complete_allowed("sensitive", "advice", None) is False
 
 
 def test_normal_complete_allowed_benign_false():
-    """risk_level benign non rientra nella eccezione (benign ha già min=N max=N)."""
+    """risk_level benign is not covered by the exception (benign already has min=N max=N)."""
     assert normal_complete_allowed("benign", "factual", None) is False
 
 
@@ -99,7 +99,7 @@ def test_intent_type_from_request_type_factual():
 
 def test_intent_type_from_request_type_advice():
     assert intent_type_from_request_type("ethical_dilemma") == "advice"
-    # Default (risk_score=0.5, intent_operational=False): 0.5 non è < 0.5, quindi "advice"
+    # Default (risk_score=0.5, intent_operational=False): 0.5 is not < 0.5, so "advice"
     assert intent_type_from_request_type("sensitive_topic") == "advice"
 
 

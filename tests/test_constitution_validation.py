@@ -1,7 +1,7 @@
 """
-Test validazione costituzione: CORE.BALANCE.1 deve essere caricato correttamente.
-Fail-fast: YAML invalido o validazione Pydantic fallita → ConstitutionLoadError.
-Nessun mock di ruamel o Pydantic.
+Constitution validation test: CORE.BALANCE.1 must be loaded correctly.
+Fail-fast: invalid YAML or failed Pydantic validation → ConstitutionLoadError.
+No ruamel or Pydantic mocks.
 """
 
 import tempfile
@@ -17,7 +17,7 @@ from moralstack.constitution import (
 
 
 def test_core_balance_1_loaded():
-    """YAML valido → caricamento corretto, CORE.BALANCE.1 presente."""
+    """Valid YAML → correct loading, CORE.BALANCE.1 present."""
     config_dir = Path(__file__).parent.parent / "moralstack" / "constitution" / "data"
     if not (config_dir / "core.yaml").exists():
         pytest.skip("moralstack/constitution/data/core.yaml not present")
@@ -34,8 +34,8 @@ def test_core_balance_1_loaded():
 
 
 def test_get_constitution_exposes_loaded_ok():
-    """get_constitution() espone constitution_loaded_ok e constitution_corrupted
-    (sempre True/False con fail-fast)."""
+    """get_constitution() exposes constitution_loaded_ok and constitution_corrupted
+    (always True/False with fail-fast)."""
     config_dir = Path(__file__).parent.parent / "moralstack" / "constitution" / "data"
     if not (config_dir / "core.yaml").exists():
         pytest.skip("moralstack/constitution/data/core.yaml not present")
@@ -48,7 +48,7 @@ def test_get_constitution_exposes_loaded_ok():
 
 
 def test_yaml_invalid_raises():
-    """YAML sintatticamente invalido → ConstitutionLoadError."""
+    """Syntactically invalid YAML → ConstitutionLoadError."""
     with tempfile.TemporaryDirectory() as tmp:
         config_dir = Path(tmp)
         core_path = config_dir / "core.yaml"
@@ -61,7 +61,7 @@ def test_yaml_invalid_raises():
 
 
 def test_yaml_unknown_field_raises():
-    """Campo sconosciuto nel YAML (extra='forbid') → ConstitutionLoadError."""
+    """Unknown field in the YAML (extra='forbid') → ConstitutionLoadError."""
     valid_core = """
 principles:
   - id: CORE.BALANCE.1
@@ -81,7 +81,7 @@ unknown_field: 42
 
 
 def test_yaml_wrong_type_raises():
-    """Tipo errato (es. priority non intero) → ConstitutionLoadError."""
+    """Wrong type (e.g. priority not an integer) → ConstitutionLoadError."""
     invalid_core = """
 principles:
   - id: CORE.BALANCE.1
@@ -99,7 +99,7 @@ principles:
 
 
 def test_yaml_empty_raises():
-    """File YAML vuoto → ConstitutionLoadError."""
+    """Empty YAML file → ConstitutionLoadError."""
     with tempfile.TemporaryDirectory() as tmp:
         config_dir = Path(tmp)
         (config_dir / "core.yaml").write_text("", encoding="utf-8")

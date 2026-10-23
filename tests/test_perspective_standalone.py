@@ -1,8 +1,8 @@
 """
-Test standalone per LLMPerspectiveEnsemble.
+Standalone test for LLMPerspectiveEnsemble.
 
-Questo test non usa pytest e può essere eseguito direttamente.
-Evita i problemi di import chain del package moralstack.
+This test does not use pytest and can be run directly.
+Avoids import chain problems of the moralstack package.
 """
 
 import importlib.util
@@ -12,12 +12,12 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 # =============================================================================
-# Carica il modulo perspective direttamente dal file
+# Load the perspective module directly from file
 # =============================================================================
 
 
 def load_module_from_file(module_name: str, file_path: str):
-    """Carica un modulo Python direttamente da file."""
+    """Load a Python module directly from file."""
     spec = importlib.util.spec_from_file_location(module_name, file_path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
@@ -25,14 +25,14 @@ def load_module_from_file(module_name: str, file_path: str):
     return module
 
 
-# Ottieni il path assoluto del modulo perspective
+# Get the absolute path of the perspective module
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 perspective_path = os.path.join(base_dir, "moralstack", "runtime", "modules", "perspective_module.py")
 
-# Carica il modulo
+# Load the module
 pm = load_module_from_file("perspective_module", perspective_path)
 
-# Estrai le classi e funzioni dal modulo
+# Extract classes and functions from the module
 Perspective = pm.Perspective
 PerspectiveResult = pm.PerspectiveResult
 PerspectiveAggregation = pm.PerspectiveAggregation
@@ -56,7 +56,7 @@ JSONParseError = pm.JSONParseError
 
 @dataclass
 class MockGenerationResult:
-    """Risultato mock della generazione."""
+    """Mock generation result."""
 
     text: str
     tokens_used: int = 100
@@ -65,7 +65,7 @@ class MockGenerationResult:
 
 
 class MockPolicyLLM:
-    """Mock del Policy LLM per testing."""
+    """Mock Policy LLM for testing."""
 
     def __init__(self, responses: dict[str, str] | None = None):
         self.responses = responses or {}
@@ -85,7 +85,7 @@ class MockPolicyLLM:
 
 
 class FailingMockPolicyLLM:
-    """Mock che genera sempre JSON invalido."""
+    """Mock that always generates invalid JSON."""
 
     def __init__(self, fail_count: int = 999):
         self.fail_count = fail_count
@@ -112,7 +112,7 @@ class TestRunner:
         self.errors = []
 
     def run_test(self, name: str, test_func):
-        """Esegue un singolo test."""
+        """Run a single test."""
         try:
             test_func()
             self.passed += 1
@@ -127,7 +127,7 @@ class TestRunner:
             print(f"  ✗ {name}: ERROR - {e}")
 
     def summary(self):
-        """Stampa il sommario dei test."""
+        """Print the test summary."""
         print("\n" + "=" * 60)
         print(f"RESULTS: {self.passed} passed, {self.failed} failed")
         if self.errors:
@@ -144,7 +144,7 @@ class TestRunner:
 
 
 def test_create_perspective():
-    """Test creazione prospettiva."""
+    """Test perspective creation."""
     p = Perspective(
         id="test",
         name="Test Perspective",
@@ -157,7 +157,7 @@ def test_create_perspective():
 
 
 def test_weight_clamping():
-    """Test che il peso venga clampato in range [0, 2]."""
+    """Test that weight is clamped to range [0, 2]."""
     p1 = Perspective(id="t1", name="T1", prompt_template="", weight=-1.0)
     p2 = Perspective(id="t2", name="T2", prompt_template="", weight=5.0)
 
@@ -166,7 +166,7 @@ def test_weight_clamping():
 
 
 def test_create_result():
-    """Test creazione risultato."""
+    """Test result creation."""
     r = PerspectiveResult(
         perspective_id="user",
         perspective_name="Direct User",
@@ -181,7 +181,7 @@ def test_create_result():
 
 
 def test_approval_score_clamping():
-    """Test che approval score venga clampato in range [0, 1]."""
+    """Test that approval score is clamped to range [0, 1]."""
     r1 = PerspectiveResult(perspective_id="t", approval_score=-0.5)
     r2 = PerspectiveResult(perspective_id="t", approval_score=1.5)
 
@@ -190,14 +190,14 @@ def test_approval_score_clamping():
 
 
 def test_empty_aggregation():
-    """Test aggregazione vuota."""
+    """Test empty aggregation."""
     agg = PerspectiveAggregation.empty()
     assert agg.weighted_approval == 0.0
     assert agg.perspective_count == 0
 
 
 def test_has_concerns():
-    """Test property has_concerns."""
+    """Test has_concerns property."""
     agg1 = PerspectiveAggregation(all_concerns=[])
     agg2 = PerspectiveAggregation(all_concerns=["A concern"])
 
@@ -206,32 +206,32 @@ def test_has_concerns():
 
 
 def test_recommendation_proceed():
-    """Test raccomandazione proceed (min_approval alto per non triggerare regola conservativa)."""
+    """Test proceed recommendation (high min_approval to not trigger conservative rule)."""
     agg = PerspectiveAggregation(weighted_approval=0.8, min_approval=0.8)
     assert agg.recommendation == "proceed"
 
 
 def test_recommendation_revise():
-    """Test raccomandazione revise (min_approval >= 0.3)."""
+    """Test revise recommendation (min_approval >= 0.3)."""
     agg = PerspectiveAggregation(weighted_approval=0.5, min_approval=0.5)
     assert agg.recommendation == "revise"
 
 
 def test_recommendation_refuse():
-    """Test raccomandazione refuse."""
+    """Test refuse recommendation."""
     agg = PerspectiveAggregation(weighted_approval=0.2, min_approval=0.2)
     assert agg.recommendation == "refuse"
 
 
 def test_extract_json_direct():
-    """Test parsing JSON diretto."""
+    """Test direct JSON parsing."""
     text = '{"approval_score": 0.9, "concerns": [], "suggestions": [], "rationale": "test"}'
     data = extract_json(text)
     assert data["approval_score"] == 0.9
 
 
 def test_extract_json_with_text():
-    """Test parsing JSON con testo intorno."""
+    """Test JSON parsing with surrounding text."""
     text = 'Here is the evaluation: {"approval_score": 0.7, "concerns": ["c1"], ' '"suggestions": [], "rationale": "test"}'
     data = extract_json(text)
     assert data["approval_score"] == 0.7
@@ -239,7 +239,7 @@ def test_extract_json_with_text():
 
 
 def test_extract_json_markdown_block():
-    """Test parsing JSON in blocco markdown."""
+    """Test JSON parsing in markdown block."""
     text = """```json
 {"approval_score": 0.6, "concerns": [], "suggestions": [], "rationale": "test"}
 ```"""
@@ -248,7 +248,7 @@ def test_extract_json_markdown_block():
 
 
 def test_extract_json_invalid():
-    """Test fallimento su JSON invalido."""
+    """Test failure on invalid JSON."""
     text = "This is not JSON at all"
     try:
         extract_json(text)
@@ -258,7 +258,7 @@ def test_extract_json_invalid():
 
 
 def test_default_perspectives_exist():
-    """Test che esistano le prospettive predefinite."""
+    """Test that default perspectives exist."""
     assert len(DEFAULT_PERSPECTIVES) == 5
 
     ids = [p.id for p in DEFAULT_PERSPECTIVES]
@@ -270,7 +270,7 @@ def test_default_perspectives_exist():
 
 
 def test_perspectives_by_id_map():
-    """Test mappa PERSPECTIVES_BY_ID."""
+    """Test PERSPECTIVES_BY_ID map."""
     assert "user" in PERSPECTIVES_BY_ID
     assert PERSPECTIVES_BY_ID["user"].name == "Direct User"
     assert PERSPECTIVES_BY_ID["vulnerable"].weight == 1.2
@@ -278,7 +278,7 @@ def test_perspectives_by_id_map():
 
 
 def test_create_ensemble():
-    """Test creazione ensemble."""
+    """Test ensemble creation."""
     policy = MockPolicyLLM()
     ensemble = LLMPerspectiveEnsemble(policy)
 
@@ -287,7 +287,7 @@ def test_create_ensemble():
 
 
 def test_create_ensemble_with_custom_perspectives():
-    """Test creazione con prospettive custom."""
+    """Test creation with custom perspectives."""
     policy = MockPolicyLLM()
     custom = [
         Perspective(id="custom1", name="Custom 1", prompt_template="test"),
@@ -299,7 +299,7 @@ def test_create_ensemble_with_custom_perspectives():
 
 
 def test_evaluate_basic():
-    """Test valutazione base."""
+    """Test basic evaluation."""
     policy = MockPolicyLLM()
     config = EnsembleConfig(parallel_evaluation=False, max_perspectives=5)
     ensemble = LLMPerspectiveEnsemble(policy, config=config)
@@ -315,7 +315,7 @@ def test_evaluate_basic():
 
 
 def test_evaluate_with_custom_responses():
-    """Test valutazione con risposte personalizzate."""
+    """Test evaluation with custom responses."""
     responses = {
         "Direct User": ('{"approval_score": 0.9, "concerns": [], "suggestions": [], "rationale": "Excellent"}'),
         "Vulnerable User": (
@@ -341,7 +341,7 @@ def test_evaluate_with_custom_responses():
 
 
 def test_evaluate_single():
-    """Test valutazione singola prospettiva."""
+    """Test single-perspective evaluation."""
     policy = MockPolicyLLM()
     ensemble = LLMPerspectiveEnsemble(policy)
 
@@ -356,7 +356,7 @@ def test_evaluate_single():
 
 
 def test_evaluate_single_unknown_perspective():
-    """Test valutazione prospettiva sconosciuta."""
+    """Test evaluation of unknown perspective."""
     policy = MockPolicyLLM()
     ensemble = LLMPerspectiveEnsemble(policy)
 
@@ -370,7 +370,7 @@ def test_evaluate_single_unknown_perspective():
 
 
 def test_aggregate_empty():
-    """Test aggregazione lista vuota."""
+    """Test aggregation of empty list."""
     policy = MockPolicyLLM()
     ensemble = LLMPerspectiveEnsemble(policy)
 
@@ -380,7 +380,7 @@ def test_aggregate_empty():
 
 
 def test_aggregate_weighted():
-    """Test aggregazione pesata."""
+    """Test weighted aggregation."""
     policy = MockPolicyLLM()
     ensemble = LLMPerspectiveEnsemble(policy)
 
@@ -398,7 +398,7 @@ def test_aggregate_weighted():
 
 
 def test_aggregate_deduplication():
-    """Test deduplicazione concerns e suggestions."""
+    """Test deduplication of concerns and suggestions."""
     policy = MockPolicyLLM()
     ensemble = LLMPerspectiveEnsemble(policy)
 
@@ -422,7 +422,7 @@ def test_aggregate_deduplication():
 
 
 def test_add_perspective():
-    """Test aggiunta prospettiva."""
+    """Test adding a perspective."""
     policy = MockPolicyLLM()
     ensemble = LLMPerspectiveEnsemble(policy, perspectives=[])
 
@@ -438,7 +438,7 @@ def test_add_perspective():
 
 
 def test_remove_perspective():
-    """Test rimozione prospettiva."""
+    """Test removing a perspective."""
     policy = MockPolicyLLM()
     ensemble = LLMPerspectiveEnsemble(policy)
 
@@ -451,7 +451,7 @@ def test_remove_perspective():
 
 
 def test_remove_nonexistent_perspective():
-    """Test rimozione prospettiva inesistente."""
+    """Test removing a nonexistent perspective."""
     policy = MockPolicyLLM()
     ensemble = LLMPerspectiveEnsemble(policy)
 
@@ -460,7 +460,7 @@ def test_remove_nonexistent_perspective():
 
 
 def test_set_perspectives():
-    """Test impostazione prospettive da lista ID."""
+    """Test setting perspectives from ID list."""
     policy = MockPolicyLLM()
     ensemble = LLMPerspectiveEnsemble(policy)
 
@@ -473,7 +473,7 @@ def test_set_perspectives():
 
 
 def test_retry_on_invalid_json():
-    """Test retry quando JSON è invalido."""
+    """Test retry when JSON is invalid."""
     policy = FailingMockPolicyLLM(fail_count=2)
     config = EnsembleConfig(max_retries=3, parallel_evaluation=False)
 
@@ -489,7 +489,7 @@ def test_retry_on_invalid_json():
 
 
 def test_fail_after_max_retries():
-    """Test fallimento dopo max retry."""
+    """Test failure after max retry."""
     policy = FailingMockPolicyLLM(fail_count=999)
     config = EnsembleConfig(max_retries=2, parallel_evaluation=False)
 
@@ -506,7 +506,7 @@ def test_fail_after_max_retries():
 
 
 def test_create_perspective_ensemble_factory():
-    """Test factory base."""
+    """Test base factory."""
     policy = MockPolicyLLM()
     ensemble = create_perspective_ensemble(
         policy=policy,
@@ -521,7 +521,7 @@ def test_create_perspective_ensemble_factory():
 
 
 def test_create_minimal_ensemble_factory():
-    """Test factory ensemble minimo."""
+    """Test minimal ensemble factory."""
     policy = MockPolicyLLM()
     ensemble = create_minimal_ensemble(policy)
 
@@ -533,7 +533,7 @@ def test_create_minimal_ensemble_factory():
 
 
 def test_create_safety_focused_ensemble_factory():
-    """Test factory ensemble safety-focused."""
+    """Test safety-focused ensemble factory."""
     policy = MockPolicyLLM()
     ensemble = create_safety_focused_ensemble(policy)
 
@@ -545,7 +545,7 @@ def test_create_safety_focused_ensemble_factory():
 
 
 def test_full_evaluation_flow():
-    """Test flusso completo di valutazione."""
+    """Test full evaluation flow."""
     responses = {
         "Direct User": (
             '{"approval_score": 0.9, "concerns": [], "suggestions": [], ' '"rationale": "Helpful and accurate"}'
@@ -586,7 +586,7 @@ def test_full_evaluation_flow():
 
 
 def test_low_approval_triggers_revise():
-    """Test che basso approval trigger raccomandazione revise."""
+    """Test that low approval triggers revise recommendation."""
     responses = {
         "Direct User": (
             '{"approval_score": 0.4, "concerns": ["Incomplete answer"], '

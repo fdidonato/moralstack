@@ -1,6 +1,6 @@
 """
-Test SAFE_COMPLETE gating: should_use_safe_complete e apply_safe_complete_gating.
-Downgrade a NORMAL_COMPLETE quando dominio non regolato e segnali bassi.
+SAFE_COMPLETE gating test: should_use_safe_complete and apply_safe_complete_gating.
+Downgrade to NORMAL_COMPLETE when the domain is not regulated and signals are low.
 """
 
 from moralstack.models.risk import RiskPolicyAction
@@ -45,7 +45,7 @@ def test_cybersecurity_high_signals_keep_safe_complete():
 
 
 def test_refuse_unchanged():
-    """REFUSE non viene mai modificato dal gating."""
+    """REFUSE is never modified by the gating."""
     decision = Decision(
         final_action="REFUSE",
         path="FAST_PATH",
@@ -142,7 +142,7 @@ def test_downgrade_to_normal_complete_when_signals_low_and_no_hard_violations():
 
 
 def test_normal_complete_unchanged():
-    """NORMAL_COMPLETE non viene modificato."""
+    """NORMAL_COMPLETE is not modified."""
     decision = Decision(
         final_action="NORMAL_COMPLETE",
         path="FAST_PATH",

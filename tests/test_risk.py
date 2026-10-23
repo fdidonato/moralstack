@@ -1,8 +1,8 @@
 """
-Test per LLMBasedRiskEstimator (Giudice Semantico).
+Tests for LLMBasedRiskEstimator (Semantic Judge).
 
-Verifica il corretto funzionamento del classificatore di rischio etico
-basato su analisi semantica (senza keyword matching).
+Verifies the correct behavior of the ethical risk classifier
+based on semantic analysis (without keyword matching).
 """
 
 import os
@@ -90,7 +90,7 @@ def reset_mock_llm(shared_mock_llm):
 
 @dataclass
 class MockGenerationResult:
-    """Mock result per Policy LLM."""
+    """Mock result for Policy LLM."""
 
     text: str
     tokens_used: int = 100
@@ -99,16 +99,16 @@ class MockGenerationResult:
 
 class MockPolicyLLM:
     """
-    Mock del Policy LLM per testing del Giudice Semantico.
+    Mock Policy LLM for testing the Semantic Judge.
 
-    Simula l'analisi semantica restituendo risposte JSON basate sull'intento
-    rilevato nel prompt (non su keyword matching letterale).
+    Simulates semantic analysis by returning JSON responses based on the intent
+    detected in the prompt (not on literal keyword matching).
     """
 
     def __init__(self, responses: dict[str, str] | None = None):
         """
         Args:
-            responses: Mappa pattern -> risposta JSON (per test specifici)
+            responses: Map pattern -> JSON response (for specific tests)
         """
         self.responses = responses or {}
         self.call_count = 0
@@ -117,23 +117,23 @@ class MockPolicyLLM:
 
     def generate(self, *args: Any, **kwargs: Any) -> MockGenerationResult:
         """
-        Simula analisi semantica del prompt.
+        Simulates semantic analysis of the prompt.
 
-        Il mock analizza l'intento della richiesta, non le parole specifiche.
+        The mock analyzes the request's intent, not specific words.
         """
         self.call_count += 1
         prompt = kwargs.get("prompt", args[0] if args else "")
         self.last_prompt = prompt
 
-        # Check per risposte custom configurate nei test
+        # Check for custom responses configured in tests
         for pattern, response in self.responses.items():
             if pattern.lower() in prompt.lower():
                 return MockGenerationResult(text=response)
 
-        # Simula analisi semantica basata sull'intento
+        # Simulates semantic analysis based on intent
         prompt_lower = prompt.lower()
 
-        # Intento di causare danno fisico o illegale
+        # Intent to cause physical or illegal harm
         if self._detects_harmful_intent(prompt_lower):
             return MockGenerationResult(text="""{
                 "q1_confidential": "no",
@@ -153,7 +153,7 @@ class MockPolicyLLM:
                 "detected_language": "en"
             }""")
 
-        # Argomenti sensibili che richiedono attenzione
+        # Sensitive topics requiring attention
         if self._detects_sensitive_topic(prompt_lower):
             return MockGenerationResult(text="""{
                 "q1_confidential": "no",
@@ -173,7 +173,7 @@ class MockPolicyLLM:
                 "rationale": "Semantic analysis: sensitive topic requiring careful handling"
             }""")
 
-        # Default: richiesta benigna
+        # Default: benign request
         return MockGenerationResult(text="""{
             "q1_confidential": "no",
             "q2_unauthorized": "no",
@@ -198,8 +198,8 @@ class MockPolicyLLM:
         return self.generate(prompt=prompt, system=messages[0]["content"] if messages else "", config=config)
 
     def _detects_harmful_intent(self, text: str) -> bool:
-        """Simula rilevamento di intento dannoso (non keyword matching)."""
-        # Intento di costruire/creare oggetti pericolosi
+        """Simulates detection of harmful intent (not keyword matching)."""
+        # Intent to build/create dangerous objects
         harmful_intents = [
             "how to build a bomb",
             "how to make a bomb",
@@ -211,7 +211,7 @@ class MockPolicyLLM:
         return any(intent in text for intent in harmful_intents)
 
     def _detects_sensitive_topic(self, text: str) -> bool:
-        """Simula rilevamento di argomento sensibile."""
+        """Simulates detection of a sensitive topic."""
         sensitive_topics = [
             "struggling with depression",
             "feeling suicidal",
@@ -228,7 +228,7 @@ class MockPolicyLLM:
 
 
 class FailingMockPolicyLLM:
-    """Mock che fallisce sempre (per testare error handling)."""
+    """Mock that always fails (to test error handling)."""
 
     def __init__(self, fail_mode: str = "exception"):
         self.fail_mode = fail_mode
@@ -251,10 +251,10 @@ class FailingMockPolicyLLM:
 
 
 class TestRiskEstimation:
-    """Test per RiskEstimation dataclass."""
+    """Tests for RiskEstimation dataclass."""
 
     def test_clamp_score(self):
-        """Score viene clampato in [0, 1]."""
+        """Score is clamped to [0, 1]."""
         estimation = RiskEstimation(
             score=1.5,
             confidence=0.8,
@@ -270,7 +270,7 @@ class TestRiskEstimation:
         assert estimation2.score == 0.0
 
     def test_clamp_confidence(self):
-        """Confidence viene clampata in [0, 1]."""
+        """Confidence is clamped to [0, 1]."""
         estimation = RiskEstimation(
             score=0.5,
             confidence=2.0,
@@ -279,13 +279,13 @@ class TestRiskEstimation:
         assert estimation.confidence == 1.0
 
     def test_benign_factory(self):
-        """Test factory method benign."""
+        """Test benign factory method."""
         estimation = RiskEstimation.benign()
         assert estimation.score == 0.1
         assert estimation.risk_category == RiskCategory.BENIGN
 
     def test_clearly_harmful_factory(self):
-        """Test factory method clearly_harmful."""
+        """Test clearly_harmful factory method."""
         signals = ["harmful_intent", "physical_harm"]
         estimation = RiskEstimation.clearly_harmful(signals)
         assert estimation.score == 0.95
@@ -293,9 +293,9 @@ class TestRiskEstimation:
         assert estimation.semantic_signals == signals
 
     def test_from_error_factory(self):
-        """Test factory method from_error (richiede deliberazione)."""
+        """Test from_error factory method (requires deliberation)."""
         estimation = RiskEstimation.from_error("Test error")
-        # Fallback conservativo richiede deliberazione
+        # Conservative fallback requires deliberation
         assert estimation.score == 0.6
         assert estimation.confidence == 0.4
         assert estimation.risk_category == RiskCategory.SENSITIVE
@@ -308,23 +308,23 @@ class TestRiskEstimation:
 
 
 class TestJSONParsing:
-    """Test per funzioni di parsing JSON."""
+    """Tests for JSON parsing functions."""
 
     def test_extract_json_direct(self):
-        """Parsing JSON diretto."""
+        """Direct JSON parsing."""
         text = '{"key": "value", "number": 42}'
         result = extract_json(text)
         assert result["key"] == "value"
         assert result["number"] == 42
 
     def test_extract_json_with_surrounding_text(self):
-        """Parsing JSON con testo circostante."""
+        """JSON parsing with surrounding text."""
         text = 'Here is the result: {"risk_score": 0.5} end'
         result = extract_json(text)
         assert result["risk_score"] == 0.5
 
     def test_extract_json_markdown_code_block(self):
-        """Parsing JSON in blocco markdown."""
+        """JSON parsing in markdown block."""
         text = """Here is the analysis:
 ```json
 {"category": "benign", "score": 0.2}
@@ -334,19 +334,19 @@ Done."""
         assert result["category"] == "benign"
 
     def test_extract_json_trailing_comma(self):
-        """Parsing JSON con virgola trailing."""
+        """JSON parsing with trailing comma."""
         text = '{"key": "value",}'
         result = extract_json(text)
         assert result["key"] == "value"
 
     def test_extract_json_invalid_raises(self):
-        """JSON invalido solleva eccezione."""
+        """Invalid JSON raises an exception."""
         text = "This is not JSON at all"
         with pytest.raises(JSONParseError):
             extract_json(text)
 
     def test_parse_risk_response_complete(self):
-        """Parsing risposta completa del risk estimator."""
+        """Parsing a complete risk estimator response."""
         # intent_operational=true avoids intent_contradiction downgrade (op_risk HIGH + all intent false)
         text = """{
             "risk_score": 0.75,
@@ -372,7 +372,7 @@ Done."""
         assert out.operational_risk.name == "HIGH"
 
     def test_parse_risk_response_missing_fields(self):
-        """Parsing con campi mancanti usa default."""
+        """Parsing with missing fields uses defaults."""
         text = '{"risk_score": 0.3, "request_type": "factual_query", "harm_type": "none"}'
 
         out = _parse_risk_text(text)
@@ -382,14 +382,14 @@ Done."""
         assert out.risk_policy_action == RiskPolicyAction.ALLOW
 
     def test_parse_risk_response_invalid_category(self):
-        """Categoria invalida usa default."""
+        """Invalid category uses default."""
         text = '{"category": "invalid_category"}'
 
         out = _parse_risk_text(text)
         assert out.category == RiskCategory.SENSITIVE
 
     def test_parse_risk_response_crisis_help_seeking_returns_booleans(self):
-        """Parse con Q8 yes ma requested_instructions/intent_to_harm no: ritorna
+        """Parse with Q8 yes but requested_instructions/intent_to_harm no: returns
         self_harm_language True, requested_instructions/intent_to_harm False."""
         text = """{
             "q8_self_harm_suicide": "yes",
@@ -409,9 +409,9 @@ Done."""
         assert out.intent_to_harm is False
 
     def test_parse_risk_response_ethics_hacking_no_instructions_not_clearly_harmful(self):
-        """Etica dell'hacking / tema cyber senza richiesta istruzioni: Q9 yes ma operational
-        NONE, no intent_operational/requested_instructions/intent_to_harm → non
-        CLEARLY_HARMFUL, score <= 0.45, non DENY."""
+        """Hacking ethics / cyber topic without instruction request: Q9 yes but operational
+        NONE, no intent_operational/requested_instructions/intent_to_harm → not
+        CLEARLY_HARMFUL, score <= 0.45, not DENY."""
         text = """{
             "q1_confidential": "no",
             "q2_unauthorized": "no",
@@ -442,7 +442,7 @@ Done."""
         assert out.risk_policy_action != RiskPolicyAction.DENY
 
     def test_parse_risk_response_conceptual_q9_yes_operational_none_score_bounded(self):
-        """Prompt concettuale con q9=yes ma operational_risk=NONE, no how-to → score <= 0.3."""
+        """Conceptual prompt with q9=yes but operational_risk=NONE, no how-to → score <= 0.3."""
         text = """{
             "q1_confidential": "no",
             "q2_unauthorized": "no",
@@ -472,7 +472,7 @@ Done."""
         assert out.score <= 0.3
 
     def test_parse_risk_response_howto_score_at_least_05(self):
-        """Prompt con HOW-TO (intent_operational / requested_instructions) → score >= 0.5."""
+        """Prompt with HOW-TO (intent_operational / requested_instructions) → score >= 0.5."""
         text = """{
             "q1_confidential": "no",
             "q2_unauthorized": "no",
@@ -501,7 +501,7 @@ Done."""
         assert out.score >= 0.5, "HOW-TO (intent_operational/requested_instructions) must have score >= 0.5"
 
     def test_parse_risk_response_howto_bypass_2fa_clearly_harmful_deny(self):
-        """Come bypassare 2FA / istruzioni di hacking: operational_risk HIGH o
+        """How to bypass 2FA / hacking instructions: operational_risk HIGH or
         intent_operational + requested_instructions → CLEARLY_HARMFUL + DENY."""
         text = """{
             "q1_confidential": "no",
@@ -532,7 +532,7 @@ Done."""
         assert out.risk_policy_action == RiskPolicyAction.DENY
 
     def test_parse_risk_response_detected_language(self):
-        """Parse con detected_language nel JSON → estratto correttamente."""
+        """Parse with detected_language in the JSON → extracted correctly."""
         text = """{
             "risk_score": 0.5,
             "confidence": 0.8,
@@ -547,13 +547,13 @@ Done."""
         assert out.detected_language == "it"
 
     def test_parse_risk_response_detected_language_missing_defaults_empty(self):
-        """Parse senza detected_language → stringa vuota."""
+        """Parse without detected_language → empty string."""
         text = '{"risk_score": 0.3, "request_type": "factual_query", "harm_type": "none"}'
         out = _parse_risk_text(text)
         assert out.detected_language == ""
 
     def test_estimator_crisis_help_seeking_sensitive_deliberate(self):
-        """Prompt crisis help-seeking (depressione, cosa fare) → SENSITIVE + DELIBERATE
+        """Crisis help-seeking prompt (depression, what to do) → SENSITIVE + DELIBERATE
         + request_type crisis_support."""
         crisis_json = """{
             "q1_confidential": "no",
@@ -595,14 +595,14 @@ Done."""
 
 
 class TestConservativeEstimator:
-    """Test per estimator conservativo senza LLM.
+    """Tests for the conservative estimator without LLM.
 
-    Quando non c'è un LLM disponibile, il sistema opera in modo conservativo
-    richiedendo deliberazione per qualsiasi richiesta non vuota.
+    When no LLM is available, the system operates conservatively
+    requiring deliberation for any non-empty request.
     """
 
     def test_any_request_requires_deliberation(self, shared_conservative_estimator):
-        """Senza LLM, qualsiasi richiesta richiede deliberazione (from_error)."""
+        """Without LLM, any request requires deliberation (from_error)."""
         estimation = shared_conservative_estimator.estimate("What is the capital of France?")
         assert estimation.score == 0.6
         assert estimation.confidence == 0.4
@@ -611,23 +611,23 @@ class TestConservativeEstimator:
         assert "policy not set" in estimation.rationale
 
     def test_empty_prompt_is_benign(self, shared_conservative_estimator):
-        """Prompt vuoto è sempre benigno."""
+        """An empty prompt is always benign."""
         estimation = shared_conservative_estimator.estimate("")
         assert estimation.score == 0.1
         assert estimation.risk_category == RiskCategory.BENIGN
 
     def test_whitespace_only_prompt_is_benign(self, shared_conservative_estimator):
-        """Prompt solo whitespace è benigno."""
+        """A whitespace-only prompt is benign."""
         estimation = shared_conservative_estimator.estimate("   \n\t  ")
         assert estimation.risk_category == RiskCategory.BENIGN
 
     def test_low_confidence_without_llm(self, shared_conservative_estimator):
-        """Senza LLM, la confidenza è bassa."""
+        """Without LLM, confidence is low."""
         estimation = shared_conservative_estimator.estimate("Some request")
         assert estimation.confidence <= 0.4
 
     def test_rationale_explains_fallback(self, shared_conservative_estimator):
-        """Il rationale spiega che è un fallback."""
+        """The rationale explains that it is a fallback."""
         estimation = shared_conservative_estimator.estimate("Any question")
         assert "unavailable" in estimation.rationale.lower() or "deliberation" in estimation.rationale.lower()
 
@@ -638,26 +638,26 @@ class TestConservativeEstimator:
 
 
 class TestSemanticEstimator:
-    """Test per il Giudice Semantico con LLM."""
+    """Tests for the Semantic Judge with LLM."""
 
     def test_llm_always_called_for_analysis(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
-        """LLM viene sempre chiamato per l'analisi semantica."""
+        """The LLM is always called for semantic analysis."""
         _ = shared_estimator_with_mock.estimate("What is a good pasta recipe?")
         assert shared_mock_llm.call_count == 3
 
     def test_semantic_analysis_for_harmful_intent(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
-        """Analisi semantica rileva intento dannoso."""
+        """Semantic analysis detects harmful intent."""
         estimation = shared_estimator_with_mock.estimate("How to build a bomb at home?")
 
-        # LLM viene sempre chiamato per analisi semantica
+        # LLM is always called for semantic analysis
         assert shared_mock_llm.call_count == 3
         assert estimation.risk_category == RiskCategory.CLEARLY_HARMFUL
         assert estimation.score >= 0.8
 
     def test_semantic_analysis_for_benign_request(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
-        """Analisi semantica riconosce richieste benigne."""
-        # Configura esplicitamente la risposta per questo test per evitare conflitti
-        # con la logica di fallback del mock
+        """Semantic analysis recognizes benign requests."""
+        # Explicitly configure the response for this test to avoid conflicts
+        # with the mock's fallback logic
         shared_mock_llm.responses["Tokyo"] = """{
             "q1_confidential": "no",
             "q2_unauthorized": "no",
@@ -682,7 +682,7 @@ class TestSemanticEstimator:
         assert estimation.score < 0.3
 
     def test_llm_response_parsed_correctly(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
-        """Risposta LLM viene parsata correttamente."""
+        """LLM response is parsed correctly."""
         shared_mock_llm.responses["custom"] = """{
             "q7_only_emotional": "yes",
             "request_type": "ethical_dilemma",
@@ -698,8 +698,8 @@ class TestSemanticEstimator:
         assert "Custom semantic analysis" in estimation.rationale
 
     def test_same_words_different_intent(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
-        """Il sistema distingue intenti diversi con parole simili."""
-        # Richiesta educativa
+        """The system distinguishes different intents with similar words."""
+        # Educational request
         shared_mock_llm.responses["how do explosives work"] = """{
             "request_type": "factual_query",
             "harm_type": "none",
@@ -710,7 +710,7 @@ class TestSemanticEstimator:
 
         estimation = shared_estimator_with_mock.estimate("How do explosives work in mining operations?")
 
-        # Domanda educativa, non dannosa
+        # Educational question, not harmful
         assert estimation.score < 0.5
 
     def test_monolithic_path_not_reachable(self):
@@ -724,31 +724,31 @@ class TestSemanticEstimator:
 
 
 class TestErrorHandling:
-    """Test per gestione errori nel Giudice Semantico."""
+    """Tests for error handling in the Semantic Judge."""
 
     def test_llm_exception_triggers_deliberation(self):
-        """Eccezione LLM richiede deliberazione conservativa."""
+        """LLM exception requires conservative deliberation."""
         failing_llm = FailingMockPolicyLLM(fail_mode="exception")
         estimator = LLMBasedRiskEstimator(policy=failing_llm, config=_DEFAULT_TEST_CONFIG)
 
         estimation = estimator.estimate("Some ambiguous request")
 
-        # Fallback richiede deliberazione (score medio, confidenza bassa)
+        # Fallback requires deliberation (medium score, low confidence)
         assert estimation.score >= 0.4
         assert estimation.confidence <= 0.5
         assert "SYSTEM.REQUIRES_DELIBERATION" in estimation.semantic_signals
 
     def test_llm_invalid_json_retries(self):
-        """JSON invalido triggera retry."""
+        """Invalid JSON triggers retry."""
         failing_llm = FailingMockPolicyLLM(fail_mode="invalid_json")
         config = RiskEstimatorConfig(max_retries=3)
         estimator = LLMBasedRiskEstimator(policy=failing_llm, config=config)
 
         estimation = estimator.estimate("Some request")
 
-        # Tutti i retry esauriti
+        # All retries exhausted
         assert failing_llm.call_count == 9
-        # Fallback richiede deliberazione
+        # Fallback requires deliberation
         assert "SYSTEM.REQUIRES_DELIBERATION" in estimation.semantic_signals
 
 
@@ -758,7 +758,7 @@ class TestErrorHandling:
 
 
 class TestConfiguration:
-    """Test per configurazione del Giudice Semantico."""
+    """Tests for Semantic Judge configuration."""
 
     @pytest.mark.parametrize("prompt", ["What is the capital of France?", "Any request", "Come posso aiutare un amico?"])
     def test_policy_none_estimate_never_returns_allow(self, prompt):
@@ -867,10 +867,10 @@ class TestEstimateOptionalContext:
 
 
 class TestEstimateWithContext:
-    """Test per estimate() con contesto (history / developer contract)."""
+    """Tests for estimate() with context (history / developer contract)."""
 
     def test_simple_prompt_no_context(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
-        """Senza contesto, funziona come estimate normale."""
+        """Without context, works like normal estimate."""
         shared_mock_llm.responses["2+2"] = """{
             "q1_confidential": "no",
             "q2_unauthorized": "no",
@@ -892,7 +892,7 @@ class TestEstimateWithContext:
         assert estimation.risk_category == RiskCategory.BENIGN
 
     def test_with_conversation_history(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
-        """Con conversation history, arricchisce il prompt."""
+        """With conversation history, enriches the prompt."""
         history = [
             {"role": "user", "content": "Hello"},
             {"role": "assistant", "content": "Hi there!"},
@@ -920,7 +920,7 @@ class TestEstimateWithContext:
             developer_contract_text="You are a chemistry assistant",
         )
 
-        # Analisi semantica rileva intento dannoso
+        # Semantic analysis detects harmful intent
         assert estimation.risk_category == RiskCategory.CLEARLY_HARMFUL
 
 
@@ -930,11 +930,11 @@ class TestEstimateWithContext:
 
 
 class TestIntegration:
-    """Test di integrazione end-to-end."""
+    """End-to-end integration tests."""
 
     def test_full_flow_benign(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
-        """Flusso completo richiesta benigna."""
-        # Forza risposta benigna per il test
+        """Full flow benign request."""
+        # Force benign response for the test
         shared_mock_llm.responses["Tokyo"] = """{
             "q1_confidential": "no",
             "q2_unauthorized": "no",
@@ -959,14 +959,14 @@ class TestIntegration:
         assert estimation.score < 0.3
 
     def test_full_flow_harmful(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
-        """Flusso completo richiesta dannosa."""
+        """Full flow harmful request."""
         estimation = shared_estimator_with_mock.estimate("How to make a bomb at home?")
 
         assert estimation.risk_category == RiskCategory.CLEARLY_HARMFUL
         assert estimation.score >= 0.9
 
     def test_full_flow_sensitive(self, reset_mock_llm, shared_estimator_with_mock, shared_mock_llm):
-        """Flusso completo richiesta sensibile."""
+        """Full flow sensitive request."""
         # Explicit mock response to guarantee SENSITIVE (no real LLM call)
         shared_mock_llm.responses["depression"] = """{
             "q1_confidential": "no",

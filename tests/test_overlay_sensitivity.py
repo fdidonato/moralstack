@@ -1,5 +1,5 @@
 """
-Test per overlay sensitivity: schema, risk_score floor e CYCLES_EXHAUSTED fallback.
+Tests for overlay sensitivity: schema, risk_score floor and CYCLES_EXHAUSTED fallback.
 No LLM calls; synthetic contexts only.
 """
 
@@ -23,35 +23,35 @@ sys.path.insert(0, str(ROOT))
 
 
 class TestOverlaySensitiveSchema:
-    """Verifica che il campo `sensitive` sia correttamente gestito nello schema."""
+    """Verifies that the `sensitive` field is handled correctly in the schema."""
 
     def test_overlay_yaml_default_false(self):
-        """OverlayYAML senza `sensitive` ha default False."""
+        """OverlayYAML without `sensitive` defaults to False."""
         oy = OverlayYAML()
         assert oy.sensitive is False
 
     def test_overlay_yaml_sensitive_true(self):
-        """OverlayYAML con `sensitive: true` lo mantiene."""
+        """OverlayYAML with `sensitive: true` keeps it."""
         oy = OverlayYAML(sensitive=True)
         assert oy.sensitive is True
 
     def test_overlay_yaml_sensitive_false_explicit(self):
-        """OverlayYAML con `sensitive: false` esplicito."""
+        """OverlayYAML with explicit `sensitive: false`."""
         oy = OverlayYAML(sensitive=False)
         assert oy.sensitive is False
 
     def test_overlay_default_false(self):
-        """Overlay senza `sensitive` ha default False."""
+        """Overlay without `sensitive` defaults to False."""
         o = Overlay(domain="creative")
         assert o.sensitive is False
 
     def test_overlay_sensitive_true(self):
-        """Overlay con `sensitive=True` lo mantiene."""
+        """Overlay with `sensitive=True` keeps it."""
         o = Overlay(domain="mental_health", sensitive=True)
         assert o.sensitive is True
 
     def test_overlay_sensitive_propagation(self):
-        """Overlay costruito da OverlayYAML propaga `sensitive`."""
+        """Overlay built from OverlayYAML propagates `sensitive`."""
         oy = OverlayYAML(
             sensitive=True,
             description="Mental health overlay",
@@ -64,7 +64,7 @@ class TestOverlaySensitiveSchema:
         assert overlay.sensitive is True
 
     def test_overlay_sensitive_propagation_false(self):
-        """Overlay costruito da OverlayYAML non-sensitive propaga False."""
+        """Overlay built from a non-sensitive OverlayYAML propagates False."""
         oy = OverlayYAML(
             sensitive=False,
         )
@@ -79,8 +79,8 @@ class TestOverlaySensitiveSchema:
 # Controller Logic Tests (unit-level, isolated)
 # =============================================================================
 
-# Le funzioni seguenti testano la logica decisionale applicata nel controller
-# in modo isolato, senza bisogno dell'intero orchestrator.
+# The following functions test the decision logic applied in the controller
+# in isolation, without needing the whole orchestrator.
 
 
 def _make_decision(
@@ -88,7 +88,7 @@ def _make_decision(
     path: str = "DELIBERATIVE_PATH",
     reason_codes: list[str] | None = None,
 ) -> Decision:
-    """Helper per creare una Decision di test."""
+    """Helper to create a test Decision."""
     return Decision(
         final_action=final_action,
         path=path,
@@ -108,7 +108,7 @@ def _make_outcome(
     cycle: int = 2,
     max_cycles: int = 2,
 ) -> ConvergenceOutcome:
-    """Helper per creare un ConvergenceOutcome di test."""
+    """Helper to create a test ConvergenceOutcome."""
     return ConvergenceOutcome(
         should_continue=False,
         converged=converged,
@@ -119,7 +119,7 @@ def _make_outcome(
 
 
 class TestOverlaySensitiveRiskFloor:
-    """Verifica la logica risk_score floor per overlay sensitive."""
+    """Verifies the risk_score floor logic for sensitive overlays."""
 
     def test_floor_applied_when_sensitive_and_low_score(self):
         """Overlay sensitive + risk_score 0.1 -> floor a 0.35."""
@@ -130,7 +130,7 @@ class TestOverlaySensitiveRiskFloor:
         assert risk_score == OVERLAY_SENSITIVE_RISK_FLOOR
 
     def test_floor_not_applied_when_not_sensitive(self):
-        """Overlay non sensitive + risk_score 0.1 -> invariato."""
+        """Non-sensitive overlay + risk_score 0.1 -> unchanged."""
         risk_score = 0.1
         overlay_sensitive = False
         if overlay_sensitive and risk_score < OVERLAY_SENSITIVE_RISK_FLOOR:
@@ -138,7 +138,7 @@ class TestOverlaySensitiveRiskFloor:
         assert risk_score == 0.1
 
     def test_floor_not_applied_when_score_above_threshold(self):
-        """Overlay sensitive + risk_score 0.5 -> invariato (già sopra la soglia)."""
+        """Sensitive overlay + risk_score 0.5 -> unchanged (already above the threshold)."""
         risk_score = 0.5
         overlay_sensitive = True
         if overlay_sensitive and risk_score < OVERLAY_SENSITIVE_RISK_FLOOR:
@@ -146,7 +146,7 @@ class TestOverlaySensitiveRiskFloor:
         assert risk_score == 0.5
 
     def test_floor_guarantees_deliberative_path_entry(self):
-        """Il floor 0.35 è sopra la threshold_low 0.3, quindi forza il path deliberativo."""
+        """The 0.35 floor is above threshold_low 0.3, so it forces the deliberative path."""
         assert OVERLAY_SENSITIVE_RISK_FLOOR > 0.3, (
             "OVERLAY_SENSITIVE_RISK_FLOOR deve essere > threshold_low (0.3) "
             "per garantire l'ingresso nel path deliberativo"
@@ -154,7 +154,7 @@ class TestOverlaySensitiveRiskFloor:
 
 
 class TestCyclesExhaustedFallback:
-    """Verifica la logica fallback SAFE_COMPLETE su CYCLES_EXHAUSTED."""
+    """Verifies the SAFE_COMPLETE fallback logic on CYCLES_EXHAUSTED."""
 
     def _apply_fallback(
         self,
@@ -163,7 +163,7 @@ class TestCyclesExhaustedFallback:
         risk_category: RiskCategory,
         overlay_sensitive: bool,
     ) -> Decision:
-        """Riproduce la logica di fallback del controller."""
+        """Reproduces the controller's fallback logic."""
         if (
             outcome.stop_reason == "CYCLES_EXHAUSTED"
             and decision.final_action == "NORMAL_COMPLETE"
@@ -196,7 +196,7 @@ class TestCyclesExhaustedFallback:
         assert "cycles_exhausted_sensitive_fallback" in result.reason_codes
 
     def test_cycles_exhausted_risk_category_sensitive_fallback(self):
-        """CYCLES_EXHAUSTED + risk_category SENSITIVE (senza overlay) -> SAFE_COMPLETE."""
+        """CYCLES_EXHAUSTED + risk_category SENSITIVE (without overlay) -> SAFE_COMPLETE."""
         outcome = _make_outcome(stop_reason="CYCLES_EXHAUSTED", converged=False)
         decision = _make_decision(final_action="NORMAL_COMPLETE")
         result = self._apply_fallback(
@@ -222,7 +222,7 @@ class TestCyclesExhaustedFallback:
         assert "cycles_exhausted_sensitive_fallback" in result.reason_codes
 
     def test_cycles_exhausted_non_sensitive_no_fallback(self):
-        """CYCLES_EXHAUSTED + non-sensitive + BENIGN -> NORMAL_COMPLETE preservato."""
+        """CYCLES_EXHAUSTED + non-sensitive + BENIGN -> NORMAL_COMPLETE preserved."""
         outcome = _make_outcome(stop_reason="CYCLES_EXHAUSTED", converged=False)
         decision = _make_decision(final_action="NORMAL_COMPLETE")
         result = self._apply_fallback(
@@ -235,7 +235,7 @@ class TestCyclesExhaustedFallback:
         assert "cycles_exhausted_sensitive_fallback" not in result.reason_codes
 
     def test_cycles_exhausted_refuse_not_overridden(self):
-        """CYCLES_EXHAUSTED + REFUSE -> REFUSE preservato (mai degradato)."""
+        """CYCLES_EXHAUSTED + REFUSE -> REFUSE preserved (never downgraded)."""
         outcome = _make_outcome(stop_reason="CYCLES_EXHAUSTED", converged=False)
         decision = _make_decision(final_action="REFUSE")
         result = self._apply_fallback(
@@ -247,7 +247,7 @@ class TestCyclesExhaustedFallback:
         assert result.final_action == "REFUSE"
 
     def test_converged_no_fallback(self):
-        """CONVERGED + sensitive -> nessun fallback (deliberazione riuscita)."""
+        """CONVERGED + sensitive -> no fallback (deliberation succeeded)."""
         outcome = _make_outcome(stop_reason="CONVERGED", converged=True)
         decision = _make_decision(final_action="NORMAL_COMPLETE")
         result = self._apply_fallback(
@@ -259,7 +259,7 @@ class TestCyclesExhaustedFallback:
         assert result.final_action == "NORMAL_COMPLETE"
 
     def test_fallback_preserves_decision_fields(self):
-        """Il fallback preserva tutti i campi della decisione originale."""
+        """The fallback preserves all fields of the original decision."""
         outcome = _make_outcome(stop_reason="CYCLES_EXHAUSTED", converged=False)
         decision = Decision(
             final_action="NORMAL_COMPLETE",

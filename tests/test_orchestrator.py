@@ -1,7 +1,7 @@
 """
-Test per MoralStack Orchestrator.
+Tests for MoralStack Orchestrator.
 
-Verifica il corretto funzionamento dell'orchestrator e dei cicli deliberativi.
+Verifies the correct behavior of the orchestrator and of the deliberative cycles.
 """
 
 import os
@@ -42,7 +42,7 @@ from moralstack.runtime.orchestrator import (
 # Mock Objects
 # =============================================================================
 
-# Valori per assi risk usati da decide_action (_axis_val si aspetta .value LOW|MEDIUM|HIGH)
+# Values for risk axes used by decide_action (_axis_val expects .value LOW|MEDIUM|HIGH)
 _AXIS_MEDIUM = type("_Axis", (), {"value": "MEDIUM"})()
 
 
@@ -66,7 +66,7 @@ class MockRiskEstimation:
     intent_type: str = ""
     requested_instructions: bool = False
     intent_to_harm: bool = False
-    detected_language: str = ""  # ISO 639-1, da Risk Estimator reale
+    detected_language: str = ""  # ISO 639-1, from the real Risk Estimator
 
     @property
     def triggered_signals(self) -> list[str]:
@@ -415,7 +415,7 @@ class MockConstitutionStore:
 
 
 class FailingMockLLM:
-    """Mock LLM che fallisce."""
+    """Mock LLM that fails."""
 
     def __init__(self, fail_on: str = "all"):
         self.fail_on = fail_on
@@ -463,21 +463,21 @@ def shared_low_risk_estimator():
 
 
 class TestDataModels:
-    """Test per data models."""
+    """Tests for data models."""
 
     def test_processed_request_defaults(self):
-        """ProcessedRequest ha default corretti."""
+        """ProcessedRequest has correct defaults."""
         req = ProcessedRequest(prompt="Hello")
         assert req.prompt == "Hello"
-        assert req.request_id  # UUID generato
+        assert req.request_id  # UUID generated
         assert req.conversation_history == []
-        # user_context ora è un UserContext dataclass
+        # user_context is now a UserContext dataclass
         assert req.user_context.locale == "en-US"
         assert req.user_context.permission_level == "standard"
         assert req.user_context.domain_overlay is None
 
     def test_response_metadata(self):
-        """ResponseMetadata funziona correttamente."""
+        """ResponseMetadata works correctly."""
         meta = ResponseMetadata(
             risk_score=0.5,
             deliberation_cycles=2,
@@ -528,7 +528,7 @@ class TestDataModels:
         assert meta.predicted_action == RiskPolicyAction.ALLOW_WITH_CAVEAT.value
 
     def test_final_response(self):
-        """FinalResponse funziona correttamente."""
+        """FinalResponse works correctly."""
         response = FinalResponse(
             content="Hello!",
             response_type=ResponseType.DIRECT,
@@ -537,19 +537,19 @@ class TestDataModels:
         assert response.response_type == ResponseType.DIRECT
 
     def test_final_response_refusal_factory(self):
-        """FinalResponse.refusal factory funziona."""
+        """FinalResponse.refusal factory works."""
         meta = ResponseMetadata(risk_score=0.9)
         response = FinalResponse.refusal("Cannot help", meta)
         assert response.response_type == ResponseType.FULL_REFUSAL
 
     def test_final_response_safe_default(self):
-        """FinalResponse.safe_default funziona."""
+        """FinalResponse.safe_default works."""
         response = FinalResponse.safe_default(processing_time_ms=100)
         assert response.response_type == ResponseType.FULL_REFUSAL
         assert "SYSTEM.FAIL_SAFE" in response.metadata.triggered_principles
 
     def test_deliberation_state(self):
-        """DeliberationState properties funzionano."""
+        """DeliberationState properties work."""
         state = DeliberationState()
         assert state.cycle == 0
         assert state.last_critique is None
@@ -563,19 +563,19 @@ class TestDataModels:
 
 
 class TestConfiguration:
-    """Test per configurazione."""
+    """Tests for configuration."""
 
     def test_risk_thresholds_defaults(self):
-        """RiskThresholds ha default corretti."""
+        """RiskThresholds has correct defaults."""
         thresholds = RiskThresholds()
         assert thresholds.low == 0.3
         assert thresholds.medium == 0.7
 
     def test_orchestrator_config_defaults(self):
-        """OrchestratorConfig ha default corretti."""
+        """OrchestratorConfig has correct defaults."""
         config = OrchestratorConfig()
         assert config.max_deliberation_cycles == 2
-        assert config.timeout_ms == 600000  # 10 minuti (full stack con cicli e LLM)
+        assert config.timeout_ms == 600000  # 10 minutes (full stack with cycles and LLM)
         assert config.enable_perspectives is True
 
 
@@ -585,10 +585,10 @@ class TestConfiguration:
 
 
 class TestOrchestratorFastPath:
-    """Test per fast path dell'orchestrator."""
+    """Tests for the orchestrator fast path."""
 
     def test_fast_path_low_risk(self, shared_low_risk_estimator, shared_mock_policy):
-        """Rischio basso triggera fast path."""
+        """Low risk triggers fast path."""
         orchestrator = create_orchestrator(
             policy=shared_mock_policy,
             risk_estimator=shared_low_risk_estimator,
@@ -601,17 +601,17 @@ class TestOrchestratorFastPath:
         assert result.response.response_type == ResponseType.DIRECT
 
     def test_fast_path_string_request(self, shared_low_risk_estimator, shared_mock_policy):
-        """Stringa come request funziona."""
+        """A string as request works."""
         orchestrator = create_orchestrator(
             policy=shared_mock_policy,
             risk_estimator=shared_low_risk_estimator,
         )
 
         result = orchestrator.process("Hello world")
-        assert result.response.content  # Non vuoto
+        assert result.response.content  # Non-empty
 
     def test_fast_path_no_critic(self, shared_low_risk_estimator, shared_mock_policy):
-        """Fast path senza critic funziona."""
+        """Fast path without critic works."""
         orchestrator = create_orchestrator(
             policy=shared_mock_policy,
             risk_estimator=shared_low_risk_estimator,
@@ -628,11 +628,11 @@ class TestOrchestratorFastPath:
 
 
 class TestOrchestratorDeliberativePath:
-    """Test per deliberative path."""
+    """Tests for the deliberative path."""
 
     @pytest.fixture
     def high_risk_estimator(self):
-        """Risk estimator che ritorna alto rischio."""
+        """Risk estimator that returns high risk."""
         return MockRiskEstimator(default_score=0.8)
 
     @pytest.fixture
@@ -640,8 +640,8 @@ class TestOrchestratorDeliberativePath:
         return MockCritic(has_violations=False)
 
     def test_deliberative_path_high_risk(self, high_risk_estimator, shared_mock_policy, mock_critic, shared_mock_store):
-        """Rischio sopra soglia (score >= low) con NORMAL_COMPLETE triggera deliberative path."""
-        # Prompt generico: mock restituisce default_score, NONE, ALLOW -> NORMAL_COMPLETE
+        """Risk above threshold (score >= low) with NORMAL_COMPLETE triggers deliberative path."""
+        # Generic prompt: mock returns default_score, NONE, ALLOW -> NORMAL_COMPLETE
         # risk_score 0.5 >= low (0.3) -> _deliberative_path, no benign_fast_path
         high_risk_estimator.default_score = 0.5
 
@@ -658,7 +658,7 @@ class TestOrchestratorDeliberativePath:
         assert result.total_cycles >= 1
 
     def test_deliberative_with_all_modules(self, high_risk_estimator, shared_mock_policy, shared_mock_store):
-        """Deliberation con tutti i moduli."""
+        """Deliberation with all modules."""
         high_risk_estimator.default_score = 0.5
 
         orchestrator = create_orchestrator(
@@ -680,16 +680,16 @@ class TestOrchestratorDeliberativePath:
     def test_semantic_harm_triggers_revise_despite_positive_valence(
         self, high_risk_estimator, shared_mock_policy, shared_mock_store
     ):
-        """expected_valence positivo ma semantic_expected_harm alto -> REVISE
-        (semantic harm influisce)."""
+        """positive expected_valence but high semantic_expected_harm -> REVISE
+        (semantic harm has an influence)."""
         from moralstack.orchestration.convergence_evaluator import ConvergenceEvaluator
 
         high_risk_estimator.default_score = 0.5
         config = OrchestratorConfig(max_deliberation_cycles=3, min_hindsight_score=0.9)
         sim = MockSimulator(
             worst_case=0.0,
-            expected_valence=0.5,  # positivo
-            semantic_expected_harm=0.7,  # alto
+            expected_valence=0.5,  # positive
+            semantic_expected_harm=0.7,  # high
             dominant_harm_types=["physical_harm"],
         )
         state = DeliberationState(
@@ -704,22 +704,22 @@ class TestOrchestratorDeliberativePath:
         assert decision == DecisionType.REVISE
 
     def test_deliberative_max_cycles_limit(self, high_risk_estimator, shared_mock_policy, shared_mock_store):
-        """Max cycles viene rispettato."""
+        """Max cycles is respected."""
         config = OrchestratorConfig(max_deliberation_cycles=2)
 
-        # Hindsight basso = non converge
+        # Low hindsight = does not converge
         orchestrator = Orchestrator(
             config=config,
             policy=shared_mock_policy,
             risk_estimator=high_risk_estimator,
             critic=MockCritic(),
-            hindsight=MockHindsight(score=0.3),  # Sotto soglia
+            hindsight=MockHindsight(score=0.3),  # Below threshold
             constitution_store=shared_mock_store,
         )
 
         result = orchestrator.process("Question")
 
-        # Dovrebbe fermarsi a max_cycles
+        # Should stop at max_cycles
         assert result.total_cycles <= config.max_deliberation_cycles
 
 
@@ -729,14 +729,14 @@ class TestOrchestratorDeliberativePath:
 
 
 class TestOrchestratorViolations:
-    """Test per gestione violazioni."""
+    """Tests for violation handling."""
 
     @pytest.fixture
     def high_risk_estimator(self):
         return MockRiskEstimator(default_score=0.8)
 
     def test_soft_violations_add_caveat(self, high_risk_estimator, shared_mock_policy, shared_mock_store):
-        """Soft violations aggiungono caveat."""
+        """Soft violations add caveat."""
         critic_with_soft = MockCritic(has_violations=True, critical=False)
 
         orchestrator = create_orchestrator(
@@ -754,7 +754,7 @@ class TestOrchestratorViolations:
         assert result.response.response_type == ResponseType.WITH_CAVEAT
 
     def test_critical_violations_trigger_revision(self, high_risk_estimator, shared_mock_policy, shared_mock_store):
-        """Critical violations triggerano revisione."""
+        """Critical violations trigger revision."""
         critic_critical = MockCritic(has_violations=True, critical=True)
 
         config = OrchestratorConfig(max_deliberation_cycles=2)
@@ -769,10 +769,10 @@ class TestOrchestratorViolations:
 
         result = orchestrator.process("Bad request")
 
-        # Dovrebbe tentare revisioni
+        # Should attempt revisions
         assert result.total_cycles >= 1
-        # Policy rewrite dovrebbe essere chiamato
-        assert shared_mock_policy.rewrite_calls >= 0  # Dipende dalla logica
+        # Policy rewrite should be called
+        assert shared_mock_policy.rewrite_calls >= 0  # Depends on the logic
 
 
 # =============================================================================
@@ -781,10 +781,10 @@ class TestOrchestratorViolations:
 
 
 class TestOrchestratorHindsight:
-    """Test per integrazione hindsight."""
+    """Tests for hindsight integration."""
 
     def test_hindsight_refuse_recommendation(self):
-        """Hindsight refuse (in decision1 post-deliberation) triggera rifiuto."""
+        """Hindsight refuse (in decision1 post-deliberation) triggers refusal."""
         # risk_score 0.8 >= low -> _deliberative_path; hindsight refuse -> REFUSE
         orchestrator = create_orchestrator(
             policy=MockPolicyLLM(),
@@ -801,7 +801,7 @@ class TestOrchestratorHindsight:
         assert result.response.response_type == ResponseType.FULL_REFUSAL
 
     def test_high_hindsight_score_converges(self):
-        """Alto hindsight score fa convergere."""
+        """High hindsight score makes it converge."""
         orchestrator = create_orchestrator(
             policy=MockPolicyLLM(),
             risk_estimator=MockRiskEstimator(default_score=0.5),
@@ -825,10 +825,10 @@ class TestOrchestratorHindsight:
 
 
 class TestOrchestratorErrorHandling:
-    """Test per gestione errori."""
+    """Tests for error handling."""
 
     def test_generation_error_safe_fallback(self):
-        """Errore generazione usa safe fallback."""
+        """Generation error uses safe fallback."""
         config = OrchestratorConfig(safe_response_on_error=True)
 
         orchestrator = Orchestrator(
@@ -843,7 +843,7 @@ class TestOrchestratorErrorHandling:
         assert result.response.response_type == ResponseType.FULL_REFUSAL
 
     def test_risk_estimation_error(self):
-        """Errore risk estimation gestito."""
+        """Risk estimation error handled."""
 
         class FailingRiskEstimator:
             def estimate(self, prompt: str, **kwargs: Any):
@@ -859,7 +859,7 @@ class TestOrchestratorErrorHandling:
         assert result.error is not None
 
     def test_timeout_handling(self):
-        """Timeout gestito correttamente."""
+        """Timeout handled correctly."""
         config = OrchestratorConfig(
             timeout_ms=1,  # 1ms timeout
             max_deliberation_cycles=10,
@@ -881,7 +881,7 @@ class TestOrchestratorErrorHandling:
 
         result = orchestrator.process("Request")
 
-        # Potrebbe avere timeout o completare velocemente
+        # May time out or complete quickly
         assert result.response is not None
 
 
@@ -894,7 +894,7 @@ def _make_decision(
     final_action: str = "NORMAL_COMPLETE",
     path: str = "DELIBERATIVE_PATH",
 ) -> Decision:
-    """Decision minima per test assembler."""
+    """Minimal decision for assembler tests."""
     return Decision(
         final_action=final_action,
         path=path,
@@ -908,15 +908,15 @@ def _make_decision(
 
 
 class TestResponseAssembler:
-    """Test Response Assembler (renderer deterministico:
-    solo decision.final_action decide il tipo)."""
+    """Test Response Assembler (deterministic renderer:
+    only decision.final_action decides the type)."""
 
     @pytest.fixture
     def assembler(self):
         return ResponseAssembler()
 
     def test_assemble_direct_response(self, assembler):
-        """Con decision NORMAL_COMPLETE l'assembler produce DIRECT."""
+        """With a NORMAL_COMPLETE decision the assembler produces DIRECT."""
         state = DeliberationState(
             cycle=1,
             draft_response="This is the answer.",
@@ -931,7 +931,7 @@ class TestResponseAssembler:
         assert response.metadata.final_action == "NORMAL_COMPLETE"
 
     def test_assemble_with_decision_safe_complete(self, assembler):
-        """Con decision SAFE_COMPLETE l'assembler produce WITH_CAVEAT;
+        """With a SAFE_COMPLETE decision the assembler produces WITH_CAVEAT;
         content = draft (no rationale prepend)."""
         soft_violation = MockViolation(constraint_type="soft", rationale="Use with care.")
         critique = MockCritiqueReport(
@@ -954,7 +954,7 @@ class TestResponseAssembler:
         assert "Use with care" not in response.content
 
     def test_assemble_orthodox_normal_complete_ignores_soft_violations(self, assembler):
-        """Ortodosso: NORMAL_COMPLETE -> DIRECT anche con soft violations."""
+        """Orthodox: NORMAL_COMPLETE -> DIRECT even with soft violations."""
         soft_violation = MockViolation(constraint_type="soft")
         critique = MockCritiqueReport(
             violations=[soft_violation],
@@ -992,7 +992,7 @@ class TestResponseAssembler:
         assert "[REFUSAL_FALLBACK]" in response.content or len((response.content or "").strip()) > 20
 
     def test_format_refusal(self, assembler):
-        """format_refusal funziona."""
+        """format_refusal works."""
         text = assembler.format_refusal(
             reason="This is harmful",
             alternatives=["Try this instead"],
@@ -1055,10 +1055,10 @@ class TestResponseAssembler:
 
 
 class TestFactoryFunctions:
-    """Test per factory functions."""
+    """Tests for factory functions."""
 
     def test_create_orchestrator(self):
-        """create_orchestrator crea orchestrator configurato."""
+        """create_orchestrator creates a configured orchestrator."""
         orchestrator = create_orchestrator(
             max_cycles=5,
             timeout_ms=10000,
@@ -1077,7 +1077,7 @@ class TestFactoryFunctions:
         assert orchestrator.config.timeout_ms == OrchestratorConfig().timeout_ms
 
     def test_create_minimal_orchestrator(self):
-        """create_minimal_orchestrator crea versione minimale."""
+        """create_minimal_orchestrator creates a minimal version."""
         orchestrator = create_minimal_orchestrator()
 
         assert orchestrator.config.max_deliberation_cycles == 2
@@ -1091,10 +1091,10 @@ class TestFactoryFunctions:
 
 
 class TestIntegration:
-    """Test di integrazione end-to-end."""
+    """End-to-end integration tests."""
 
     def test_full_flow_benign_request(self):
-        """Flusso completo richiesta benigna."""
+        """Full flow benign request."""
         orchestrator = create_orchestrator(
             policy=MockPolicyLLM(response="The weather is sunny."),
             risk_estimator=MockRiskEstimator(default_score=0.1),
@@ -1108,7 +1108,7 @@ class TestIntegration:
         assert "sunny" in result.response.content.lower()
 
     def test_full_flow_high_risk_converges(self):
-        """Flusso completo alto rischio con convergenza."""
+        """Full flow high risk with convergence."""
         orchestrator = create_orchestrator(
             policy=MockPolicyLLM(response="Here is safe information."),
             risk_estimator=MockRiskEstimator(default_score=0.8),
@@ -1121,12 +1121,12 @@ class TestIntegration:
 
         result = orchestrator.process("Complex but safe request")
 
-        assert "deliberative" in result.path_taken  # "deliberative" o "deliberative_sensitive"
+        assert "deliberative" in result.path_taken  # "deliberative" or "deliberative_sensitive"
         assert result.converged is True
         assert result.total_cycles >= 1
 
     def test_full_flow_refused_request(self):
-        """Flusso completo richiesta rifiutata: deliberative path e decision1
+        """Full flow refused request: deliberative path and decision1
         (critic/hindsight) -> REFUSE."""
         # risk_score 0.95 >= low -> _deliberative_path; critic+hindsight refuse
         orchestrator = create_orchestrator(
@@ -1145,8 +1145,8 @@ class TestIntegration:
         assert result.response.response_type == ResponseType.FULL_REFUSAL
 
     def test_deny_fast_path_refusal_content_from_template(self):
-        """Richiesta DENY (FAST_PATH REFUSE): content deve contenere frase di rifiuto esplicita."""
-        # Prompt che fa ritornare DENY + FAST_PATH (es. operational_risk=HIGH)
+        """DENY request (FAST_PATH REFUSE): content must contain an explicit refusal phrase."""
+        # Prompt that makes it return DENY + FAST_PATH (e.g. operational_risk=HIGH)
         orchestrator = create_orchestrator(
             policy=MockPolicyLLM(response="ignored"),
             risk_estimator=MockRiskEstimator(default_score=0.1),
@@ -1189,7 +1189,7 @@ class _RefuseRiskEstimator:
 
 
 class TestBorderlineRefuseConfig:
-    """Test parametrizzati per borderline REFUSE upper bound."""
+    """Parametrized tests for borderline REFUSE upper bound."""
 
     @pytest.mark.parametrize(
         "risk_score, borderline_upper, expected_deliberative",
@@ -1203,7 +1203,7 @@ class TestBorderlineRefuseConfig:
         ],
     )
     def test_borderline_refuse_config(self, risk_score, borderline_upper, expected_deliberative):
-        """Verifica che il borderline REFUSE usi il pipeline deliberativo o early-fast refusal."""
+        """Verifies that borderline REFUSE uses the deliberative pipeline or early-fast refusal."""
         config = OrchestratorConfig(
             risk_thresholds=RiskThresholds(low=0.0, medium=0.7),
             borderline_refuse_upper=borderline_upper,
@@ -1259,7 +1259,7 @@ class TestBorderlineRefuseConfig:
             assert result.response.response_type == ResponseType.FULL_REFUSAL
 
     def test_borderline_refuse_default_config_backward_compat(self):
-        """Il default borderline_refuse_upper=0.95 mantiene backward compatibility."""
+        """The default borderline_refuse_upper=0.95 keeps backward compatibility."""
         config = OrchestratorConfig()
         assert config.borderline_refuse_upper == 0.95
 

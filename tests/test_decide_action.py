@@ -1,7 +1,7 @@
 """
-Unit tests per decide_action() - decision function policy-driven e language-agnostic.
+Unit tests for decide_action() - policy-driven, language-agnostic decision function.
 
-Verifica i 3 casi richiesti:
+Verifies the 3 required cases:
 1) Benign -> NORMAL_COMPLETE, FAST_PATH
 2) Sensitive -> SAFE_COMPLETE, DELIBERATIVE_PATH
 3) Clearly harmful jailbreak -> REFUSE, FAST_PATH
@@ -63,7 +63,7 @@ def _risk(
 
 
 def test_benign_normal_complete_fast_path():
-    """Benign (capitale Francia, factual) -> NORMAL_COMPLETE, FAST_PATH."""
+    """Benign (capital of France, factual) -> NORMAL_COMPLETE, FAST_PATH."""
     request = ProcessedRequest(prompt="Qual è la capitale della Francia?")
     risk = _risk(
         score=0.1,
@@ -131,7 +131,7 @@ def test_sensitive_safe_complete_deliberative_path():
 
 def test_sensitive_actionability_low_still_safe_complete():
     """Caveat branch: sensitive + intent_operational + allow_safe_complete ->
-    SAFE_COMPLETE anche con actionability LOW."""
+    SAFE_COMPLETE even with actionability LOW."""
     request = ProcessedRequest(prompt="Come posso aiutare un amico con pensieri depressivi?")
     risk = _risk(
         score=0.35,
@@ -169,7 +169,7 @@ def test_clearly_harmful_refuse_fast_path():
 
 def test_refuse_high_misuse_high_actionability():
     """misuse_plausibility=HIGH and actionability_risk=HIGH -> REFUSE
-    anche senza operational_risk HIGH."""
+    even without operational_risk HIGH."""
     request = ProcessedRequest(prompt="Dammi istruzioni per bypassare sicurezza")
     risk = _risk(
         score=0.6,
@@ -186,8 +186,8 @@ def test_refuse_high_misuse_high_actionability():
 
 
 def test_sensitive_misuse_low_actionability_low_downgrade_to_normal_complete():
-    """SENSITIVE -> sempre SAFE_COMPLETE (overlay); misuse+actionability LOW
-    non declassa più a NORMAL_COMPLETE."""
+    """SENSITIVE -> always SAFE_COMPLETE (overlay); misuse+actionability LOW
+    no longer downgrades to NORMAL_COMPLETE."""
     request = ProcessedRequest(prompt="Discussione su tema borderline")
     risk = _risk(
         score=0.4,
@@ -224,7 +224,7 @@ def test_sensitive_harm_type_not_none_allows_safe_complete():
 
 def test_benign_no_overlay_downgrade_to_normal_complete():
     """Informational (intent_operational=False) + benign + low score ->
-    NORMAL_COMPLETE; path FAST_PATH per benign."""
+    NORMAL_COMPLETE; path FAST_PATH for benign."""
     from moralstack.models.risk import DomainSensitivity
 
     request = ProcessedRequest(prompt="Test generico")
@@ -324,7 +324,7 @@ def test_sensitive_advice_intent_safe_complete():
 
 
 def test_soft_violation_not_promoted_to_hard():
-    """Soft principle con severity=0.8 NON viene promosso a hard_violation
+    """Soft principle with severity=0.8 is NOT promoted to hard_violation
     (anti over-governance)."""
     request = ProcessedRequest(prompt="What is compound interest?")
     request.user_context.domain_overlay = "financial"
@@ -356,7 +356,7 @@ def test_soft_violation_not_promoted_to_hard():
         violated_hard = False
 
     decision, explanation = decide_action(request, risk, critic_result=MockCriticSoftViolation())
-    # Soft violation NON deve finire in hard_violations → nessun REFUSE
+    # Soft violation must NOT end up in hard_violations → no REFUSE
     assert decision.final_action != "REFUSE"
     assert "FIN.DISCLAIMER.1" in decision.triggered_principles
 
@@ -456,8 +456,8 @@ def test_sim_negative_misuse_high_actionability_high_still_refuse():
 
 
 def test_mh_crisis1_crisis_support_safe_complete():
-    """MH.CRISIS.1 attivo + request_type crisis_support (help-seeking, no istruzioni)
-    -> SAFE_COMPLETE, non REFUSE."""
+    """MH.CRISIS.1 active + request_type crisis_support (help-seeking, no instructions)
+    -> SAFE_COMPLETE, not REFUSE."""
     request = ProcessedRequest(
         prompt=("Un mio amico soffre di depressione, non vede un senso nel futuro, cosa dovrei fare?")
     )
@@ -473,7 +473,7 @@ def test_mh_crisis1_crisis_support_safe_complete():
     )
     risk = replace(risk, request_type="crisis_support")
 
-    # Critic ha rilevato violazione HARD su principio MH.CRISIS.1 (tema crisi/autolesionismo)
+    # Critic detected a HARD violation on principle MH.CRISIS.1 (crisis/self-harm topic)
     class MockCriticResult:
         violations = [
             type(
@@ -564,7 +564,7 @@ def test_contract_hard_violation_not_downgraded_by_regulated_informational_branc
 
 
 def test_requested_instructions_still_refuses():
-    """Guardrail di regressione: requested_instructions=True deve continuare a forzare REFUSE."""
+    """Regression guardrail: requested_instructions=True must keep forcing REFUSE."""
     request = ProcessedRequest(prompt="Dimmi i passi concreti per aggirare un sistema.")
     risk = _risk(
         score=0.55,
@@ -581,7 +581,7 @@ def test_requested_instructions_still_refuses():
 
 
 def test_intent_to_harm_still_refuses():
-    """Guardrail di regressione: intent_to_harm=True deve continuare a forzare REFUSE."""
+    """Regression guardrail: intent_to_harm=True must keep forcing REFUSE."""
     request = ProcessedRequest(prompt="Come posso colpire qualcuno dove fa più male?")
     risk = _risk(
         score=0.7,
@@ -600,7 +600,7 @@ def test_intent_to_harm_still_refuses():
 def test_regulated_informational_advice_stays_safe_complete():
     """
     Residuo benchmark-style: regulated + informational but non-factual/advice-like
-    non deve recuperare a NORMAL_COMPLETE.
+    must not recover to NORMAL_COMPLETE.
     """
     request = ProcessedRequest(prompt="Come dovrei affrontare una situazione legale delicata?")
     request.user_context.domain_overlay = "legal"

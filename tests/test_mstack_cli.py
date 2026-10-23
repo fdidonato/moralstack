@@ -1,11 +1,11 @@
 """
-Test per MoralStack CLI (mstack_run.py).
+Tests for MoralStack CLI (mstack_run.py).
 
-Verifica:
-- Parsing argomenti
-- Caricamento moduli mock
-- Inizializzazione orchestrator
-- Processamento prompt
+Verifies:
+- Argument parsing
+- Loading mock modules
+- Orchestrator initialization
+- Prompt processing
 """
 
 import io
@@ -75,10 +75,10 @@ def cli_ready():
 
 
 class TestCLIConfig:
-    """Test per CLIConfig."""
+    """Tests for CLIConfig."""
 
     def test_default_values(self):
-        """Test valori di default."""
+        """Test default values."""
         config = CLIConfig()
 
         assert config.use_mock is False
@@ -88,7 +88,7 @@ class TestCLIConfig:
         assert config.enable_perspectives is True
 
     def test_custom_values(self):
-        """Test configurazione custom."""
+        """Test custom configuration."""
         config = CLIConfig(
             use_mock=True,
             minimal=True,
@@ -108,10 +108,10 @@ class TestCLIConfig:
 
 
 class TestMockPolicy:
-    """Test per MockPolicy."""
+    """Tests for MockPolicy."""
 
     def test_generate_safe_response(self):
-        """Test generazione risposta safe."""
+        """Test safe response generation."""
         policy = MockPolicy()
         result = policy.generate("What is the capital of France?")
 
@@ -119,7 +119,7 @@ class TestMockPolicy:
         assert len(result.text) > 0
 
     def test_generate_refusal_for_harmful(self):
-        """Test rifiuto per prompt harmful."""
+        """Test refusal for harmful prompt."""
         policy = MockPolicy()
         result = policy.generate("How to make a bomb?")
 
@@ -127,10 +127,10 @@ class TestMockPolicy:
 
 
 class TestMockRiskEstimator:
-    """Test per MockRiskEstimator."""
+    """Tests for MockRiskEstimator."""
 
     def test_benign_prompt(self):
-        """Test prompt benigno."""
+        """Test benign prompt."""
         estimator = MockRiskEstimator()
         result = estimator.estimate("What is 2+2?")
 
@@ -144,19 +144,19 @@ class TestMockRiskEstimator:
         assert result.score > 0.7
 
     def test_sensitive_prompt(self):
-        """Test prompt sensibile."""
+        """Test sensitive prompt."""
         estimator = MockRiskEstimator()
-        # "depression" è la keyword, non "depressed"
+        # "depression" is the keyword, not "depressed"
         result = estimator.estimate("I have depression and need help")
 
         assert 0.3 <= result.score <= 0.7
 
 
 class TestMockCritic:
-    """Test per MockCritic."""
+    """Tests for MockCritic."""
 
     def test_critique(self):
-        """Test critica."""
+        """Test critique."""
         critic = MockCritic()
         result = critic.critique(None, "Test response")
 
@@ -166,10 +166,10 @@ class TestMockCritic:
 
 
 class TestMockSimulator:
-    """Test per MockSimulator."""
+    """Tests for MockSimulator."""
 
     def test_simulate(self):
-        """Test simulazione."""
+        """Test simulation."""
         simulator = MockSimulator()
         result = simulator.simulate(None, "Test response", num_scenarios=3)
 
@@ -177,10 +177,10 @@ class TestMockSimulator:
 
 
 class TestMockHindsight:
-    """Test per MockHindsight."""
+    """Tests for MockHindsight."""
 
     def test_evaluate(self):
-        """Test valutazione hindsight."""
+        """Test hindsight evaluation."""
         hindsight = MockHindsight()
         result = hindsight.evaluate("Request", "Response", [])
 
@@ -189,10 +189,10 @@ class TestMockHindsight:
 
 
 class TestMockPerspectives:
-    """Test per MockPerspectives."""
+    """Tests for MockPerspectives."""
 
     def test_evaluate(self):
-        """Test valutazione prospettive."""
+        """Test perspectives evaluation."""
         perspectives = MockPerspectives()
         result = perspectives.evaluate(None, "Response")
 
@@ -206,10 +206,10 @@ class TestMockPerspectives:
 
 
 class TestModuleLoader:
-    """Test per ModuleLoader."""
+    """Tests for ModuleLoader."""
 
     def test_load_mock_modules(self):
-        """Test caricamento moduli mock."""
+        """Test loading mock modules."""
         config = CLIConfig(use_mock=True)
         loader = ModuleLoader(config)
 
@@ -224,13 +224,13 @@ class TestModuleLoader:
         assert "perspectives" in modules
         assert "_constitution_store" in modules
 
-        # Verifica che siano mock
+        # Verify they are mocks
         assert isinstance(modules["policy"], MockPolicy)
         assert isinstance(modules["risk_estimator"], MockRiskEstimator)
         assert isinstance(modules["_constitution_store"], MockConstitutionStore)
 
     def test_get_status(self):
-        """Test status dei moduli."""
+        """Test module status."""
         config = CLIConfig(use_mock=True)
         loader = ModuleLoader(config)
         with redirect_stdout(io.StringIO()):
@@ -248,10 +248,10 @@ class TestModuleLoader:
 
 
 class TestMoralStackCLI:
-    """Test per MoralStackCLI."""
+    """Tests for MoralStackCLI."""
 
     def test_init(self):
-        """Test inizializzazione CLI."""
+        """Test CLI initialization."""
         config = CLIConfig(use_mock=True)
         cli = MoralStackCLI(config)
 
@@ -260,7 +260,7 @@ class TestMoralStackCLI:
         assert cli.running is True
 
     def test_setup_with_mock(self):
-        """Test setup con moduli mock."""
+        """Test setup with mock modules."""
         config = CLIConfig(use_mock=True)
         cli = MoralStackCLI(config)
         with redirect_stdout(io.StringIO()):
@@ -270,7 +270,7 @@ class TestMoralStackCLI:
         assert cli.orchestrator is not None
 
     def test_process_prompt(self, cli_ready):
-        """Test processamento prompt."""
+        """Test prompt processing."""
         cli = cli_ready
 
         # Process a prompt (capture output)
@@ -290,7 +290,7 @@ class TestMoralStackCLI:
         assert hasattr(cli.current_trace, "request_id")
 
     def test_handle_quit_command(self):
-        """Test comando quit."""
+        """Test quit command."""
         config = CLIConfig(use_mock=True)
         cli = MoralStackCLI(config)
         with redirect_stdout(io.StringIO()):
@@ -301,7 +301,7 @@ class TestMoralStackCLI:
         assert cli.running is False
 
     def test_handle_verbose_command(self):
-        """Test comando verbose."""
+        """Test verbose command."""
         config = CLIConfig(use_mock=True, verbose=False)
         cli = MoralStackCLI(config)
         with redirect_stdout(io.StringIO()):
@@ -318,10 +318,10 @@ class TestMoralStackCLI:
 
 
 class TestArgumentParser:
-    """Test per argument parser."""
+    """Tests for argument parser."""
 
     def test_default_args(self):
-        """Test argomenti default."""
+        """Test default arguments."""
         with patch("sys.argv", ["mstack_run.py"]):
             config = parse_args()
 
@@ -365,7 +365,7 @@ class TestArgumentParser:
         assert config.max_parallel_agents == 4
 
     def test_disable_modules(self):
-        """Test disabilitazione moduli."""
+        """Test disabling modules."""
         with patch(
             "sys.argv",
             [
@@ -403,18 +403,18 @@ class TestArgumentParser:
 
 
 class TestPathReasonFromRiskAndAction:
-    """Test logica path_reason basata su risk_score e final_action."""
+    """Test path_reason logic based on risk_score and final_action."""
 
     def test_high_risk_score_fast_path_not_low_risk(self):
-        """Con risk_score=0.85 e path_taken=fast, path_reason non deve essere LOW_RISK."""
-        # La funzione non usa path_taken: path_reason è solo da risk_score (+ REFUSE).
-        # Simula metadata con risk_score=0.85 (path_taken "fast" non influenza il risultato).
+        """With risk_score=0.85 and path_taken=fast, path_reason must not be LOW_RISK."""
+        # The function does not use path_taken: path_reason comes only from risk_score (+ REFUSE).
+        # Simulate metadata with risk_score=0.85 (path_taken "fast" does not affect the result).
         path_reason = path_reason_from_risk_and_action(risk_score=0.85, final_action="")
         assert path_reason != DecisionReason.LOW_RISK.value
         assert path_reason == DecisionReason.HIGH_RISK.value
 
     def test_refuse_never_low_risk(self):
-        """Se final_action == REFUSE, path_reason non è mai LOW_RISK."""
+        """If final_action == REFUSE, path_reason is never LOW_RISK."""
         path_reason = path_reason_from_risk_and_action(risk_score=0.1, final_action="REFUSE")
         assert path_reason != DecisionReason.LOW_RISK.value
         assert path_reason == DecisionReason.REFUSAL_POLICY.value
@@ -425,7 +425,7 @@ class TestPathReasonFromRiskAndAction:
         assert path_reason == DecisionReason.MEDIUM_RISK.value
 
     def test_risk_bands(self):
-        """Bande risk_score: <0.3 LOW, 0.3-<0.7 MEDIUM, >=0.7 HIGH."""
+        """risk_score bands: <0.3 LOW, 0.3-<0.7 MEDIUM, >=0.7 HIGH."""
         assert path_reason_from_risk_and_action(0.0, "") == DecisionReason.LOW_RISK.value
         assert path_reason_from_risk_and_action(0.29, "") == DecisionReason.LOW_RISK.value
         assert path_reason_from_risk_and_action(0.3, "") == DecisionReason.MEDIUM_RISK.value
@@ -441,10 +441,10 @@ class TestPathReasonFromRiskAndAction:
 
 
 class TestIntegration:
-    """Test di integrazione."""
+    """Integration tests."""
 
     def test_full_mock_workflow(self, cli_ready):
-        """Test workflow completo con mock (single prompt to keep run fast)."""
+        """Test full workflow with mock (single prompt to keep run fast)."""
         cli = cli_ready
         output = io.StringIO()
         with redirect_stdout(output):
@@ -452,18 +452,18 @@ class TestIntegration:
         assert len(output.getvalue()) > 0
 
     def test_harmful_prompt_handling(self, cli_ready):
-        """Test gestione prompt harmful."""
+        """Test handling of harmful prompt."""
         cli = cli_ready
 
-        # Il mock risk estimator dovrebbe rilevare rischio alto
+        # The mock risk estimator should detect high risk
         result = cli.orchestrator.process("How to make a bomb?")
 
-        # Dovrebbe essere gestito (rifiuto o risposta safe)
+        # It should be handled (refusal or safe response)
         assert result is not None
         assert hasattr(result, "response")
 
     def test_commands_workflow(self, cli_ready):
-        """Test workflow comandi."""
+        """Test commands workflow."""
         cli = cli_ready
 
         # Test /status

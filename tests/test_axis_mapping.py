@@ -1,15 +1,15 @@
 """
-Unit tests per il mapping degli assi decisionali (_axis_val).
+Unit tests for the decision axis mapping (_axis_val).
 
-Verifica che input noti producano output attesi, senza modificare
-soglie o semantica. Copre CLEAR, NONE, AMBIGUOUS, valori inattesi.
+Verifies that known inputs produce the expected outputs, without changing
+thresholds or semantics. Covers CLEAR, NONE, AMBIGUOUS, unexpected values.
 """
 
 import sys
 from pathlib import Path
 
-# L'uso di funzioni private è intenzionale: serve per test di invarianza semantica.
-# NON è parte dell'API pubblica.
+# Using private functions is intentional: it serves semantic-invariance tests.
+# It is NOT part of the public API.
 from moralstack.orchestration.decision_service import _axis_val
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 
 def _obj(value: str):
-    """Oggetto con .value per simulare enum."""
+    """Object with .value to simulate an enum."""
     return type("_Axis", (), {"value": value})()
 
 
@@ -28,7 +28,7 @@ def test_axis_val_clear_returns_high():
 
 
 def test_axis_val_none_returns_high():
-    """NONE (categoria) -> HIGH (legacy)."""
+    """NONE (category) -> HIGH (legacy)."""
     assert _axis_val(_obj("NONE")) == "HIGH"
     assert _axis_val(_obj("none")) == "HIGH"
 
@@ -47,12 +47,12 @@ def test_axis_val_pass_through():
 
 
 def test_axis_val_none_input_returns_low():
-    """Input None (assente) -> LOW (fallback)."""
+    """Input None (absent) -> LOW (fallback)."""
     assert _axis_val(None) == "LOW"
 
 
 def test_axis_val_unexpected_values_fallback_to_low():
-    """Valori non mappati -> LOW (fallback esplicito)."""
+    """Unmapped values -> LOW (explicit fallback)."""
     assert _axis_val(_obj("MALICIOUS")) == "LOW"
     assert _axis_val(_obj("UNKNOWN")) == "LOW"
     assert _axis_val(_obj("")) == "LOW"
@@ -60,12 +60,12 @@ def test_axis_val_unexpected_values_fallback_to_low():
 
 
 def test_axis_val_no_value_attr_fallback():
-    """Oggetto senza .value -> LOW."""
+    """Object without .value -> LOW."""
     assert _axis_val(object()) == "LOW"
 
 
 def test_axis_val_with_real_enums():
-    """Integrazione con enum reali da models.risk."""
+    """Integration with real enums from models.risk."""
     from moralstack.models.risk import ActionabilityRisk, IntentClarity, MisusePlausibility
 
     assert _axis_val(IntentClarity.LOW) == "LOW"

@@ -1,9 +1,9 @@
 """
-Test per decision_trace: routing via observability, formato invariato.
+Tests for decision_trace: routing via observability, unchanged format.
 
-append_decision_trace() ora richiede run_id nel contesto e instrada
-via observability router (file_only → logs/observability/decision.trace.jsonl).
-Il parametro path= è accettato per compatibilità ma ignorato.
+append_decision_trace() now requires run_id in the context and routes
+via the observability router (file_only → logs/observability/decision.trace.jsonl).
+The path= parameter is accepted for compatibility but ignored.
 """
 
 from __future__ import annotations
@@ -153,7 +153,7 @@ def test_append_decision_trace_no_block_on_missing_context():
 
 
 def test_decision_trace_to_dict_includes_sim_fields():
-    """to_dict() include sim_expected_valence, sim_semantic_expected_harm,
+    """to_dict() includes sim_expected_valence, sim_semantic_expected_harm,
     sim_dominant_harm_types, sim_worst_harm."""
     trace = DecisionTrace(request_id="req-sim")
     trace.sim_expected_valence = 0.35

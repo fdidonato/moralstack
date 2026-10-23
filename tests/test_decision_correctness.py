@@ -1,8 +1,8 @@
 """
-Test unitari per la Decision Correctness Function (DCF).
+Unit tests for the Decision Correctness Function (DCF).
 
-Ordine restrittività: N ≼ S ≼ R (NORMAL_COMPLETE ≼ SAFE_COMPLETE ≼ REFUSE).
-Policy: min_required (safety floor), max_allowed (utility ceiling); OK sse min ≼ chosen ≼ max.
+Restrictiveness order: N ≼ S ≼ R (NORMAL_COMPLETE ≼ SAFE_COMPLETE ≼ REFUSE).
+Policy: min_required (safety floor), max_allowed (utility ceiling); OK iff min ≼ chosen ≼ max.
 """
 
 from moralstack.runtime.decision_correctness import (
@@ -141,7 +141,7 @@ def test_clearly_harmful_chosen_safe_underblock():
 
 
 # -----------------------------------------------------------------------------
-# 9) hard_violations non vuoto + chosen=R => OK
+# 9) hard_violations non-empty + chosen=R => OK
 # -----------------------------------------------------------------------------
 
 
@@ -155,7 +155,7 @@ def test_hard_violations_chosen_refuse_ok():
 
 
 # -----------------------------------------------------------------------------
-# 10) hard_violations non vuoto + chosen=S => UNDERBLOCK
+# 10) hard_violations non-empty + chosen=S => UNDERBLOCK
 # -----------------------------------------------------------------------------
 
 
@@ -291,7 +291,7 @@ def test_compute_interval_morally_nuanced():
 
 
 # -----------------------------------------------------------------------------
-# Policy formale SAFE_COMPLETE (trigger: risk + regulated domain or ambiguity)
+# Formal SAFE_COMPLETE policy (trigger: risk + regulated domain or ambiguity)
 # -----------------------------------------------------------------------------
 
 
