@@ -3,9 +3,12 @@ MoralStack server proxy: FastAPI app exposing OpenAI-compatible endpoints
 governed by MoralStack.
 
 Per design v1.3 §4.2, the proxy is a thin HTTP wrapper on the already-validated
-SDK (GovernedClient). It receives OpenAI-style requests, applies governance,
-then forwards to the upstream OpenAI client (for NORMAL_COMPLETE / SAFE_COMPLETE)
-or returns a synthetic ChatCompletion (for REFUSE).
+SDK (GovernedClient). It receives OpenAI-style requests, applies governance and
+returns a synthetic ChatCompletion (or synthetic SSE stream) carrying the text
+produced inside the governed pipeline, for every final_action (Plan 1: the
+upstream client never generates the delivered answer; a pipeline failure fails
+closed to a governed refusal). With the opt-in generation="upstream_then_verify"
+the upstream client may write only the speculative draft, which is then governed.
 
 Concurrency: two concurrent calls with the same conversation_id are serialized
 via per-conversation locks (design v1.3 §4.4). Blocking orchestrator and upstream
@@ -710,8 +713,9 @@ def create_app(
         2. Acquire conversation lock (section 4.4).
         3. Build ProcessedRequest from messages.
         4. Call controller.process().
-        5. Route: REFUSE -> synthetic completion; SAFE_COMPLETE -> forward with
-           appended synthetic user turn; NORMAL_COMPLETE -> forward original.
+        5. Deliver the governed text via ``finalize_delivery`` as a synthetic
+           completion (or synthetic SSE) for every final_action; a pipeline
+           failure returns a governed refusal (Plan 1, no upstream passthrough).
         6. Attach X-Moralstack-* headers.
         """
         try:

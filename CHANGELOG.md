@@ -100,6 +100,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   but not read. The `HindsightConfig` comments and the `from_evaluations` docstring no longer cite `worst_case` or a
   non-existent `revise_threshold` argument, and the risk estimator docstring names q1–q17 instead of q1–q13. No
   behavior change.
+- **`moralstack/server/proxy.py` docstrings describe governed delivery.** The module and handler docstrings still
+  said NORMAL_COMPLETE / SAFE_COMPLETE are forwarded to the upstream client; the code delivers the governed text as a
+  synthetic completion for every action and fails closed to a governed refusal (Plan 1). Docstrings only.
 
 ## 1.0.0 — 2026-10-21
 
