@@ -247,6 +247,8 @@ def test_verify_report_reads_the_suite_record(
     assert check_args[1].endswith("suite_record.py") and check_args[2:] == ["check"]
     assert check_kwargs.get("timeout") == stop_gate.SUITE_CHECK_TIMEOUT_SECONDS
     assert stop_gate.PRECOMMIT_TIMEOUT_SECONDS + stop_gate.SUITE_CHECK_TIMEOUT_SECONDS < 300
+    if asks_verifier:
+        assert "exit 1" in context, "the check's reason (or its exit code) is surfaced"
     # tmp_path itself contains "pytest-of-...", so match whole arguments, not substrings.
     assert not any(part in ("pytest", "-mpytest") for args, _ in calls for part in args)
     assert all(args[1:3] != ["-m", "pytest"] for args, _ in calls)
@@ -261,3 +263,29 @@ def test_precommit_timeout_constant(stop_gate, run_hook, project, monkeypatch):
     assert len(calls) == 1
     _, kwargs = calls[0]
     assert kwargs.get("timeout") == stop_gate.PRECOMMIT_TIMEOUT_SECONDS == 150
+
+
+@pytest.mark.parametrize(("outcome", "content_match"), [("PASSED", True), ("FAILED", False)])
+def test_env_only_mismatch_on_a_passed_record_is_not_reported_as_missing(
+    stop_gate, run_hook, project, monkeypatch, outcome, content_match
+):
+    """The fingerprint includes PATH and the hook's shell has its own PATH, so an
+    env-only mismatch on a PASSED record means the same content already passed."""
+    stdout = "suite_record: test-relevant environment differs (names: PATH, PYTHONUTF8); run again\n"
+    stub_subprocess(monkeypatch, stop_gate, returncode=1, stdout=stdout)
+    (project / ".claude" / ".suite-result.json").write_text(
+        json.dumps({"outcome": outcome, "reusable": outcome == "PASSED"}), encoding="utf-8"
+    )
+    write_code_file(project, "scripts/ai/suite_record.py")
+    write_code_file(project, "tests/test_foo.py")
+    write_session_edits(project, "s1", ["tests/test_foo.py"])
+    code, out = run_hook(stop_gate, _payload(), project)
+    assert code == 0
+    context = out["hookSpecificOutput"]["additionalContext"]
+    if content_match:
+        assert "a PASSED full-suite record matches this tree's content" in context
+        assert "names: PATH, PYTHONUTF8" in context
+        assert "pre-commit-verifier" not in context
+    else:
+        assert "no PASSED full-suite record for this tree (test-relevant environment differs" in context
+        assert "pre-commit-verifier" in context

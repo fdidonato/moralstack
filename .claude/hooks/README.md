@@ -37,8 +37,10 @@ turn. They are plain Python (no third-party imports) and unit-tested in
   fingerprint) and `stop_hook_active` is False. It runs **no tests** and says so in
   every report — tests are the `pre-commit-verifier` agent's job. The report's
   `tests:` line comes from `suite_record.py check` (60 s budget): "full suite PASSED
-  for this exact tree" when a reusable record matches, otherwise a request to run the
-  verifier.
+  for this exact tree" when a reusable record matches; when only the environment
+  differs (the hook's shell has its own `PATH`, which the fingerprint includes) and the
+  record is PASSED, it says the content matches; otherwise it quotes the check's reason
+  and asks to run the verifier.
 - **Docs-gate** blocks when governance behavior files change without touching a
   **verified-memory ledger** (`docs/CODEBASE_FACTS.md`,
   `docs/MORALSTACK_CODEBASE_INDEX.md`, `docs/traces/`, `docs/modules/`), at most

@@ -302,7 +302,24 @@ def _suite_status(project: Path, py: str) -> str:
         return f"no suite record checked ({type(exc).__name__}); {_RUN_VERIFIER}."
     if proc.returncode == 0:
         return "full suite PASSED for this exact tree (suite_record.py check)."
-    return f"no PASSED full-suite record for this tree (suite_record.py check); {_RUN_VERIFIER}."
+    lines = (proc.stdout or "").strip().splitlines()
+    reason = lines[-1].removeprefix("suite_record: ") if lines else f"exit {proc.returncode}"
+    # The hook's shell has its own PATH, which the fingerprint includes: an env-only
+    # difference on a PASSED record means the same content already passed.
+    if reason.startswith("test-relevant environment differs") and _record_passed(project):
+        return (
+            "a PASSED full-suite record matches this tree's content; only this hook's shell "
+            f"environment differs from the recording run ({reason.split('(', 1)[-1].split(')', 1)[0]})."
+        )
+    return f"no PASSED full-suite record for this tree ({reason}); {_RUN_VERIFIER}."
+
+
+def _record_passed(project: Path) -> bool:
+    try:
+        record = json.loads((project / ".claude" / ".suite-result.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(record, dict) and record.get("outcome") == "PASSED" and record.get("reusable") is True
 
 
 def _verify(project: Path, code: list[str]) -> tuple[str, bool]:
