@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`docs/CODEBASE_FACTS.md` is compacted from ~300 KB to ~150 KB.** Rows over 1,500 characters are condensed with
+  a `Full detail:` pointer, and FIXED/RESOLVED gaps are moved; the originals are kept verbatim in
+  `docs/archive/codebase_facts_detail.md`.
 - **Targeted test runs are serial, and the full suite is recorded per tree state.** Selecting part of the suite
   (files, directories, node ids or `-k`) no longer starts up to 8 xdist workers; the full suite stays parallel and an
   explicit `-n` still wins. `scripts/ai/suite_record.py run|check` fingerprints the working tree and reuses a PASSED

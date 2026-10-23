@@ -93,7 +93,7 @@ LINE_ALLOWLIST: dict[str, tuple[tuple[str, str], ...]] = {
     "moralstack/models/risk/calibration.py": (
         ("yes/true/1/sì/si", "documents the Italian yes-token accepted by the parser (data)"),
     ),
-    "docs/CODEBASE_FACTS.md": (
+    "docs/archive/codebase_facts_detail.md": (
         ("nessun cambio a parser, retry o contratti JSON", "verbatim quote of a historical Italian commit message"),
     ),
     "tests/test_calibration_guard.py": (
