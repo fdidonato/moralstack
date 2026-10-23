@@ -330,17 +330,17 @@ _AXIS_FALLBACK_LEVEL = "LOW"
 
 def _axis_val(e: RiskCategoryLikeProtocol | None) -> str:
     """
-    Normalizza valori degli assi decisionali in livelli LOW|MEDIUM|HIGH.
+    Normalizes decision-axis values into LOW|MEDIUM|HIGH levels.
 
-    Riceve enum o valori categoriali (es. IntentClarity, MisusePlausibility,
-    ActionabilityRisk) e li mappa in livelli decisionali per la policy.
-    Usa AXIS_VALUE_MAPPING; valori non mappati producono _AXIS_FALLBACK_LEVEL.
+    Receives enums or categorical values (e.g. IntentClarity, MisusePlausibility,
+    ActionabilityRisk) and maps them to decision levels for the policy.
+    Uses AXIS_VALUE_MAPPING; unmapped values yield _AXIS_FALLBACK_LEVEL.
 
     NOTE:
-    Il mapping riflette decisioni di policy intenzionali.
-    Alcune associazioni categoria->livello possono sembrare non intuitive
-    (es. NONE->HIGH) ma sono mantenute per backward compatibility.
-    NON modificare senza full benchmark review.
+    The mapping reflects intentional policy decisions.
+    Some category->level associations may look counterintuitive
+    (e.g. NONE->HIGH) but are kept for backward compatibility.
+    Do NOT modify without a full benchmark review.
     """
     if e is None:
         return _AXIS_FALLBACK_LEVEL
@@ -352,8 +352,8 @@ def _axis_val(e: RiskCategoryLikeProtocol | None) -> str:
 
 def _extract_critic_violations(critic_result: CriticReportProtocol | None) -> tuple[list[str], list[str]]:
     """
-    Estrae hard_violations e triggered_principles dal critic_result.
-    Ritorna (hard_violations, triggered_principles).
+    Extracts hard_violations and triggered_principles from critic_result.
+    Returns (hard_violations, triggered_principles).
     """
     hard_violations: list[str] = []
     triggered_principles: list[str] = []
@@ -513,9 +513,9 @@ def _handle_hard_violations(
     write_final: bool = True,
 ) -> tuple[Decision, DecisionExplanation] | None:
     """
-    Gestisce il ramo con hard_violations presenti.
-    Ritorna (Decision, DecisionExplanation) se gestito, None altrimenti
-    (non dovrebbe mai essere None se hard_violations).
+    Handles the branch with hard_violations present.
+    Returns (Decision, DecisionExplanation) if handled, None otherwise
+    (should never be None if hard_violations).
     """
     hard_violations = inputs.hard_violations
     if not hard_violations:
@@ -547,7 +547,7 @@ def _handle_hard_violations(
         )
         return d, expl
 
-    # Deroga: info-regolata (risk basso, non operativo, dominio regolato)
+    # Carve-out: regulated-info (low risk, non-operational, regulated domain)
     op_risk = getattr(risk_assessment, "operational_risk", OperationalRisk.NONE)
     if (
         risk_score < 0.5
@@ -663,12 +663,12 @@ def _handle_normative_refuse_guards(
     actionability_risk: str,
     write_final: bool = True,
 ) -> tuple[Decision, DecisionExplanation] | None:
-    # FONTE AUTORITATIVA per final_action quando op_risk == HIGH.
-    # Produce la decisione effettiva e la scrive nel trace con winning_rule="normative_refuse_guards".
-    # path_router.py contiene un blocco speculare che ri-deriva risk_policy_action
-    # dallo stesso op_risk, ma solo per scopi di routing e logging.
-    # Le due logiche devono rimanere allineate: se cambi le condizioni qui,
-    # aggiorna anche path_router.get_route() e viceversa.
+    # AUTHORITATIVE SOURCE for final_action when op_risk == HIGH.
+    # Produces the effective decision and writes it to the trace with winning_rule="normative_refuse_guards".
+    # path_router.py contains a mirror block that re-derives risk_policy_action
+    # from the same op_risk, but only for routing and logging purposes.
+    # The two logics must stay aligned: if you change the conditions here,
+    # also update path_router.get_route() and vice versa.
     """Normative REFUSE guards: op_risk HIGH, or misuse+actionability HIGH."""
     if op_risk == OperationalRisk.HIGH:
         d = _make_decision(
@@ -943,9 +943,9 @@ def decide_action(
         return d, expl
 
     # Informational recovery
-    # Calcola se il critic ha trovato soft violations nell'overlay corrente.
-    # Se True, _handle_informational_recovery cede il controllo alla policy bounds
-    # invece di forzare NORMAL_COMPLETE, preservando i principi overlay (es. MED.DISCLAIMER.1).
+    # Computes whether the critic found soft violations in the current overlay.
+    # If True, _handle_informational_recovery yields control to the policy bounds
+    # instead of forcing NORMAL_COMPLETE, preserving the overlay principles (e.g. MED.DISCLAIMER.1).
     _overlay_soft_violations = bool(
         critic_result
         and any(getattr(v, "constraint_type", "") == "soft" for v in (getattr(critic_result, "violations", []) or []))

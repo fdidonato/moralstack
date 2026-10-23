@@ -1,18 +1,18 @@
 from typing import Any
 
 """
-MoralStack Orchestration – coordinamento alto livello del flusso deliberativo.
+MoralStack Orchestration – high-level coordination of the deliberative flow.
 
-Responsabilità separate in:
-- controller: coordinamento e process()
+Responsibilities are split into:
+- controller: coordination and process()
 - decision_service: decide_action (path/final_action)
-- deliberation_runner: cicli e moduli (critic, simulator, perspectives, hindsight)
-- diagnostics: logging, DCF (mai influenza flusso)
-- response_assembler: costruzione risposta finale
-- types: tipi condivisi
-- trace: Trace request-scoped (diagnostica)
+- deliberation_runner: cycles and modules (critic, simulator, perspectives, hindsight)
+- diagnostics: logging, DCF (never influences the flow)
+- response_assembler: final response construction
+- types: shared types
+- trace: request-scoped Trace (diagnostics)
 
-Lazy imports: i moduli concreti vengono caricati solo al primo accesso.
+Lazy imports: concrete modules are loaded only on first access.
 """
 
 __all__ = [
@@ -53,7 +53,7 @@ _LAZY_ATTRS: dict[str, str] = {
 
 
 def __getattr__(name: str) -> Any:
-    """Import lazy per evitare side effects a import-time."""
+    """Lazy import to avoid import-time side effects."""
     if name in _LAZY_ATTRS:
         import importlib
 

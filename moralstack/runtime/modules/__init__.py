@@ -3,13 +3,13 @@ from typing import Any
 """
 MoralStack Runtime Modules.
 
-Moduli cognitivi per il processo deliberativo:
-- critic_module: Critica costituzionale
-- simulator_module: Simulazione conseguenze
-- hindsight_module: Valutazione hindsight (safety/helpfulness/honesty)
-- perspective_module: Ensemble di prospettive cognitive
+Cognitive modules for the deliberative process:
+- critic_module: Constitutional critique
+- simulator_module: Consequence simulation
+- hindsight_module: Hindsight evaluation (safety/helpfulness/honesty)
+- perspective_module: Ensemble of cognitive perspectives
 
-Lazy imports: i moduli concreti vengono caricati solo al primo accesso.
+Lazy imports: the concrete modules are loaded only on first access.
 """
 
 __all__ = [
@@ -88,7 +88,7 @@ _LAZY_ATTRS: dict[str, str] = {
 
 
 def __getattr__(name: str) -> Any:
-    """Import lazy per evitare side effects a import-time."""
+    """Lazy import to avoid import-time side effects."""
     if name in _LAZY_ATTRS:
         import importlib
 

@@ -1,5 +1,5 @@
 """
-Data models per il sistema di classificazione del rischio.
+Data models for the risk classification system.
 """
 
 from __future__ import annotations
@@ -22,19 +22,19 @@ from .categories import (
 @dataclass(frozen=True)
 class RiskEstimation:
     """
-    Risultato della stima del rischio semantico.
-    Value object immutabile: ogni variazione richiede una nuova istanza.
+    Result of the semantic risk estimation.
+    Immutable value object: any variation requires a new instance.
 
     Attributes:
-        score: Score di rischio [0, 1], più alto = più rischioso
-        confidence: Confidenza nella stima [0, 1]
-        risk_category: Categoria di rischio
-        domain_sensitivity: dimensione domini regolati/etici
-        operational_risk: capacità di ricostruire/eseguire azioni dannose
-        semantic_signals: Segnali semantici identificati dall'analisi LLM
-        risk_policy_action: ALLOW | ALLOW_WITH_CAVEAT | DELIBERATE | DENY (per gating)
-        rationale: Spiegazione del rischio dal giudice semantico
-        raw_response: Risposta grezza dell'LLM (per debug)
+        score: Risk score [0, 1], higher = riskier
+        confidence: Confidence in the estimate [0, 1]
+        risk_category: Risk category
+        domain_sensitivity: regulated/ethical domains dimension
+        operational_risk: ability to reconstruct/carry out harmful actions
+        semantic_signals: Semantic signals identified by the LLM analysis
+        risk_policy_action: ALLOW | ALLOW_WITH_CAVEAT | DELIBERATE | DENY (for gating)
+        rationale: Risk explanation from the semantic judge
+        raw_response: Raw LLM response (for debugging)
         intent_clarity: Language-agnostic; LOW | MEDIUM | HIGH (for SAFE_COMPLETE routing)
         misuse_plausibility: Language-agnostic; LOW | MEDIUM | HIGH (for SAFE_COMPLETE routing)
         actionability_risk: Language-agnostic; LOW | MEDIUM | HIGH (instrumentation only)
@@ -103,7 +103,7 @@ class RiskEstimation:
     retrieval_error: str | None = None
 
     def __post_init__(self) -> None:
-        # Clamp values in range valido (object.__setattr__ per frozen)
+        # Clamp values to the valid range (object.__setattr__ for frozen)
         object.__setattr__(self, "score", max(0.0, min(1.0, self.score)))
         object.__setattr__(self, "confidence", max(0.0, min(1.0, self.confidence)))
         # Coerce legacy str input to RiskPolicyAction
@@ -112,7 +112,7 @@ class RiskEstimation:
 
     @classmethod
     def benign(cls, confidence: float = 0.95, rationale: str = "") -> RiskEstimation:
-        """Factory per richieste benigne."""
+        """Factory for benign requests."""
         return cls(
             score=0.1,
             confidence=confidence,
@@ -126,7 +126,7 @@ class RiskEstimation:
 
     @classmethod
     def clearly_harmful(cls, semantic_signals: list[str], rationale: str = "", confidence: float = 0.95) -> RiskEstimation:
-        """Factory per richieste chiaramente dannose."""
+        """Factory for clearly harmful requests."""
         return cls(
             score=0.95,
             confidence=confidence,
@@ -140,8 +140,8 @@ class RiskEstimation:
 
     @classmethod
     def from_error(cls, error_msg: str) -> RiskEstimation:
-        """Factory per fallback in caso di errore (assume rischio moderato,
-        richiede deliberazione)."""
+        """Factory for error fallback (assumes moderate risk,
+        requires deliberation)."""
         return cls(
             score=0.6,
             confidence=0.4,
@@ -157,17 +157,17 @@ class RiskEstimation:
 @dataclass(frozen=True)
 class RiskEstimatorConfig:
     """
-    Configurazione per LLMBasedRiskEstimator (Giudice Semantico).
-    Value object immutabile: ogni variazione richiede una nuova istanza.
+    Configuration for LLMBasedRiskEstimator (Semantic Judge).
+    Immutable value object: any variation requires a new instance.
 
-    Il sistema NON usa keyword matching. Tutte le decisioni sono basate
-    sull'analisi semantica dell'LLM che valuta intento, contesto e significato.
+    The system does NOT use keyword matching. All decisions are based
+    on the LLM's semantic analysis, which evaluates intent, context and meaning.
     """
 
-    # LLM settings per l'analisi semantica
+    # LLM settings for the semantic analysis
     max_retries: int = 2
-    max_tokens: int = 512  # Token per risposta del giudice (512 per evitare troncamento JSON)
-    temperature: float = 0.1  # Bassa per decisioni consistenti
+    max_tokens: int = 512  # Tokens per judge response (512 to avoid JSON truncation)
+    temperature: float = 0.1  # Low for consistent decisions
 
     # Focused mini-estimator strategy (3 focused LLM calls).
     # None = inherit the main risk policy model (see resolve_risk_mini_model).

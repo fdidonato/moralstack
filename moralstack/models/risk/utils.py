@@ -1,5 +1,5 @@
 """
-Utility functions per il risk estimator (pure, stateless).
+Utility functions for the risk estimator (pure, stateless).
 """
 
 from __future__ import annotations
@@ -11,10 +11,10 @@ def _intent_type_from_request_type(
     intent_operational: bool = False,
     risk_score: float = 0.5,
 ) -> str:
-    """Deriva intent_type da request_type per policy SAFE_COMPLETE
-    (stesso mapping di decision_policy).
+    """Derives intent_type from request_type for SAFE_COMPLETE policy
+    (same mapping as decision_policy).
 
-    Per sensitive_topic: non-operational + risk_score basso → factual (informativo/descrittivo).
+    Per sensitive_topic: non-operational + low risk_score → factual (informative/descriptive).
     """
     if not request_type:
         return ""

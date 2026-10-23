@@ -1,11 +1,11 @@
 """
-LLMHindsightEvaluator - Valutatore hindsight per MoralStack.
+LLMHindsightEvaluator - Hindsight evaluator for MoralStack.
 
-Valuta risposte e conseguenze simulate retrospettivamente, producendo
-score di safety, helpfulness, honesty e un reward totale.
-Usa il Policy LLM con prompt specializzato e parsing JSON rigoroso con retry.
+Evaluates responses and simulated consequences retrospectively, producing
+safety, helpfulness and honesty scores and a total reward.
+Uses the Policy LLM with a specialized prompt and strict JSON parsing with retry.
 
-FIX PERFORMANCE: Aggiunto caching per evitare ricalcolo su input identici.
+FIX PERFORMANCE: Added caching to avoid recomputation on identical inputs.
 """
 
 from __future__ import annotations
@@ -64,28 +64,28 @@ def _build_context_block(
 
 
 class HindsightRecommendation(Enum):
-    """Raccomandazione basata sulla valutazione hindsight."""
+    """Recommendation based on the hindsight evaluation."""
 
-    PROCEED = "proceed"  # Risposta accettabile
-    REVISE = "revise"  # Necessita revisione
-    REFUSE = "refuse"  # Da rifiutare
+    PROCEED = "proceed"  # Acceptable response
+    REVISE = "revise"  # Needs revision
+    REFUSE = "refuse"  # To be refused
 
 
 @dataclass
 class HindsightScores:
     """
-    Score dettagliati della valutazione hindsight.
+    Detailed scores of the hindsight evaluation.
 
-    Tutti i valori sono in range [-1, 1]:
-    - -1: Estremamente negativo
-    -  0: Neutro
-    - +1: Estremamente positivo
+    All values are in the range [-1, 1]:
+    - -1: Extremely negative
+    -  0: Neutral
+    - +1: Extremely positive
 
     Attributes:
-        safety: Quanto la risposta è sicura e non dannosa
-        helpfulness: Quanto la risposta è utile e informativa
-        honesty: Quanto la risposta è onesta e trasparente
-        total: Score composito pesato
+        safety: How safe and non-harmful the response is
+        helpfulness: How useful and informative the response is
+        honesty: How honest and transparent the response is
+        total: Weighted composite score
     """
 
     safety: float = 0.0
@@ -94,7 +94,7 @@ class HindsightScores:
     total: float = 0.0
 
     def __post_init__(self) -> None:
-        """Clamp tutti i valori in [-1, 1]."""
+        """Clamp all values to [-1, 1]."""
         self.safety = max(-1.0, min(1.0, self.safety))
         self.helpfulness = max(-1.0, min(1.0, self.helpfulness))
         self.honesty = max(-1.0, min(1.0, self.honesty))
@@ -109,16 +109,16 @@ class HindsightScores:
         weights: tuple[float, float, float] = (0.5, 0.3, 0.2),
     ) -> "HindsightScores":
         """
-        Calcola gli score con total pesato.
+        Computes the scores with a weighted total.
 
         Args:
-            safety: Score safety [-1, 1]
-            helpfulness: Score helpfulness [-1, 1]
-            honesty: Score honesty [-1, 1]
-            weights: Pesi (safety, helpfulness, honesty)
+            safety: Safety score [-1, 1]
+            helpfulness: Helpfulness score [-1, 1]
+            honesty: Honesty score [-1, 1]
+            weights: Weights (safety, helpfulness, honesty)
 
         Returns:
-            HindsightScores con total calcolato
+            HindsightScores with the computed total
         """
         w_s, w_h, w_o = weights
         total = w_s * safety + w_h * helpfulness + w_o * honesty
@@ -134,15 +134,15 @@ class HindsightScores:
 @dataclass
 class HindsightEvaluation:
     """
-    Valutazione hindsight di un singolo scenario.
+    Hindsight evaluation of a single scenario.
 
     Attributes:
-        scenario_id: ID dello scenario valutato
-        scores: Score dettagliati (safety/helpfulness/honesty/total)
-        harm_probability: Probabilità di danno [0, 1]
-        benefit_probability: Probabilità di beneficio [0, 1]
-        confidence: Confidenza nella valutazione [0, 1]
-        rationale: Spiegazione della valutazione
+        scenario_id: ID of the evaluated scenario
+        scores: Detailed scores (safety/helpfulness/honesty/total)
+        harm_probability: Probability of harm [0, 1]
+        benefit_probability: Probability of benefit [0, 1]
+        confidence: Confidence in the evaluation [0, 1]
+        rationale: Explanation of the evaluation
     """
 
     scenario_id: str
@@ -153,30 +153,30 @@ class HindsightEvaluation:
     rationale: str = ""
 
     def __post_init__(self) -> None:
-        """Normalizza probabilità in [0, 1]."""
+        """Normalize probabilities to [0, 1]."""
         self.harm_probability = max(0.0, min(1.0, self.harm_probability))
         self.benefit_probability = max(0.0, min(1.0, self.benefit_probability))
         self.confidence = max(0.0, min(1.0, self.confidence))
 
     @property
     def reward_score(self) -> float:
-        """Score reward principale (alias per total)."""
+        """Main reward score (alias for total)."""
         return self.scores.total
 
 
 @dataclass
 class AggregatedHindsight:
     """
-    Aggregazione delle valutazioni hindsight multiple.
+    Aggregation of multiple hindsight evaluations.
 
     Attributes:
-        expected_value: Valore atteso del reward su tutti gli scenari
-        worst_case: Reward dello scenario peggiore
-        best_case: Reward dello scenario migliore
-        variance: Varianza dei reward
-        avg_scores: Score medi (safety/helpfulness/honesty/total)
-        recommendation: Raccomandazione finale
-        evaluations: Lista delle valutazioni individuali
+        expected_value: Expected reward value across all scenarios
+        worst_case: Reward of the worst scenario
+        best_case: Reward of the best scenario
+        variance: Reward variance
+        avg_scores: Average scores (safety/helpfulness/honesty/total)
+        recommendation: Final recommendation
+        evaluations: List of the individual evaluations
     """
 
     expected_value: float = 0.0
@@ -194,38 +194,38 @@ class AggregatedHindsight:
         refuse_threshold: float = -0.5,
     ) -> "AggregatedHindsight":
         """
-        Aggrega liste di valutazioni in risultato finale.
+        Aggregates lists of evaluations into a final result.
 
         Args:
-            evaluations: Lista di HindsightEvaluation
-            refuse_threshold: Soglia expected_value per refuse (default -0.5)
-            revise_threshold: Soglia expected_value per revise (default -0.25)
+            evaluations: List of HindsightEvaluation
+            refuse_threshold: expected_value threshold for refuse (default -0.5)
+            revise_threshold: expected_value threshold for revise (default -0.25)
 
         Returns:
-            AggregatedHindsight con metriche aggregate
+            AggregatedHindsight with aggregated metrics
 
         Decision Logic:
-            - expected_value >= 0.0: PROCEED (risposta globalmente benefica)
-            - expected_value >= -0.25: REVISE (leggero miglioramento possibile)
-            - expected_value >= -0.5: REVISE (necessita miglioramento)
-            - expected_value < -0.5: REFUSE (conseguenze chiaramente negative)
+            - expected_value >= 0.0: PROCEED (overall beneficial response)
+            - expected_value >= -0.25: REVISE (slight improvement possible)
+            - expected_value >= -0.5: REVISE (needs improvement)
+            - expected_value < -0.5: REFUSE (clearly negative consequences)
         """
         if not evaluations:
             return cls()
 
-        # Estrai rewards
+        # Extract rewards
         rewards = [e.scores.total for e in evaluations]
 
-        # Calcola statistiche
+        # Compute statistics
         expected_value = sum(rewards) / len(rewards)
         worst_case = min(rewards)
         best_case = max(rewards)
 
-        # Varianza
+        # Variance
         mean = expected_value
         variance = sum((r - mean) ** 2 for r in rewards) / len(rewards)
 
-        # Score medi
+        # Average scores
         avg_safety = sum(e.scores.safety for e in evaluations) / len(evaluations)
         avg_helpfulness = sum(e.scores.helpfulness for e in evaluations) / len(evaluations)
         avg_honesty = sum(e.scores.honesty for e in evaluations) / len(evaluations)
@@ -235,26 +235,26 @@ class AggregatedHindsight:
             honesty=avg_honesty,
         )
 
-        # Determina recommendation
-        # LOGICA CORRETTA: basata su expected_value con soglie NEGATIVE
-        # - PROCEED: expected_value >= 0 (risposta globalmente benefica)
-        # - REVISE: expected_value tra -0.5 e 0 (migliorabile ma non dannosa)
-        # - REFUSE: expected_value < -0.5 (chiaramente negativa)
+        # Determine recommendation
+        # CORRECT LOGIC: based on expected_value with NEGATIVE thresholds
+        # - PROCEED: expected_value >= 0 (overall beneficial response)
+        # - REVISE: expected_value between -0.5 and 0 (improvable but not harmful)
+        # - REFUSE: expected_value < -0.5 (clearly negative)
         #
-        # NOTA IMPORTANTE per dilemmi etici interpersonali:
-        # - Valori leggermente negativi (-0.1 a -0.3) sono NORMALI
-        # - Ferire i sentimenti ≠ danno concreto
-        # - Solo valori molto negativi (< -0.5) giustificano refuse
+        # IMPORTANT NOTE for interpersonal ethical dilemmas:
+        # - Slightly negative values (-0.1 to -0.3) are NORMAL
+        # - Hurting feelings ≠ concrete harm
+        # - Only very negative values (< -0.5) justify refuse
 
         if expected_value >= 0.0:
-            # Valore atteso positivo = risposta globalmente benefica
+            # Positive expected value = overall beneficial response
             recommendation = HindsightRecommendation.PROCEED
         elif expected_value >= refuse_threshold:
-            # Valore atteso leggermente negativo ma recuperabile con revisione
-            # Questo include range da -0.5 a 0
+            # Slightly negative expected value but recoverable with revision
+            # This includes the range from -0.5 to 0
             recommendation = HindsightRecommendation.REVISE
         else:
-            # Valore atteso chiaramente negativo (< -0.5)
+            # Clearly negative expected value (< -0.5)
             recommendation = HindsightRecommendation.REFUSE
 
         return cls(
@@ -269,7 +269,7 @@ class AggregatedHindsight:
 
     @classmethod
     def from_error(cls) -> "AggregatedHindsight":
-        """Crea risultato di fallback in caso di errore critico."""
+        """Creates a fallback result on critical error."""
         return cls(
             expected_value=-1.0,
             worst_case=-1.0,
@@ -282,12 +282,12 @@ class AggregatedHindsight:
 @dataclass
 class HindsightResult:
     """
-    Risultato completo della valutazione hindsight.
+    Complete result of the hindsight evaluation.
 
     Attributes:
-        aggregated: Metriche aggregate
-        raw_response: Risposta grezza dell'LLM (per debug)
-        parse_attempts: Numero di tentativi di parsing JSON
+        aggregated: Aggregated metrics
+        raw_response: Raw LLM response (for debug)
+        parse_attempts: Number of JSON parsing attempts
     """
 
     aggregated: AggregatedHindsight = field(default_factory=AggregatedHindsight)
@@ -308,14 +308,14 @@ class HindsightResult:
 
     @classmethod
     def empty(cls) -> "HindsightResult":
-        """Crea un risultato vuoto."""
+        """Creates an empty result."""
         return cls(
             aggregated=AggregatedHindsight(),
         )
 
     @classmethod
     def from_error(cls, error_msg: str) -> "HindsightResult":
-        """Crea risultato di fallback in caso di errore."""
+        """Creates a fallback result on error."""
         return cls(
             aggregated=AggregatedHindsight.from_error(),
             raw_response=error_msg,
@@ -354,7 +354,7 @@ RETRY_BATCH_PROMPT = RETRY_HINDSIGHT_BATCH
 
 
 def _parse_float_score(value: Any, default: float = 0.0, min_val: float = -1.0, max_val: float = 1.0) -> float:
-    """Parsa un valore float con clamping e fallback."""
+    """Parses a float value with clamping and fallback."""
     try:
         score = float(value)
         return max(min_val, min(max_val, score))
@@ -367,12 +367,12 @@ def parse_hindsight_response(
     scenario_id: str = "default",
 ) -> HindsightEvaluation:
     """
-    Parsa la risposta del hindsight evaluator per singolo scenario
-    (parser strutturato obbligatorio).
+    Parses the hindsight evaluator response for a single scenario
+    (mandatory structured parser).
 
     Raises:
-        JSONParseError: Impossibile estrarre JSON
-        ValidationError: Validazione schema fallita
+        JSONParseError: Unable to extract JSON
+        ValidationError: Schema validation failed
     """
     out = parse_and_validate_hindsight_single_output(text)
     scores = HindsightScores.compute_total(
@@ -394,7 +394,7 @@ def _hindsight_batch_output_to_evaluations(
     out: HindsightBatchOutput,
     consequence_ids: list[str],
 ) -> list[HindsightEvaluation]:
-    """Converte HindsightBatchOutput (parser strutturato) in list[HindsightEvaluation]."""
+    """Converts HindsightBatchOutput (structured parser) into list[HindsightEvaluation]."""
     evaluations: list[HindsightEvaluation] = []
     for i, e in enumerate(out.evaluations):
         sid = consequence_ids[i] if i < len(consequence_ids) else (e.scenario_id or f"scenario_{i}")
@@ -421,12 +421,12 @@ def parse_batch_hindsight_response(
     consequence_ids: list[str],
 ) -> list[HindsightEvaluation]:
     """
-    Parsa la risposta del hindsight evaluator per batch con parser strutturato obbligatorio.
+    Parses the hindsight evaluator batch response with the mandatory structured parser.
 
-    Unica fonte: parse_and_validate_hindsight_batch_output. Nessun fallback.
+    Single source: parse_and_validate_hindsight_batch_output. No fallback.
     Raises:
-        JSONParseError: Impossibile estrarre JSON
-        ValidationError: Validazione schema fallita
+        JSONParseError: Unable to extract JSON
+        ValidationError: Schema validation failed
     """
     out = parse_and_validate_hindsight_batch_output(text)
     return _hindsight_batch_output_to_evaluations(out, consequence_ids)
@@ -439,52 +439,52 @@ def parse_batch_hindsight_response(
 
 @dataclass
 class HindsightConfig:
-    """Configurazione per l'Hindsight Evaluator."""
+    """Configuration for the Hindsight Evaluator."""
 
     max_retries: int = 3
-    max_tokens: int = 768  # Ridotto per velocità (valutazioni batch dovrebbero essere più concise)
-    temperature: float = 0.3  # Bassa per valutazioni consistenti
+    max_tokens: int = 768  # Reduced for speed (batch evaluations should be more concise)
+    temperature: float = 0.3  # Low for consistent evaluations
     top_p: float = 0.9  # Nucleus sampling; configurable via MORALSTACK_HINDSIGHT_TOP_P
 
-    # Pesi per il calcolo del total score
+    # Weights for computing the total score
     weight_safety: float = 0.5
     weight_helpfulness: float = 0.3
     weight_honesty: float = 0.2
 
-    # Soglie per recommendation (calibrate per evitare falsi positivi)
-    # NOTA: soglie abbassate per essere meno conservativi su discussioni legittime
-    refuse_threshold: float = -0.7  # worst_case < questo -> refuse (era -0.5)
-    revise_threshold: float = 0.0  # expected_value < questo -> revise (era 0.3)
+    # Thresholds for recommendation (calibrated to avoid false positives)
+    # NOTE: thresholds lowered to be less conservative on legitimate discussions
+    refuse_threshold: float = -0.7  # worst_case < this -> refuse (was -0.5)
+    revise_threshold: float = 0.0  # expected_value < this -> revise (was 0.3)
 
-    # Se True, valuta tutti gli scenari in una singola chiamata
+    # If True, evaluates all scenarios in a single call
     use_batch_evaluation: bool = True
 
-    # FIX PERFORMANCE: Caching per evitare ricalcolo su input identici
-    enable_caching: bool = True  # Abilita caching risultati
+    # FIX PERFORMANCE: Caching to avoid recomputation on identical inputs
+    enable_caching: bool = True  # Enable result caching
 
 
 class LLMHindsightEvaluator:
     """
-    Valutatore hindsight basato su LLM.
+    LLM-based hindsight evaluator.
 
-    Valuta risposte e conseguenze simulate retrospettivamente, producendo
-    score di safety, helpfulness, honesty e un reward totale in [-1, 1].
-    Usa il Policy LLM con prompt specializzato e parsing JSON rigoroso
-    con retry automatico.
+    Evaluates responses and simulated consequences retrospectively, producing
+    safety, helpfulness and honesty scores and a total reward in [-1, 1].
+    Uses the Policy LLM with a specialized prompt and strict JSON parsing
+    with automatic retry.
 
     Attributes:
-        policy: Il Policy LLM per valutazione
-        config: Configurazione dell'evaluator
+        policy: The Policy LLM for evaluation
+        config: Evaluator configuration
 
     Usage:
         evaluator = LLMHindsightEvaluator(policy)
 
-        # Valuta singolo scenario
+        # Evaluate a single scenario
         evaluation = evaluator.evaluate_scenario(request, response, consequence)
         print(f"Safety: {evaluation.scores.safety}")
         print(f"Total: {evaluation.scores.total}")
 
-        # Valuta multipli scenari e aggrega
+        # Evaluate multiple scenarios and aggregate
         result = evaluator.evaluate(request, response, consequences)
         print(f"Recommendation: {result.aggregated.recommendation}")
     """
@@ -496,12 +496,12 @@ class LLMHindsightEvaluator:
         prompt_set: PromptSet | None = None,
     ) -> None:
         """
-        Inizializza l'Hindsight Evaluator.
+        Initializes the Hindsight Evaluator.
 
         Args:
-            policy: Policy LLM per valutazione
-            config: Configurazione (opzionale)
-            prompt_set: PromptSet da cui leggere prompt e retry (default: set impacchettato)
+            policy: Policy LLM for evaluation
+            config: Configuration (optional)
+            prompt_set: PromptSet to read prompts and retries from (default: packaged set)
         """
         self.policy = policy
         self._prompt_set = prompt_set or default_prompt_set()
@@ -532,7 +532,7 @@ class LLMHindsightEvaluator:
             response_format=hindsight_batch_response_format(),
         )
 
-        # Pesi per HindsightScores
+        # Weights for HindsightScores
         self._score_weights = (
             self.config.weight_safety,
             self.config.weight_helpfulness,
@@ -548,17 +548,17 @@ class LLMHindsightEvaluator:
         sent_calls: list[tuple[list[dict[str, str]], str]] | None = None,
     ) -> HindsightEvaluation:
         """
-        Valuta un singolo scenario (risposta + conseguenza).
+        Evaluates a single scenario (response + consequence).
 
         Args:
-            request: Richiesta originale dell'utente
-            response: Risposta da valutare
-            consequence: Conseguenza simulata da valutare
+            request: Original user request
+            response: Response to evaluate
+            consequence: Simulated consequence to evaluate
             sent_calls: if given, receives the (messages, branch) of the call that produced the evaluation
                 (audit only; the individual path uses it to build the row's wire record)
 
         Returns:
-            HindsightEvaluation con scores e metriche
+            HindsightEvaluation with scores and metrics
         """
         prompt = self._prompt_set.format(
             "hindsight.single.user",
@@ -583,7 +583,7 @@ class LLMHindsightEvaluator:
                 if attempt == 0:
                     user_text = prompt
                 else:
-                    # Retry con prompt specifico
+                    # Retry with specific prompt
                     user_text = f"{prompt}\n\n{self._prompt_set.text('hindsight.retry.single')}"
                 sent = (generate_messages_for(user_text, single_system_prompt), "generate")
                 result = self.policy.generate(
@@ -601,7 +601,7 @@ class LLMHindsightEvaluator:
                     scenario_id=consequence.scenario_id,
                 )
 
-                # Ricalcola total con i pesi configurati
+                # Recompute total with the configured weights
                 evaluation.scores = HindsightScores.compute_total(
                     safety=evaluation.scores.safety,
                     helpfulness=evaluation.scores.helpfulness,
@@ -625,7 +625,7 @@ class LLMHindsightEvaluator:
                 )
                 continue
 
-        # Tutti i retry falliti - ritorna valutazione pessimistica
+        # All retries failed - return a pessimistic evaluation
         return HindsightEvaluation(
             scenario_id=consequence.scenario_id,
             scores=HindsightScores(
@@ -692,19 +692,19 @@ class LLMHindsightEvaluator:
         conversation_history: list[Turn] | None = None,
     ) -> HindsightResult:
         """
-        Valuta risposta contro multiple conseguenze simulate.
+        Evaluates a response against multiple simulated consequences.
 
-        FIX PERFORMANCE: Usa caching per evitare ricalcolo su input identici.
-        Se la tripla (request, response, consequences) è già stata valutata,
-        ritorna il risultato cached.
+        FIX PERFORMANCE: Uses caching to avoid recomputation on identical inputs.
+        If the triple (request, response, consequences) has already been evaluated,
+        returns the cached result.
 
         Args:
-            request: Richiesta originale dell'utente
-            response: Risposta da valutare
-            consequences: Lista di conseguenze simulate
+            request: Original user request
+            response: Response to evaluate
+            consequences: List of simulated consequences
 
         Returns:
-            HindsightResult con valutazioni aggregate
+            HindsightResult with aggregated evaluations
         """
         if not consequences:
             return HindsightResult.empty()
@@ -717,8 +717,8 @@ class LLMHindsightEvaluator:
             ),
         )
 
-        # FIX PERFORMANCE: Check cache prima di valutare
-        # Usa hash delle conseguenze come parte della chiave
+        # FIX PERFORMANCE: Check cache before evaluating
+        # Use the hash of the consequences as part of the key
         if self.config.enable_caching:
             cache = get_global_cache()
             consequences_hash = hashlib.md5("|".join(c.scenario_id for c in consequences).encode()).hexdigest()
@@ -743,7 +743,7 @@ class LLMHindsightEvaluator:
         else:
             result = self._evaluate_individual(request, response, consequences)
 
-        # FIX PERFORMANCE: Salva in cache per usi futuri
+        # FIX PERFORMANCE: Save to cache for future use
         if self.config.enable_caching:
             cache = get_global_cache()
             consequences_hash = hashlib.md5("|".join(c.scenario_id for c in consequences).encode()).hexdigest()
@@ -768,11 +768,11 @@ class LLMHindsightEvaluator:
         conversation_history: list[Turn] | None = None,
     ) -> HindsightResult:
         """
-        Valuta tutti gli scenari in una singola chiamata LLM.
+        Evaluates all scenarios in a single LLM call.
 
-        Più efficiente per multiple conseguenze.
+        More efficient for multiple consequences.
         """
-        # Formatta conseguenze per il prompt
+        # Format consequences for the prompt
         consequences_text = self._format_consequences(consequences)
         consequence_ids = [c.scenario_id for c in consequences]
 
@@ -834,7 +834,7 @@ class LLMHindsightEvaluator:
                     last_error = RuntimeError("No valid evaluations parsed")
                     continue
 
-                # Ricalcola total per ogni valutazione con i pesi configurati
+                # Recompute total for each evaluation with the configured weights
                 for evaluation in evaluations:
                     evaluation.scores = HindsightScores.compute_total(
                         safety=evaluation.scores.safety,
@@ -843,7 +843,7 @@ class LLMHindsightEvaluator:
                         weights=self._score_weights,
                     )
 
-                # Aggrega risultati
+                # Aggregate results
                 aggregated = AggregatedHindsight.from_evaluations(
                     evaluations=evaluations,
                     refuse_threshold=self.config.refuse_threshold,
@@ -891,7 +891,7 @@ class LLMHindsightEvaluator:
                     except Exception:
                         pass
                 continue
-        # Tutti i retry falliti: errore esplicito, nessun fallback decisionale
+        # All retries failed: explicit error, no decision fallback
         from moralstack.utils.structured_output import ValidationError as StructuredValidationError
 
         if last_error is not None and isinstance(last_error, (JSONParseError, StructuredValidationError)):
@@ -907,9 +907,9 @@ class LLMHindsightEvaluator:
         consequences: list[Consequence],
     ) -> HindsightResult:
         """
-        Valuta ogni scenario individualmente.
+        Evaluates each scenario individually.
 
-        Più robusto ma meno efficiente.
+        More robust but less efficient.
         """
         evaluations: list[HindsightEvaluation] = []
         prompts_used: list[str] = []
@@ -962,15 +962,15 @@ class LLMHindsightEvaluator:
         evaluations: list[HindsightEvaluation],
     ) -> AggregatedHindsight:
         """
-        Aggrega lista di valutazioni in risultato finale.
+        Aggregates a list of evaluations into a final result.
 
-        Convenience method per aggregazione manuale.
+        Convenience method for manual aggregation.
 
         Args:
-            evaluations: Lista di HindsightEvaluation
+            evaluations: List of HindsightEvaluation
 
         Returns:
-            AggregatedHindsight con recommendation
+            AggregatedHindsight with recommendation
         """
         return AggregatedHindsight.from_evaluations(
             evaluations=evaluations,
@@ -979,7 +979,7 @@ class LLMHindsightEvaluator:
 
     def _format_consequences(self, consequences: list[Consequence]) -> str:
         """
-        Formatta lista di conseguenze per inclusione nel prompt.
+        Formats the list of consequences for inclusion in the prompt.
         """
         lines = []
 
@@ -1004,17 +1004,17 @@ def create_hindsight_evaluator(
     prompt_set: PromptSet | None = None,
 ) -> LLMHindsightEvaluator:
     """
-    Factory function per creare un Hindsight Evaluator.
+    Factory function for creating a Hindsight Evaluator.
 
     When config is None the constructor loads from env (MORALSTACK_HINDSIGHT_*).
 
     Args:
-        policy: Policy LLM da usare
+        policy: Policy LLM to use
         config: Optional explicit config; when None, loaded from env
         prompt_set: PromptSet to read prompts from (optional; default: packaged set)
 
     Returns:
-        LLMHindsightEvaluator configurato
+        Configured LLMHindsightEvaluator
     """
     return LLMHindsightEvaluator(
         policy=policy,

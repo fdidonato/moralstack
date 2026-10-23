@@ -1,5 +1,5 @@
 """
-Tipi base e modelli dati per MoralStack.
+Base types and data models for MoralStack.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Any, List, Literal, Optional, Protocol
 
 @dataclass
 class Turn:
-    """Singolo turno di conversazione."""
+    """Single conversation turn."""
 
     role: Literal["user", "assistant"]
     content: str
@@ -22,7 +22,7 @@ class Turn:
 
 @dataclass
 class UserContext:
-    """Contesto utente per la richiesta."""
+    """User context for the request."""
 
     locale: str = "en-US"
     permission_level: Literal["standard", "research", "admin"] = "standard"
@@ -36,7 +36,7 @@ class UserContext:
 
 @dataclass
 class Violation:
-    """Rappresenta una singola violazione di principio."""
+    """Represents a single principle violation."""
 
     principle_id: str
     principle_title: str
@@ -63,7 +63,7 @@ class PrincipleLikeProtocol(Protocol):
 
 
 class PolicyLLMProtocol(Protocol):
-    """Protocollo per il Policy LLM."""
+    """Protocol for the Policy LLM."""
 
     def generate(
         self,
@@ -95,13 +95,13 @@ class PolicyLLMProtocol(Protocol):
 
 
 class RiskEstimatorProtocol(Protocol):
-    """Protocollo per il Risk Estimator."""
+    """Protocol for the Risk Estimator."""
 
     def estimate(self, prompt: str) -> Any: ...
 
 
 class CriticProtocol(Protocol):
-    """Protocollo per il Constitutional Critic."""
+    """Protocol for the Constitutional Critic."""
 
     def critique(
         self,
@@ -140,7 +140,7 @@ class CriticProtocol(Protocol):
 
 
 class SimulatorProtocol(Protocol):
-    """Protocollo per il Consequence Simulator."""
+    """Protocol for the Consequence Simulator."""
 
     def simulate(
         self,
@@ -155,7 +155,7 @@ class SimulatorProtocol(Protocol):
 
 
 class HindsightProtocol(Protocol):
-    """Protocollo per l'Hindsight Evaluator."""
+    """Protocol for the Hindsight Evaluator."""
 
     def evaluate_response(self, request: str, response: str, consequences: Optional[List[Any]] = None) -> Any: ...
     def evaluate(
@@ -172,7 +172,7 @@ class HindsightProtocol(Protocol):
 
 
 class PerspectiveEnsembleProtocol(Protocol):
-    """Protocollo per il Perspective Ensemble."""
+    """Protocol for the Perspective Ensemble."""
 
     def evaluate(
         self,

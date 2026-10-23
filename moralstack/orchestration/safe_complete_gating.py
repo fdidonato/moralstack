@@ -1,7 +1,7 @@
 """
-SAFE_COMPLETE gating: emettere SAFE_COMPLETE solo quando strettamente necessario.
-Domini regolati e/o segnali specifici; in tutti gli altri casi borderline/educativi
--> NORMAL_COMPLETE. Solo metadati e routing; nessuna inferenza dal testo.
+SAFE_COMPLETE gating: emit SAFE_COMPLETE only when strictly necessary.
+Regulated domains and/or specific signals; in all other borderline/educational cases
+-> NORMAL_COMPLETE. Metadata and routing only; no inference from text.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def _norm_domain(domain: str | None) -> str | None:
 
 
 def _axis_at_least(s: str | None, level: str) -> bool:
-    """True se il livello dell'asse è >= level (LOW < MEDIUM < HIGH)."""
+    """True if the axis level is >= level (LOW < MEDIUM < HIGH)."""
     if s is None:
         return False
     u = (str(s).strip().upper() or "").strip()
@@ -44,12 +44,12 @@ def should_use_safe_complete(
     overlay_sensitive: bool = False,
 ) -> bool:
     """
-    True SOLO se SAFE_COMPLETE è giustificato da dominio regolato o segnali.
-    - hard_violations presenti => il caller deve REFUSE, non SAFE_COMPLETE
-      (non usare per gating downgrade).
-    - domain in REGULATED_DOMAINS => True (anche con segnali LOW).
+    True ONLY if SAFE_COMPLETE is justified by a regulated domain or signals.
+    - hard_violations present => the caller must REFUSE, not SAFE_COMPLETE
+      (do not use for downgrade gating).
+    - domain in REGULATED_DOMAINS => True (even with LOW signals).
     - (misuse_plausibility >= MEDIUM AND actionability_risk >= MEDIUM) => True.
-    - Se risk_policy_action == ALLOW e domain NON regulated e segnali non attivi
+    - If risk_policy_action == ALLOW and domain is NOT regulated and signals are not active
       => False.
     """
 
@@ -80,8 +80,8 @@ def apply_safe_complete_gating(
     overlay_sensitive: bool = False,
 ) -> Decision:
     """
-    Se decision.final_action è SAFE_COMPLETE ma should_use_safe_complete(...) è False,
-    downgrade a NORMAL_COMPLETE. REFUSE invariato. Logga ogni downgrade.
+    If decision.final_action is SAFE_COMPLETE but should_use_safe_complete(...) is False,
+    downgrade to NORMAL_COMPLETE. REFUSE unchanged. Logs every downgrade.
     """
     if decision.final_action != "SAFE_COMPLETE":
         return decision

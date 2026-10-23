@@ -7,7 +7,7 @@ instance) with a per-request composition that incorporates the DeveloperContract
 `request.developer_contract is None`, the returned string is byte-identical to the
 legacy base for the same mode.
 
-Normative reference: MORALSTACK_MULTITURN_DESIGN.md v1.3 §8 Modifiche 1/3/4.
+Normative reference: MORALSTACK_MULTITURN_DESIGN.md v1.3 §8 Changes 1/3/4.
 """
 
 from __future__ import annotations

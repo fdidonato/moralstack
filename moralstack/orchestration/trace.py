@@ -1,6 +1,6 @@
 """
-Trace: oggetto request-scoped per diagnostica end-to-end.
-Vive per l'intera richiesta; aggiornato dopo ogni step in controller.process.
+Trace: request-scoped object for end-to-end diagnostics.
+Lives for the entire request; updated after each step in controller.process.
 """
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 @dataclass
 class Trace:
     """
-    Traccia di una singola richiesta: osservabilità e diagnostica.
-    Campi minimi per audit e tracciabilità decisionale.
+    Trace of a single request: observability and diagnostics.
+    Minimal fields for audit and decision traceability.
     """
 
     request_id: str = ""

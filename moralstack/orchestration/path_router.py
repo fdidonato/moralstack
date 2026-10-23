@@ -126,12 +126,12 @@ def get_route(
     elif op_risk == OperationalRisk.LOW and risk_policy_action != RiskPolicyAction.DENY:
         risk_policy_action = RiskPolicyAction.DELIBERATE
 
-    # NOTA ARCHITETTURALE: questo blocco ri-deriva risk_policy_action da op_risk
-    # esclusivamente per il ROUTING e per il logging nel controller.
-    # NON è la fonte autoritativa della decisione finale (final_action).
-    # La fonte autoritativa è decision_service._handle_normative_refuse_guards().
-    # Se modifichi la logica op_risk qui, devi aggiornare anche decision_service.py
-    # e viceversa. Le due devono rimanere allineate.
+    # ARCHITECTURAL NOTE: this block re-derives risk_policy_action from op_risk
+    # exclusively for ROUTING and for logging in the controller.
+    # It is NOT the authoritative source of the final decision (final_action).
+    # The authoritative source is decision_service._handle_normative_refuse_guards().
+    # If you change the op_risk logic here, you must also update decision_service.py
+    # and vice versa. The two must stay aligned.
 
     if final_action_str == "REFUSE" and path != "DELIBERATIVE_PATH" and not borderline_refuse:
         return "refuse", borderline_refuse, risk_policy_action

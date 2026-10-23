@@ -3,9 +3,9 @@ from typing import Any
 """
 MoralStack Runtime.
 
-Runtime di inferenza che aggiunge ragionamento morale deliberativo a un LLM base.
+Inference runtime that adds deliberative moral reasoning to a base LLM.
 
-Lazy imports: i moduli concreti vengono caricati solo al primo accesso.
+Lazy imports: concrete modules are loaded only on first access.
 """
 
 __all__ = [
@@ -19,7 +19,7 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
-    """Import lazy per evitare side effects a import-time."""
+    """Lazy import to avoid import-time side effects."""
     if name in __all__:
         import importlib
 

@@ -40,7 +40,7 @@ def _get_openai_config(
     api_key_override: str | None = None,
     model_override: str | None = None,
 ) -> OpenAIPolicyConfig:
-    """Configurazione da env, con override opzionali (es. da --openai-key)."""
+    """Configuration from env, with optional overrides (e.g. from --openai-key)."""
     api_key = (api_key_override or os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
         raise ValueError(
@@ -73,8 +73,8 @@ def _get_openai_config(
 @dataclass(frozen=True)
 class OpenAIPolicyConfig:
     """
-    Configurazione per OpenAIPolicy (override env opzionali).
-    Value object immutabile: ogni variazione richiede una nuova istanza.
+    Configuration for OpenAIPolicy (optional env overrides).
+    Immutable value object: any variation requires a new instance.
     """
 
     api_key: str | None = None
@@ -90,8 +90,8 @@ class OpenAIPolicyConfig:
 
 class OpenAIPolicy:
     """
-    Policy LLM basata esclusivamente su OpenAI API.
-    Implementa generate, rewrite, refuse con retry e timeout.
+    Policy LLM based exclusively on the OpenAI API.
+    Implements generate, rewrite, refuse with retry and timeout.
     """
 
     def __init__(
@@ -106,22 +106,22 @@ class OpenAIPolicy:
     ) -> None:
         """
         Args:
-            api_key: Override OPENAI_API_KEY (default: da env)
-            model: Override OPENAI_MODEL (default: da env o gpt-4o)
-            base_url: Override OPENAI_BASE_URL (default: da env)
-            timeout_ms: Override OPENAI_TIMEOUT_MS in millisecondi
+            api_key: Override OPENAI_API_KEY (default: from env)
+            model: Override OPENAI_MODEL (default: from env or gpt-4o)
+            base_url: Override OPENAI_BASE_URL (default: from env)
+            timeout_ms: Override OPENAI_TIMEOUT_MS in milliseconds
             max_retries: Override OPENAI_MAX_RETRIES
-            config: Config object che sovrascrive i singoli parametri
-            prompt_set: PromptSet da cui `rewrite` legge i propri testi (default: set impacchettato)
+            config: Config object that overrides the individual parameters
+            prompt_set: PromptSet from which `rewrite` reads its texts (default: packaged set)
         """
         self._prompt_set = prompt_set or default_prompt_set()
-        # 1. Carichiamo i default da env (con eventuali override di api_key/model da costruttore)
+        # 1. Load the defaults from env (with any api_key/model overrides from the constructor)
         env_cfg = _get_openai_config(api_key_override=api_key, model_override=model)
 
-        # 2. Applichiamo eventuali override passati esplicitamente o tramite l'oggetto config.
-        #    La priorità è: parametri espliciti __init__ > oggetto config > env/defaults.
+        # 2. Apply any overrides passed explicitly or via the config object.
+        #    Priority is: explicit __init__ parameters > config object > env/defaults.
 
-        # Parametri da config (se presente)
+        # Parameters from config (if present)
         final_api_key = config.api_key if config and config.api_key is not None else env_cfg.api_key
         final_model = config.model if config and config.model is not None else env_cfg.model
         final_base_url = config.base_url if config and config.base_url is not None else env_cfg.base_url
@@ -132,7 +132,7 @@ class OpenAIPolicy:
         final_max_tokens = config.max_tokens if config and config.max_tokens is not None else env_cfg.max_tokens
         final_rewrite_model = config.rewrite_model if config and config.rewrite_model is not None else env_cfg.rewrite_model
 
-        # Override espliciti da parametri __init__ (sovrascrivono tutto)
+        # Explicit overrides from __init__ parameters (they override everything)
         if api_key is not None:
             final_api_key = api_key
         if model is not None:
@@ -170,7 +170,7 @@ class OpenAIPolicy:
         return self._rewrite_model
 
     def set_cost_tracker(self, tracker: Any) -> None:
-        """Imposta un TokenCostTracker per tracciare i costi delle chiamate."""
+        """Sets a TokenCostTracker to track call costs."""
         self._cost_tracker = tracker
 
     def _complete(
@@ -439,7 +439,7 @@ class OpenAIPolicy:
         config: GenerationConfig | None = None,
         overrides: GenerationOverrides | None = None,
     ) -> GenerationResult:
-        """Riscrive una bozza in base al feedback.
+        """Rewrites a draft based on feedback.
 
         Uses OpenAI predicted outputs (speculative decoding) when the model
         supports it: the existing draft is provided as a prediction hint so
@@ -473,7 +473,7 @@ class OpenAIPolicy:
         config: GenerationConfig | None = None,
         language: str | None = None,
     ) -> GenerationResult:
-        """Genera un rifiuto empatico e informativo.
+        """Generates an empathetic and informative refusal.
 
         Args:
             prompt: User request (may be empty for regulated domains).
@@ -516,5 +516,5 @@ class OpenAIPolicy:
         return self.generate(refuse_prompt, system=refuse_system, config=config)
 
 
-# Re-export per compatibilità (alcuni moduli importavano GenerationConfig da policy)
+# Re-export for compatibility (some modules imported GenerationConfig from policy)
 __all__ = ["OpenAIPolicy", "OpenAIPolicyConfig", "GenerationConfig", "GenerationOverrides"]

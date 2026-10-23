@@ -1,6 +1,6 @@
 """
-Decision Trace: modello strutturato e serializzabile per ogni richiesta MoralStack.
-Persistito su file JSONL, indicizzato per request_id.
+Decision Trace: structured, serializable model for every MoralStack request.
+Persisted to a JSONL file, indexed by request_id.
 """
 
 from __future__ import annotations
@@ -24,13 +24,13 @@ _trace_file_path: str | None = None
 
 
 def _get_trace_path(path_override: str | None = None) -> str:
-    """Risolve il path: override > env > default. Ritorna path assoluto per consistency."""
+    """Resolves the path: override > env > default. Returns an absolute path for consistency."""
     raw = path_override if path_override is not None else os.getenv(TRACE_PATH_ENV, DEFAULT_TRACE_PATH)
     return os.path.abspath(raw)
 
 
 def _ensure_trace_file(path: str) -> io.TextIOWrapper | None:
-    """Apre (lazy) il file di trace e lo restituisce. None in caso di errore."""
+    """Lazily opens the trace file and returns it. None on error."""
     global _trace_file, _trace_file_path
     if _trace_file is not None and _trace_file_path == path:
         return _trace_file
@@ -131,7 +131,7 @@ class DecisionTrace:
 
 
 def normalize_trace_fields(trace: DecisionTrace) -> DecisionTrace:
-    """Assicura che nessun campo critico sia None (audit-grade)."""
+    """Ensures no critical field is None (audit-grade)."""
     trace.risk_raw = trace.risk_raw or None
     trace.estimation_mode = getattr(trace, "estimation_mode", "") or ""
     trace.domain_overlay = trace.domain_overlay or ""

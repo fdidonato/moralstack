@@ -44,17 +44,17 @@ def build_critic_prompt(
     prompt_set: PromptSet | None = None,
 ) -> str:
     """
-    Costruisce il prompt per il critic.
+    Builds the prompt for the critic.
 
     Args:
-        context: DelibContext con request, draft e risk signals
-        principles: Testo formattato dei principi
-        previous_violations: Violazioni del ciclo precedente
-        previous_guidance: Revision guidance del ciclo precedente
-        prompt_set: PromptSet da cui leggere i template (default: set impacchettato)
+        context: DelibContext with request, draft and risk signals
+        principles: Formatted text of the principles
+        previous_violations: Violations from the previous cycle
+        previous_guidance: Revision guidance from the previous cycle
+        prompt_set: PromptSet to read the templates from (default: packaged set)
 
     Returns:
-        Prompt string pronto per l'LLM (dynamic content only; the static
+        Prompt string ready for the LLM (dynamic content only; the static
         rules/schema live in the ``critic.full.system`` composition).
     """
     ps = prompt_set or default_prompt_set()

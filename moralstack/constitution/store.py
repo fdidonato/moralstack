@@ -1,8 +1,8 @@
 """
-Constitution Store - Gestione principi etici per MoralStack.
+Constitution Store - Ethical principles management for MoralStack.
 
-Responsabilità: Gestione principi etici, risoluzione conflitti, overlay.
-Caricamento YAML: solo ruamel.yaml. Validazione: solo Pydantic. Fail-fast.
+Responsibilities: ethical principle management, conflict resolution, overlays.
+YAML loading: ruamel.yaml only. Validation: Pydantic only. Fail-fast.
 """
 
 from __future__ import annotations
@@ -41,10 +41,10 @@ else:
         PolicyLLMProtocol = None  # type: ignore[misc, assignment]
         GenerationConfig = None  # type: ignore[misc, assignment]
 
-# ID principio core obbligatorio per validazione (fail-closed)
+# Mandatory core principle ID for validation (fail-closed)
 REQUIRED_CORE_PRINCIPLE_ID = "CORE.BALANCE.1"
 
-# Alias per retrocompatibilità
+# Alias for backward compatibility
 ConstitutionValidationError = ConstitutionLoadError
 
 
@@ -80,14 +80,14 @@ def detect_domain(
     Returns:
         Detected domain or None if not detected or LLM unavailable.
     """
-    # Usa SOLO LLM per rilevamento dominio
+    # Use ONLY the LLM for domain detection
     if policy_llm is None or not domain_descriptions:
         return None
 
     try:
         return _detect_domain_llm(query, policy_llm, domain_descriptions, available_domains)
     except Exception as e:
-        # Log errore ma non fallback - usa solo LLM
+        # Log the error but no fallback - use only the LLM
         import logging
 
         logger = logging.getLogger(__name__)
@@ -102,22 +102,22 @@ def _detect_domain_llm(
     available_domains: list[str] | None = None,
 ) -> str | None:
     """
-    Rileva dominio usando classificazione semantica LLM.
+    Detects the domain using LLM semantic classification.
 
     Args:
-        query: Query utente (qualsiasi lingua)
-        policy_llm: Policy LLM per classificazione
-        domain_descriptions: Dizionario delle descrizioni dei domini {nome: descrizione}
-        available_domains: Lista di domini disponibili (se None, usa lista completa)
+        query: User query (any language)
+        policy_llm: Policy LLM for classification
+        domain_descriptions: Dictionary of domain descriptions {name: description}
+        available_domains: List of available domains (if None, uses the full list)
 
     Returns:
-        Dominio rilevato o None se non rilevato.
+        Detected domain, or None if not detected.
     """
-    # Se available_domains è specificato, filtra solo quelli
+    # If available_domains is specified, filter to those only
     if available_domains is not None:
         domain_descriptions = {k: v for k, v in domain_descriptions.items() if k in available_domains}
 
-    # Costruisci lista domini per prompt
+    # Build the domain list for the prompt
     domains_list = "\n".join([f"- {domain}: {desc}" for domain, desc in sorted(domain_descriptions.items())])
 
     domains_enum = " | ".join([f'"{d}"' for d in sorted(domain_descriptions.keys())]) + " | null"
@@ -162,31 +162,31 @@ Output ONLY valid JSON, nothing else:"""
 
         config = GenerationConfig(
             max_tokens=150,
-            temperature=0.1,  # Bassa temperatura per classificazione
+            temperature=0.1,  # Low temperature for classification
             top_p=0.9,
         )
 
         result = policy_llm.generate(prompt, config=config)
         response_text = result.text.strip()
 
-        # Estrai JSON dalla risposta
+        # Extract JSON from the response
         import json
         import re
 
-        # Cerca JSON nella risposta
+        # Look for JSON in the response
         json_match = re.search(r"\{[^}]+\}", response_text, re.DOTALL)
         if json_match:
             data = json.loads(json_match.group())
             domain = data.get("domain")
             confidence = data.get("confidence", 0.0)
 
-            # Ritorna dominio se confidence > 0.5 (soglia più bassa per maggiore sensibilità)
-            # Log per debug se confidence è bassa ma dominio rilevato
+            # Return the domain if confidence > 0.5 (lower threshold for higher sensitivity)
+            # Debug log if confidence is low but a domain was detected
             if isinstance(domain, str) and domain:
                 if confidence > 0.5:
                     return domain
                 else:
-                    # Log per debug: dominio rilevato ma confidence bassa
+                    # Debug log: domain detected but confidence low
                     import logging
 
                     logger = logging.getLogger(__name__)
@@ -195,7 +195,7 @@ Output ONLY valid JSON, nothing else:"""
         return None
 
     except Exception as e:
-        # Log errore per debug
+        # Log the error for debugging
         import logging
 
         logger = logging.getLogger(__name__)
@@ -239,21 +239,21 @@ class ConstitutionStoreConfig:
 
 class ConstitutionStore:
     """
-    Gestisce i principi etici della costituzione.
+    Manages the ethical principles of the constitution.
 
-    Responsabilità:
-    - Caricamento principi da YAML
-    - Supporto overlay di dominio
-    - Risoluzione conflitti tra principi
-    - Retrieval principi rilevanti
+    Responsibilities:
+    - Loading principles from YAML
+    - Domain overlay support
+    - Conflict resolution between principles
+    - Relevant principle retrieval
 
-    Uso:
+    Usage:
         store = ConstitutionStore()  # uses bundled data by default
         constitution = store.get_constitution(domain="medical")
         relevant = store.get_relevant_principles(prompt, top_k=10)
     """
 
-    # Soglia di confidenza per accettare principi (Fix 3)
+    # Confidence threshold to accept principles (Fix 3)
     DEFAULT_CONFIDENCE_THRESHOLD = 0.6
 
     def __init__(
@@ -370,21 +370,21 @@ class ConstitutionStore:
         return self.get_available_domains()
 
     def set_cost_tracker(self, tracker: Any | None) -> None:
-        """Imposta il TokenCostTracker per tracciare i costi (domain agents e prefilter)."""
+        """Sets the TokenCostTracker to track costs (domain agents and prefilter)."""
         self._cost_tracker = tracker
         self._retriever.set_cost_tracker(tracker)
 
     @property
     def config_dir(self) -> Path:
-        """Directory di configurazione."""
+        """Configuration directory."""
         return self._config_dir
 
     def get_available_domains(self) -> list[str]:
         """
-        Ottiene lista di domini disponibili (overlay esistenti).
+        Gets the list of available domains (existing overlays).
 
         Returns:
-            Lista di nomi di dominio disponibili.
+            List of available domain names.
         """
         if self._available_domains_cache is not None:
             return self._available_domains_cache
@@ -393,9 +393,9 @@ class ConstitutionStore:
         available = []
 
         if overlays_path.exists():
-            # Cerca file .yaml nella directory overlays
+            # Look for .yaml files in the overlays directory
             for overlay_file in overlays_path.glob("*.yaml"):
-                domain = overlay_file.stem  # Nome file senza estensione
+                domain = overlay_file.stem  # File name without extension
                 available.append(domain)
 
         self._available_domains_cache = sorted(available)
@@ -403,31 +403,31 @@ class ConstitutionStore:
 
     def get_domain_descriptions(self) -> dict[str, str]:
         """
-        Ottiene le descrizioni semantiche di tutti i domini disponibili.
+        Gets the semantic descriptions of all available domains.
 
-        Carica dinamicamente le descrizioni dai file YAML degli overlay.
-        Include anche una descrizione per 'core'.
+        Dynamically loads the descriptions from the overlay YAML files.
+        Also includes a description for 'core'.
 
         Returns:
             Dict {domain_name: description}
         """
         descriptions: dict[str, str] = {}
 
-        # Descrizione per core (principi universali)
+        # Description for core (universal principles)
         descriptions["core"] = (
             "Universal ethical principles: harm prevention, privacy protection, "
             "deception prevention, honesty, safety, illegal activity prevention, "
             "malware prevention, child safety, transparency, autonomy."
         )
 
-        # Carica descrizioni dagli overlay
+        # Load descriptions from the overlays
         for domain_name in self.get_available_domains():
             try:
                 overlay = self.load_overlay(domain_name)
                 if overlay.description:
                     descriptions[domain_name] = overlay.description
                 else:
-                    # Fallback: genera descrizione base dal nome
+                    # Fallback: generate a basic description from the name
                     descriptions[domain_name] = f"Principles specific to {domain_name} domain."
             except FileNotFoundError:
                 descriptions[domain_name] = f"Principles specific to {domain_name} domain."
@@ -437,23 +437,23 @@ class ConstitutionStore:
     @property
     def principles(self) -> list[Principle]:
         """
-        Tutti i principi core ordinati per priorità.
+        All core principles ordered by priority.
 
-        Shortcut per accesso rapido senza overlay.
+        Shortcut for quick access without overlays.
         """
         return resolve_conflict(self.load_core())
 
     def load_core(self) -> list[Principle]:
         """
-        Carica principi core da file YAML (ruamel.yaml) con validazione Pydantic.
-        Fail-fast: YAML invalido o principio obbligatorio mancante → ConstitutionLoadError.
+        Loads core principles from a YAML file (ruamel.yaml) with Pydantic validation.
+        Fail-fast: invalid YAML or missing mandatory principle → ConstitutionLoadError.
 
         Returns:
-            Lista di principi core (oggetti Pydantic tipizzati).
+            List of core principles (typed Pydantic objects).
 
         Raises:
-            FileNotFoundError: Se il file core non esiste.
-            ConstitutionLoadError: Se il caricamento o la validazione fallisce.
+            FileNotFoundError: If the core file does not exist.
+            ConstitutionLoadError: If loading or validation fails.
         """
         if self._core_principles is not None:
             return list(self._core_principles)
@@ -502,18 +502,18 @@ class ConstitutionStore:
 
     def load_overlay(self, domain: str) -> Overlay:
         """
-        Carica overlay di dominio da file YAML (ruamel.yaml) con validazione Pydantic.
-        Fail-fast: YAML invalido → ConstitutionLoadError.
+        Loads a domain overlay from a YAML file (ruamel.yaml) with Pydantic validation.
+        Fail-fast: invalid YAML → ConstitutionLoadError.
 
         Args:
-            domain: Nome del dominio (es. "medical", "legal").
+            domain: Domain name (e.g. "medical", "legal").
 
         Returns:
-            Overlay per il dominio specificato (oggetti Pydantic tipizzati).
+            Overlay for the specified domain (typed Pydantic objects).
 
         Raises:
-            FileNotFoundError: Se il file overlay non esiste.
-            ConstitutionLoadError: Se il caricamento o la validazione fallisce.
+            FileNotFoundError: If the overlay file does not exist.
+            ConstitutionLoadError: If loading or validation fails.
         """
         if domain in self._overlays:
             return self._overlays[domain]
@@ -571,13 +571,13 @@ class ConstitutionStore:
 
     def get_constitution(self, domain: str | None = None) -> Constitution:
         """
-        Assembla costituzione completa.
+        Assembles the complete constitution.
 
         Args:
-            domain: Dominio per overlay opzionale.
+            domain: Domain for the optional overlay.
 
         Returns:
-            Constitution con principi core e eventuale overlay.
+            Constitution with core principles and optional overlay.
         """
         core = self.load_core()
         overlay = None
@@ -586,10 +586,10 @@ class ConstitutionStore:
             try:
                 overlay = self.load_overlay(domain)
             except FileNotFoundError:
-                # Domain senza overlay, usa solo core
+                # Domain without overlay, use core only
                 pass
 
-        # Fail-fast: se siamo qui, caricamento è andato a buon fine
+        # Fail-fast: if we are here, loading succeeded
         return Constitution(
             core_principles=core,
             active_overlay=overlay,
@@ -606,19 +606,19 @@ class ConstitutionStore:
         retrieval_phase: str = "risk_routing",
     ) -> list[Principle]:
         """
-        Retrieval con agenti paralleli per dominio.
+        Retrieval with parallel per-domain agents.
 
         Delegates to ConstitutionRetriever.
 
         Args:
-            query: Testo della richiesta/prompt (qualsiasi lingua).
-            top_k: Numero massimo di principi da ritornare.
-            domain: Dominio opzionale (forza valutazione di questo dominio).
+            query: Request/prompt text (any language).
+            top_k: Maximum number of principles to return.
+            domain: Optional domain (forces evaluation of this domain).
             retrieval_phase: Observability qualifier for domain prefilter persistence
                 (``risk_routing`` vs ``deliberation_retrieval``).
 
         Returns:
-            Lista di principi ordinati per rilevanza (max top_k).
+            List of principles ordered by relevance (max top_k).
         """
         return self._retriever.get_relevant_principles(
             query,
@@ -636,7 +636,7 @@ class ConstitutionStore:
         retrieval_phase: str = "risk_routing",
     ) -> PrincipleRetrievalResult:
         """
-        Retrieval con agenti paralleli per dominio, canale decisionale tipizzato.
+        Retrieval with parallel per-domain agents, typed decision channel.
 
         Delegates to ConstitutionRetriever.retrieve(). Returns the principles, the
         raw ``prefiltered_domains`` (decision channel — the caller owns the `core`
@@ -644,14 +644,14 @@ class ConstitutionStore:
         the retired per-retrieval debug accessor this replaces). Writes no instance state.
 
         Args:
-            query: Testo della richiesta/prompt (qualsiasi lingua).
-            top_k: Numero massimo di principi da ritornare.
-            domain: Dominio opzionale (forza valutazione di questo dominio).
+            query: Request/prompt text (any language).
+            top_k: Maximum number of principles to return.
+            domain: Optional domain (forces evaluation of this domain).
             retrieval_phase: Observability qualifier for domain prefilter persistence
                 (``risk_routing`` vs ``deliberation_retrieval``).
 
         Returns:
-            PrincipleRetrievalResult frozen (principles, prefiltered_domains, debug_info).
+            Frozen PrincipleRetrievalResult (principles, prefiltered_domains, debug_info).
         """
         return self._retriever.retrieve(
             query,
@@ -686,33 +686,33 @@ class ConstitutionStore:
 
     def resolve_conflict(self, principles: list[Principle]) -> list[Principle]:
         """
-        Ordina principi per risoluzione conflitti.
+        Sorts principles for conflict resolution.
 
-        Regole:
-        1. Hard constraints > Soft norms (sempre)
-        2. Tra stesso livello: priority più alta vince
-        3. A parità di priority: principio più specifico vince
-        4. Tie finale: ordine alfabetico ID (determinismo)
+        Rules:
+        1. Hard constraints > Soft norms (always)
+        2. Within the same level: higher priority wins
+        3. On equal priority: the more specific principle wins
+        4. Final tie: alphabetical ID order (determinism)
 
         Args:
-            principles: Lista di principi da ordinare.
+            principles: List of principles to sort.
 
         Returns:
-            Lista ordinata per priorità di applicazione.
+            List ordered by application priority.
         """
         return resolve_conflict(principles)
 
     def reload(self) -> None:
         """
-        Ricarica configurazione da file.
+        Reloads configuration from file.
 
-        Utile per hot-reload senza riavvio.
-        Invalida tutte le cache incluse quelle degli agenti.
+        Useful for hot-reload without restart.
+        Invalidates all caches, including the agents' ones.
         """
         self._core_principles = None
         self._overlays.clear()
-        self._matching_cache.clear()  # Pulisce anche cache matching
-        self._available_domains_cache = None  # Reset cache domini
+        self._matching_cache.clear()  # Also clear the matching cache
+        self._available_domains_cache = None  # Reset domain cache
         self._retriever.invalidate_cache()
 
 
@@ -723,22 +723,22 @@ class ConstitutionStore:
 
 def create_store(config_dir: Path | str | None = None) -> ConstitutionStore:
     """
-    Factory function per creare uno store.
+    Factory function to create a store.
 
     Args:
-        config_dir: Directory configurazione opzionale.
+        config_dir: Optional configuration directory.
 
     Returns:
-        ConstitutionStore configurato.
+        Configured ConstitutionStore.
     """
     return ConstitutionStore(config_dir=config_dir)
 
 
 def create_default_constitution() -> Constitution:
     """
-    Crea una costituzione con principi di default hardcoded.
+    Creates a constitution with hardcoded default principles.
 
-    Utile per testing o quando non ci sono file YAML.
+    Useful for testing or when there are no YAML files.
     """
     default_principles = [
         Principle(

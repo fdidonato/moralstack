@@ -1,6 +1,6 @@
 """
-ResponseAssembler: costruisce la risposta finale.
-Renderer deterministico: response_type determinato SOLO da decision.final_action.
+ResponseAssembler: builds the final response.
+Deterministic renderer: response_type is determined ONLY by decision.final_action.
 """
 
 from __future__ import annotations
@@ -45,8 +45,8 @@ _LOG = logging.getLogger(__name__)
 
 class ResponseAssembler:
     """
-    Assembla la risposta finale basata sullo stato deliberativo.
-    Non decide il livello di sicurezza: la decisione è di competenza esclusiva di decide_action().
+    Assembles the final response based on the deliberative state.
+    Does not decide the safety level: the decision is the exclusive responsibility of decide_action().
     """
 
     REFUSAL_TEMPLATE = """{reason}
@@ -82,8 +82,8 @@ class ResponseAssembler:
         draft_provenance: DraftProvenance | None = None,
     ) -> FinalResponse:
         """
-        Assembla la risposta finale. Renderer deterministico: il tipo di risposta
-        (DIRECT / WITH_CAVEAT / FULL_REFUSAL) è determinato SOLO da decision.final_action.
+        Assembles the final response. Deterministic renderer: the response type
+        (DIRECT / WITH_CAVEAT / FULL_REFUSAL) is determined ONLY by decision.final_action.
 
         ``draft_provenance``: centralized draft-provenance attribution (Codex
         round-3), covering both FAST_PATH and deliberative-reuse delivery
@@ -262,8 +262,8 @@ class ResponseAssembler:
         constitution_store: object | None = None,
     ) -> FinalResponse:
         """Generate REFUSE content from shared refusal generator."""
-        # DISABILITO: Il draft_response è la risposta originale rejettata, NON un refusal valido
-        # Non dovremmo mai usare il draft per REFUSE - deve sempre generare nuovo refusal
+        # DISABLED: draft_response is the original rejected response, NOT a valid refusal
+        # We should never use the draft for REFUSE - it must always generate a new refusal
         # if self._draft_is_valid_refusal(state):
         #     content = state.draft_response.strip()
         #     if len(content) > 20:
@@ -277,18 +277,18 @@ class ResponseAssembler:
         #             metadata=metadata,
         #         )
 
-        # Costruisci una guidance reale a partire dai dati disponibili,
-        # non affidarti alla revision_guidance del critic che è vuota su REFUSE.
+        # Build a real guidance from the available data,
+        # do not rely on the critic's revision_guidance, which is empty on REFUSE.
         _critique_guidance = ""
         if state.last_critique and hasattr(state.last_critique, "revision_guidance"):
             _critique_guidance = (state.last_critique.revision_guidance or "").strip()
 
-        # Se il critic non ha prodotto guidance (caso REFUSE), usa il rationale
-        # del risk estimator come base per la guidance al refusal LLM.
+        # If the critic produced no guidance (REFUSE case), use the risk estimator's
+        # rationale as the basis for the refusal LLM guidance.
         if not _critique_guidance and risk_estimation is not None:
             _critique_guidance = (getattr(risk_estimation, "rationale", "") or "").strip()
 
-        # Fallback finale: almeno il reason_code è informativo
+        # Final fallback: at least the reason_code is informative
         if not _critique_guidance and state.has_critical_violations:
             # Model-facing only when a policy LLM will receive it as the refusal rationale; without a policy the
             # sentence is the static delivered/metadata fallback and keeps its literal.
@@ -426,7 +426,7 @@ class ResponseAssembler:
         )
 
     def format_refusal(self, reason: str, alternatives: list[str]) -> str:
-        """Formatta un messaggio di rifiuto. Language-agnostic: no hardcoded natural language."""
+        """Formats a refusal message. Language-agnostic: no hardcoded natural language."""
         if alternatives:
             alt_text = "\n".join(f"- {a}" for a in alternatives)
         else:

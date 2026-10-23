@@ -1,5 +1,5 @@
 """
-Calibration, parsing e mapping score/categoria per il risk estimator.
+Calibration, parsing and score/category mapping for the risk estimator.
 """
 
 from __future__ import annotations
@@ -198,7 +198,7 @@ def _calibrate_harm_signals_present(
     harm_type: str,
     operational_risk: OperationalRisk,
 ) -> tuple[float, RiskCategory, list[str], str]:
-    """Caso: harmful_count > 0. Gestisce CLEARLY_HARMFUL, POTENTIALLY_HARMFUL, defensive override."""
+    """Case: harmful_count > 0. Handles CLEARLY_HARMFUL, POTENTIALLY_HARMFUL, defensive override."""
     signals: list[str] = []
     category: RiskCategory = RiskCategory.SENSITIVE
 
@@ -332,7 +332,7 @@ def _calibrate_emotional_only(
     score: float,
     harm_type: str,
 ) -> tuple[float, RiskCategory, list[str], str]:
-    """Caso: solo q7_only_emotional=True."""
+    """Case: only q7_only_emotional=True."""
     signals: list[str] = []
     category: RiskCategory = RiskCategory.SENSITIVE
 
@@ -374,7 +374,7 @@ def _calibrate_no_harm(
     score: float,
     harm_type: str,
 ) -> tuple[float, RiskCategory, list[str], str]:
-    """Caso: nessun segnale di harm. Routing basato su request_type/harm_type."""
+    """Case: no harm signal. Routing based on request_type/harm_type."""
     signals = [f"request_type:{request_type}", f"harm_type:{harm_type}"]
     category: RiskCategory = RiskCategory.SENSITIVE
 
@@ -767,12 +767,12 @@ def merge_mini_estimator_results(
     operational_data: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Unifica i 3 JSON dict dei mini-estimator in un unico dict con priorità per fonte.
+    Merges the 3 mini-estimator JSON dicts into a single dict with per-source priority.
 
-    - LLM 1 (intent_data): authoritative per detected_language, intent_*, request_type,
+    - LLM 1 (intent_data): authoritative for detected_language, intent_*, request_type,
       harm_type, intent_clarity, rationale (intent framing)
-    - LLM 2 (signal_data): authoritative per q1..q17, domain_sensitivity
-    - LLM 3 (operational_data): authoritative per operational_risk, risk_score, confidence,
+    - LLM 2 (signal_data): authoritative for q1..q17, domain_sensitivity
+    - LLM 3 (operational_data): authoritative for operational_risk, risk_score, confidence,
       misuse_plausibility, actionability_risk, risk_policy_action, rationale (risk assessment)
 
     rationale: merged from LLM 1 (intent) + LLM 3 (operational) with source labels.

@@ -1,11 +1,11 @@
 """
-Utilità per il parsing JSON robusto in MoralStack.
+Utilities for robust JSON parsing in MoralStack.
 
-Gestisce casi comuni di output LLM malformato:
-- JSON troncato (stringhe/array/oggetti non chiusi)
-- Testo prima/dopo il JSON
-- Escape sequences problematiche
-- Blocchi markdown
+Handles common cases of malformed LLM output:
+- Truncated JSON (unclosed strings/arrays/objects)
+- Text before/after the JSON
+- Problematic escape sequences
+- Markdown blocks
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Any, cast
 
 
 class JSONParseError(Exception):
-    """Errore nel parsing JSON."""
+    """JSON parsing error."""
 
     pass
 
@@ -27,19 +27,19 @@ def _loads_json_object(text: str) -> dict[str, Any]:
 
 
 def _preprocess_text(text: str) -> str:
-    """Pre-processa il testo per rimuovere problemi comuni."""
-    # Rimuovi trailing comma in oggetti e array
-    # Pattern: , seguito da } o ] con opzionale whitespace nel mezzo
+    """Pre-processes the text to remove common problems."""
+    # Remove trailing commas in objects and arrays
+    # Pattern: , followed by } or ] with optional whitespace in between
     text = re.sub(r",\s*\}", "}", text)
     text = re.sub(r",\s*\]", "]", text)
 
-    # Rimuovi backslash spurii prima di underscore (errore comune LLM)
+    # Remove stray backslashes before underscore (common LLM error)
     text = text.replace("\\_", "_")
 
-    # Rimuovi caratteri di controllo problematici (eccetto newline e tab)
+    # Remove problematic control characters (except newline and tab)
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
 
-    # Normalizza newline
+    # Normalize newlines
     text = text.replace("\r\n", "\n").replace("\r", "\n")
 
     return text
@@ -47,42 +47,42 @@ def _preprocess_text(text: str) -> str:
 
 def _try_complete_truncated_json(text: str) -> str | None:
     """
-    Tenta di completare un JSON troncato.
+    Attempts to complete a truncated JSON.
 
-    Casi gestiti:
-    - Stringhe non chiuse: "value → "value"
-    - Array non chiusi: ["a", "b → ["a", "b"]
-    - Oggetti non chiusi: {"key": "value → {"key": "value"}
+    Handled cases:
+    - Unclosed strings: "value → "value"
+    - Unclosed arrays: ["a", "b → ["a", "b"]
+    - Unclosed objects: {"key": "value → {"key": "value"}
     """
     if not text.strip().startswith("{"):
         return None
 
-    # Conta le parentesi aperte/chiuse
+    # Count open/closed brackets
     open_braces = text.count("{")
     close_braces = text.count("}")
     open_brackets = text.count("[")
     close_brackets = text.count("]")
 
-    # Se già bilanciato, non serve completare
+    # If already balanced, no completion needed
     if open_braces == close_braces and open_brackets == close_brackets:
         return text
 
     completed = text.rstrip()
 
-    # Rimuovi trailing comma se presente
+    # Remove trailing comma if present
     completed = re.sub(r",\s*$", "", completed)
 
-    # Se finisce con una stringa non chiusa, chiudila
-    # Pattern: "...[^"] alla fine senza " di chiusura
+    # If it ends with an unclosed string, close it
+    # Pattern: "...[^"] at the end without a closing "
     if re.search(r':\s*"[^"]*$', completed):
         completed += '"'
 
-    # Chiudi array aperti
+    # Close open arrays
     while open_brackets > close_brackets:
         completed += "]"
         close_brackets += 1
 
-    # Chiudi oggetti aperti
+    # Close open objects
     while open_braces > close_braces:
         completed += "}"
         close_braces += 1
@@ -91,12 +91,12 @@ def _try_complete_truncated_json(text: str) -> str | None:
 
 
 def _extract_json_object(text: str) -> str | None:
-    """Estrae il primo oggetto JSON completo dal testo."""
+    """Extracts the first complete JSON object from the text."""
     start_idx = text.find("{")
     if start_idx == -1:
         return None
 
-    # Cerca la parentesi di chiusura corrispondente
+    # Look for the matching closing bracket
     depth = 0
     in_string = False
     escape_next = False
@@ -126,28 +126,28 @@ def _extract_json_object(text: str) -> str | None:
             if depth == 0:
                 return text[start_idx : i + 1]
 
-    # Se arriviamo qui, l'oggetto è troncato
+    # If we get here, the object is truncated
     return text[start_idx:]
 
 
 def extract_json(text: str) -> dict[str, Any]:
     """
-    Estrae e parsa JSON da testo in modo robusto.
-    Supporta blocchi markdown, testo prima/dopo, JSON troncato, escape problematici.
-    text: stringa che può contenere JSON.
-    Ritorna: dizionario parsato.
-    Solleva JSONParseError se non riesce a estrarre JSON valido.
+    Extracts and parses JSON from text robustly.
+    Supports markdown blocks, text before/after, truncated JSON, problematic escapes.
+    text: string that may contain JSON.
+    Returns: parsed dictionary.
+    Raises JSONParseError if it cannot extract valid JSON.
     """
     original_text = text
     text = _preprocess_text(text.strip())
 
-    # Tentativo 1: Parsing diretto (caso ideale)
+    # Attempt 1: Direct parsing (ideal case)
     try:
         return _loads_json_object(text)
     except json.JSONDecodeError:
         pass
 
-    # Tentativo 2: Estrazione da blocchi markdown ```json ... ``` o ``` ... ```
+    # Attempt 2: Extraction from markdown blocks ```json ... ``` or ``` ... ```
     code_patterns = [
         r"```json\s*(.*?)\s*```",
         r"```\s*(.*?)\s*```",
@@ -158,10 +158,10 @@ def extract_json(text: str) -> dict[str, Any]:
             try:
                 return _loads_json_object(match.group(1))
             except json.JSONDecodeError:
-                # Prova a riparare il contenuto
+                # Try to repair the content
                 pass
 
-    # Tentativo 3: Estrai l'oggetto JSON dal testo
+    # Attempt 3: Extract the JSON object from the text
     json_text = _extract_json_object(text)
     if json_text:
         try:
@@ -169,7 +169,7 @@ def extract_json(text: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             pass
 
-        # Tentativo 4: Prova a completare JSON troncato
+        # Attempt 4: Try to complete truncated JSON
         completed = _try_complete_truncated_json(json_text)
         if completed:
             try:
@@ -177,7 +177,7 @@ def extract_json(text: str) -> dict[str, Any]:
             except json.JSONDecodeError:
                 pass
 
-    # Tentativo 5: Cerca JSON tra primo { e ultimo }
+    # Attempt 5: Look for JSON between the first { and the last }
     start_idx = text.find("{")
     end_idx = text.rfind("}")
 
@@ -186,7 +186,7 @@ def extract_json(text: str) -> dict[str, Any]:
         try:
             return _loads_json_object(json_content)
         except json.JSONDecodeError:
-            # Tentativo 6: Riparazione newline nelle stringhe
+            # Attempt 6: Repair newlines in strings
             try:
                 repaired = re.sub(
                     r':\s*"([^"]*)"',
@@ -197,7 +197,7 @@ def extract_json(text: str) -> dict[str, Any]:
             except Exception:
                 pass
 
-            # Tentativo 7: Completa se troncato
+            # Attempt 7: Complete if truncated
             completed = _try_complete_truncated_json(json_content)
             if completed and completed != json_content:
                 try:
@@ -205,7 +205,7 @@ def extract_json(text: str) -> dict[str, Any]:
                 except json.JSONDecodeError:
                     pass
 
-    # Tentativo 8: Se c'è solo { senza }, prova a completare
+    # Attempt 8: If there is only { without }, try to complete
     if "{" in text and "}" not in text:
         start_idx = text.find("{")
         truncated = text[start_idx:]

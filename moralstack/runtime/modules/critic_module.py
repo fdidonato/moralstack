@@ -1,8 +1,8 @@
 """
-LLMConstitutionalCritic - Critica costituzionale per MoralStack.
+LLMConstitutionalCritic - Constitutional critic for MoralStack.
 
-Valuta risposte contro la costituzione e produce critiche strutturate.
-Usa il Policy LLM con prompt specializzato e parsing JSON rigoroso.
+Evaluates responses against the constitution and produces structured critiques.
+Uses the Policy LLM with a specialized prompt and strict JSON parsing.
 """
 
 from __future__ import annotations
@@ -57,30 +57,30 @@ def _build_context_block(
 # Data Models
 # =============================================================================
 
-# Decisione strutturata: niente parsing testuale di "REFUSE"
+# Structured decision: no textual parsing of "REFUSE"
 CriticDecision = Literal["PROCEED", "REVISE", "REFUSE"]
 
 
 @dataclass
 class CriticReport:
     """
-    Report completo della critica costituzionale.
+    Complete report of the constitutional critique.
 
     Attributes:
-        violations: Lista di violazioni rilevate
-        severity_score: Score aggregato [0, 1]
-        has_critical_violations: True se almeno un hard constraint è violato
-        violated_hard: Alias esplicito per has_critical_violations (HARD non mediabili)
-        decision: PROCEED | REVISE | REFUSE (output strutturato, no string parsing)
-        revision_guidance: Istruzioni per migliorare la risposta (non usata per decidere)
-        raw_response: Risposta grezza dell'LLM (per debug)
-        parse_attempts: Numero di tentativi di parsing JSON
+        violations: List of detected violations
+        severity_score: Aggregated score [0, 1]
+        has_critical_violations: True if at least one hard constraint is violated
+        violated_hard: Explicit alias for has_critical_violations (HARD, non-negotiable)
+        decision: PROCEED | REVISE | REFUSE (structured output, no string parsing)
+        revision_guidance: Instructions to improve the response (not used to decide)
+        raw_response: Raw LLM response (for debug)
+        parse_attempts: Number of JSON parsing attempts
     """
 
     violations: list[Violation] = field(default_factory=list)
     severity_score: float = 0.0
     has_critical_violations: bool = False
-    violated_hard: bool = False  # HARD constraints violati (non mediabili da majority vote)
+    violated_hard: bool = False  # HARD constraints violated (not negotiable via majority vote)
     decision: CriticDecision = "PROCEED"
     revision_guidance: str = ""
     raw_response: str = ""
@@ -106,7 +106,7 @@ class CriticReport:
 
     @classmethod
     def empty(cls) -> CriticReport:
-        """Crea un report vuoto (nessuna violazione)."""
+        """Creates an empty report (no violations)."""
         return cls(
             violations=[],
             severity_score=0.0,
@@ -137,7 +137,7 @@ class CriticReport:
 
     @classmethod
     def from_error(cls, error_msg: str) -> CriticReport:
-        """Crea un report di fallback in caso di errore critico."""
+        """Creates a fallback report on critical error."""
         return cls(
             violations=[],
             severity_score=1.0,  # Assume worst case
@@ -151,7 +151,7 @@ class CriticReport:
 
 @dataclass
 class QuickCheckResult:
-    """Risultato del quick check per fast path."""
+    """Result of the quick check for the fast path."""
 
     passed: bool
     critical_violation: Violation | None = None
@@ -182,17 +182,17 @@ QUICK_CHECK_PROMPT_TEMPLATE = default_prompt_set().template("critic.quick.user")
 
 
 # =============================================================================
-# Validazione dati violazioni (usata solo da _critic_output_to_tuple)
+# Violation data validation (used only by _critic_output_to_tuple)
 # =============================================================================
 
-VIOLATION_THRESHOLD = 0.15  # Soglia sotto cui la severity indica "non violato"
+VIOLATION_THRESHOLD = 0.15  # Threshold below which severity indicates "not violated"
 
 
 def _critic_output_to_tuple(
     critic_output: CriticOutput,
     principles_map: dict[str, Principle],
 ) -> tuple[list[Violation], str, CriticDecision, bool]:
-    """Converte CriticOutput (Pydantic) nella tupla (violations, revision_guidance,
+    """Converts CriticOutput (Pydantic) into the tuple (violations, revision_guidance,
     decision, violated_hard)."""
     violations: list[Violation] = []
     for v in critic_output.violations:
@@ -230,11 +230,11 @@ def parse_critic_response(
     path_decision: str = "DELIBERATIVE_PATH",
 ) -> tuple[list[Violation], str, CriticDecision, bool]:
     """
-    Parsa la risposta del critic con parser strutturato obbligatorio.
+    Parses the critic response with the mandatory structured parser.
 
-    Unica fonte di verità: CriticOutput (Pydantic). Nessun fallback legacy.
-    Se il parsing fallisce si solleva JSONParseError o ValidationError e si logga
-    request_id, raw_output (preview), errore. Nessuna decisione alternativa.
+    Single source of truth: CriticOutput (Pydantic). No legacy fallback.
+    If parsing fails, JSONParseError or ValidationError is raised and the following is logged:
+    request_id, raw_output (preview), error. No alternative decision.
     """
     parsed_output_keys = list(CriticOutput.model_fields.keys())
     try:
@@ -284,14 +284,14 @@ def parse_critic_response(
 
 @dataclass
 class CriticConfig:
-    """Configurazione per il Constitutional Critic."""
+    """Configuration for the Constitutional Critic."""
 
     max_retries: int = 2
-    max_tokens: int = 384  # Ridotto drasticamente per velocità
-    temperature: float = 0.1  # Più basso per determinismo
+    max_tokens: int = 384  # Drastically reduced for speed
+    temperature: float = 0.1  # Lower for determinism
     top_p: float = 0.9  # Nucleus sampling; configurable via MORALSTACK_CRITIC_TOP_P
-    top_k_principles: int = 20  # Ridotto per ridurre dimensione prompt
-    include_examples: bool = False  # Disabilitato per velocizzare
+    top_k_principles: int = 20  # Reduced to shrink prompt size
+    include_examples: bool = False  # Disabled for speed
     # Chars of each principle's rule the critic actually reads. Rules longer
     # than this are cut mid-sentence, so a clause that sits past the window
     # (typically a carve-out, which English drafting puts last) never reaches
@@ -303,16 +303,16 @@ class CriticConfig:
 
 class LLMConstitutionalCritic:
     """
-    Critic costituzionale basato su LLM.
+    LLM-based constitutional critic.
 
-    Valuta risposte contro la costituzione e produce critiche strutturate.
-    Usa il Policy LLM con prompt specializzato e parsing JSON rigoroso
-    con retry automatico.
+    Evaluates responses against the constitution and produces structured critiques.
+    Uses the Policy LLM with a specialized prompt and strict JSON parsing
+    with automatic retry.
 
     Attributes:
-        policy: Il Policy LLM per generazione
-        store: Constitution Store per accesso ai principi
-        config: Configurazione del critic
+        policy: The Policy LLM used for generation
+        store: Constitution Store for access to the principles
+        config: Critic configuration
 
     Usage:
         critic = LLMConstitutionalCritic(policy, store)
@@ -331,13 +331,13 @@ class LLMConstitutionalCritic:
         prompt_set: PromptSet | None = None,
     ) -> None:
         """
-        Inizializza il Constitutional Critic.
+        Initializes the Constitutional Critic.
 
         Args:
-            policy: Policy LLM per generazione critica
-            store: Constitution Store (opzionale, per lookup principi)
-            config: Configurazione (opzionale)
-            prompt_set: PromptSet da cui leggere prompt e retry (default: set impacchettato)
+            policy: Policy LLM for critique generation
+            store: Constitution Store (optional, for principle lookup)
+            config: Configuration (optional)
+            prompt_set: PromptSet to read prompts and retries from (default: packaged set)
         """
         self.policy = policy
         self.store = store
@@ -372,19 +372,19 @@ class LLMConstitutionalCritic:
         conversation_history: list[Turn] | None = None,
     ) -> CriticReport:
         """
-        Valuta response contro constitution.
+        Evaluates response against constitution.
 
         Args:
-            request: Richiesta originale dell'utente
-            response: Risposta da valutare
-            constitution: Costituzione con principi
-            principles: Principi specifici da usare (override)
-            request_id: Identificatore richiesta per tracciabilità log parser
+            request: Original user request
+            response: Response to evaluate
+            constitution: Constitution with principles
+            principles: Specific principles to use (override)
+            request_id: Request identifier for parser log traceability
 
         Returns:
-            CriticReport con violazioni e guidance
+            CriticReport with violations and guidance
         """
-        # Determina principi da usare
+        # Determine the principles to use
         if principles is not None:
             active_principles = principles
         else:
@@ -393,13 +393,13 @@ class LLMConstitutionalCritic:
         if not active_principles:
             return CriticReport.empty_skipped(reason="no relevant principles retrieved from constitution")
 
-        # Costruisci mappa per lookup
+        # Build map for lookup
         principles_map = {p.id: p for p in active_principles}
 
-        # Formatta principi per prompt (formato compatto per ridurre token)
+        # Format principles for prompt (compact format to reduce tokens)
         principles_text = format_principles_compact(active_principles, max_rule_len=self.config.max_rule_len)
 
-        # Costruisci prompt: usa builder centralizzato (moralstack/prompts/)
+        # Build prompt: use the centralized builder (moralstack/prompts/)
         ctx = delib_context or DelibContext(user_prompt=request, draft_text_full=response)
 
         # Tier-1: deterministically detect a single enumerated-token output
@@ -437,7 +437,7 @@ class LLMConstitutionalCritic:
         )
         retry_prompt = self._prompt_set.text("critic.retry")
 
-        # Genera critica con retry
+        # Generate critique with retry
         raw_response = ""
         parse_attempts = 0
         last_error: Exception | None = None
@@ -476,7 +476,7 @@ class LLMConstitutionalCritic:
                 raw_response = result.text
                 attempt_token_usage = TokenUsage.from_generation_result(result)
 
-                # Parse JSON (output strutturato: decision + violated_hard)
+                # Parse JSON (structured output: decision + violated_hard)
                 violations, guidance, decision, violated_hard = parse_critic_response(
                     raw_response,
                     principles_map,
@@ -576,7 +576,7 @@ class LLMConstitutionalCritic:
                     )
                 continue
 
-        # Tutti i retry falliti: errore esplicito, nessun fallback decisionale
+        # All retries failed: explicit error, no decision fallback
         error_msg = f"Critic structured parsing failed after {parse_attempts} attempts: {last_error_str}"
         if last_error is not None and isinstance(
             last_error, (JSONParseError, StructuredValidationError, PydanticValidationError)
@@ -691,14 +691,14 @@ class LLMConstitutionalCritic:
         pre_retrieved_principles: list[Principle] | None = None,
     ) -> QuickCheckResult:
         """
-        Check veloce per fast path.
+        Quick check for the fast path.
 
-        Controlla solo hard constraints per decisione rapida.
+        Checks only hard constraints for a quick decision.
 
         Args:
-            request: Richiesta originale
-            response: Risposta da verificare
-            constitution: Costituzione
+            request: Original request
+            response: Response to verify
+            constitution: Constitution
             pre_retrieved_principles: Optional shared retrieval result from the
                 risk-owned single upstream wave (unified single-retrieval-per-request).
                 When supplied, filtered to HARD instead of self-retrieving (single
@@ -707,7 +707,7 @@ class LLMConstitutionalCritic:
                 (fail-safe fallback).
 
         Returns:
-            QuickCheckResult con pass/fail
+            QuickCheckResult with pass/fail
 
         Raises:
             JSONParseError: the reply is unparseable, is not a JSON object, or has
@@ -724,7 +724,7 @@ class LLMConstitutionalCritic:
 
         start = time.perf_counter()
 
-        # Usa principi rilevanti se disponibili, altrimenti top hard constraints
+        # Use relevant principles if available, otherwise top hard constraints
         hard_constraints = []
         if pre_retrieved_principles is not None:
             # Reuse the risk-owned retrieval (already executed once upstream);
@@ -733,9 +733,9 @@ class LLMConstitutionalCritic:
         elif self.store is not None:
             try:
                 # Fail-safe fallback: no shared context supplied — self-retrieve
-                # (solo HARD) per questa query.
+                # (HARD only) for this query.
                 relevant = self.store.get_relevant_principles(query=request, top_k=10, domain=None)
-                # Filtra solo hard constraints rilevanti
+                # Filter only relevant hard constraints
                 hard_constraints = [p for p in relevant if p.level == "hard"][:10]
             except Exception as e:
                 logger.warning(
@@ -744,17 +744,17 @@ class LLMConstitutionalCritic:
                     exc_info=e,
                 )
 
-        # Fallback: usa top hard constraints per priorità (never skip the check,
+        # Fallback: use top hard constraints by priority (never skip the check,
         # even when the shared/self-retrieved list has zero HARD principles).
         if not hard_constraints:
             hard_constraints = [p for p in constitution.principles if p.level == "hard"][
                 :10
-            ]  # Aumentato da 5 a 10 per maggiore copertura
+            ]  # Increased from 5 to 10 for wider coverage
 
         if not hard_constraints:
             raise NoHardPrinciplesError("quick_check found no HARD principle to check against")
 
-        # Formatta hard constraints (formato compatto per ridurre token)
+        # Format hard constraints (compact format to reduce tokens)
         constraints_text = format_principles_compact(hard_constraints, max_rule_len=self.config.max_rule_len)
 
         prompt = self._prompt_set.format(
@@ -764,7 +764,7 @@ class LLMConstitutionalCritic:
             response=response,
         )
 
-        # Genera con config veloce (usa top_p da config)
+        # Generate with fast config (uses top_p from config)
         quick_config = GenerationConfig(
             max_tokens=256,
             temperature=0.1,
@@ -819,7 +819,7 @@ class LLMConstitutionalCritic:
             principle_id = str(data.get("principle_id", "UNKNOWN"))
             evidence = str(data.get("evidence", ""))
 
-            # Trova il principio
+            # Find the principle
             principle = next((p for p in hard_constraints if p.id == principle_id), None)
 
             violation = Violation(
@@ -856,14 +856,14 @@ class LLMConstitutionalCritic:
         conversation_history: list[Turn] | None = None,
     ) -> CriticReport:
         """
-        Critica usando principi rilevanti per la richiesta.
+        Critiques using the principles relevant to the request.
 
-        Convenience method che usa lo store per semantic retrieval.
+        Convenience method that uses the store for semantic retrieval.
 
         Args:
-            request: Richiesta originale
-            response: Risposta da valutare
-            domain: Dominio opzionale per overlay
+            request: Original request
+            response: Response to evaluate
+            domain: Optional domain for overlay
 
         Returns:
             CriticReport
@@ -878,7 +878,7 @@ class LLMConstitutionalCritic:
         if self.store is None:
             raise ValueError("ConstitutionStore required for this method")
 
-        # Ottieni principi rilevanti
+        # Get relevant principles
         principles = self.store.get_relevant_principles(
             query=request,
             top_k=self.config.top_k_principles,
@@ -902,9 +902,9 @@ class LLMConstitutionalCritic:
 
     def _compute_severity_score(self, violations: list[Violation]) -> float:
         """
-        Calcola severity score aggregato.
+        Computes the aggregated severity score.
 
-        Formula: weighted average con boost per hard constraints.
+        Formula: weighted average with a boost for hard constraints.
         """
         if not violations:
             return 0.0
@@ -913,7 +913,7 @@ class LLMConstitutionalCritic:
         weighted_sum = 0.0
 
         for v in violations:
-            # Hard constraints pesano di più
+            # Hard constraints weigh more
             weight = 2.0 if v.constraint_type == "hard" else 1.0
             weighted_sum += v.severity * weight
             total_weight += weight
@@ -921,7 +921,7 @@ class LLMConstitutionalCritic:
         if total_weight == 0:
             return 0.0
 
-        # Normalizza e clamp
+        # Normalize and clamp
         score = weighted_sum / total_weight
         return max(0.0, min(1.0, score))
 

@@ -1,4 +1,4 @@
-"""Decision trace per audit e indicizzazione per request_id."""
+"""Decision trace for audit and indexing by request_id."""
 
 from moralstack.runtime.trace.decision_trace import (
     DecisionTrace,

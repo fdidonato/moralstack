@@ -1,5 +1,5 @@
 """
-LLMBasedRiskEstimator - Classificazione rischio etico per MoralStack.
+LLMBasedRiskEstimator - Ethical risk classification for MoralStack.
 """
 
 from __future__ import annotations
@@ -251,29 +251,29 @@ def _risk_message_sections(
 
 class LLMBasedRiskEstimator:
     """
-    Giudice Semantico per la classificazione del rischio etico.
+    Semantic Judge for ethical risk classification.
 
-    Valuta il potenziale rischio etico di una richiesta utente usando
-    ESCLUSIVAMENTE analisi semantica basata su LLM. Non utilizza keyword
-    matching o pattern di parole - analizza significato, intento e contesto.
+    Assesses the potential ethical risk of a user request using
+    EXCLUSIVELY LLM-based semantic analysis. It does not use keyword
+    matching or word patterns - it analyzes meaning, intent and context.
 
-    Principi del Giudice Semantico:
-    - Il rischio deriva dall'INTENTO, non dalle parole usate
-    - "Come funziona un'esplosione" (educativo) ≠ "Come costruire una bomba" (dannoso)
-    - Il contesto determina se una richiesta è legittima o meno
-    - Domande su argomenti sensibili non sono automaticamente rischiose
+    Principles of the Semantic Judge:
+    - Risk derives from INTENT, not from the words used
+    - "How does an explosion work" (educational) ≠ "How to build a bomb" (harmful)
+    - Context determines whether a request is legitimate or not
+    - Questions about sensitive topics are not automatically risky
 
     Attributes:
-        policy: Il Policy LLM per l'analisi semantica
-        config: Configurazione dell'estimator
-        constitution_store: Store dei principi etici (opzionale)
+        policy: The Policy LLM for the semantic analysis
+        config: Estimator configuration
+        constitution_store: Store of ethical principles (optional)
 
     Usage:
         estimator = LLMBasedRiskEstimator(policy)
-        risk = estimator.estimate("Come posso aiutare un amico depresso?")
+        risk = estimator.estimate("How can I help a depressed friend?")
 
-        # Il giudice valuta l'intento (aiutare) non le parole ("depresso")
-        print(risk.rationale)  # Spiega il ragionamento semantico
+        # The judge evaluates the intent (helping), not the words ("depressed")
+        print(risk.rationale)  # Explains the semantic reasoning
 
         # Without a policy (policy=None) estimate() fails closed:
         # RiskEstimation.from_error, hence DELIBERATE.
@@ -287,14 +287,14 @@ class LLMBasedRiskEstimator:
         prompt_set: PromptSet | None = None,
     ) -> None:
         """
-        Inizializza il Giudice Semantico.
+        Initializes the Semantic Judge.
 
         Args:
-            policy: Policy LLM per l'analisi semantica.
+            policy: Policy LLM for the semantic analysis.
                    If None, ``estimate()`` fails closed through
                    ``RiskEstimation.from_error`` (DELIBERATE).
-            config: Configurazione (opzionale).
-            constitution_store: Constitution Store opzionale per arricchire l'analisi.
+            config: Configuration (optional).
+            constitution_store: Optional Constitution Store to enrich the analysis.
             prompt_set: Prompt fragments for the three mini-estimators (None = packaged defaults).
         """
         self.policy = policy
@@ -357,16 +357,16 @@ class LLMBasedRiskEstimator:
         retrieval_top_k: int | None = None,
     ) -> RiskEstimation:
         """
-        Stima il rischio etico di un prompt usando analisi semantica pura.
+        Estimates the ethical risk of a prompt using pure semantic analysis.
 
-        Il Giudice Semantico analizza:
-        1. L'INTENTO della richiesta (informativo, educativo, potenzialmente dannoso)
-        2. Il CONTESTO implicito (chi potrebbe fare questa domanda e perché)
-        3. Le CONSEGUENZE potenziali di una risposta
+        The Semantic Judge analyzes:
+        1. The INTENT of the request (informational, educational, potentially harmful)
+        2. The implicit CONTEXT (who might ask this question and why)
+        3. The potential CONSEQUENCES of a response
 
-        NON considera:
-        - Presenza di parole specifiche (no keyword matching)
-        - Pattern lessicali superficiali
+        Does NOT consider:
+        - Presence of specific words (no keyword matching)
+        - Superficial lexical patterns
 
         Optional context (``developer_contract_text``, ``conversation_history``), when
         provided, is prepended to the request body sent to the three mini-estimators
@@ -374,7 +374,7 @@ class LLMBasedRiskEstimator:
         on the system prompt or prior turns.
 
         Args:
-            prompt: Richiesta utente da valutare
+            prompt: User request to assess
             developer_contract_text: Deployer system prompt / developer contract text
             conversation_history: Prior turns as ``{"role", "content"}`` dicts
             retrieval_query: Optional override for the constitution-retrieval query
@@ -386,14 +386,14 @@ class LLMBasedRiskEstimator:
                 controller). Defaults to ``self._top_k`` when absent.
 
         Returns:
-            RiskEstimation con score, categoria e ragionamento semantico
+            RiskEstimation with score, category and semantic reasoning
         """
         if not prompt or not prompt.strip():
             return RiskEstimation.benign(confidence=1.0, rationale="Empty request - no content to analyze")
 
         # With policy=None this fails closed: _parallel_mini_analysis raises and
         # _semantic_analysis maps it to RiskEstimation.from_error (DELIBERATE).
-        # Analisi semantica via LLM (unica strategia)
+        # Semantic analysis via LLM (only strategy)
         return self._semantic_analysis(
             prompt,
             developer_contract_text=developer_contract_text,
@@ -778,15 +778,15 @@ class LLMBasedRiskEstimator:
         retrieval_top_k: int | None = None,
     ) -> RiskEstimation:
         """
-        Esegue 3 mini-chiamate LLM in parallelo via ThreadPoolExecutor.
+        Runs 3 LLM mini-calls in parallel via ThreadPoolExecutor.
 
         LLM 1 (estimate_intent): detected_language, intent_*, request_type, harm_type, rationale (intent)
         LLM 2 (estimate_signals): q1-q13, domain_sensitivity
         LLM 3 (estimate_operational): operational_risk, risk_score, confidence, misuse_plausibility, ..., rationale (risk)
 
-        Aggrega i risultati con merge_mini_estimator_results() e li processa con
-        la pipeline di calibrazione standard (parse_risk_dict).
-        estimation_mode="parallel" è impostato nel RiskEstimation risultante.
+        Aggregates the results with merge_mini_estimator_results() and processes them with
+        the standard calibration pipeline (parse_risk_dict).
+        estimation_mode="parallel" is set in the resulting RiskEstimation.
         """
         from concurrent.futures import ThreadPoolExecutor
 

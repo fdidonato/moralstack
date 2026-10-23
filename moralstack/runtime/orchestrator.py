@@ -1,8 +1,8 @@
 """
-MoralStack Orchestrator - Controllo flusso deliberativo.
+MoralStack Orchestrator - Deliberative flow control.
 
-Punto di ingresso pubblico: delega a OrchestrationController (moralstack.orchestration).
-Mantiene API invariata per compatibilità con script e test.
+Public entry point: delegates to OrchestrationController (moralstack.orchestration).
+Keeps the API unchanged for compatibility with scripts and tests.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from moralstack.orchestration.default_event_emitter import DefaultEventEmitter
 from moralstack.orchestration.default_persistence import DefaultPersistence
 from moralstack.orchestration.response_assembler import ResponseAssembler
 
-# Re-export tipi ed eccezioni per compatibilità (API pubblica)
+# Re-export types and exceptions for compatibility (public API)
 from moralstack.orchestration.types import (
     ConstitutionStoreProtocol,
     CritiqueError,
@@ -123,7 +123,7 @@ def create_minimal_orchestrator(
     risk_estimator: RiskEstimatorProtocol | None = None,
     prompt_set: PromptSet | None = None,
 ) -> "Orchestrator":
-    """Crea un Orchestrator minimale (solo policy e risk)."""
+    """Creates a minimal Orchestrator (policy and risk only)."""
     config = OrchestratorConfig(
         max_deliberation_cycles=2,
         enable_perspectives=False,
@@ -141,7 +141,7 @@ def create_minimal_orchestrator(
 class Orchestrator:
     """
     Facade: delega a OrchestrationController.
-    API pubblica invariata (process, set_logger, execution_trace, config, assembler).
+    Public API unchanged (process, set_logger, execution_trace, config, assembler).
 
     Step 14.2: optional ``ledger`` wires ``SemanticDecisionLedger`` into the controller
     for the conversational fast-path. When ``ledger`` is ``None`` (default), behaviour
@@ -202,10 +202,10 @@ class Orchestrator:
         return self._prompt_set
 
     def set_logger(self, logger: Any) -> None:
-        """Imposta il logger per tracciare chiamate LLM."""
+        """Sets the logger used to trace LLM calls."""
         self.logger = logger
         self._controller.set_logger(logger)
 
     def process(self, request: ProcessedRequest | str, **kwargs: Any) -> OrchestratorResult:
-        """Entry point principale. Delega al controller. Optional conversation_* kwargs are forwarded."""
+        """Main entry point. Delegates to the controller. Optional conversation_* kwargs are forwarded."""
         return self._controller.process(request, **kwargs)

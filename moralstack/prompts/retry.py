@@ -1,6 +1,6 @@
 """
-Prompt di retry centralizzati per parsing JSON fallito.
-Usati da critic, perspectives, simulator, hindsight.
+Centralized retry prompts for failed JSON parsing.
+Used by critic, perspectives, simulator, hindsight.
 
 Default re-exports of the packaged compositions (byte-identical to the former literals). The modules read
 the same texts from their own ``PromptSet`` (``retry.prefix``, ``critic.retry``, ``simulator.retry``, ...).
@@ -18,10 +18,10 @@ RETRY_PREFIX = _DEFAULT.text("retry.prefix")
 # Critic: schema decision/violations/revision_guidance
 RETRY_CRITIC = _DEFAULT.text("critic.retry")
 
-# Perspectives: schema compatto
+# Perspectives: compact schema
 RETRY_PERSPECTIVES = _DEFAULT.text("perspectives.retry")
 
-# Simulator: usa schema condiviso
+# Simulator: uses shared schema
 RETRY_SIMULATOR = _DEFAULT.text("simulator.retry")
 
 # Hindsight single evaluation

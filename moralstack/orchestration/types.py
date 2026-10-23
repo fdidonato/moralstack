@@ -1,6 +1,6 @@
 """
-Tipi condivisi per l'orchestrazione: state, result, config.
-Solo dataclass/enum/protocol; nessuna logica di flusso.
+Shared types for orchestration: state, result, config.
+Only dataclass/enum/protocol; no flow logic.
 """
 
 from __future__ import annotations
@@ -35,37 +35,37 @@ from moralstack.utils.output_protection import ProtectionResult
 
 
 class MoralStackError(Exception):
-    """Base exception per MoralStack."""
+    """Base exception for MoralStack."""
 
     pass
 
 
 class RiskEstimationError(MoralStackError):
-    """Errore nella stima del rischio."""
+    """Error in risk estimation."""
 
     pass
 
 
 class GenerationError(MoralStackError):
-    """Il policy LLM non ha potuto generare la risposta."""
+    """The policy LLM could not generate the response."""
 
     pass
 
 
 class CritiqueError(MoralStackError):
-    """Errore del critic costituzionale."""
+    """Constitutional critic error."""
 
     pass
 
 
 class SimulationError(MoralStackError):
-    """Errore nella simulazione delle conseguenze."""
+    """Error in consequence simulation."""
 
     pass
 
 
 class OrchestratorTimeoutError(MoralStackError):
-    """Timeout superato durante l'elaborazione."""
+    """Timeout exceeded during processing."""
 
     pass
 
@@ -94,7 +94,7 @@ SYSTEM_TIMEOUT_FAIL_CLOSED = "system_timeout"
 
 
 class FinalAction(Enum):
-    """Stato finale esplicito della decisione."""
+    """Explicit final state of the decision."""
 
     NORMAL_COMPLETE = "normal_complete"
     SAFE_COMPLETE = "safe_complete"
@@ -102,7 +102,7 @@ class FinalAction(Enum):
 
 
 class ResponseType(Enum):
-    """Tipi di risposta finale."""
+    """Final response types."""
 
     DIRECT = "direct"
     WITH_CAVEAT = "with_caveat"
@@ -113,7 +113,7 @@ class ResponseType(Enum):
 
 
 class DecisionType(Enum):
-    """Tipi di decisione del ciclo deliberativo."""
+    """Decision types of the deliberative cycle."""
 
     CONTINUE = "continue"
     CONVERGED = "converged"
@@ -129,17 +129,17 @@ StopReason = Literal[
     "TIMEOUT",
     "ERROR",
     "MANUAL_POLICY_STOP",
-    "NONE",  # in-loop, non ancora usciti
+    "NONE",  # in-loop, not yet exited
 ]
 
 
 @dataclass(frozen=True)
 class ConvergenceOutcome:
     """
-    Esito convergenza dopo enforcement: unica autorità per il loop deliberativo.
-    should_continue=True è permesso SOLO se cycle < max_cycles AND converged=False
+    Convergence outcome after enforcement: sole authority for the deliberative loop.
+    should_continue=True is allowed ONLY if cycle < max_cycles AND converged=False
     AND no fatal condition.
-    Value object immutabile: ogni variazione richiede una nuova istanza.
+    Immutable value object: any change requires a new instance.
     """
 
     should_continue: bool
@@ -150,8 +150,8 @@ class ConvergenceOutcome:
 
 
 def response_type_to_final_action(response_type: ResponseType) -> FinalAction | None:
-    """Mappa ResponseType -> FinalAction. FAIL_SAFE solo se final_action
-    non è uno di questi tre."""
+    """Maps ResponseType -> FinalAction. FAIL_SAFE only if final_action
+    is not one of these three."""
     if response_type == ResponseType.DIRECT:
         return FinalAction.NORMAL_COMPLETE
     if response_type == ResponseType.WITH_CAVEAT:
@@ -167,7 +167,7 @@ def response_type_to_final_action(response_type: ResponseType) -> FinalAction | 
 
 
 # =============================================================================
-# Decision result (output di decide_action)
+# Decision result (output of decide_action)
 # =============================================================================
 
 FinalActionStr = Literal["REFUSE", "SAFE_COMPLETE", "NORMAL_COMPLETE"]
@@ -199,11 +199,11 @@ AxisStr = Literal["LOW", "MEDIUM", "HIGH"]
 @dataclass(frozen=True)
 class Decision:
     """
-    Output di decide_action(): final_action e path deterministici da soli segnali semantici.
-    Tutti i campi sempre impostati (nessuna inferenza dal testo di risposta).
-    reason_codes: codici diagnostici per routing
-    (es. regulated_but_informational, informational_intent_override).
-    Value object immutabile: ogni variazione richiede una nuova istanza.
+    Output of decide_action(): final_action and path deterministic from semantic signals alone.
+    All fields always set (no inference from the response text).
+    reason_codes: diagnostic codes for routing
+    (e.g. regulated_but_informational, informational_intent_override).
+    Immutable value object: any change requires a new instance.
     """
 
     final_action: FinalActionStr
@@ -224,7 +224,7 @@ class Decision:
 
 @dataclass
 class ProcessedRequest:
-    """Richiesta processata pronta per l'Orchestrator."""
+    """Processed request ready for the Orchestrator."""
 
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     prompt: str = ""
@@ -246,7 +246,7 @@ class ProcessedRequest:
     upstream_draft_generator: Any = field(default=None, repr=False, compare=False)
 
     def get_domain(self) -> str | None:
-        """Ottiene il dominio overlay dall'user context."""
+        """Gets the overlay domain from the user context."""
         if isinstance(self.user_context, UserContext):
             return self.user_context.domain_overlay
         elif isinstance(self.user_context, dict):
@@ -290,7 +290,7 @@ class DraftProvenance:
 
 @dataclass
 class ResponseMetadata:
-    """Metadata della risposta finale (audit/tracciabilità)."""
+    """Final response metadata (audit/traceability)."""
 
     risk_score: float = 0.0
     hindsight_score: float = 0.0
@@ -526,7 +526,7 @@ class ResponseMetadata:
 
 @dataclass
 class FinalResponse:
-    """Risposta finale dell'Orchestrator."""
+    """Final response of the Orchestrator."""
 
     content: str
     response_type: ResponseType
@@ -536,7 +536,7 @@ class FinalResponse:
 
     @classmethod
     def refusal(cls, content: str, metadata: ResponseMetadata) -> FinalResponse:
-        """Factory per risposte di rifiuto."""
+        """Factory for refusal responses."""
         return cls(
             content=content,
             response_type=ResponseType.FULL_REFUSAL,
@@ -545,7 +545,7 @@ class FinalResponse:
 
     @classmethod
     def safe_default(cls, processing_time_ms: int = 0) -> FinalResponse:
-        """Factory per risposta safe di fallback. final_action sempre valorizzata
+        """Factory for the safe fallback response. final_action always set
         (FAIL_SAFE -> REFUSE)."""
         return cls(
             content="[SYSTEM_ERROR]",
@@ -568,7 +568,7 @@ PathTakenType = Literal[
 @dataclass
 class OrchestratorResult:
     """
-    Risultato completo dell'Orchestrator.
+    Complete result of the Orchestrator.
     path: FAST_PATH | DELIBERATIVE_PATH; cycles: 0 for FAST_PATH, else deliberation cycle count.
     """
 
@@ -583,7 +583,7 @@ class OrchestratorResult:
     execution_trace: dict[str, Any] | None = None
     # Populated for deliberative runs; also set when fast_path falls through to deliberation.
     convergence_snapshot: dict[str, Any] | None = None
-    trace: Any = None  # orchestration Trace (request-scoped diagnostica)
+    trace: Any = None  # orchestration Trace (request-scoped diagnostics)
     # Optional conversation linkage (multi-turn foundation; dormant when unset)
     conversation_id: str | None = None
     turn_index: int | None = None
@@ -618,8 +618,8 @@ class OrchestratorResult:
 @dataclass(frozen=True)
 class RiskThresholds:
     """
-    Soglie per la classificazione del rischio.
-    Value object immutabile: ogni variazione richiede una nuova istanza.
+    Thresholds for risk classification.
+    Immutable value object: any change requires a new instance.
     """
 
     low: float = 0.3
@@ -629,8 +629,8 @@ class RiskThresholds:
 @dataclass(frozen=True)
 class OrchestratorConfig:
     """
-    Configurazione dell'Orchestrator.
-    Value object immutabile: ogni variazione richiede una nuova istanza.
+    Configuration of the Orchestrator.
+    Immutable value object: any change requires a new instance.
     """
 
     max_deliberation_cycles: int = 2
@@ -662,7 +662,7 @@ class OrchestratorConfig:
     enable_soft_revision: bool = True
     soft_revision_min_suggestions: int = 1  # Minimum total suggestions to trigger
     soft_revision_max_approval: float = 0.95  # Skip rewrite if weighted approval exceeds this
-    early_exit_perspectives_threshold: float = 0.85  # Early exit se critic PROCEED + perspectives >= questo
+    early_exit_perspectives_threshold: float = 0.85  # Early exit if critic PROCEED + perspectives >= this
     # When True and parallel_module_calls is True, critic runs in parallel
     # with simulator and perspectives instead of acting as a sequential gate.
     # Hard violations are still honoured: sim/persp results are discarded when
@@ -959,7 +959,7 @@ class DeliberationState:
         return list(set(principles))
 
     def fork(self) -> DeliberationState:
-        """Copia shallow per branching parallelo. Solo le liste mutabili sono copiate."""
+        """Shallow copy for parallel branching. Only the mutable lists are copied."""
         return DeliberationState(
             cycle=self.cycle,
             draft_response=self.draft_response,
@@ -1073,7 +1073,7 @@ class DeliberationDependencies:
 
 
 # =============================================================================
-# Helpers (usati da assembler/diagnostics)
+# Helpers (used by assembler/diagnostics)
 # =============================================================================
 
 

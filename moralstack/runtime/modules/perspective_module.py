@@ -1,11 +1,11 @@
 """
-LLMPerspectiveEnsemble - Ensemble di prospettive per MoralStack.
+LLMPerspectiveEnsemble - Perspective ensemble for MoralStack.
 
-Valuta risposte da multiple prospettive cognitive per garantire
-una valutazione completa e bilanciata dell'output dell'AI.
-Usa il Policy LLM con prompt specializzati e aggregazione pesata.
+Evaluates responses from multiple cognitive perspectives to ensure
+a complete and balanced evaluation of the AI output.
+Uses the Policy LLM with specialized prompts and weighted aggregation.
 
-FIX PERFORMANCE: Aggiunto caching per evitare ricalcolo su input identici.
+FIX PERFORMANCE: Added caching to avoid recomputation on identical inputs.
 """
 
 from __future__ import annotations
@@ -43,13 +43,13 @@ from moralstack.utils.structured_output import perspective_response_format
 @dataclass
 class Perspective:
     """
-    Rappresenta una prospettiva di valutazione.
+    Represents an evaluation perspective.
 
     Attributes:
-        id: Identificatore univoco (es. "user", "vulnerable")
-        name: Nome descrittivo della prospettiva
-        prompt_template: Template per il prompt di valutazione
-        weight: Peso nell'aggregazione [0, 2]
+        id: Unique identifier (e.g. "user", "vulnerable")
+        name: Descriptive name of the perspective
+        prompt_template: Template for the evaluation prompt
+        weight: Weight in the aggregation [0, 2]
     """
 
     id: str
@@ -58,23 +58,23 @@ class Perspective:
     weight: float = 1.0
 
     def __post_init__(self) -> None:
-        """Normalizza il peso in range valido."""
+        """Normalizes the weight to a valid range."""
         self.weight = max(0.0, min(2.0, self.weight))
 
 
 @dataclass
 class PerspectiveResult:
     """
-    Risultato della valutazione da una singola prospettiva.
+    Result of the evaluation from a single perspective.
 
     Attributes:
-        perspective_id: ID della prospettiva usata
-        perspective_name: Nome della prospettiva
-        approval_score: Score di approvazione [0, 1]
-        concerns: Lista di preoccupazioni identificate
-        suggestions: Lista di suggerimenti per migliorare
-        rationale: Ragionamento dettagliato
-        raw_response: Risposta grezza dell'LLM (per debug)
+        perspective_id: ID of the perspective used
+        perspective_name: Name of the perspective
+        approval_score: Approval score [0, 1]
+        concerns: List of identified concerns
+        suggestions: List of suggestions for improvement
+        rationale: Detailed reasoning
+        raw_response: Raw LLM response (for debug)
     """
 
     perspective_id: str
@@ -93,23 +93,23 @@ class PerspectiveResult:
     token_usage_source: TokenUsageSource = "unknown"
 
     def __post_init__(self) -> None:
-        """Normalizza l'approval score in range valido."""
+        """Normalizes the approval score to a valid range."""
         self.approval_score = max(0.0, min(1.0, self.approval_score))
 
 
 @dataclass
 class PerspectiveAggregation:
     """
-    Aggregazione dei risultati da tutte le prospettive.
+    Aggregation of the results from all perspectives.
 
     Attributes:
-        weighted_approval: Media pesata degli approval scores
-        min_approval: Score di approvazione minimo
-        max_approval: Score di approvazione massimo
-        all_concerns: Lista unificata e deduplicata di preoccupazioni
-        all_suggestions: Lista unificata e deduplicata di suggerimenti
-        perspective_count: Numero di prospettive valutate
-        dissent_level: Livello di disaccordo tra prospettive [0, 1]
+        weighted_approval: Weighted average of the approval scores
+        min_approval: Minimum approval score
+        max_approval: Maximum approval score
+        all_concerns: Unified, deduplicated list of concerns
+        all_suggestions: Unified, deduplicated list of suggestions
+        perspective_count: Number of perspectives evaluated
+        dissent_level: Level of disagreement among perspectives [0, 1]
     """
 
     weighted_approval: float = 0.0
@@ -122,27 +122,27 @@ class PerspectiveAggregation:
 
     @classmethod
     def empty(cls) -> PerspectiveAggregation:
-        """Crea un'aggregazione vuota."""
+        """Creates an empty aggregation."""
         return cls()
 
     @property
     def has_concerns(self) -> bool:
-        """True se ci sono preoccupazioni."""
+        """True if there are concerns."""
         return len(self.all_concerns) > 0
 
     @property
     def recommendation(self) -> Literal["proceed", "revise", "refuse"]:
         """
-        Raccomandazione basata sull'aggregazione.
+        Recommendation based on the aggregation.
 
         Returns:
-            "proceed" se approval > 0.7
-            "revise" se 0.3 <= approval <= 0.7
-            "refuse" se approval < 0.3
+            "proceed" if approval > 0.7
+            "revise" if 0.3 <= approval <= 0.7
+            "refuse" if approval < 0.3
         """
-        # Regola conservativa: se una qualunque prospettiva è fortemente contraria,
-        # preferisci REVISIONE/RIFIUTO anche se la media pesata è alta.
-        # Questo evita che "Potential Misuser" (0.0) venga mascherato da altre (1.0).
+        # Conservative rule: if any perspective is strongly opposed,
+        # prefer REVISION/REFUSAL even if the weighted average is high.
+        # This prevents "Potential Misuser" (0.0) from being masked by others (1.0).
         if self.min_approval <= 0.2:
             return "refuse"
         if self.min_approval < 0.3:
@@ -158,14 +158,14 @@ class PerspectiveAggregation:
 @dataclass
 class EnsembleResult:
     """
-    Risultato completo dell'ensemble di prospettive.
+    Complete result of the perspective ensemble.
 
     Attributes:
-        results: Lista di risultati per ogni prospettiva
-        aggregation: Aggregazione dei risultati
-        raw_responses: Risposte grezze (per debug)
-        evaluation_count: Numero di valutazioni riuscite
-        failed_perspectives: Prospettive che hanno fallito
+        results: List of results for each perspective
+        aggregation: Aggregation of the results
+        raw_responses: Raw responses (for debug)
+        evaluation_count: Number of successful evaluations
+        failed_perspectives: Perspectives that failed
     """
 
     results: list[PerspectiveResult] = field(default_factory=list)
@@ -187,7 +187,7 @@ class EnsembleResult:
 
     @classmethod
     def empty(cls) -> EnsembleResult:
-        """Crea un risultato vuoto."""
+        """Creates an empty result."""
         return cls(
             results=[],
             aggregation=PerspectiveAggregation.empty(),
@@ -196,7 +196,7 @@ class EnsembleResult:
 
     @classmethod
     def from_error(cls, error_msg: str) -> EnsembleResult:
-        """Crea un risultato di fallback in caso di errore critico."""
+        """Creates a fallback result on critical error."""
         return cls(
             results=[],
             aggregation=PerspectiveAggregation(
@@ -217,7 +217,7 @@ class EnsembleResult:
 # perspective is the packaged ``perspectives.identity.<id>`` fragment of the PromptSet in use.
 _DEFAULT_PERSPECTIVE_SPECS: tuple[tuple[str, str, float], ...] = (
     ("user", "Direct User", 1.0),
-    ("vulnerable", "Vulnerable User", 1.2),  # Peso maggiore per protezione
+    ("vulnerable", "Vulnerable User", 1.2),  # Higher weight for protection
     ("observer", "Neutral Observer", 1.0),
     ("adversary", "Potential Misuser", 0.8),
     ("compliance", "Compliance Officer", 1.0),
@@ -236,7 +236,7 @@ def _build_default_perspectives(prompt_set: PromptSet | None = None) -> list[Per
 # Default re-exports (packaged set). Instances read their own set via ``_build_default_perspectives``.
 DEFAULT_PERSPECTIVES = _build_default_perspectives()
 
-# Mappa per lookup rapido
+# Map for fast lookup
 PERSPECTIVES_BY_ID = {p.id: p for p in DEFAULT_PERSPECTIVES}
 
 # =============================================================================
@@ -254,7 +254,7 @@ RETRY_PROMPT = RETRY_PERSPECTIVES
 
 
 def validate_perspective_data(data: dict[str, Any]) -> bool:
-    """Valida che i dati di una valutazione prospettica siano completi."""
+    """Validates that the data of a perspective evaluation is complete."""
     return "approval_score" in data
 
 
@@ -263,24 +263,24 @@ def parse_perspective_response(
     perspective: Perspective,
 ) -> PerspectiveResult:
     """
-    Parsa la risposta della valutazione prospettica.
+    Parses the perspective evaluation response.
 
     Args:
-        text: Risposta JSON dell'LLM
-        perspective: Prospettiva usata per la valutazione
+        text: JSON response from the LLM
+        perspective: Perspective used for the evaluation
 
     Returns:
         PerspectiveResult
 
     Raises:
-        JSONParseError: Se parsing fallisce
+        JSONParseError: If parsing fails
     """
     data = extract_json(text)
 
     if not validate_perspective_data(data):
         raise JSONParseError("Missing required field: approval_score")
 
-    # Parse approval_score con fallback
+    # Parse approval_score with fallback
     try:
         approval_score = float(data.get("approval_score", 0.5))
     except (ValueError, TypeError):
@@ -359,37 +359,37 @@ def _build_history_snippet(conversation_history: list[Turn] | None) -> str:
 
 @dataclass
 class EnsembleConfig:
-    """Configurazione per il Perspective Ensemble."""
+    """Configuration for the Perspective Ensemble."""
 
-    max_retries: int = 3  # Aumentato da 2 per dare più chance di ottenere JSON valido
-    max_tokens: int = 512  # AUMENTATO da 256: 256 è troppo basso per JSON completo con concerns/suggestions
-    temperature: float = 0.1  # Abbassato da 0.2 per output più deterministico e strutturato
+    max_retries: int = 3  # Increased from 2 to give more chances of getting valid JSON
+    max_tokens: int = 512  # INCREASED from 256: 256 is too low for complete JSON with concerns/suggestions
+    temperature: float = 0.1  # Lowered from 0.2 for more deterministic, structured output
     top_p: float = 0.9  # Nucleus sampling; configurable via MORALSTACK_PERSPECTIVES_TOP_P
     parallel_evaluation: bool = True
     max_workers: int = 3
     timeout_seconds: float = 60.0
-    max_perspectives: int = 2  # Default: user + compliance (riduce costi e latenza)
-    # Le prospettive critiche (adversary, compliance) sono essenziali per
-    # rilevare contenuti potenzialmente pericolosi che le prospettive
-    # user-centric potrebbero non identificare
-    conservative_on_failure: bool = True  # Se una prospettiva fallisce, usa un fallback conservativo
+    max_perspectives: int = 2  # Default: user + compliance (reduces cost and latency)
+    # The critical perspectives (adversary, compliance) are essential to
+    # detect potentially dangerous content that the user-centric
+    # perspectives might not identify
+    conservative_on_failure: bool = True  # If a perspective fails, use a conservative fallback
 
-    # FIX PERFORMANCE: Caching per evitare ricalcolo su input identici
-    enable_caching: bool = False  # Disabilitato di default: evita stato globale nei test
+    # FIX PERFORMANCE: Caching to avoid recomputation on identical inputs
+    enable_caching: bool = False  # Disabled by default: avoids global state in tests
 
 
 class LLMPerspectiveEnsemble:
     """
-    Ensemble di prospettive basato su LLM.
+    LLM-based perspective ensemble.
 
-    Valuta risposte da multiple prospettive cognitive per garantire
-    una valutazione completa e bilanciata. Supporta valutazione
-    parallela per migliori performance.
+    Evaluates responses from multiple cognitive perspectives to ensure
+    a complete and balanced evaluation. Supports
+    parallel evaluation for better performance.
 
     Attributes:
-        policy: Il Policy LLM per generazione
-        config: Configurazione dell'ensemble
-        perspectives: Lista di prospettive da usare
+        policy: The Policy LLM used for generation
+        config: Ensemble configuration
+        perspectives: List of perspectives to use
 
     Usage:
         ensemble = LLMPerspectiveEnsemble(policy)
@@ -411,13 +411,13 @@ class LLMPerspectiveEnsemble:
         prompt_set: PromptSet | None = None,
     ) -> None:
         """
-        Inizializza il Perspective Ensemble.
+        Initializes the Perspective Ensemble.
 
         Args:
-            policy: Policy LLM per generazione valutazioni
-            config: Configurazione (opzionale)
-            perspectives: Lista di prospettive (opzionale, usa default se None)
-            prompt_set: PromptSet da cui leggere prompt, identita' e retry (default: set impacchettato)
+            policy: Policy LLM for evaluation generation
+            config: Configuration (optional)
+            perspectives: List of perspectives (optional, uses defaults if None)
+            prompt_set: PromptSet to read prompts, identities and retries from (default: packaged set)
         """
         self.policy = policy
         self._prompt_set = prompt_set or default_prompt_set()
@@ -430,7 +430,7 @@ class LLMPerspectiveEnsemble:
 
             config = load_perspective_config_from_env()
         self.config = config
-        # Usa default solo se perspectives è None, non se è lista vuota
+        # Use defaults only if perspectives is None, not if it is an empty list
         self.perspectives = list(self._perspectives_by_id.values()) if perspectives is None else list(perspectives)
 
         self._generation_config = GenerationConfig(
@@ -452,20 +452,20 @@ class LLMPerspectiveEnsemble:
         conversation_history: list[Turn] | None = None,
     ) -> EnsembleResult:
         """
-        Valuta la risposta da tutte le prospettive.
+        Evaluates the response from all perspectives.
 
-        FIX PERFORMANCE: Usa caching per evitare ricalcolo su input identici.
-        Se la coppia (request, response) è già stata valutata, ritorna il risultato cached.
+        FIX PERFORMANCE: Uses caching to avoid recomputation on identical inputs.
+        If the (request, response) pair has already been evaluated, returns the cached result.
 
         Args:
-            request: Richiesta originale dell'utente
-            response: Risposta da valutare
-            perspectives: Prospettive specifiche (override)
+            request: Original user request
+            response: Response to evaluate
+            perspectives: Specific perspectives (override)
 
         Returns:
-            EnsembleResult con risultati e aggregazione
+            EnsembleResult with results and aggregation
         """
-        # FIX PERFORMANCE: Check cache prima di valutare
+        # FIX PERFORMANCE: Check cache before evaluating
         prompt_ctx = PromptContext.from_contract(developer_contract, conversation_history)
         context_fingerprint = build_context_fingerprint(
             developer_contract=developer_contract,
@@ -487,9 +487,9 @@ class LLMPerspectiveEnsemble:
         if not active_perspectives:
             return EnsembleResult.empty()
 
-        # Limita il numero di prospettive per velocità
+        # Limit the number of perspectives for speed
         if self.config.max_perspectives > 0 and len(active_perspectives) > self.config.max_perspectives:
-            # Prendi le prime N prospettive (priorità alle più importanti)
+            # Take the first N perspectives (priority to the most important)
             active_perspectives = active_perspectives[: self.config.max_perspectives]
 
         # OPT-2: build shared system once (REQUEST+RESPONSE+CONTRACT+HISTORY+common instructions)
@@ -540,7 +540,7 @@ class LLMPerspectiveEnsemble:
                 conversation_history=conversation_history,
             )
 
-        # FIX PERFORMANCE: Salva in cache per usi futuri
+        # FIX PERFORMANCE: Save to cache for future use
         if self.config.enable_caching:
             cache = get_global_cache()
             cache.set_perspective_result(
@@ -588,12 +588,12 @@ class LLMPerspectiveEnsemble:
                 for perspective in perspectives
             }
 
-            # Raccogli i risultati con gestione timeout
+            # Collect the results with timeout handling
             try:
                 for future in as_completed(future_to_perspective, timeout=self.config.timeout_seconds):
                     perspective = future_to_perspective[future]
                     try:
-                        result = future.result(timeout=1.0)  # Timeout per singolo result
+                        result = future.result(timeout=1.0)  # Timeout per single result
                         if result is not None:
                             results.append(result)
                             raw_responses.append(result.raw_response)
@@ -616,7 +616,7 @@ class LLMPerspectiveEnsemble:
                             failed_perspectives.append(perspective.id)
                             raise
 
-        # Aggrega risultati
+        # Aggregate results
         aggregation = self.aggregate(results, perspectives)
 
         prompts_list = [getattr(r, "prompt", "") for r in results]
@@ -687,7 +687,7 @@ class LLMPerspectiveEnsemble:
             else:
                 failed_perspectives.append(perspective.id)
 
-        # Aggrega risultati
+        # Aggregate results
         aggregation = self.aggregate(results, perspectives)
 
         prompts_list = [getattr(r, "prompt", "") for r in results]
@@ -867,14 +867,14 @@ class LLMPerspectiveEnsemble:
         perspectives: list[Perspective] | None = None,
     ) -> PerspectiveAggregation:
         """
-        Aggrega i risultati delle valutazioni.
+        Aggregates the evaluation results.
 
-        Calcola media pesata degli approval scores, unifica concerns
-        e suggestions rimuovendo duplicati.
+        Computes the weighted average of the approval scores, merges concerns
+        and suggestions removing duplicates.
 
         Args:
-            results: Lista di risultati da aggregare
-            perspectives: Prospettive per lookup pesi (opzionale)
+            results: List of results to aggregate
+            perspectives: Perspectives for weight lookup (optional)
 
         Returns:
             PerspectiveAggregation
@@ -882,19 +882,19 @@ class LLMPerspectiveEnsemble:
         if not results:
             return PerspectiveAggregation.empty()
 
-        # Costruisci mappa pesi
+        # Build weights map
         weight_map: dict[str, float] = {}
         if perspectives:
             weight_map = {p.id: p.weight for p in perspectives}
         else:
-            # Usa pesi da default perspectives
+            # Use weights from default perspectives
             weight_map = {p.id: p.weight for p in self.perspectives}
-            # Aggiungi pesi dai default (di questo set) per fallback
+            # Add weights from the defaults (of this set) as fallback
             for pid, p in self._perspectives_by_id.items():
                 if pid not in weight_map:
                     weight_map[pid] = p.weight
 
-        # Calcola weighted average
+        # Compute weighted average
         total_weight = 0.0
         weighted_sum = 0.0
 
@@ -905,18 +905,18 @@ class LLMPerspectiveEnsemble:
 
         weighted_approval = weighted_sum / total_weight if total_weight > 0 else 0.5
 
-        # Trova min/max
+        # Find min/max
         scores = [r.approval_score for r in results]
         min_approval = min(scores)
         max_approval = max(scores)
 
-        # Calcola dissent level (varianza normalizzata)
+        # Compute dissent level (normalized variance)
         dissent_level = max_approval - min_approval
 
-        # Unifica concerns (deduplica mantenendo ordine)
+        # Merge concerns (deduplicate preserving order)
         all_concerns = self._deduplicate_strings([concern for result in results for concern in result.concerns])
 
-        # Unifica suggestions (deduplica mantenendo ordine)
+        # Merge suggestions (deduplicate preserving order)
         all_suggestions = self._deduplicate_strings([suggestion for result in results for suggestion in result.suggestions])
 
         return PerspectiveAggregation(
@@ -931,10 +931,10 @@ class LLMPerspectiveEnsemble:
 
     def _deduplicate_strings(self, items: list[str]) -> list[str]:
         """
-        Deduplica lista di stringhe mantenendo l'ordine.
+        Deduplicates a list of strings preserving the order.
 
-        Usa confronto case-insensitive per deduplicazione ma
-        mantiene il case originale.
+        Uses case-insensitive comparison for deduplication but
+        keeps the original case.
         """
         seen: set[str] = set()
         result: list[str] = []
@@ -949,24 +949,24 @@ class LLMPerspectiveEnsemble:
 
     def add_perspective(self, perspective: Perspective) -> None:
         """
-        Aggiunge una prospettiva all'ensemble.
+        Adds a perspective to the ensemble.
 
         Args:
-            perspective: Prospettiva da aggiungere
+            perspective: Perspective to add
         """
-        # Rimuovi esistente con stesso ID
+        # Remove existing one with the same ID
         self.perspectives = [p for p in self.perspectives if p.id != perspective.id]
         self.perspectives.append(perspective)
 
     def remove_perspective(self, perspective_id: str) -> bool:
         """
-        Rimuove una prospettiva dall'ensemble.
+        Removes a perspective from the ensemble.
 
         Args:
-            perspective_id: ID della prospettiva da rimuovere
+            perspective_id: ID of the perspective to remove
 
         Returns:
-            True se rimossa, False se non trovata
+            True if removed, False if not found
         """
         original_len = len(self.perspectives)
         self.perspectives = [p for p in self.perspectives if p.id != perspective_id]
@@ -974,17 +974,17 @@ class LLMPerspectiveEnsemble:
 
     def set_perspectives(self, perspective_ids: list[str]) -> None:
         """
-        Imposta le prospettive attive tramite lista di ID.
+        Sets the active perspectives through a list of IDs.
 
-        Usa le prospettive di default costruite dal PromptSet dell'istanza.
+        Uses the default perspectives built from the instance's PromptSet.
 
         Args:
-            perspective_ids: Lista di ID da attivare
+            perspective_ids: List of IDs to activate
         """
         self.perspectives = [self._perspectives_by_id[pid] for pid in perspective_ids if pid in self._perspectives_by_id]
 
     def get_active_perspectives(self) -> list[str]:
-        """Restituisce lista di ID delle prospettive attive."""
+        """Returns the list of IDs of the active perspectives."""
         return [p.id for p in self.perspectives]
 
 
@@ -1003,19 +1003,19 @@ def create_perspective_ensemble(
     prompt_set: PromptSet | None = None,
 ) -> LLMPerspectiveEnsemble:
     """
-    Factory function per creare un Perspective Ensemble.
+    Factory function for creating a Perspective Ensemble.
 
     Args:
-        policy: Policy LLM da usare
-        max_retries: Tentativi massimi per parsing JSON (ignored if config is provided)
-        temperature: Temperatura per generazione (ignored if config is provided)
-        parallel: Se True, valutazione parallela (ignored if config is provided)
-        perspective_ids: Lista di ID prospettive da usare (default: tutte)
+        policy: Policy LLM to use
+        max_retries: Maximum attempts for JSON parsing (ignored if config is provided)
+        temperature: Temperature for generation (ignored if config is provided)
+        parallel: If True, parallel evaluation (ignored if config is provided)
+        perspective_ids: List of perspective IDs to use (default: all)
         config: Optional EnsembleConfig; if provided, overrides kwargs. If None, built from kwargs.
         prompt_set: PromptSet to read prompts and perspective identities from (default: packaged set)
 
     Returns:
-        LLMPerspectiveEnsemble configurato
+        Configured LLMPerspectiveEnsemble
     """
     if config is None:
         config = EnsembleConfig(
@@ -1024,7 +1024,7 @@ def create_perspective_ensemble(
             parallel_evaluation=parallel,
         )
 
-    # Seleziona prospettive
+    # Select perspectives
     perspectives = None
     if perspective_ids:
         by_id = {p.id: p for p in _build_default_perspectives(prompt_set)}
@@ -1044,18 +1044,18 @@ def create_minimal_ensemble(
     prompt_set: PromptSet | None = None,
 ) -> LLMPerspectiveEnsemble:
     """
-    Crea un ensemble minimo con 2 prospettive chiave.
+    Creates a minimal ensemble with 2 key perspectives.
 
-    Utile per valutazioni rapide con meno overhead (riduce costi e latenza).
+    Useful for quick evaluations with less overhead (reduces cost and latency).
     When config is None, loads EnsembleConfig from environment (MORALSTACK_PERSPECTIVES_*).
 
     Args:
-        policy: Policy LLM da usare
+        policy: Policy LLM to use
         config: Optional EnsembleConfig; if None, loaded from env via perspective_config_loader.
         prompt_set: PromptSet to read prompts and perspective identities from (default: packaged set)
 
     Returns:
-        LLMPerspectiveEnsemble con prospettive: user, compliance
+        LLMPerspectiveEnsemble with perspectives: user, compliance
     """
     if config is None:
         from moralstack.runtime.modules.perspective_config_loader import (
@@ -1126,16 +1126,16 @@ def create_safety_focused_ensemble(
     prompt_set: PromptSet | None = None,
 ) -> LLMPerspectiveEnsemble:
     """
-    Crea un ensemble focalizzato sulla safety.
+    Creates a safety-focused ensemble.
 
-    Include prospettive con maggiore attenzione ai rischi.
+    Includes perspectives with greater attention to risks.
 
     Args:
-        policy: Policy LLM da usare
+        policy: Policy LLM to use
         prompt_set: PromptSet to read prompts from (default: packaged set)
 
     Returns:
-        LLMPerspectiveEnsemble con prospettive: vulnerable, adversary, compliance
+        LLMPerspectiveEnsemble with perspectives: vulnerable, adversary, compliance
     """
     return create_perspective_ensemble(
         policy=policy,

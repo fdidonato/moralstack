@@ -1,7 +1,7 @@
 """
-DeliberationRunner: gestisce cicli deliberativi e chiamate ai moduli
+DeliberationRunner: manages deliberative cycles and module calls
 (critic, simulator, perspectives, hindsight, generation).
-NON decide path; restituisce stato/risultato al controller.
+Does NOT decide path; returns state/result to the controller.
 """
 
 from __future__ import annotations
@@ -807,8 +807,8 @@ def _neutral_refusal_risk_estimation(risk_estimation: RiskEstimationProtocol) ->
 
 class DeliberationRunner:
     """
-    Esegue cicli deliberativi e path fast/benign/safe_complete.
-    Non decide path; il controller governa il flusso.
+    Runs deliberative cycles and the fast/benign/safe_complete paths.
+    Does not decide path; the controller governs the flow.
     """
 
     def __init__(
@@ -852,7 +852,7 @@ class DeliberationRunner:
         return self._executor
 
     def close(self) -> None:
-        """Chiude il ThreadPoolExecutor se presente."""
+        """Closes the ThreadPoolExecutor if present."""
         if self._executor is not None:
             self._executor.shutdown(wait=True)
             self._executor = None
@@ -1057,7 +1057,7 @@ class DeliberationRunner:
         speculative_draft: str | None = None,
         draft_provenance: DraftProvenance | None = None,
     ) -> OrchestratorResult:
-        """FAST PATH per operational_risk == NONE. Nessun modulo deliberativo."""
+        """FAST PATH for operational_risk == NONE. No deliberative modules."""
         from moralstack.orchestration.diagnostics import orch_debug_log
 
         orch_debug_log(
@@ -1181,7 +1181,7 @@ class DeliberationRunner:
         decision: Decision,
         decision_explanation: DecisionExplanation | None = None,
     ) -> OrchestratorResult:
-        """SAFE_COMPLETE path: genera con istruzioni caveat; nessun ciclo deliberativo."""
+        """SAFE_COMPLETE path: generates with caveat instructions; no deliberative cycle."""
         from moralstack.orchestration.diagnostics import orch_debug_log
 
         orch_debug_log(
@@ -1647,8 +1647,8 @@ class DeliberationRunner:
         request_analysis: RequestAnalysisContext | None = None,
         draft_provenance: DraftProvenance | None = None,
     ) -> OrchestratorResult:
-        """Path veloce: genera draft + quick check costituzionale;
-        se fallisce passa a deliberative.
+        """Fast path: generates draft + constitutional quick check;
+        if it fails, falls back to deliberative.
 
         Fail closed (PROJECT_SPEC §5.6/§5.7): the fast draft is delivered only if the
         HARD ``quick_check`` ran and passed, or the check is skipped by design (no
@@ -1991,8 +1991,8 @@ class DeliberationRunner:
         draft_provenance: DraftProvenance | None = None,
         request_analysis: RequestAnalysisContext | None = None,
     ) -> OrchestratorResult:
-        """Helper: costruisce OrchestratorResult da state (usato da run_fast_path
-        quando quick_check fallisce). ``draft_provenance``: forwarded to
+        """Helper: builds OrchestratorResult from state (used by run_fast_path
+        when quick_check fails). ``draft_provenance``: forwarded to
         ``assemble`` (fast-path -> deliberative escalation; see run_fast_path).
         ``request_analysis``: threaded from ``run_fast_path`` (in scope at its
         caller, ``:1049`` area) so the hard-violation delivery guard below can
@@ -2297,9 +2297,9 @@ class DeliberationRunner:
         draft_provenance: DraftProvenance | None = None,
     ) -> tuple[DeliberationState, float, ConvergenceOutcome]:
         """
-        Esegue cicli deliberativi. Restituisce (state, risk_score, outcome) per assemblaggio.
-        L'unica autorità sul loop è outcome post-enforcement: "continue"
-        non sopravvive a cicli esauriti.
+        Runs deliberative cycles. Returns (state, risk_score, outcome) for assembly.
+        The sole authority over the loop is the post-enforcement outcome: "continue"
+        does not survive exhausted cycles.
 
         Args:
             speculative_draft: Pre-generated draft from parallel overlap with
@@ -2476,8 +2476,8 @@ class DeliberationRunner:
         draft_provenance: DraftProvenance | None = None,
         start_time: float | None = None,
     ) -> DeliberationState:
-        """Singolo ciclo deliberativo: generate/revisione, critique, simulate,
-        perspectives, hindsight, decisione."""
+        """Single deliberative cycle: generate/revision, critique, simulate,
+        perspectives, hindsight, decision."""
         state.cycle += 1
         set_current_cycle(state.cycle)
         state._simulator_ran_this_cycle = None
@@ -3525,8 +3525,8 @@ class DeliberationRunner:
         return state
 
     def _apply_constitutional_perspective_override(self, state: DeliberationState) -> None:
-        """Applica override costituzionale sulle prospettive quando il Critic
-        rileva violazioni HARD."""
+        """Applies the constitutional override on the perspectives when the Critic
+        detects HARD violations."""
         from moralstack.orchestration.types import EnsembleResultProtocol
         from moralstack.runtime.modules.perspective_module import (
             EnsembleResult,

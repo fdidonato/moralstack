@@ -31,7 +31,7 @@ REASON_SENSITIVE_ALLOWED = "risk_sensitive_allowed"
 
 
 # -----------------------------------------------------------------------------
-# Action enum (ordine: N < S < R)
+# Action enum (order: N < S < R)
 # -----------------------------------------------------------------------------
 
 
@@ -49,8 +49,8 @@ class Action(str, Enum):
 @dataclass(frozen=True)
 class PolicyContext:
     """
-    Inputs per compute_action_bounds / decide_final_action.
-    Value object immutabile: ogni variazione richiede una nuova istanza.
+    Inputs for compute_action_bounds / decide_final_action.
+    Immutable value object: any change requires a new instance.
     """
 
     domain: str | None = None
@@ -83,8 +83,8 @@ class PolicyContext:
 @dataclass(frozen=True)
 class PolicyBounds:
     """
-    Output di compute_action_bounds: min_required, max_allowed, reason_codes.
-    Value object immutabile: ogni variazione richiede una nuova istanza.
+    Output of compute_action_bounds: min_required, max_allowed, reason_codes.
+    Immutable value object: any change requires a new instance.
     """
 
     min_required: Action
@@ -157,8 +157,8 @@ def _has_ambiguity_or_dual_use(ctx: PolicyContext) -> bool:
 
 def compute_action_bounds(ctx: PolicyContext) -> PolicyBounds:
     """
-    Calcola min_required e max_allowed (e reason_codes) dalla policy formale.
-    Single source of truth; nessuna inferenza da testo.
+    Computes min_required and max_allowed (and reason_codes) from the formal policy.
+    Single source of truth; no inference from text.
     """
     reason_codes: list[str] = []
     rc = _norm_risk_category(ctx.risk_category)
@@ -219,8 +219,8 @@ def compute_action_bounds(ctx: PolicyContext) -> PolicyBounds:
         reason_codes.append(REASON_RISK_POTENTIALLY_HARMFUL)
         if ctx.overlay_sensitive and not ctx.intent_operational:
             intent = (ctx.intent_type or "").strip().lower() if ctx.intent_type else None
-            # Esenzione fattuale: query educative/fattuali non richiedono SAFE_COMPLETE
-            # anche in domini regolati — l'over-governance erode utilità.
+            # Factual exemption: educational/factual queries do not require SAFE_COMPLETE
+            # even in regulated domains — over-governance erodes utility.
             if intent == "factual" and not _has_ambiguity_or_dual_use(ctx):
                 reason_codes.append(REASON_SAFE_COMPLETE_ALLOWED)
                 return PolicyBounds(
@@ -263,7 +263,7 @@ def compute_action_bounds(ctx: PolicyContext) -> PolicyBounds:
 
 def decide_final_action(ctx: PolicyContext) -> tuple[str, PolicyBounds, list[str]]:
     """
-    Deriva final_action da bounds.
+    Derives final_action from bounds.
     - REFUSE required -> REFUSE
     - SAFE_COMPLETE required -> SAFE_COMPLETE
     - Gray zone (POTENTIALLY_HARMFUL): default NORMAL_COMPLETE to reduce FPs

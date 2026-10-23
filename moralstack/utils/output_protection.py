@@ -1,12 +1,12 @@
 """
-MoralStack Output Protection - Anti-Leakage e Language Consistency.
+MoralStack Output Protection - Anti-Leakage and Language Consistency.
 
-Protezione robusta contro:
-- System prompt leakage (tramite Canary Tokens)
-- Delimiter injection (tramite Structural Delimiters)
-- Language mismatch (tramite Echo-Back nel prompt)
+Robust protection against:
+- System prompt leakage (via Canary Tokens)
+- Delimiter injection (via Structural Delimiters)
+- Language mismatch (via Echo-Back in the prompt)
 
-Approccio language-agnostic e a basso costo computazionale.
+Language-agnostic, low computational cost approach.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from moralstack.prompts.catalog import PromptSet, default_prompt_set
 
 @dataclass
 class ProtectionResult:
-    """Risultato della validazione output."""
+    """Output validation result."""
 
     original: str
     cleaned: str
@@ -32,84 +32,84 @@ class ProtectionResult:
 
 class CanaryProtection:
     """
-    Protezione leakage tramite canary tokens.
+    Leakage protection via canary tokens.
 
-    Inserisce token unici "segreti" nel system prompt che NON dovrebbero
-    MAI apparire nell'output. Se appaiono → leakage rilevato.
+    Inserts unique "secret" tokens into the system prompt that should NEVER
+    appear in the output. If they do → leakage detected.
 
-    Vantaggi:
-    - Costo O(1): solo una ricerca di stringa
-    - Language-agnostic: funziona con qualsiasi lingua
-    - Nessun pattern hardcoded
+    Advantages:
+    - O(1) cost: just a string search
+    - Language-agnostic: works with any language
+    - No hardcoded patterns
 
     Usage:
         canary = CanaryProtection()
         system_prompt = canary.inject(original_prompt)
-        # ... genera output ...
+        # ... generate output ...
         is_safe, cleaned = canary.validate(output)
     """
 
     def __init__(self, rotate_per_request: bool = False, prompt_set: PromptSet | None = None):
         """
         Args:
-            rotate_per_request: Se True, genera nuovo canary per ogni richiesta
-            prompt_set: PromptSet da cui leggere il testo dell'istruzione canary (default: set impacchettato)
+            rotate_per_request: If True, generates a new canary for each request
+            prompt_set: PromptSet to read the canary instruction text from (default: packaged set)
         """
         self._rotate = rotate_per_request
         self._prompt_set = prompt_set or default_prompt_set()
         self._canary = self._generate_canary()
 
     def _generate_canary(self) -> str:
-        """Genera un token canary univoco e difficile da indovinare."""
-        # Formato che sembra un riferimento interno ma è unico
+        """Generates a unique, hard-to-guess canary token."""
+        # Format that looks like an internal reference but is unique
         unique_id = hashlib.md5(uuid.uuid4().bytes).hexdigest()[:8].upper()
         return f"§REF_{unique_id}§"
 
     @property
     def current_canary(self) -> str:
-        """Ritorna il canary corrente (per debug)."""
+        """Returns the current canary (for debugging)."""
         return self._canary
 
     def inject(self, system_prompt: str) -> str:
         """
-        Inserisce il canary nel system prompt.
+        Injects the canary into the system prompt.
 
-        Il canary viene aggiunto come "riferimento interno" che il modello
-        non dovrebbe mai ripetere nell'output.
+        The canary is added as an "internal reference" that the model
+        should never repeat in the output.
         """
         if self._rotate:
             self._canary = self._generate_canary()
 
-        # Istruzione che include il canary in modo naturale
+        # Instruction that includes the canary naturally
         canary_instruction = self._prompt_set.format("policy.canary_instruction", canary=self._canary)
 
         return system_prompt + canary_instruction
 
     def validate(self, output: str) -> tuple[bool, str]:
         """
-        Verifica se l'output contiene il canary.
+        Checks whether the output contains the canary.
 
         Returns:
             (is_clean, cleaned_output)
-            - is_clean: True se nessun leakage rilevato
-            - cleaned_output: output pulito (se leakage, rimuove la parte contaminata)
+            - is_clean: True if no leakage detected
+            - cleaned_output: cleaned output (on leakage, removes the contaminated part)
         """
         if self._canary not in output:
             return True, output
 
-        # Leakage rilevato! Trova dove finisce il contenuto "contaminato"
+        # Leakage detected! Find where the "contaminated" content ends
         lines = output.split("\n")
         clean_lines = []
         found_clean_content = False
 
         for line in lines:
-            # Se la linea contiene il canary, saltala
+            # If the line contains the canary, skip it
             if self._canary in line:
                 continue
-            # Se la linea contiene pattern di istruzioni, saltala
+            # If the line contains instruction patterns, skip it
             if self._looks_like_instruction(line):
                 continue
-            # Altrimenti è contenuto pulito
+            # Otherwise it is clean content
             if line.strip():
                 found_clean_content = True
             if found_clean_content:
@@ -117,7 +117,7 @@ class CanaryProtection:
 
         cleaned = "\n".join(clean_lines).strip()
 
-        # Se non c'è contenuto pulito, restituisci un placeholder
+        # If there is no clean content, return a placeholder
         if not cleaned:
             cleaned = "[Risposta non generata correttamente]"
 
@@ -125,24 +125,24 @@ class CanaryProtection:
 
     def _looks_like_instruction(self, line: str) -> bool:
         """
-        Euristica leggera per identificare linee che sembrano istruzioni.
+        Lightweight heuristic to identify lines that look like instructions.
 
-        NON usa keyword specifiche per lingua, ma pattern strutturali.
+        Does NOT use language-specific keywords, but structural patterns.
         """
         stripped = line.strip()
         if not stripped:
             return False
 
-        # Pattern strutturali (non linguistici):
-        # 1. Inizia con [ e finisce con ] (bracket instruction)
+        # Structural (non-linguistic) patterns:
+        # 1. Starts with [ and ends with ] (bracket instruction)
         if stripped.startswith("[") and stripped.endswith("]"):
             return True
 
-        # 2. Tutto maiuscolo (probabilmente un header/titolo di istruzione)
+        # 2. All uppercase (probably an instruction header/title)
         if stripped.isupper() and len(stripped) > 3:
             return True
 
-        # 3. Contiene il pattern "§" (nostro marker)
+        # 3. Contains the "§" pattern (our marker)
         if "§" in stripped:
             return True
 
@@ -151,32 +151,32 @@ class CanaryProtection:
 
 class DelimiterProtection:
     """
-    Protezione tramite delimitatori strutturali.
+    Protection via structural delimiters.
 
-    Usa delimitatori speciali per separare system prompt da user input.
-    Se questi delimitatori appaiono nell'output → leakage.
+    Uses special delimiters to separate the system prompt from user input.
+    If these delimiters appear in the output → leakage.
 
-    Vantaggi:
-    - Costo O(n): solo operazioni su stringhe
+    Advantages:
+    - O(n) cost: string operations only
     - Language-agnostic
-    - Separazione chiara dei "ruoli"
+    - Clear separation of "roles"
     """
 
-    # Delimitatori univoci che non dovrebbero apparire in contenuto normale
+    # Unique delimiters that should not appear in normal content
     SYSTEM_START = "◆SYS◆"
     SYSTEM_END = "◆/SYS◆"
     USER_START = "◆USR◆"
     USER_END = "◆/USR◆"
 
-    # Pattern per rilevare qualsiasi delimitatore
+    # Pattern to detect any delimiter
     DELIMITER_PATTERN = re.compile(r"◆/?(?:SYS|USR)◆")
 
     def wrap_system(self, content: str) -> str:
-        """Avvolge il contenuto di sistema nei delimitatori."""
+        """Wraps the system content in the delimiters."""
         return f"{self.SYSTEM_START}\n{content}\n{self.SYSTEM_END}"
 
     def wrap_user(self, content: str) -> str:
-        """Avvolge il contenuto utente nei delimitatori."""
+        """Wraps the user content in the delimiters."""
         return f"{self.USER_START}\n{content}\n{self.USER_END}"
 
     def build_prompt(
@@ -185,7 +185,7 @@ class DelimiterProtection:
         user_content: str,
     ) -> str:
         """
-        Costruisce un prompt completo con separazione strutturale.
+        Builds a complete prompt with structural separation.
         """
         return f"""{self.wrap_system(system_content)}
 
@@ -195,33 +195,33 @@ Response:"""
 
     def validate(self, output: str) -> tuple[bool, str]:
         """
-        Verifica se l'output contiene delimitatori (= leakage).
+        Checks whether the output contains delimiters (= leakage).
 
         Returns:
             (is_clean, cleaned_output)
         """
-        # Cerca qualsiasi delimitatore nell'output
+        # Look for any delimiter in the output
         if not self.DELIMITER_PATTERN.search(output):
             return True, output
 
-        # Leakage rilevato! Rimuovi tutto prima dell'ultimo delimitatore
-        # e tutto ciò che è dopo "Response:"
+        # Leakage detected! Remove everything before the last delimiter
+        # and everything after "Response:"
         cleaned = output
 
-        # Trova l'ultima occorrenza di un delimitatore
+        # Find the last occurrence of a delimiter
         matches = list(self.DELIMITER_PATTERN.finditer(output))
         if matches:
             last_match = matches[-1]
-            # Prendi tutto dopo l'ultimo delimitatore
+            # Take everything after the last delimiter
             after_delimiter = output[last_match.end() :]
-            # Trova il primo newline dopo
+            # Find the first newline after it
             newline_idx = after_delimiter.find("\n")
             if newline_idx >= 0:
                 cleaned = after_delimiter[newline_idx:].strip()
             else:
                 cleaned = after_delimiter.strip()
 
-        # Rimuovi anche eventuali "Response:" residui
+        # Also remove any leftover "Response:"
         if cleaned.startswith("Response:"):
             cleaned = cleaned[9:].strip()
 
@@ -232,39 +232,39 @@ Response:"""
 
     def sanitize_user_input(self, user_input: str) -> str:
         """
-        Rimuove eventuali delimitatori dall'input utente.
+        Removes any delimiters from the user input.
 
-        Previene che l'utente inietti i nostri delimitatori.
+        Prevents the user from injecting our delimiters.
         """
         return self.DELIMITER_PATTERN.sub("", user_input)
 
 
 class OutputProtector:
     """
-    Protettore completo che combina Canary + Delimiters + Language Rules.
+    Complete protector combining Canary + Delimiters + Language Rules.
 
-    Uso consigliato:
+    Recommended usage:
         protector = OutputProtector()
 
-        # Prepara il system prompt
+        # Prepare the system prompt
         protected_prompt = protector.prepare_system_prompt(base_prompt)
 
-        # Dopo la generazione, valida l'output
+        # After generation, validate the output
         result = protector.validate(output, user_input)
         final_output = result.cleaned
 
-    Costo totale: O(n) dove n è la lunghezza dell'output.
+    Total cost: O(n) where n is the output length.
     """
 
-    # Regole di lingua e anti-leakage: i testi vivono in moralstack/prompts/data/policy.yaml
-    # (``policy.language_rules`` / ``policy.anti_leak_rules``). Questi attributi di classe restano
-    # come re-export del set di default (valori identici ai vecchi letterali); a runtime
-    # ``prepare_system_prompt`` legge il PromptSet dell'istanza.
-    # NB (anti-leak): queste regole proteggono il system prompt, non nascondono i limiti del
-    # modello. Un limite dichiarato (nessuna esperienza personale, nessun accesso
-    # in tempo reale, data di addestramento) e' contenuto utile per l'utente e
-    # deve restare dicibile: vietarlo produceva risposte che inventavano ricordi
-    # o omettevano la data del knowledge cut-off.
+    # Language and anti-leakage rules: the texts live in moralstack/prompts/data/policy.yaml
+    # (``policy.language_rules`` / ``policy.anti_leak_rules``). These class attributes remain
+    # as a re-export of the default set (values identical to the old literals); at runtime
+    # ``prepare_system_prompt`` reads the instance's PromptSet.
+    # NB (anti-leak): these rules protect the system prompt, they do not hide the model's
+    # limits. A declared limit (no personal experience, no real-time
+    # access, training date) is useful content for the user and
+    # must remain sayable: forbidding it produced answers that invented memories
+    # or omitted the knowledge cut-off date.
     LANGUAGE_RULES = default_prompt_set().text("policy.language_rules")
     ANTI_LEAK_RULES = default_prompt_set().text("policy.anti_leak_rules")
 
@@ -277,10 +277,10 @@ class OutputProtector:
     ):
         """
         Args:
-            enable_canary: Abilita protezione canary token
-            enable_delimiters: Abilita protezione delimitatori
-            rotate_canary: Genera nuovo canary per ogni richiesta
-            prompt_set: PromptSet da cui leggere regole di lingua, anti-leak e canary
+            enable_canary: Enables canary token protection
+            enable_delimiters: Enables delimiter protection
+            rotate_canary: Generates a new canary for each request
+            prompt_set: PromptSet to read language, anti-leak and canary rules from
         """
         self._prompt_set = prompt_set or default_prompt_set()
         self._canary = (
@@ -290,21 +290,21 @@ class OutputProtector:
 
     def prepare_system_prompt(self, base_prompt: str) -> str:
         """
-        Prepara il system prompt con tutte le protezioni.
+        Prepares the system prompt with all protections.
 
         Args:
-            base_prompt: System prompt originale
+            base_prompt: Original system prompt
 
         Returns:
-            System prompt protetto con regole anti-leak e lingua
+            Protected system prompt with anti-leak and language rules
         """
-        # Aggiungi regole di lingua
+        # Add language rules
         enhanced = (
             f"{base_prompt}\n{self._prompt_set.text('policy.language_rules')}"
             f"\n{self._prompt_set.text('policy.anti_leak_rules')}"
         )
 
-        # Aggiungi canary se abilitato
+        # Add canary if enabled
         if self._canary:
             enhanced = self._canary.inject(enhanced)
 
@@ -312,13 +312,13 @@ class OutputProtector:
 
     def prepare_user_input(self, user_input: str) -> str:
         """
-        Sanitizza l'input utente.
+        Sanitizes the user input.
 
         Args:
-            user_input: Input originale dell'utente
+            user_input: Original user input
 
         Returns:
-            Input sanitizzato (rimuove delimitatori iniettati)
+            Sanitized input (removes injected delimiters)
         """
         if self._delimiters:
             return self._delimiters.sanitize_user_input(user_input)
@@ -326,13 +326,13 @@ class OutputProtector:
 
     def validate(self, output: str) -> ProtectionResult:
         """
-        Valida l'output e rimuove eventuali leakage.
+        Validates the output and removes any leakage.
 
         Args:
-            output: Output grezzo dell'LLM
+            output: Raw LLM output
 
         Returns:
-            ProtectionResult con output pulito e metadata
+            ProtectionResult with cleaned output and metadata
         """
         original = output
         cleaned = output
@@ -353,7 +353,7 @@ class OutputProtector:
                 had_leakage = True
                 leakage_type = "delimiter" if leakage_type is None else f"{leakage_type}+delimiter"
 
-        # 3. Pulizia finale leggera (rimuovi whitespace eccessivo)
+        # 3. Light final cleanup (remove excess whitespace)
         cleaned = cleaned.strip()
 
         return ProtectionResult(
@@ -365,26 +365,26 @@ class OutputProtector:
         )
 
 
-# Factory function per uso semplice
+# Factory function for simple use
 def create_protector(
     enable_canary: bool = True,
     enable_delimiters: bool = True,
     prompt_set: PromptSet | None = None,
 ) -> OutputProtector:
     """
-    Crea un OutputProtector con configurazione standard.
+    Creates an OutputProtector with standard configuration.
 
     Args:
-        enable_canary: Abilita protezione canary (default True)
-        enable_delimiters: Abilita protezione delimitatori (default True)
-        prompt_set: PromptSet da cui leggere i testi (default: set impacchettato)
+        enable_canary: Enables canary protection (default True)
+        enable_delimiters: Enables delimiter protection (default True)
+        prompt_set: PromptSet to read the texts from (default: packaged set)
 
     Returns:
-        OutputProtector configurato
+        Configured OutputProtector
     """
     return OutputProtector(
         enable_canary=enable_canary,
         enable_delimiters=enable_delimiters,
-        rotate_canary=False,  # Per efficienza, non ruotare
+        rotate_canary=False,  # For efficiency, do not rotate
         prompt_set=prompt_set,
     )

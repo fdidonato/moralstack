@@ -1,8 +1,8 @@
 """
-Safe Refusal Generator: genera la forma linguistica del rifiuto tramite LLM.
+Safe Refusal Generator: generates the linguistic form of the refusal via LLM.
 
-PRINCIPIO: Il LLM NON decide, NON valuta il rischio.
-Riceve solo contesto non operativo dopo che REFUSE è già stato deciso.
+PRINCIPLE: The LLM does NOT decide and does NOT assess risk.
+It only receives non-operational context after REFUSE has already been decided.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ class RefusalGenerationResult:
 # Consumer should replace with localized message.
 REFUSAL_FALLBACK_MARKER = "[REFUSAL_FALLBACK]"
 
-# Mappa codici ISO 639-1 (da Risk Estimator) a nome lingua per il prompt
+# Map ISO 639-1 codes (from Risk Estimator) to language names for the prompt
 _ISO_TO_LANGUAGE: dict[str, str] = {
     "en": "English",
     "it": "Italian",
@@ -135,10 +135,10 @@ _HARM_TYPE_CATEGORIES: dict[str, list[str]] = {
 
 
 def _iso_to_language_name(iso: str | None) -> str:
-    """Mappa codice ISO 639-1 (da risk_estimation.detected_language) a nome lingua."""
+    """Maps an ISO 639-1 code (from risk_estimation.detected_language) to a language name."""
     if not iso or not str(iso).strip():
         return "English"
-    # Supporta sia "it" che "it-IT"
+    # Supports both "it" and "it-IT"
     code = str(iso).strip().lower().split("-")[0][:2]
     return _ISO_TO_LANGUAGE.get(code, "English")
 
@@ -373,7 +373,7 @@ def _build_user_message(
 
 
 class _LLMGenerateProtocol(Protocol):
-    """Protocollo minimo: solo generate(prompt, system)."""
+    """Minimal protocol: only generate(prompt, system)."""
 
     def generate(self, prompt: str, system: str = "", config: Any = None) -> Any: ...
 
@@ -556,29 +556,29 @@ def generate_llm_safe_refusal(
     prompt_set: PromptSet | None = None,
 ) -> str:
     """
-    Genera la forma linguistica del rifiuto tramite LLM.
+    Generates the linguistic form of the refusal via LLM.
 
-    Wrapper backward-compatible su `generate_llm_safe_refusal_detailed`:
-    nuovi caller dovrebbero usare la versione detailed per ottenere anche i
-    prompt sintetici (utili per la persistenza in log/UI/markdown).
+    Backward-compatible wrapper over `generate_llm_safe_refusal_detailed`:
+    new callers should use the detailed version to also get the
+    synthetic prompts (useful for persistence in logs/UI/markdown).
 
-    Vincoli di sicurezza (rispettati dal prompt):
-    - Nessun nome di sostanze, processi chimici, esempi concreti
-    - Spiegazione a livello etico/sicurezza/policy generale
-    - Nessun tono moralistico o minaccioso
-    - Nessun suggerimento di ricerche abusabili
+    Safety constraints (honored by the prompt):
+    - No names of substances, chemical processes, concrete examples
+    - Explanation at the general ethics/safety/policy level
+    - No moralizing or threatening tone
+    - No suggestions of abusable searches
 
     Args:
-        risk_category: Categoria di rischio (es. clearly_harmful, potentially_harmful)
-        policy_reason_codes: Codici reason dalla policy (es. risk_clearly_harmful)
-        language: Lingua di output (es. Italian, English)
-        domain: Dominio di contesto (es. general, cybersecurity, financial, ...)
-        llm_client: Policy LLM con metodo generate(); None per fallback
-        rationale: Rationale dal risk estimator (opzionale); usato come linea
-            guida a livello astratto
+        risk_category: Risk category (e.g. clearly_harmful, potentially_harmful)
+        policy_reason_codes: Reason codes from the policy (e.g. risk_clearly_harmful)
+        language: Output language (e.g. Italian, English)
+        domain: Context domain (e.g. general, cybersecurity, financial, ...)
+        llm_client: Policy LLM with a generate() method; None for fallback
+        rationale: Rationale from the risk estimator (optional); used as an abstract-level
+            guideline
 
     Returns:
-        Testo di rifiuto sicuro, self-contained.
+        Safe, self-contained refusal text.
     """
     return generate_llm_safe_refusal_detailed(
         user_prompt=user_prompt,
@@ -595,5 +595,5 @@ def generate_llm_safe_refusal(
 
 
 def _fallback_refusal() -> str:
-    """Fallback sicuro se LLM non disponibile o fallisce. Language-agnostic marker."""
+    """Safe fallback if the LLM is unavailable or fails. Language-agnostic marker."""
     return REFUSAL_FALLBACK_MARKER

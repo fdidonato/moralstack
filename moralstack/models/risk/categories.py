@@ -1,5 +1,5 @@
 """
-Enums, categorie e costanti per il sistema di classificazione del rischio.
+Enums, categories and constants for the risk classification system.
 """
 
 from __future__ import annotations
@@ -8,17 +8,17 @@ from enum import Enum
 
 
 class RiskCategory(Enum):
-    """Categorie di rischio etico."""
+    """Ethical risk categories."""
 
-    BENIGN = "benign"  # Richieste informative standard
-    MORALLY_NUANCED = "morally_nuanced"  # Dilemmi etici interpersonali (richiede deliberazione)
-    SENSITIVE = "sensitive"  # Argomenti delicati ma legittimi
-    POTENTIALLY_HARMFUL = "potentially_harmful"  # Richiede scrutinio
-    CLEARLY_HARMFUL = "clearly_harmful"  # Violazione evidente
+    BENIGN = "benign"  # Standard informational requests
+    MORALLY_NUANCED = "morally_nuanced"  # Interpersonal ethical dilemmas (requires deliberation)
+    SENSITIVE = "sensitive"  # Delicate but legitimate topics
+    POTENTIALLY_HARMFUL = "potentially_harmful"  # Requires scrutiny
+    CLEARLY_HARMFUL = "clearly_harmful"  # Obvious violation
 
 
 class DomainSensitivity(Enum):
-    """Dimensione per domini regolati o etici."""
+    """Dimension for regulated or ethical domains."""
 
     LOW = "LOW"
     MEDIUM = "MEDIUM"
@@ -26,7 +26,7 @@ class DomainSensitivity(Enum):
 
 
 class OperationalRisk(Enum):
-    """Dimensione: capacità di ricostruire o eseguire azioni dannose."""
+    """Dimension: ability to reconstruct or carry out harmful actions."""
 
     NONE = "NONE"
     LOW = "LOW"
@@ -34,7 +34,7 @@ class OperationalRisk(Enum):
 
 
 class IntentClarity(Enum):
-    """Segnale language-agnostic: chiarezza dell'intento utente (semantico). LOW|MEDIUM|HIGH."""
+    """Language-agnostic signal: clarity of the user's intent (semantic). LOW|MEDIUM|HIGH."""
 
     LOW = "LOW"  # Ambiguous intent (legacy AMBIGUOUS -> LOW)
     MEDIUM = "MEDIUM"
@@ -42,7 +42,7 @@ class IntentClarity(Enum):
 
 
 class MisusePlausibility(Enum):
-    """Segnale language-agnostic: plausibilità di uso malevolo (semantico)."""
+    """Language-agnostic signal: plausibility of malicious use (semantic)."""
 
     LOW = "LOW"
     MEDIUM = "MEDIUM"
@@ -50,7 +50,7 @@ class MisusePlausibility(Enum):
 
 
 class ActionabilityRisk(Enum):
-    """Segnale: rischio che le informazioni possano essere usate in modo dannoso."""
+    """Signal: risk that the information could be used harmfully."""
 
     LOW = "LOW"
     MEDIUM = "MEDIUM"
@@ -58,7 +58,7 @@ class ActionabilityRisk(Enum):
 
 
 class RiskPolicyAction(Enum):
-    """Azione di gating basata su risk (usata dall'orchestrator)."""
+    """Gating action based on risk (used by the orchestrator)."""
 
     ALLOW = "ALLOW"
     ALLOW_WITH_CAVEAT = "ALLOW_WITH_CAVEAT"

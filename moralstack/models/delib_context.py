@@ -1,7 +1,7 @@
 """
-DelibContext - Rappresentazione compatta e condivisa del contesto deliberativo.
+DelibContext - Compact, shared representation of the deliberative context.
 
-Usato per ridurre token e latenza: costruito una volta per ciclo.
+Used to reduce tokens and latency: built once per cycle.
 """
 
 from __future__ import annotations
@@ -12,23 +12,23 @@ from dataclasses import dataclass, field
 @dataclass
 class DelibContext:
     """
-    Contesto condiviso per la deliberazione. Deriva una volta per ciclo.
+    Shared context for deliberation. Derived once per cycle.
 
     Attributes:
-        request_id: Identificatore richiesta
-        user_prompt: Prompt originale utente
-        detected_language: Lingua rilevata (ISO 639-1) se disponibile
-        domain_overlay: Dominio overlay attivo (es. financial, health)
-        risk_score: Score rischio [0, 1]
-        risk_category: Categoria rischio (BENIGN, SENSITIVE, ecc.)
+        request_id: Request identifier
+        user_prompt: Original user prompt
+        detected_language: Detected language (ISO 639-1) if available
+        domain_overlay: Active overlay domain (e.g. financial, health)
+        risk_score: Risk score [0, 1]
+        risk_category: Risk category (BENIGN, SENSITIVE, etc.)
         operational_risk: NONE | LOW | MEDIUM | HIGH
-        intent_operational: True se intento operativo (how-to, steps)
+        intent_operational: True if operational intent (how-to, steps)
         actionability_risk: LOW | MEDIUM | HIGH
-        draft_id: Identificatore versione draft (es. cycle number)
-        draft_text_full: Testo completo del draft (sempre disponibile)
-        safety_caveats_present: True se draft contiene caveat espliciti
-        citations_or_disclaimer_present: True se disclaimer/citazioni presenti
-        change_log: Per cycle>1, lista modifiche rispetto a draft precedente
+        draft_id: Draft version identifier (e.g. cycle number)
+        draft_text_full: Full draft text (always available)
+        safety_caveats_present: True if the draft contains explicit caveats
+        citations_or_disclaimer_present: True if disclaimers/citations are present
+        change_log: For cycle>1, list of changes relative to the previous draft
     """
 
     request_id: str = ""

@@ -1,14 +1,14 @@
 """
-Decision policy: regole deterministiche per SAFE_COMPLETE e NORMAL_COMPLETE.
+Decision policy: deterministic rules for SAFE_COMPLETE and NORMAL_COMPLETE.
 
-SAFE_COMPLETE è un'azione first-class, attivata da risk_level + intent_type + domain_overlay.
-Nessuna inferenza dal testo; solo segnali strutturati.
+SAFE_COMPLETE is a first-class action, triggered by risk_level + intent_type + domain_overlay.
+No inference from text; structured signals only.
 """
 
 from __future__ import annotations
 
 # -----------------------------------------------------------------------------
-# Costanti di policy (rule-based)
+# Policy constants (rule-based)
 # -----------------------------------------------------------------------------
 
 RISK_LEVELS_SENSITIVE = frozenset({"sensitive", "morally_nuanced"})
@@ -18,7 +18,7 @@ DOMAINS_REQUIRING_SAFE = frozenset({"healthcare", "mental_health", "legal", "fin
 
 
 def _norm_risk_level(risk_level: str | None) -> str | None:
-    """Normalizza risk_level a lowercase; None se vuoto/invalido."""
+    """Normalizes risk_level to lowercase; None if empty/invalid."""
     if risk_level is None:
         return None
     v = (str(risk_level).strip().lower() or "").strip()
@@ -29,7 +29,7 @@ def _norm_risk_level(risk_level: str | None) -> str | None:
 
 
 def _norm_intent_type(intent_type: str | None) -> str | None:
-    """Normalizza intent_type a lowercase (SUPPORT -> support)."""
+    """Normalizes intent_type to lowercase (SUPPORT -> support)."""
     if intent_type is None:
         return None
     v = (str(intent_type).strip().lower() or "").strip()
@@ -40,7 +40,7 @@ def _norm_intent_type(intent_type: str | None) -> str | None:
 
 
 def _norm_domain(domain_overlay: str | None) -> str | None:
-    """Normalizza domain_overlay a lowercase; None se vuoto."""
+    """Normalizes domain_overlay to lowercase; None if empty."""
     if domain_overlay is None:
         return None
     v = (str(domain_overlay).strip().lower() or "").strip()
@@ -53,23 +53,23 @@ def safe_complete_required(
     domain_overlay: str | None,
 ) -> bool:
     """
-    SAFE_COMPLETE è RICHIESTO se una delle seguenti condizioni è vera:
+    SAFE_COMPLETE is REQUIRED if any of the following conditions holds:
 
     1) risk_level ∈ {SENSITIVE, MORALLY_NUANCED} AND intent_type ∈ {SUPPORT, ADVICE}
 
     2) domain_overlay ∈ {healthcare, mental_health, legal, financial} AND risk_level != BENIGN
 
-    Funzione pura; nessun side-effect.
+    Pure function; no side effects.
     """
     r = _norm_risk_level(risk_level)
     i = _norm_intent_type(intent_type)
     d = _norm_domain(domain_overlay)
 
-    # Regola 1: sensibile/morally_nuanced + support/advice → SAFE_COMPLETE richiesto
+    # Rule 1: sensitive/morally_nuanced + support/advice → SAFE_COMPLETE required
     if r in RISK_LEVELS_SENSITIVE and i is not None and i in INTENT_TYPES_SUPPORT_ADVICE:
         return True
 
-    # Regola 2: dominio vincolante + rischio non benigno → SAFE_COMPLETE richiesto
+    # Rule 2: binding domain + non-benign risk → SAFE_COMPLETE required
     if d is not None and d in DOMAINS_REQUIRING_SAFE and r is not None and r != "benign":
         return True
 
@@ -83,11 +83,11 @@ def intent_type_from_request_type(
     risk_score: float = 0.5,
 ) -> str | None:
     """
-    Deriva intent_type da request_type quando l'LLM non fornisce intent_type esplicito.
-    Usato per policy e DCF.
+    Derives intent_type from request_type when the LLM provides no explicit intent_type.
+    Used for policy and DCF.
 
-    Per sensitive_topic: non-operational + risk_score basso → factual (informativo/descrittivo).
-    Altrimenti conservativo → advice.
+    For sensitive_topic: non-operational + low risk_score → factual (informational/descriptive).
+    Otherwise conservative → advice.
     """
     if request_type is None:
         return None
@@ -117,14 +117,14 @@ def normal_complete_allowed(
     domain_overlay: str | None,
 ) -> bool:
     """
-    NORMAL_COMPLETE è consentito SOLO se tutte le seguenti sono vere:
+    NORMAL_COMPLETE is allowed ONLY if all of the following hold:
 
     - risk_level ∈ {SENSITIVE, MORALLY_NUANCED}
     - intent_type ∈ {FACTUAL, EXPLANATION}
     - domain_overlay is None
 
-    In tal caso l'intervallo ammesso è [NORMAL_COMPLETE, SAFE_COMPLETE].
-    Funzione pura.
+    In that case the allowed range is [NORMAL_COMPLETE, SAFE_COMPLETE].
+    Pure function.
     """
     r = _norm_risk_level(risk_level)
     i = _norm_intent_type(intent_type)

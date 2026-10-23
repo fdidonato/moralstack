@@ -1,8 +1,8 @@
 """
-Context Builder - Costruisce DelibContext e delta evaluation.
+Context Builder - Builds DelibContext and delta evaluation.
 
-Summarization deterministica (no LLM) per ridurre costi.
-Caching opzionale con chiave (request_id, draft_hash).
+Deterministic summarization (no LLM) to reduce costs.
+Optional caching keyed by (request_id, draft_hash).
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ DELTA_MAX_BULLETS = 8
 
 
 def _truncate_to_chars(text: str, max_chars: int) -> str:
-    """Tronca testo a max_chars, tagliando su parola."""
+    """Truncate text to max_chars, cutting at a word boundary."""
     if not text or len(text) <= max_chars:
         return text or ""
     truncated = text[: max_chars + 1].rsplit(maxsplit=1)[0]
@@ -25,15 +25,15 @@ def _truncate_to_chars(text: str, max_chars: int) -> str:
 
 def compute_delta(prev_text: str, new_text: str) -> list[str]:
     """
-    Calcola change_log tra prev_text e new_text usando difflib.
-    Ritorna lista di bullet che descrivono le modifiche.
+    Computes the change_log between prev_text and new_text using difflib.
+    Returns a list of bullets describing the changes.
 
     Args:
-        prev_text: Testo draft precedente
-        new_text: Testo draft nuovo
+        prev_text: Previous draft text
+        new_text: New draft text
 
     Returns:
-        Lista di stringhe (es. "Added: ...", "Removed: ...", "Changed: ...")
+        List of strings (e.g. "Added: ...", "Removed: ...", "Changed: ...")
     """
     if not prev_text and not new_text:
         return []
@@ -84,18 +84,18 @@ def build_context(
     cycle: int = 1,
 ) -> DelibContext:
     """
-    Costruisce DelibContext per il ciclo corrente.
+    Builds the DelibContext for the current cycle.
 
     Args:
-        user_prompt: Prompt originale utente
-        risk_result: RiskEstimation (o oggetto con score, risk_category, ecc.)
-        domain: Dominio overlay (es. "financial")
-        draft_text: Testo draft corrente
-        prev_context: Contesto ciclo precedente (per delta, cycle>1)
-        cycle: Numero ciclo (1-based)
+        user_prompt: Original user prompt
+        risk_result: RiskEstimation (or an object with score, risk_category, etc.)
+        domain: Overlay domain (e.g. "financial")
+        draft_text: Current draft text
+        prev_context: Previous cycle context (for delta, cycle>1)
+        cycle: Cycle number (1-based)
 
     Returns:
-        DelibContext popolato
+        Populated DelibContext
     """
     ctx = DelibContext()
 
@@ -130,7 +130,7 @@ def build_context(
     if prev_context and cycle > 1 and prev_context.draft_text_full:
         ctx.change_log = compute_delta(prev_context.draft_text_full, draft_text or "")
 
-    # Caveats/disclaimer: lasciati False; orchestrator può sovrascrivere se ha info
+    # Caveats/disclaimer: left False; the orchestrator may override if it has the info
     ctx.safety_caveats_present = False
     ctx.citations_or_disclaimer_present = False
 

@@ -1,10 +1,10 @@
 """
-LLMBasedRiskEstimator - Classificazione rischio etico per MoralStack.
+LLMBasedRiskEstimator - Ethical risk classification for MoralStack.
 
-Classificatore di rischio semantico che usa un LLM per valutare il
-potenziale rischio etico di una richiesta. Agisce come un "giudice
-semantico" che analizza il significato e l'intento della richiesta,
-senza affidarsi a pattern di parole chiave.
+Semantic risk classifier that uses an LLM to assess the
+potential ethical risk of a request. It acts as a "semantic
+judge" that analyzes the meaning and intent of the request,
+without relying on keyword patterns.
 """
 
 from __future__ import annotations

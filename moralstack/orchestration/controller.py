@@ -1,6 +1,6 @@
 """
-OrchestrationController: solo coordinamento alto livello.
-process() governa il flusso in base a decision.path; nessuna logica interna complessa.
+OrchestrationController: high-level coordination only.
+process() drives the flow based on decision.path; no complex internal logic.
 """
 
 from __future__ import annotations
@@ -209,8 +209,8 @@ def _normalize_runtime_domain(domain: str | None) -> str | None:
 
 class OrchestrationController:
     """
-    Coordinamento alto livello: stima rischio, decide path, delega a runner/assembler/diagnostics.
-    Path governa il flusso; nessun early return aggiuntivo.
+    High-level coordination: estimates risk, decides path, delegates to runner/assembler/diagnostics.
+    Path governs the flow; no additional early returns.
     """
 
     def __init__(
@@ -2304,11 +2304,11 @@ class OrchestrationController:
             )
             decision1 = override
         # --- CYCLES_EXHAUSTED conservative fallback ---
-        # Upgrade NORMAL_COMPLETE → SAFE_COMPLETE solo se la categoria è intrinsecamente
-        # sensibile (SENSITIVE / MORALLY_NUANCED), OPPURE se overlay_sensitive + rischio
-        # non banale + il critic ha trovato almeno una soft violation nell'ultimo ciclo.
-        # overlay_sensitive da solo NON è sufficiente: evita falsi upgrade su query benigne
-        # in domini regolati (es. "sintomi influenza" su overlay medical).
+        # Upgrade NORMAL_COMPLETE → SAFE_COMPLETE only if the category is intrinsically
+        # sensitive (SENSITIVE / MORALLY_NUANCED), OR if overlay_sensitive + non-trivial risk
+        # + the critic found at least one soft violation in the last cycle.
+        # overlay_sensitive alone is NOT sufficient: avoids false upgrades on benign queries
+        # in regulated domains (e.g. "flu symptoms" on the medical overlay).
         _cycles_soft_violation = bool(
             state.last_critique
             and any(
@@ -2533,8 +2533,8 @@ class OrchestrationController:
         conversation_state: ConversationGovernanceState | None = None,
     ) -> OrchestratorResult:
         """
-        Entry point principale. Il flusso è governato da decision.path.
-        REFUSE/benign/SAFE_COMPLETE fanno early return solo se path != DELIBERATIVE_PATH.
+        Main entry point. The flow is governed by decision.path.
+        REFUSE/benign/SAFE_COMPLETE early-return only if path != DELIBERATIVE_PATH.
         Optional conversation_* / conversation_state are persisted for linkage only;
         they do not change routing or request-level analysis when unset.
         """
@@ -2838,10 +2838,10 @@ class OrchestrationController:
                 )
 
             risk_proto = _as_risk_protocol(risk_estimation)
-            # Propaga il risk_score floored (applicato sopra per overlay sensitive) dentro
-            # risk_proto, in modo che decide_action e _handle_informational_recovery vedano
-            # lo score corretto (0.35 invece di 0.1) quando l'overlay ha alzato il floor.
-            # RiskEstimation è frozen=True: usare dataclasses.replace() per creare una copia.
+            # Propagates the floored risk_score (applied above for sensitive overlays) into
+            # risk_proto, so that decide_action and _handle_informational_recovery see
+            # the corrected score (0.35 instead of 0.1) when the overlay raised the floor.
+            # RiskEstimation is frozen=True: use dataclasses.replace() to create a copy.
             if overlay_sensitive and risk_score != original_risk:
                 risk_proto = cast(RiskEstimationProtocol, _dc_replace(risk_estimation, score=risk_score))
             self._emit_risk_assessment_trace(request_id, risk_proto, risk_score)

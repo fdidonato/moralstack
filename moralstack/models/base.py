@@ -13,8 +13,8 @@ from moralstack.observability.token_usage import TokenUsage, TokenUsageSource
 @dataclass(frozen=True)
 class GenerationConfig:
     """
-    Configurazione per la generazione di testo.
-    Value object immutabile: ogni variazione richiede una nuova istanza.
+    Configuration for text generation.
+    Immutable value object: any variation requires a new instance.
     """
 
     max_tokens: int = 2048

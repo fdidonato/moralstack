@@ -1,11 +1,11 @@
 """
-MoralStack - Runtime di inferenza con ragionamento morale deliberativo.
+MoralStack - Inference runtime with deliberative moral reasoning.
 
-Un sistema che aggiunge ragionamento etico deliberativo a LLM base,
-intercettando le richieste, valutando il rischio etico, e orchestrando
-un processo di auto-critica e simulazione prima di produrre una risposta.
+A system that adds deliberative ethical reasoning to base LLMs,
+intercepting requests, assessing ethical risk, and orchestrating
+a self-critique and simulation process before producing a response.
 
-SDK pubblico::
+Public SDK::
 
     from moralstack import govern
     from openai import OpenAI
@@ -32,8 +32,8 @@ except PackageNotFoundError:
         _pyproject = tomllib.load(f)
     __version__ = _pyproject["project"]["version"]
 
-# SDK public API — lazy imports per evitare overhead a import time.
-# Il costo della pipeline viene pagato solo alla prima chiamata govern().
+# SDK public API — lazy imports to avoid overhead at import time.
+# The pipeline cost is paid only on the first govern() call.
 
 __all__ = [
     "__version__",
@@ -56,7 +56,7 @@ def __getattr__(name: str) -> object:
         from moralstack import sdk as _sdk  # noqa: PLC0415
 
         obj = getattr(_sdk, name)
-        # Metti nella cache del modulo per evitare lookup ripetuti
+        # Cache in the module to avoid repeated lookups
         import sys
 
         setattr(sys.modules[__name__], name, obj)

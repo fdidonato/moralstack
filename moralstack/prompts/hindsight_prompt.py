@@ -35,14 +35,14 @@ def build_hindsight_prompt(
     prompt_set: PromptSet | None = None,
 ) -> str:
     """
-    Costruisce il prompt per l'hindsight evaluator (batch mode).
+    Builds the prompt for the hindsight evaluator (batch mode).
 
     Args:
-        context: DelibContext con request, draft e risk signals
-        consequences_text: Testo formattato delle conseguenze simulate
-        prompt_set: PromptSet da cui leggere il template (default: set impacchettato)
+        context: DelibContext with request, draft and risk signals
+        consequences_text: Formatted text of the simulated consequences
+        prompt_set: PromptSet to read the template from (default: packaged set)
     Returns:
-        Prompt string pronto per l'LLM (dynamic content only; the static
+        Prompt string ready for the LLM (dynamic content only; the static
         evaluation instructions/schema live in the ``hindsight.batch.system`` composition).
     """
     request = context.user_prompt or ""

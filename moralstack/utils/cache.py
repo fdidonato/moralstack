@@ -1,10 +1,10 @@
 """
 MoralStack Caching Utilities.
 
-Fornisce caching LRU per chiamate LLM e risultati di moduli per ottimizzare
-le performance ed evitare chiamate ridondanti.
+Provides LRU caching for LLM calls and module results to optimize
+performance and avoid redundant calls.
 
-FIX PERFORMANCE: Evita di richiamare l'LLM se l'input è identico.
+PERFORMANCE FIX: Avoids calling the LLM again if the input is identical.
 """
 
 from __future__ import annotations
@@ -23,27 +23,27 @@ T = TypeVar("T")
 
 @dataclass
 class CacheEntry(Generic[T]):
-    """Entry nella cache con metadata."""
+    """Cache entry with metadata."""
 
     value: T
     created_at: float = field(default_factory=time.time)
     hits: int = 0
 
     def touch(self) -> None:
-        """Incrementa il contatore di hit."""
+        """Increments the hit counter."""
         self.hits += 1
 
 
 class LRUCache(Generic[T]):
     """
-    Cache LRU thread-safe per risultati.
+    Thread-safe LRU cache for results.
 
-    Usa OrderedDict per mantenere l'ordine di accesso e supporta
-    invalidazione basata su TTL (time-to-live).
+    Uses OrderedDict to keep the access order and supports
+    TTL (time-to-live) based invalidation.
 
     Attributes:
-        max_size: Numero massimo di entry
-        ttl_seconds: Tempo di vita delle entry (0 = infinito)
+        max_size: Maximum number of entries
+        ttl_seconds: Entry time-to-live (0 = infinite)
 
     Usage:
         cache = LRUCache[str](max_size=100, ttl_seconds=300)
@@ -57,11 +57,11 @@ class LRUCache(Generic[T]):
         ttl_seconds: float = 0,
     ) -> None:
         """
-        Inizializza la cache.
+        Initializes the cache.
 
         Args:
-            max_size: Numero massimo di entry (default 100)
-            ttl_seconds: TTL in secondi, 0 per infinito (default 0)
+            max_size: Maximum number of entries (default 100)
+            ttl_seconds: TTL in seconds, 0 for infinite (default 0)
         """
         self.max_size = max_size
         self.ttl_seconds = ttl_seconds
@@ -72,13 +72,13 @@ class LRUCache(Generic[T]):
 
     def get(self, key: str) -> T | None:
         """
-        Ottiene un valore dalla cache.
+        Gets a value from the cache.
 
         Args:
-            key: Chiave da cercare
+            key: Key to look up
 
         Returns:
-            Valore se presente e valido, None altrimenti
+            Value if present and valid, None otherwise
         """
         with self._lock:
             entry = self._cache.get(key)
@@ -91,12 +91,12 @@ class LRUCache(Generic[T]):
             if self.ttl_seconds > 0:
                 age = time.time() - entry.created_at
                 if age > self.ttl_seconds:
-                    # Entry scaduta
+                    # Expired entry
                     del self._cache[key]
                     self._misses += 1
                     return None
 
-            # Hit: muovi in fondo (più recente)
+            # Hit: move to the end (most recent)
             self._cache.move_to_end(key)
             entry.touch()
             self._hits += 1
@@ -104,27 +104,27 @@ class LRUCache(Generic[T]):
 
     def set(self, key: str, value: T) -> None:
         """
-        Inserisce un valore nella cache.
+        Inserts a value into the cache.
 
         Args:
-            key: Chiave
-            value: Valore da cachare
+            key: Key
+            value: Value to cache
         """
         with self._lock:
-            # Se già presente, aggiorna
+            # If already present, update
             if key in self._cache:
                 self._cache[key] = CacheEntry(value=value)
                 self._cache.move_to_end(key)
                 return
 
-            # Evict se necessario
+            # Evict if necessary
             while len(self._cache) >= self.max_size:
-                self._cache.popitem(last=False)  # Rimuovi il più vecchio
+                self._cache.popitem(last=False)  # Remove the oldest
 
             self._cache[key] = CacheEntry(value=value)
 
     def clear(self) -> None:
-        """Svuota la cache."""
+        """Clears the cache."""
         with self._lock:
             self._cache.clear()
             self._hits = 0
@@ -132,10 +132,10 @@ class LRUCache(Generic[T]):
 
     def invalidate(self, key: str) -> bool:
         """
-        Invalida una specifica entry.
+        Invalidates a specific entry.
 
         Returns:
-            True se l'entry esisteva ed è stata rimossa
+            True if the entry existed and was removed
         """
         with self._lock:
             if key in self._cache:
@@ -145,7 +145,7 @@ class LRUCache(Generic[T]):
 
     @property
     def stats(self) -> dict[str, Any]:
-        """Statistiche della cache."""
+        """Cache statistics."""
         with self._lock:
             total = self._hits + self._misses
             hit_rate = self._hits / total if total > 0 else 0.0
@@ -168,22 +168,22 @@ class LRUCache(Generic[T]):
 
 class ModuleResultCache:
     """
-    Cache specializzata per risultati di moduli MoralStack.
+    Cache specialized for MoralStack module results.
 
-    Ottimizzata per cachare risultati di:
+    Optimized for caching results of:
     - Perspectives (request, response) -> EnsembleResult
     - Simulation (request, response) -> SimulationResult
     - Hindsight (request, response, consequences) -> HindsightResult
 
-    Supporta invalidazione selettiva quando la response cambia.
+    Supports selective invalidation when the response changes.
 
     Usage:
         cache = ModuleResultCache()
 
-        # Salva risultato perspectives
+        # Store the perspectives result
         cache.set_perspective_result(request, response, result)
 
-        # Recupera se disponibile
+        # Retrieve if available
         cached = cache.get_perspective_result(request, response)
         if cached:
             return cached
@@ -194,16 +194,16 @@ class ModuleResultCache:
         max_perspectives: int = 50,
         max_simulations: int = 50,
         max_hindsight: int = 50,
-        ttl_seconds: float = 600,  # 10 minuti default
+        ttl_seconds: float = 600,  # 10 minutes default
     ) -> None:
         """
-        Inizializza le cache per ogni tipo di modulo.
+        Initializes the caches for each module type.
 
         Args:
-            max_perspectives: Max entry per perspectives
-            max_simulations: Max entry per simulations
-            max_hindsight: Max entry per hindsight
-            ttl_seconds: TTL per tutte le cache
+            max_perspectives: Max entries for perspectives
+            max_simulations: Max entries for simulations
+            max_hindsight: Max entries for hindsight
+            ttl_seconds: TTL for all caches
         """
         self._perspectives: LRUCache[Any] = LRUCache(max_perspectives, ttl_seconds)
         self._simulations: LRUCache[Any] = LRUCache(max_simulations, ttl_seconds)
@@ -298,14 +298,14 @@ class ModuleResultCache:
         self._hindsight.set(key, result)
 
     def clear_all(self) -> None:
-        """Svuota tutte le cache."""
+        """Clears all caches."""
         self._perspectives.clear()
         self._simulations.clear()
         self._hindsight.clear()
 
     @property
     def stats(self) -> dict[str, dict[str, Any]]:
-        """Statistiche aggregate di tutte le cache."""
+        """Aggregated statistics of all caches."""
         return {
             "perspectives": self._perspectives.stats,
             "simulations": self._simulations.stats,
@@ -362,10 +362,10 @@ _global_cache: ModuleResultCache | None = None
 
 def get_global_cache() -> ModuleResultCache:
     """
-    Ottiene la cache globale, creandola se necessario.
+    Gets the global cache, creating it if necessary.
 
     Returns:
-        ModuleResultCache condivisa
+        Shared ModuleResultCache
     """
     global _global_cache
     if _global_cache is None:

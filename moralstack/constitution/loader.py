@@ -54,17 +54,17 @@ def load_yaml_file(path: Path) -> dict[str, object]:
     """
     Loads YAML file into a dictionary.
 
-    Unico punto del codice che legge YAML; usa solo ruamel.yaml (safe).
+    Only place in the code that reads YAML; uses only ruamel.yaml (safe).
 
     Args:
-        path: Path del file YAML.
+        path: Path of the YAML file.
 
     Returns:
-        Dizionario radice del YAML.
+        Root dictionary of the YAML.
 
     Raises:
-        ConstitutionLoadError: Se il file è vuoto o il parsing fallisce.
-        FileNotFoundError: Se il file non esiste (non gestito qui).
+        ConstitutionLoadError: If the file is empty or parsing fails.
+        FileNotFoundError: If the file does not exist (not handled here).
     """
     with open(path, "r", encoding="utf-8") as f:
         data = _get_yaml().load(f)

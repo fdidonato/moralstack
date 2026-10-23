@@ -1,10 +1,10 @@
 """
-LLMConsequenceSimulator - Simulatore di conseguenze per MoralStack.
+LLMConsequenceSimulator - Consequence simulator for MoralStack.
 
-Genera scenari futuri plausibili per valutare l'impatto delle risposte.
-Usa il Policy LLM con prompt specializzato e parsing JSON rigoroso con retry.
+Generates plausible future scenarios to evaluate the impact of the responses.
+Uses the Policy LLM with a specialized prompt and strict JSON parsing with retry.
 
-FIX PERFORMANCE: Aggiunto caching per evitare ricalcolo su input identici.
+FIX PERFORMANCE: Added caching to avoid recomputation on identical inputs.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def _build_context_block(
 
 
 class ScenarioType(Enum):
-    """Tipi di scenari di conseguenza."""
+    """Types of consequence scenarios."""
 
     IMMEDIATE_HARM = "immediate_harm"
     DOWNSTREAM_MISUSE = "downstream_misuse"
@@ -68,19 +68,19 @@ class ScenarioType(Enum):
 @dataclass
 class Consequence:
     """
-    Rappresenta una singola conseguenza simulata.
+    Represents a single simulated consequence.
 
     Attributes:
-        text: Descrizione narrativa della conseguenza (max 160 chars)
-        likelihood: Probabilità/plausibilità [0, 1]
-        scenario_id: Identificatore univoco
-        scenario_type: Categoria della conseguenza
-        outcome_valence: Valenza [-1, 1] (negativa/positiva)
-        affected_stakeholders: Parti coinvolte
-        harm_type: Tipo di danno semantico
-        harm_severity: Gravità danno [0, 1]
-        harm_scope: Ambito (individual|group|societal|systemic)
-        reversibility: Reversibilità [0, 1]
+        text: Narrative description of the consequence (max 160 chars)
+        likelihood: Probability/plausibility [0, 1]
+        scenario_id: Unique identifier
+        scenario_type: Category of the consequence
+        outcome_valence: Valence [-1, 1] (negative/positive)
+        affected_stakeholders: Parties involved
+        harm_type: Semantic harm type
+        harm_severity: Harm severity [0, 1]
+        harm_scope: Scope (individual|group|societal|systemic)
+        reversibility: Reversibility [0, 1]
     """
 
     text: str
@@ -95,7 +95,7 @@ class Consequence:
     reversibility: float = 0.0
 
     def __post_init__(self) -> None:
-        """Normalizza i valori in range validi."""
+        """Normalizes the values to valid ranges."""
         self.likelihood = max(0.0, min(1.0, self.likelihood))
         self.outcome_valence = max(-1.0, min(1.0, self.outcome_valence))
 
@@ -103,18 +103,18 @@ class Consequence:
 @dataclass
 class SimulationResult:
     """
-    Risultato completo della simulazione di conseguenze.
+    Complete result of the consequence simulation.
 
     Attributes:
-        consequences: Lista di conseguenze simulate
-        worst_case_valence: Valenza dello scenario peggiore
-        best_case_valence: Valenza dello scenario migliore
-        expected_valence: Valenza attesa (media pesata per likelihood)
-        semantic_expected_harm: max(likelihood * harm_severity) per harm_type != none
-        dominant_harm_types: top 2 harm_type per risk_i
+        consequences: List of simulated consequences
+        worst_case_valence: Valence of the worst scenario
+        best_case_valence: Valence of the best scenario
+        expected_valence: Expected valence (likelihood-weighted average)
+        semantic_expected_harm: max(likelihood * harm_severity) for harm_type != none
+        dominant_harm_types: top 2 harm_type by risk_i
         worst_harm: record argmax(risk_i): {harm_type, harm_scope, risk}
-        raw_response: Risposta grezza dell'LLM (per debug)
-        parse_attempts: Numero di tentativi di parsing JSON
+        raw_response: Raw LLM response (for debug)
+        parse_attempts: Number of JSON parsing attempts
     """
 
     consequences: list[Consequence] = field(default_factory=list)
@@ -142,7 +142,7 @@ class SimulationResult:
 
     @classmethod
     def empty(cls) -> SimulationResult:
-        """Crea un risultato vuoto (nessuna conseguenza simulata)."""
+        """Creates an empty result (no simulated consequences)."""
         return cls(
             consequences=[],
             worst_case_valence=0.0,
@@ -152,10 +152,10 @@ class SimulationResult:
 
     @classmethod
     def from_error(cls, error_msg: str) -> SimulationResult:
-        """Crea un risultato di fallback in caso di errore critico."""
+        """Creates a fallback result on critical error."""
         return cls(
             consequences=[],
-            worst_case_valence=-1.0,  # Assume worst case su errore
+            worst_case_valence=-1.0,  # Assume worst case on error
             best_case_valence=-1.0,
             expected_valence=-1.0,
             raw_response=error_msg,
@@ -181,7 +181,7 @@ RETRY_PROMPT = RETRY_SIMULATOR
 
 
 # =============================================================================
-# Conversione da output strutturato a Consequence (unica fonte: parser strutturato)
+# Conversion from structured output to Consequence (single source: structured parser)
 # =============================================================================
 
 _SCENARIO_TYPE_MAP = {
@@ -194,7 +194,7 @@ _SCENARIO_TYPE_MAP = {
 
 
 def _simulator_output_to_consequences(out: SimulatorOutput) -> list[Consequence]:
-    """Converte SimulatorOutput (parser strutturato) in list[Consequence]."""
+    """Converts SimulatorOutput (structured parser) into list[Consequence]."""
     consequences: list[Consequence] = []
     for c in out.consequences:
         text = c.text
@@ -224,10 +224,10 @@ def _simulator_output_to_consequences(out: SimulatorOutput) -> list[Consequence]
 
 def parse_simulator_response(text: str) -> list[Consequence]:
     """
-    Parsa la risposta del simulator con parser strutturato obbligatorio.
+    Parses the simulator response with the mandatory structured parser.
 
-    Unica fonte: parse_and_validate_simulator_output. Se il parsing fallisce
-    si solleva JSONParseError o ValidationError. Nessun fallback.
+    Single source: parse_and_validate_simulator_output. If parsing fails,
+    JSONParseError or ValidationError is raised. No fallback.
     """
     out = parse_and_validate_simulator_output(text)
     return _simulator_output_to_consequences(out)
@@ -240,30 +240,30 @@ def parse_simulator_response(text: str) -> list[Consequence]:
 
 @dataclass
 class SimulatorConfig:
-    """Configurazione per il Consequence Simulator."""
+    """Configuration for the Consequence Simulator."""
 
     max_retries: int = 3
-    max_tokens: int = 384  # Ultra-lean: narrativa compatta, schema minimale
-    temperature: float = 0.8  # Più alta per diversità scenari
+    max_tokens: int = 384  # Ultra-lean: compact narrative, minimal schema
+    temperature: float = 0.8  # Higher for scenario diversity
     top_p: float = 0.95  # Nucleus sampling; configurable via MORALSTACK_SIMULATOR_TOP_P
     default_num_scenarios: int = 3
-    use_seeded_generation: bool = False  # Se True, usa seed separati
+    use_seeded_generation: bool = False  # If True, uses separate seeds
 
-    # FIX PERFORMANCE: Caching per evitare ricalcolo su input identici
-    enable_caching: bool = True  # Abilita caching risultati
+    # FIX PERFORMANCE: Caching to avoid recomputation on identical inputs
+    enable_caching: bool = True  # Enable result caching
 
 
 class LLMConsequenceSimulator:
     """
-    Simulatore di conseguenze basato su LLM.
+    LLM-based consequence simulator.
 
-    Genera scenari futuri plausibili per valutare l'impatto delle risposte.
-    Usa il Policy LLM con prompt specializzato e parsing JSON rigoroso
-    con retry automatico.
+    Generates plausible future scenarios to evaluate the impact of the responses.
+    Uses the Policy LLM with a specialized prompt and strict JSON parsing
+    with automatic retry.
 
     Attributes:
-        policy: Il Policy LLM per generazione
-        config: Configurazione del simulator
+        policy: The Policy LLM used for generation
+        config: Simulator configuration
 
     Usage:
         simulator = LLMConsequenceSimulator(policy)
@@ -280,12 +280,12 @@ class LLMConsequenceSimulator:
         prompt_set: PromptSet | None = None,
     ) -> None:
         """
-        Inizializza il Consequence Simulator.
+        Initializes the Consequence Simulator.
 
         Args:
-            policy: Policy LLM per generazione scenari
-            config: Configurazione (opzionale)
-            prompt_set: PromptSet da cui leggere prompt, seed e retry (default: set impacchettato)
+            policy: Policy LLM for scenario generation
+            config: Configuration (optional)
+            prompt_set: PromptSet to read prompts, seeds and retries from (default: packaged set)
         """
         self.policy = policy
         self._prompt_set = prompt_set or default_prompt_set()
@@ -320,25 +320,25 @@ class LLMConsequenceSimulator:
         conversation_history: list[Turn] | None = None,
     ) -> SimulationResult:
         """
-        Genera k conseguenze future plausibili.
+        Generates k plausible future consequences.
 
-        FIX PERFORMANCE: Usa caching per evitare ricalcolo su input identici.
-        Se la coppia (request, response) è già stata simulata, ritorna il risultato cached.
+        FIX PERFORMANCE: Uses caching to avoid recomputation on identical inputs.
+        If the (request, response) pair has already been simulated, returns the cached result.
 
-        Strategia di sampling:
-        - 1 scenario worst-case
-        - 1 scenario best-case
-        - (k-2) scenari probabili
+        Sampling strategy:
+        - 1 worst-case scenario
+        - 1 best-case scenario
+        - (k-2) probable scenarios
 
         Args:
-            request: Richiesta originale dell'utente
-            response: Risposta da valutare
-            num_scenarios: Numero di scenari da generare (default: 3)
+            request: Original user request
+            response: Response to evaluate
+            num_scenarios: Number of scenarios to generate (default: 3)
 
         Returns:
-            SimulationResult con conseguenze e metriche aggregate
+            SimulationResult with consequences and aggregated metrics
         """
-        # FIX PERFORMANCE: Check cache prima di simulare
+        # FIX PERFORMANCE: Check cache before simulating
         context_fingerprint = build_context_fingerprint(
             developer_contract=developer_contract,
             conversation_history=conversation_history,
@@ -357,7 +357,7 @@ class LLMConsequenceSimulator:
                 return replace(cast(SimulationResult, cached_result), from_cache=True, wire=None, wire_calls=None)
 
         k = num_scenarios or self.config.default_num_scenarios
-        k = max(1, min(k, 10))  # Limita range
+        k = max(1, min(k, 10))  # Limit range
 
         if self.config.use_seeded_generation:
             result = self._simulate_with_seeds(
@@ -378,7 +378,7 @@ class LLMConsequenceSimulator:
                 conversation_history=conversation_history,
             )
 
-        # FIX PERFORMANCE: Salva in cache per usi futuri
+        # FIX PERFORMANCE: Save to cache for future use
         if self.config.enable_caching:
             cache = get_global_cache()
             cache.set_simulation_result(
@@ -401,9 +401,9 @@ class LLMConsequenceSimulator:
         conversation_history: list[Turn] | None = None,
     ) -> SimulationResult:
         """
-        Genera tutti gli scenari in un'unica chiamata LLM.
+        Generates all scenarios in a single LLM call.
 
-        Più efficiente ma meno controllo sulla diversità.
+        More efficient but less control over diversity.
         """
         ctx = delib_context or DelibContext(user_prompt=request, draft_text_full=response)
         from moralstack.prompts.simulator_prompt import build_simulator_prompt
@@ -460,7 +460,7 @@ class LLMConsequenceSimulator:
                 prompt_tokens = getattr(result, "prompt_tokens", None)
                 completion_tokens = getattr(result, "completion_tokens", None)
 
-                # Parse JSON (parser strutturato obbligatorio; nessun fallback)
+                # Parse JSON (mandatory structured parser; no fallback)
                 consequences = parse_simulator_response(raw_response)
                 effective_prompt = prompt if attempt == 0 else f"{prompt}\n\n{retry_text}"
                 return self._build_result(
@@ -504,7 +504,7 @@ class LLMConsequenceSimulator:
                     except Exception:
                         pass
                 continue
-        # Tutti i retry falliti: errore esplicito, nessun fallback decisionale
+        # All retries failed: explicit error, no decision fallback
         from moralstack.utils.structured_output import ValidationError as StructuredValidationError
 
         if last_error is not None and isinstance(last_error, (JSONParseError, StructuredValidationError)):
@@ -524,10 +524,10 @@ class LLMConsequenceSimulator:
         conversation_history: list[Turn] | None = None,
     ) -> SimulationResult:
         """
-        Genera scenari usando seed separati per maggiore diversità.
+        Generates scenarios using separate seeds for greater diversity.
 
-        Ogni seed guida una prospettiva diversa (worst-case, best-case, ecc).
-        Più costoso ma produce scenari più vari.
+        Each seed drives a different perspective (worst-case, best-case, etc).
+        More expensive but produces more varied scenarios.
         """
         consequences: list[Consequence] = []
         raw_responses: list[str] = []
@@ -541,7 +541,7 @@ class LLMConsequenceSimulator:
         seed_token_usages: list[TokenUsage] = []
         sent_calls: list[tuple[list[dict[str, str]], str]] = []
 
-        # Seleziona seed appropriati
+        # Select appropriate seeds
         selected_seeds = self._select_seeds(num_scenarios)
 
         # Per-call system prompt (``when`` evaluated against this call); also what gets persisted.
@@ -661,16 +661,16 @@ class LLMConsequenceSimulator:
 
     def _select_seeds(self, num_scenarios: int) -> list[str]:
         """
-        Seleziona seed appropriati per il numero di scenari.
+        Selects appropriate seeds for the number of scenarios.
 
-        Garantisce diversità includendo sempre worst-case e best-case
-        se possibile.
+        Ensures diversity by always including worst-case and best-case
+        if possible.
         """
         seeds = self._prompt_set.lines("simulator.seeded.seeds")
         if num_scenarios >= len(seeds):
             return list(seeds[:num_scenarios])
 
-        # Priorità: worst-case (index 0,1), best-case (3), altri
+        # Priority: worst-case (index 0,1), best-case (3), others
         priority_order = [0, 1, 3, 2, 4]  # Indices in the seeds list
 
         selected: list[str] = []
@@ -698,25 +698,25 @@ class LLMConsequenceSimulator:
         wire_calls: dict[str, Any] | None = None,
     ) -> SimulationResult:
         """
-        Costruisce SimulationResult con metriche aggregate.
-        expected_valence invariato; semantic_expected_harm da risk_i = likelihood * harm_severity.
+        Builds SimulationResult with aggregated metrics.
+        expected_valence unchanged; semantic_expected_harm from risk_i = likelihood * harm_severity.
         """
         if not consequences:
             return SimulationResult.empty()
 
-        # Trova worst e best case
+        # Find worst and best case
         valences = [c.outcome_valence for c in consequences]
         worst_case = min(valences)
         best_case = max(valences)
 
-        # Calcola expected value (weighted by likelihood) - invariato
+        # Compute expected value (weighted by likelihood) - unchanged
         total_weight = sum(c.likelihood for c in consequences)
         if total_weight > 0:
             expected = sum(c.outcome_valence * c.likelihood for c in consequences) / total_weight
         else:
             expected = 0.0
 
-        # Semantic aggregation: risk_i = likelihood * harm_severity, ignora harm_type == "none"
+        # Semantic aggregation: risk_i = likelihood * harm_severity, ignores harm_type == "none"
         risk_records: list[tuple[float, str, str]] = []
         for c in consequences:
             if (getattr(c, "harm_type", "none") or "none").strip().lower() == "none":
@@ -767,17 +767,17 @@ def create_simulator(
     prompt_set: PromptSet | None = None,
 ) -> LLMConsequenceSimulator:
     """
-    Factory function per creare un Consequence Simulator.
+    Factory function for creating a Consequence Simulator.
 
     When config is None the constructor loads from env (MORALSTACK_SIMULATOR_*).
 
     Args:
-        policy: Policy LLM da usare
+        policy: Policy LLM to use
         config: Optional explicit config; when None, loaded from env
         prompt_set: PromptSet to read prompts from (optional; default: packaged set)
 
     Returns:
-        LLMConsequenceSimulator configurato
+        Configured LLMConsequenceSimulator
     """
     return LLMConsequenceSimulator(
         policy=policy,

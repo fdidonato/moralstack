@@ -1,9 +1,9 @@
 """
-Schema Pydantic per la costituzione YAML.
+Pydantic schema for the YAML constitution.
 
-Validazione strutturale fail-fast: nessun Any, extra="forbid".
-Schema esposti: Principle, Overlay, Constitution.
-Schema di caricamento (interni): PrincipleYAML, CoreYAML, OverlayYAML.
+Fail-fast structural validation: no Any, extra="forbid".
+Exposed schemas: Principle, Overlay, Constitution.
+Loading schemas (internal): PrincipleYAML, CoreYAML, OverlayYAML.
 """
 
 from __future__ import annotations
@@ -20,12 +20,12 @@ SeverityLevel = Literal["hard", "soft"]
 
 
 # -----------------------------------------------------------------------------
-# Modelli esposti (API pubblica)
+# Exposed models (public API)
 # -----------------------------------------------------------------------------
 
 
 class Principle(BaseModel):
-    """Principio etico della costituzione (oggetto tipizzato esposto)."""
+    """Ethical principle of the constitution (exposed typed object)."""
 
     model_config = ConfigDict(extra="forbid", frozen=False)
 
@@ -48,7 +48,7 @@ class Principle(BaseModel):
 
 
 class Overlay(BaseModel):
-    """Overlay di dominio (estensione costituzione)."""
+    """Domain overlay (constitution extension)."""
 
     model_config = ConfigDict(extra="forbid", frozen=False)
 
@@ -71,7 +71,7 @@ class Overlay(BaseModel):
 
 
 class Constitution(BaseModel):
-    """Costituzione completa (core + eventuale overlay)."""
+    """Complete constitution (core + optional overlay)."""
 
     model_config = ConfigDict(extra="forbid", frozen=False)
 
@@ -83,8 +83,8 @@ class Constitution(BaseModel):
     @property
     def principles(self) -> list[Principle]:
         """
-        Tutti i principi ordinati (core + overlay, con override priorità).
-        Ordine: hard > soft, priority decrescente, specificità, ID.
+        All ordered principles (core + overlay, with priority override).
+        Order: hard > soft, descending priority, specificity, ID.
         """
         from moralstack.constitution.helpers import resolve_conflict
 
@@ -99,13 +99,13 @@ class Constitution(BaseModel):
 
 
 # -----------------------------------------------------------------------------
-# Modelli di caricamento YAML (interni, con campi opzionali YAML)
+# YAML loading models (internal, with optional YAML fields)
 # -----------------------------------------------------------------------------
 
 
 class PrincipleYAML(BaseModel):
     """
-    Struttura di un principio come appare nel YAML.
+    Structure of a principle as it appears in the YAML.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -128,9 +128,9 @@ class PrincipleYAML(BaseModel):
         return v
 
     def to_principle(self) -> Principle:
-        """Converte in Principle.
-        Limita examples a max 2 per tipo per ridurre token.
-        Remediation ignorato (non usato nei prompt).
+        """Converts to Principle.
+        Limits examples to at most 2 per type to reduce tokens.
+        Remediation is ignored (not used in prompts).
         """
         return Principle(
             id=self.id,
@@ -140,13 +140,13 @@ class PrincipleYAML(BaseModel):
             rule=self.rule,
             examples_allow=list(self.examples_allow)[:2],
             examples_deny=list(self.examples_deny)[:2],
-            remediation="",  # Non usato nei prompt; omesso dai YAML per risparmio token
+            remediation="",  # Not used in prompts; omitted from the YAMLs to save tokens
             domain=self.domain,
         )
 
 
 class CoreYAML(BaseModel):
-    """Struttura radice del file core.yaml."""
+    """Root structure of the core.yaml file."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -154,7 +154,7 @@ class CoreYAML(BaseModel):
 
 
 class OverlayYAML(BaseModel):
-    """Struttura radice di un file overlay (es. medical.yaml)."""
+    """Root structure of an overlay file (e.g. medical.yaml)."""
 
     model_config = ConfigDict(extra="forbid")
 

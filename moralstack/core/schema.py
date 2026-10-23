@@ -1,9 +1,9 @@
 """
-Schema canonico condiviso per le decisioni deliberative.
+Shared canonical schema for deliberative decisions.
 
-UNICA fonte di verità: tutti i moduli deliberativi che producono una decisione
-devono conformarsi a questo schema. Nessuna estensione ad-hoc, nessun campo opzionale.
-Se un modulo non è in grado di produrre questo schema → ERRORE.
+SINGLE source of truth: all deliberative modules that produce a decision
+must conform to this schema. No ad-hoc extensions, no optional fields.
+If a module cannot produce this schema → ERROR.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 # -----------------------------------------------------------------------------
-# Enum values (lowercase in JSON, normalizzati a valori ammessi)
+# Enum values (lowercase in JSON, normalized to allowed values)
 # -----------------------------------------------------------------------------
 
 FINAL_ACTION_VALUES = Literal["REFUSE", "SAFE_COMPLETE", "NORMAL_COMPLETE"]
@@ -28,7 +28,7 @@ AXIS_VALUES = Literal["low", "medium", "high"]
 
 
 class RiskAssessmentSchema(BaseModel):
-    """Sotto-schema obbligatorio per risk_assessment."""
+    """Mandatory sub-schema for risk_assessment."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -39,7 +39,7 @@ class RiskAssessmentSchema(BaseModel):
 
 
 class JustificationSchema(BaseModel):
-    """Sotto-schema obbligatorio per justification."""
+    """Mandatory sub-schema for justification."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -50,10 +50,10 @@ class JustificationSchema(BaseModel):
 
 class StructuredDecision(BaseModel):
     """
-    Schema JSON canonico per tutte le decisioni deliberative.
+    Canonical JSON schema for all deliberative decisions.
 
-    Tutti i campi sono obbligatori. Nessun campo opzionale.
-    Usato come unica fonte di verità per final_action e risk/justification.
+    All fields are mandatory. No optional fields.
+    Used as the single source of truth for final_action and risk/justification.
     """
 
     model_config = ConfigDict(extra="forbid")

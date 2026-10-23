@@ -3,9 +3,9 @@ from typing import Any
 """
 MoralStack Constitution Module.
 
-Gestisce i principi etici, la costituzione e gli overlay di dominio.
+Manages ethical principles, the constitution and domain overlays.
 
-Lazy imports: loader e store vengono caricati solo al primo accesso.
+Lazy imports: loader and store are loaded only on first access.
 """
 
 __all__ = [
@@ -38,7 +38,7 @@ _LAZY_ATTRS: dict[str, str] = {
 
 
 def __getattr__(name: str) -> Any:
-    """Import lazy per evitare side effects a import-time."""
+    """Lazy import to avoid side effects at import time."""
     if name in _LAZY_ATTRS:
         import importlib
 

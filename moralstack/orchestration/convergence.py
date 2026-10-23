@@ -1,6 +1,6 @@
 """
-Convergenza deliberativa: modello di stato esplicito e invarianti.
-Enforcement centrale: "continue" non può mai sopravvivere quando cicli esauriti o converged.
+Deliberative convergence: explicit state model and invariants.
+Central enforcement: "continue" can never survive when cycles are exhausted or converged.
 """
 
 from __future__ import annotations
@@ -22,12 +22,12 @@ def enforce_convergence_invariants(
     decision_type: DecisionType | None,
 ) -> ConvergenceOutcome:
     """
-    Invarianti dure: unica autorità sul loop.
-    - should_continue=False quando cycle >= max_cycles oppure decisione convergente/refuse.
-    - Se decisione convergente (CONVERGED / CONVERGED_WITH_SUGGESTIONS): converged=True anche
-      quando cycle >= max_cycles (priorità alla decisione sullo stop per cicli esauriti).
-    - Se cycle >= max_cycles e decisione non convergente: converged=False, stop_reason=CYCLES_EXHAUSTED.
-    - should_continue=True permesso SOLO se cycle < max_cycles AND not converged AND no REFUSE.
+    Hard invariants: sole authority over the loop.
+    - should_continue=False when cycle >= max_cycles or the decision is convergent/refuse.
+    - If the decision is convergent (CONVERGED / CONVERGED_WITH_SUGGESTIONS): converged=True even
+      when cycle >= max_cycles (the decision takes priority over the stop for exhausted cycles).
+    - If cycle >= max_cycles and the decision is not convergent: converged=False, stop_reason=CYCLES_EXHAUSTED.
+    - should_continue=True allowed ONLY if cycle < max_cycles AND not converged AND no REFUSE.
     """
     decision = decision_type or DecisionType.CONTINUE
 
@@ -55,7 +55,7 @@ def enforce_convergence_invariants(
             cycle=cycle,
             max_cycles=max_cycles,
         )
-    # CONTINUE o REVISE: si può continuare solo se ci sono ancora cicli
+    # CONTINUE or REVISE: can continue only if cycles remain
     return ConvergenceOutcome(
         should_continue=cycle < max_cycles,
         converged=False,
@@ -70,7 +70,7 @@ def build_raw_outcome_for_log(
     max_cycles: int,
     decision_type: DecisionType | None,
 ) -> dict[str, Any]:
-    """Costruisce il payload 'raw' per log (prima dell'enforcement)."""
+    """Builds the 'raw' payload for logging (before enforcement)."""
     decision = decision_type or DecisionType.CONTINUE
     raw_continue = decision in (DecisionType.CONTINUE, DecisionType.REVISE)
     raw_converged = decision in (DecisionType.CONVERGED, DecisionType.CONVERGED_WITH_SUGGESTIONS)
@@ -89,7 +89,7 @@ def log_convergence_event(
     question_id: str | None = None,
     **payload: Any,
 ) -> None:
-    """Log strutturato JSON per convergenza (thread-safe via logging)."""
+    """Structured JSON log for convergence (thread-safe via logging)."""
     try:
         import json
 

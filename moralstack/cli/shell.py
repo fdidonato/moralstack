@@ -324,20 +324,20 @@ class MoralStackCLI:
         return run_id
 
     def _display_relevant_principles(self, prompt: str) -> None:
-        """Stampa la domanda dell'utente, recupera/mostra i principi rilevanti se verbose, poi 'Processing...'."""
+        """Prints the user's question, retrieves/shows the relevant principles if verbose, then 'Processing...'."""
         self._print_user_question(prompt)
 
         relevant_principles: list[Any] = []
         if self.verbose and hasattr(self, "constitution_store") and self.constitution_store:
             try:
-                # 1. Rilevamento Dominio
+                # 1. Domain detection
                 detected_domain = self._get_detected_domain(prompt)
 
-                # 2. Caricamento Costituzione e Debug relativo
+                # 2. Constitution loading and related debug
                 constitution = self.constitution_store.get_constitution(domain=detected_domain)
                 self._display_constitution_debug_info(detected_domain, constitution)
 
-                # 3. Recupero Principi Rilevanti + debug agenti (canale unico, request-scoped)
+                # 3. Relevant principles retrieval + agent debug (single channel, request-scoped)
                 retrieve = getattr(self.constitution_store, "retrieve", None)
                 if callable(retrieve):
                     result = retrieve(query=prompt, top_k=10, domain=None)
@@ -360,7 +360,7 @@ class MoralStackCLI:
         elif self.verbose and not getattr(self, "constitution_store", None):
             print_colored("⚠️  Constitution store not available for principle retrieval", "yellow")
 
-        # 5. Visualizzazione finale dei risultati
+        # 5. Final display of the results
         if self.verbose:
             self._display_final_principles(relevant_principles)
             print_colored("\n🔄 Processing...\n", "yellow")
@@ -418,22 +418,22 @@ class MoralStackCLI:
         if not self.verbose:
             return
 
-        # 1. Informazioni sulla creazione degli agenti
+        # 1. Agent creation information
         self._display_agent_creation_info(debug_info)
 
-        # 2. Conteggio principi per agente
+        # 2. Principle count per agent
         self._display_agent_principle_counts(debug_info)
 
-        # 3. Risultati dettagliati degli agenti
+        # 3. Detailed agent results
         self._display_agent_results_details(debug_info)
 
-        # 4. Domini Accettati/Rifiutati
+        # 4. Accepted/Rejected domains
         self._display_domain_status(debug_info)
 
-        # 5. Conteggio finale per dominio
+        # 5. Final count per domain
         self._display_final_per_domain_counts(debug_info)
 
-        # 6. Risultato finale e fallback
+        # 6. Final result and fallback
         self._display_final_summary_and_fallback(relevant_principles, constitution)
 
     def _display_agent_creation_info(self, debug_info: dict[str, Any]) -> None:
@@ -920,7 +920,7 @@ class MoralStackCLI:
         issues_found = False
         early_refusal = self.current_trace.response_type == "full_refusal"
 
-        # 1. Verifica fasi mancanti
+        # 1. Check for missing phases
         expected_phases = self._get_expected_phases()
         executed_phases = {p.phase for p in self.current_trace.phases}
         missing_phases = set(expected_phases.keys()) - executed_phases
@@ -932,29 +932,29 @@ class MoralStackCLI:
         if early_refusal:
             self._display_early_stop_info()
 
-        # 2. Verifica errori nelle fasi
+        # 2. Check for errors in the phases
         phases_with_errors = [p for p in self.current_trace.phases if p.errors]
         if phases_with_errors:
             self._display_phase_errors(phases_with_errors)
             issues_found = True
 
-        # 3. Verifica avvisi
+        # 3. Check for warnings
         phases_with_warnings = [p for p in self.current_trace.phases if p.warnings]
         if phases_with_warnings:
             self._display_phase_warnings(phases_with_warnings)
             issues_found = True
 
-        # 4. Verifica convergenza
+        # 4. Check convergence
         if not early_refusal and (not self.current_trace.converged) and self.current_trace.path == "deliberative":
             self._display_convergence_issues()
             issues_found = True
 
-        # 5. Verifica principi violati
+        # 5. Check violated principles
         if self.current_trace.triggered_principles:
             self._display_violated_principles()
             issues_found = True
 
-        # 6. Verifica tempo di elaborazione
+        # 6. Check processing time
         if self._display_processing_time_issues():
             issues_found = True
 

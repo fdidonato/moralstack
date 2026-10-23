@@ -1,4 +1,4 @@
-"""Prompt builders per moduli deliberativi (critic, perspectives, simulator, hindsight).
+"""Prompt builders for the deliberative modules (critic, perspectives, simulator, hindsight).
 
 The builder names are resolved lazily (PEP 562) so that importing ``moralstack.prompts.catalog`` stays cheap:
 the builder modules load the packaged default prompt set at import (the fail-fast point), the catalog must not.

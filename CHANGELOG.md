@@ -61,6 +61,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (-6) rows written by `moralstack/compliance/dccl.py` now carry `cycle=0` instead of `NULL`, in SQLite and in the
   JSONL envelope; sequence numbers are unchanged. Readers that treated NULL as "pre-cycle" should read cycle 0 with
   these sequence numbers; the request page and the markdown export already handle both.
+- **Documentation, docstrings and code comments are in English.** The remaining Italian comments and docstrings in
+  `moralstack/`, `tests/`, `scripts/`, `analytical_utils/` and `examples/`, the comments in `pyproject.toml`,
+  `requirements.txt` and `.gitignore`, the `slow` pytest marker description (shown by `pytest --markers`), and the
+  Italian labels in `docs/modules/risk_estimator.md` and `docs/refactoring_diary.md` were translated; no behavior
+  change (code, Python string literals, prompt and constitution data are unchanged). Italian stays only as data:
+  multilingual test inputs, prompt and constitution YAML, golden fixtures, and quotes of them.
+  `docs/architecture_spec.md` is excluded until its English rewrite. The new `tests/harness/test_english_only.py` fails
+  on Italian in Markdown, comments and docstrings; `PROJECT_SPEC.md` §6 now requires English.
 
 ## 1.0.0 — 2026-10-21
 

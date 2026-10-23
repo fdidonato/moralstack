@@ -1,17 +1,17 @@
 """
-Punto di ingresso unico per il parsing e la validazione degli output strutturati degli LLM.
+Single entry point for parsing and validating structured LLM outputs.
 
-Tutti i moduli che interpretano risposte LLM devono usare questo modulo (e non
-json_utils o logiche duplicate) per:
-- estrazione JSON da testo grezzo
-- validazione dello schema/contenuto
-- costruzione di tipi tipizzati
+All modules that interpret LLM responses must use this module (and not
+json_utils or duplicated logic) for:
+- JSON extraction from raw text
+- schema/content validation
+- construction of typed values
 
-Principi:
-- Parsing (estrazione JSON) e validazione (schema/campi) sono separati.
-- Un solo strato condiviso per l'estrazione JSON; la validazione è pluggabile.
-- I modelli Pydantic sono strict: campi inattesi causano ValidationError.
-- Nessun fallback decisionale: se il parsing fallisce si solleva errore esplicito.
+Principles:
+- Parsing (JSON extraction) and validation (schema/fields) are separate.
+- A single shared layer for JSON extraction; validation is pluggable.
+- Pydantic models are strict: unexpected fields cause ValidationError.
+- No decision fallback: if parsing fails an explicit error is raised.
 """
 
 from __future__ import annotations
@@ -27,12 +27,12 @@ from moralstack.utils.json_utils import JSONParseError, extract_json
 
 logger = logging.getLogger(__name__)
 
-# Solo OK o ERROR: nessun FALLBACK per decisioni.
+# Only OK or ERROR: no FALLBACK for decisions.
 ParserStatus = Literal["OK", "ERROR"]
 
 
 # -----------------------------------------------------------------------------
-# Schema canonico (decisioni deliberative)
+# Canonical schema (deliberative decisions)
 # -----------------------------------------------------------------------------
 
 
@@ -41,17 +41,17 @@ def parse_structured_decision(
     request_id: str = "",
 ) -> "StructuredDecision":
     """
-    Parsa e valida output LLM come StructuredDecision (schema canonico).
+    Parses and validates LLM output as StructuredDecision (canonical schema).
 
-    - Valida schema (chiavi, enum, tipi).
-    - Normalizza SOLO valori ammessi (es. final_action uppercase).
-    - NON inventa valori mancanti, NON corregge semantica, NON applica fallback.
+    - Validates the schema (keys, enums, types).
+    - Normalizes ONLY allowed values (e.g. final_action uppercase).
+    - Does NOT invent missing values, does NOT correct semantics, does NOT apply fallbacks.
 
     Raises:
-        JSONParseError: Impossibile estrarre JSON dal testo.
-        ValidationError: JSON estratto ma validazione fallita.
+        JSONParseError: Unable to extract JSON from the text.
+        ValidationError: JSON extracted but validation failed.
 
-    In caso di fallimento logga request_id, raw_output (truncated), errore.
+    On failure it logs request_id, raw_output (truncated), error.
     """
     try:
         data = extract_json(text)
@@ -70,7 +70,7 @@ def parse_structured_decision(
         )
         raise
 
-    # Normalizza solo valori ammessi (enum)
+    # Normalize only allowed values (enum)
     def _norm_final_action(v: Any) -> str:
         s = str(v).strip().upper() if v is not None else ""
         if s in ("REFUSE", "SAFE_COMPLETE", "NORMAL_COMPLETE"):
@@ -160,12 +160,12 @@ __all__ = [
 
 
 # -----------------------------------------------------------------------------
-# Critic (output strutturato: decision, violated_hard, violations, revision_guidance)
+# Critic (structured output: decision, violated_hard, violations, revision_guidance)
 # -----------------------------------------------------------------------------
 
 
 class CriticViolationOutput(BaseModel):
-    """Singola violazione nell'output del Critic. Strict: nessun campo extra."""
+    """Single violation in the Critic output. Strict: no extra fields."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -176,7 +176,7 @@ class CriticViolationOutput(BaseModel):
 
 
 class CriticOutput(BaseModel):
-    """Output atteso del modulo Critic. Strict: nessun campo extra."""
+    """Expected output of the Critic module. Strict: no extra fields."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -187,7 +187,7 @@ class CriticOutput(BaseModel):
 
 
 # -----------------------------------------------------------------------------
-# Simulator (output: lista di conseguenze)
+# Simulator (output: list of consequences)
 # -----------------------------------------------------------------------------
 
 _SCENARIO_TYPE = Literal[
@@ -219,7 +219,7 @@ _HARM_SCOPE = Literal["individual", "group", "societal", "systemic"]
 
 
 class SimulatorConsequenceOutput(BaseModel):
-    """Singola conseguenza nell'output del Simulator. Strict: nessun campo extra."""
+    """Single consequence in the Simulator output. Strict: no extra fields."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -240,7 +240,7 @@ class SimulatorConsequenceOutput(BaseModel):
 
 
 class SimulatorOutput(BaseModel):
-    """Output atteso del modulo Simulator. Strict: nessun campo extra."""
+    """Expected output of the Simulator module. Strict: no extra fields."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -248,16 +248,16 @@ class SimulatorOutput(BaseModel):
 
 
 def _enum_schema(literal: Any) -> dict[str, Any]:
-    """Schema JSON di un Literal di stringhe, per non duplicarne i valori."""
+    """JSON schema of a string Literal, to avoid duplicating its values."""
     return {"type": "string", "enum": list(get_args(literal))}
 
 
-# Schema per gli Structured Outputs stretti di OpenAI: e' il provider a imporre
-# lo schema, invece di validarlo qui dopo aver gia' pagato la chiamata.
-# Deriva dagli stessi alias Literal del modello Pydantic sopra, cosi' i due non
-# possono divergere. La modalita' strict impone `additionalProperties: false` e
-# tutte le proprieta' in `required`: i default del modello Pydantic restano la
-# rete per la modalita' JSON semplice, dove il campo puo' ancora mancare.
+# Schema for OpenAI strict Structured Outputs: the provider enforces
+# the schema, instead of validating it here after the call has already been paid for.
+# Derived from the same Literal aliases of the Pydantic model above, so the two cannot
+# diverge. Strict mode requires `additionalProperties: false` and
+# every property in `required`: the Pydantic model defaults remain the
+# safety net for plain JSON mode, where the field can still be missing.
 SIMULATOR_JSON_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -297,7 +297,7 @@ SIMULATOR_JSON_SCHEMA: dict[str, Any] = {
 
 
 def simulator_response_format() -> dict[str, Any]:
-    """`response_format` che fa imporre SimulatorOutput dal provider."""
+    """`response_format` that makes the provider enforce SimulatorOutput."""
     return {
         "type": "json_schema",
         "json_schema": {
@@ -309,13 +309,13 @@ def simulator_response_format() -> dict[str, Any]:
 
 
 # -----------------------------------------------------------------------------
-# Hindsight (singola valutazione e batch)
+# Hindsight (single evaluation and batch)
 # -----------------------------------------------------------------------------
 
 
 class HindsightSingleEvaluationOutput(BaseModel):
-    """Singola valutazione hindsight (usata sia in risposta singola che in batch).
-    Strict: nessun campo extra."""
+    """Single hindsight evaluation (used both in a single response and in batch).
+    Strict: no extra fields."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -330,8 +330,8 @@ class HindsightSingleEvaluationOutput(BaseModel):
 
 
 class HindsightBatchOutput(BaseModel):
-    """Output atteso del modulo Hindsight per valutazioni batch.
-    Strict: nessun campo extra."""
+    """Expected output of the Hindsight module for batch evaluations.
+    Strict: no extra fields."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -489,14 +489,14 @@ def _normalize_hindsight_batch_dict(data: dict[str, Any]) -> dict[str, Any]:
 
 
 # -----------------------------------------------------------------------------
-# Parsing e validazione generica
+# Generic parsing and validation
 # -----------------------------------------------------------------------------
 
 T = TypeVar("T")
 
 
 class ValidationError(Exception):
-    """Errore di validazione: JSON estratto ma struttura/contenuto non validi."""
+    """Validation error: JSON extracted but structure/content invalid."""
 
     def __init__(self, message: str, data: dict[str, Any] | None = None) -> None:
         super().__init__(message)
@@ -514,8 +514,8 @@ def log_parser_diagnostic(
     risk_level: str | None = None,
 ) -> None:
     """
-    Log strutturato per diagnostica parser. Emesso sempre (anche quando OK).
-    Il benchmark può intercettare tramite extra['moralstack_parser_diagnostic'].
+    Structured log for parser diagnostics. Always emitted (even when OK).
+    The benchmark can intercept it via extra['moralstack_parser_diagnostic'].
     """
     extra: dict[str, Any] = {
         "moralstack_parser_diagnostic": True,
@@ -543,47 +543,47 @@ def parse_and_validate(
     validator: Callable[[dict[str, Any]], T],
 ) -> T:
     """
-    Estrae JSON dal testo LLM e lo valida tramite un callable.
+    Extracts JSON from the LLM text and validates it through a callable.
 
-    È il flusso standard: extract_json (singolo strato condiviso) + validazione
-    specifica per tipo di output.
+    This is the standard flow: extract_json (single shared layer) + validation
+    specific to the output type.
 
     Args:
-        text: Risposta grezza dell'LLM (può contenere markdown, testo prima/dopo).
-        validator: Callable che riceve il dict e restituisce un valore tipizzato T.
-        Può sollevare ValidationError se i dati non sono validi.
+        text: Raw LLM response (may contain markdown, text before/after).
+        validator: Callable that receives the dict and returns a typed value T.
+        May raise ValidationError if the data is invalid.
 
     Returns:
-        Il valore restituito da validator (tipizzato come T).
+        The value returned by validator (typed as T).
 
     Raises:
-        JSONParseError: Impossibile estrarre JSON valido dal testo.
-        ValidationError: JSON estratto ma validazione fallita.
+        JSONParseError: Unable to extract valid JSON from the text.
+        ValidationError: JSON extracted but validation failed.
     """
     data = extract_json(text)
     return validator(data)
 
 
 # -----------------------------------------------------------------------------
-# Helper: parse_and_validate per ogni tipo di output
+# Helpers: parse_and_validate for each output type
 # -----------------------------------------------------------------------------
 
 
 def parse_and_validate_critic_output(text: str) -> CriticOutput:
-    """Estrae JSON dal testo e valida con CriticOutput (strict).
-    Solleva JSONParseError o ValidationError."""
+    """Extracts JSON from the text and validates it with CriticOutput (strict).
+    Raises JSONParseError or ValidationError."""
     return parse_and_validate(text, CriticOutput.model_validate)
 
 
 def parse_and_validate_simulator_output(text: str) -> SimulatorOutput:
-    """Estrae JSON dal testo e valida con SimulatorOutput (strict).
-    Solleva JSONParseError o ValidationError."""
+    """Extracts JSON from the text and validates it with SimulatorOutput (strict).
+    Raises JSONParseError or ValidationError."""
     return parse_and_validate(text, SimulatorOutput.model_validate)
 
 
 def parse_and_validate_hindsight_batch_output(text: str) -> HindsightBatchOutput:
-    """Estrae JSON e valida come batch hindsight (evaluations).
-    Solleva JSONParseError o ValidationError."""
+    """Extracts JSON and validates it as a hindsight batch (evaluations).
+    Raises JSONParseError or ValidationError."""
     raw = extract_json(text)
     if isinstance(raw, list):
         raw = {"evaluations": raw}
@@ -597,6 +597,6 @@ def parse_and_validate_hindsight_batch_output(text: str) -> HindsightBatchOutput
 
 
 def parse_and_validate_hindsight_single_output(text: str) -> HindsightSingleEvaluationOutput:
-    """Estrae JSON e valida come singola valutazione hindsight.
-    Solleva JSONParseError o ValidationError."""
+    """Extracts JSON and validates it as a single hindsight evaluation.
+    Raises JSONParseError or ValidationError."""
     return parse_and_validate(text, HindsightSingleEvaluationOutput.model_validate)
