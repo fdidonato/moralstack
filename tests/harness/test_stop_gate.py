@@ -207,14 +207,49 @@ def test_related_tests_helper_is_gone(stop_gate):
 
 @pytest.mark.parametrize("returncode", [0, 1])
 def test_verify_report_states_no_tests_run(stop_gate, run_hook, project, monkeypatch, returncode):
+    """No suite_record.py in the project: the hook cannot read a record, so it asks
+    for the verifier instead of claiming anything about the suite."""
     stub_subprocess(monkeypatch, stop_gate, returncode=returncode)
     write_code_file(project, "tests/test_foo.py")
     write_session_edits(project, "s1", ["tests/test_foo.py"])
     code, out = run_hook(stop_gate, _payload(), project)
     assert code == 0
     context = out["hookSpecificOutput"]["additionalContext"]
-    assert "no tests were run in this turn" in context
+    assert "tests: not run by this hook" in context
     assert "pre-commit-verifier" in context
+
+
+@pytest.mark.parametrize(
+    ("returncode", "expected", "asks_verifier"),
+    [
+        (0, "full suite PASSED for this exact tree", False),
+        (1, "no PASSED full-suite record for this tree", True),
+    ],
+)
+def test_verify_report_reads_the_suite_record(
+    stop_gate, run_hook, project, monkeypatch, returncode, expected, asks_verifier
+):
+    """A suite already run on this tree is reported as such (it used to be reported as
+    "no tests were run in this turn" unconditionally); the hook only runs
+    `suite_record.py check`, never pytest."""
+    calls: list = []
+    stub_subprocess(monkeypatch, stop_gate, returncode=returncode, calls=calls)
+    write_code_file(project, "scripts/ai/suite_record.py")
+    write_code_file(project, "tests/test_foo.py")
+    write_session_edits(project, "s1", ["tests/test_foo.py"])
+    code, out = run_hook(stop_gate, _payload(), project)
+    assert code == 0
+    context = out["hookSpecificOutput"]["additionalContext"]
+    assert expected in context
+    assert ("pre-commit-verifier" in context) is asks_verifier
+    assert len(calls) == 2
+    check_args, check_kwargs = calls[1]
+    assert check_args[1].endswith("suite_record.py") and check_args[2:] == ["check"]
+    assert check_kwargs.get("timeout") == stop_gate.SUITE_CHECK_TIMEOUT_SECONDS
+    assert stop_gate.PRECOMMIT_TIMEOUT_SECONDS + stop_gate.SUITE_CHECK_TIMEOUT_SECONDS < 300
+    # tmp_path itself contains "pytest-of-...", so match whole arguments, not substrings.
+    assert not any(part in ("pytest", "-mpytest") for args, _ in calls for part in args)
+    assert all(args[1:3] != ["-m", "pytest"] for args, _ in calls)
 
 
 def test_precommit_timeout_constant(stop_gate, run_hook, project, monkeypatch):

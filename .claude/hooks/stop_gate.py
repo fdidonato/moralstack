@@ -8,8 +8,11 @@ this session (per ``.claude/.session-edits.json`` written by
 1. **Verify (non-blocking).** Runs ``pre-commit run --files <edited code>`` with a
    ``PRECOMMIT_TIMEOUT_SECONDS`` (150 s) budget, under the 300 s Stop ``timeout``
    in ``settings.json``. It runs **no tests**: pytest is the
-   ``pre-commit-verifier`` agent's job and the report states this explicitly
-   every time. Outcome is reported to Claude via ``additionalContext``.
+   ``pre-commit-verifier`` agent's job. The report instead states whether a PASSED
+   full-suite record exists for the current tree (``scripts/ai/suite_record.py
+   check``, ``SUITE_CHECK_TIMEOUT_SECONDS`` budget), so a suite already run this
+   session is not reported as missing. Outcome is reported to Claude via
+   ``additionalContext``.
 
    The verify is **skipped** (to avoid redundant work) when either
    ``stop_hook_active`` is True (we are inside a nudge chain) or the edit-set
@@ -47,6 +50,8 @@ VERIFIED_NAME = ".last-verified.json"
 NUDGE_NAME = ".nudge-count.json"
 STUB_NAME = ".docs-stub.md"
 PRECOMMIT_TIMEOUT_SECONDS = 150  # must stay well under the Stop "timeout" in settings.json (300)
+SUITE_CHECK_TIMEOUT_SECONDS = 60  # with the pre-commit budget, still under the Stop "timeout" (300)
+_RUN_VERIFIER = "run the pre-commit-verifier agent before declaring done"
 
 BEHAVIOR_PREFIXES = (
     "moralstack/runtime/decision/",
@@ -276,18 +281,43 @@ def _emit_context(context: str) -> None:
     sys.stdout.write(json.dumps(payload))
 
 
+def _suite_status(project: Path, py: str) -> str:
+    """State of the full-suite record for the current tree, read via
+    ``suite_record.py check`` (it only reads the marker and fingerprints the tree; it
+    never runs pytest). Anything but a reusable PASSED record asks for the verifier."""
+    script = project / "scripts" / "ai" / "suite_record.py"
+    if not script.is_file():
+        return f"no suite record checked (scripts/ai/suite_record.py missing); {_RUN_VERIFIER}."
+    try:
+        proc = subprocess.run(
+            [py, str(script), "check"],
+            cwd=str(project),
+            capture_output=True,
+            text=True,
+            timeout=SUITE_CHECK_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return f"no suite record checked (suite_record.py check timed out); {_RUN_VERIFIER}."
+    except OSError as exc:
+        return f"no suite record checked ({type(exc).__name__}); {_RUN_VERIFIER}."
+    if proc.returncode == 0:
+        return "full suite PASSED for this exact tree (suite_record.py check)."
+    return f"no PASSED full-suite record for this tree (suite_record.py check); {_RUN_VERIFIER}."
+
+
 def _verify(project: Path, code: list[str]) -> tuple[str, bool]:
     """Run the non-blocking verify (pre-commit only). Returns (report_text, passed).
 
-    Deliberately runs NO tests: pytest belongs to the pre-commit-verifier agent, and
-    the report says so every time so a turn never looks self-verified.
+    Deliberately runs NO tests: pytest belongs to the pre-commit-verifier agent. The
+    report says so and adds the full-suite record state, so a turn never looks
+    self-verified and a suite that did run is not reported as missing.
     """
     py = _venv_python(project)
     precommit = _run([py, "-m", "pre_commit", "run", "--files", *code], project, PRECOMMIT_TIMEOUT_SECONDS)
     report = [
         "[Stop gate] verify (non-blocking):",
         "  pre-commit (changed files): " + precommit,
-        "  tests: NONE RUN — no tests were run in this turn; run the pre-commit-verifier agent before declaring done.",
+        "  tests: not run by this hook; " + _suite_status(project, py),
     ]
     return "\n".join(report), precommit == "passed"
 
