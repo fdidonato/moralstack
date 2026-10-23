@@ -84,9 +84,9 @@ include = ["moralstack*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# I test marcati `slow` (benchmark di performance) sono esclusi dal run di default
-# perché dominano il tempo totale della suite. Eseguibili on demand con `-m slow`
-# (o `-m ""` per non filtrare); la CI li lancia in uno step dedicato.
+# Tests marked `slow` (performance benchmarks) are excluded from the default run
+# because they dominate the suite's total time. Runnable on demand with `-m slow`
+# (or `-m ""` to not filter).
 # The suite runs in parallel (pytest-xdist): one worker per CPU, capped at 8 —
 # measured on a 10-core/12-thread laptop, 8 workers beat 12 (which oversubscribe
 # the CPU and the on-access file scanner). `worksteal` rebalances the few
@@ -94,7 +94,7 @@ testpaths = ["tests"]
 # unrecognized), e.g. for `-m slow` perf benchmarks or when debugging with `--pdb`.
 addopts = "-ra -m 'not slow' -n auto --maxprocesses=8 --dist worksteal"
 markers = [
-    "slow: benchmark/performance test escluso dal run di default (opt-in con `-m slow`)",
+    "slow: benchmark/performance test excluded from the default run (opt-in with `-m slow`)",
     "sqlite_default_synchronous: the test asserts SQLite's default fsync policy; disables the suite-wide `synchronous=OFF` of tests/conftest.py",
 ]
 

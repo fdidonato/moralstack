@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Pre-commit gate: esige l'aggiornamento della memoria verificata quando cambia il behavior.
+"""Pre-commit gate: requires the verified memory to be updated when behavior changes.
 
-Perche' al commit e non allo Stop gate: lo Stop gate e' un *nudge* best-effort ancorato a
-``.claude/.session-edits.json``, ed e' aggirabile (un test lo silenzia, gli edit via Bash o
-MultiEdit non vi finiscono, non si resetta a meta' sessione). La garanzia va dove non puoi
-saltarla: al commit, con fonte di verita' ``git diff --cached`` (cosa cambia QUESTO commit
-rispetto a HEAD). I test NON contano come sostituto della memoria.
+Why at commit and not at the Stop gate: the Stop gate is a best-effort *nudge* anchored to
+``.claude/.session-edits.json``, and it can be bypassed (a test silences it, edits via Bash or
+MultiEdit do not end up there, it does not reset mid-session). The guarantee belongs where you cannot
+skip it: at commit, with ``git diff --cached`` as the source of truth (what THIS commit changes
+relative to HEAD). Tests do NOT count as a substitute for memory.
 
-Regola (mappatura FINE, allineata a ``.claude/rules/docs-maintenance.md``): ogni prefisso di
-codice-governance ha un insieme di doc-memoria che lo soddisfano. Se in stage c'e' un file
-sotto un prefisso behavior ma NESSUNO dei suoi doc-memoria e' in stage, il commit e' bloccato.
+Rule (FINE mapping, aligned with ``.claude/rules/docs-maintenance.md``): every governance-code prefix has
+a set of memory docs that satisfy it. If a file under a behavior prefix is staged but NONE of its
+memory docs is staged, the commit is blocked.
 
-Bypass di un'eccezione motivata: ``MEMORY_GUARD_SKIP=1``. Fail-open su errore git (e' una
-garanzia di processo, non un controllo di sicurezza).
+Bypass for a justified exception: ``MEMORY_GUARD_SKIP=1``. Fail-open on git error (it is a process
+guarantee, not a security control).
 """
 
 from __future__ import annotations
@@ -21,9 +21,9 @@ import os
 import subprocess
 import sys
 
-# Prefisso codice-governance -> doc-memoria che ne costituiscono l'aggiornamento.
-# Un cambio sotto il prefisso richiede in stage ALMENO uno dei suoi doc.
-# Tieni i prefissi allineati a .claude/hooks/stop_gate.py:BEHAVIOR_PREFIXES.
+# Governance-code prefix -> memory docs that constitute its update.
+# A change under the prefix requires AT LEAST one of its docs staged.
+# Keep the prefixes aligned with .claude/hooks/stop_gate.py:BEHAVIOR_PREFIXES.
 BEHAVIOR_DOC_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("moralstack/runtime/decision/", ("docs/decision_policy.md",)),
     ("moralstack/compliance/", ("docs/traces/complai_llm_rules_flow.md",)),
@@ -41,12 +41,12 @@ BEHAVIOR_DOC_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("docs/traces/openai_compatible_multiturn.md", "docs/traces/observability_db_to_ui.md"),
     ),
     ("moralstack/constitution/", ("docs/modules/constitution_store.md", "docs/constitution.md")),
-    # Moduli deliberativi runtime: ognuno ha il proprio contratto long-form in
-    # docs/modules/. Mappatura per-modulo (il prefisso copre sia <mod>_module.py sia
-    # <mod>_config_loader.py) perche' un cambio al critic deve aggiornare critic.md,
-    # non un doc di modulo qualsiasi. Questi moduli decidono: il critic e' l'unico
-    # produttore di violated_hard, e senza hard violation il delivery-point guard non
-    # scatta mai. L'ultima riga fa da rete per il codice condiviso e per moduli futuri.
+    # Runtime deliberative modules: each has its own long-form contract in
+    # docs/modules/. Per-module mapping (the prefix covers both <mod>_module.py and
+    # <mod>_config_loader.py) because a change to the critic must update critic.md,
+    # not just any module doc. These modules decide: the critic is the only
+    # producer of violated_hard, and without a hard violation the delivery-point guard never
+    # fires. The last row is a safety net for shared code and future modules.
     ("moralstack/runtime/modules/critic_", ("docs/modules/critic.md",)),
     ("moralstack/runtime/modules/simulator_", ("docs/modules/simulator.md",)),
     ("moralstack/runtime/modules/perspective_", ("docs/modules/perspectives.md",)),
@@ -64,7 +64,7 @@ BEHAVIOR_DOC_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 
 def _staged_files() -> list[str]:
-    """File in stage (Added/Copied/Modified/Renamed)."""
+    """Staged files (Added/Copied/Modified/Renamed)."""
     result = subprocess.run(
         ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
         capture_output=True,
@@ -80,7 +80,7 @@ def main() -> int:
 
     try:
         staged = _staged_files()
-    except (subprocess.SubprocessError, OSError) as exc:  # fail-open: non bloccare per errori di tooling
+    except (subprocess.SubprocessError, OSError) as exc:  # fail-open: do not block on tooling errors
         sys.stderr.write(f"memory-guard: impossibile leggere lo stage git ({exc}); gate ignorato.\n")
         return 0
 

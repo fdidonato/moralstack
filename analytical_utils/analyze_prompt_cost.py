@@ -1,50 +1,50 @@
 #!/usr/bin/env python3
 """
-analyze_prompt_costs.py — Misura il costo per token (statico vs dinamico) di
-ogni modulo della pipeline MoralStack, leggendo dal DB SQLite di observability.
+analyze_prompt_costs.py — Measures the per-token cost (static vs dynamic) of
+every MoralStack pipeline module, reading from the observability SQLite DB.
 
-USO:
+USAGE:
 
-    # Sull'ultimo run di tipo benchmark
+    # On the latest benchmark-type run
     python scripts/analyze_prompt_costs.py
 
-    # Su un run specifico
+    # On a specific run
     python scripts/analyze_prompt_costs.py --run-id <run_id>
 
-    # Lista i run disponibili
+    # List the available runs
     python scripts/analyze_prompt_costs.py --list-runs
 
-    # Specifica un DB diverso da $MORALSTACK_OBSERVABILITY_DB_PATH
+    # Specify a DB other than $MORALSTACK_OBSERVABILITY_DB_PATH
     python scripts/analyze_prompt_costs.py --db /path/to/moralstack.db
 
-    # Output in JSON invece che tabella
+    # JSON output instead of a table
     python scripts/analyze_prompt_costs.py --json
 
 OUTPUT:
 
-    Tabella per modulo + phase con:
-      - n_calls       : numero di chiamate LLM
-      - tok_sys_avg   : token medi system_prompt
-      - tok_usr_avg   : token medi user prompt (= dinamico, l'interessante)
-      - tok_in_total  : input totali nella colonna (sys + usr) × n_calls
-      - tok_out_avg   : token output medi (raw_response)
-      - duration_avg  : durata media in ms
-      - retries_total : retry accumulati
-      - cost_share    : % del costo input totale di tutto il run
+    Table per module + phase with:
+      - n_calls       : number of LLM calls
+      - tok_sys_avg   : average system_prompt tokens
+      - tok_usr_avg   : average user prompt tokens (= dynamic, the interesting one)
+      - tok_in_total  : total input in the column (sys + usr) × n_calls
+      - tok_out_avg   : average output tokens (raw_response)
+      - duration_avg  : average duration in ms
+      - retries_total : accumulated retries
+      - cost_share    : % of the total input cost of the whole run
 
-OBIETTIVO:
+GOAL:
 
-    Identificare dove la pipeline spende davvero token.
-    Aspettative dall'analisi statica:
-      - risk_estimation 3 mini-call ~6.800 tok/query (post v3 prompts)
-      - critic, hindsight, perspective: prompt statici piccoli ma il
-        DRAFT replicato fa il volume — questo lo script lo misura.
+    Identify where the pipeline really spends tokens.
+    Expectations from the static analysis:
+      - risk_estimation 3 mini-calls ~6,800 tok/query (post v3 prompts)
+      - critic, hindsight, perspective: small static prompts but the
+        replicated DRAFT makes up the volume — this script measures it.
 
-PRINCIPIO:
+PRINCIPLE:
 
-    system_prompt è lo statico. user prompt è dinamico (request, draft,
-    constitution_context, risk_signals iniettati).
-    La differenza media usr - sys riflette il "draft replication cost".
+    system_prompt is the static part. user prompt is dynamic (request, draft,
+    constitution_context, injected risk_signals).
+    The average difference usr - sys reflects the "draft replication cost".
 """
 
 from __future__ import annotations
@@ -59,15 +59,15 @@ from pathlib import Path
 from typing import Any
 
 # ────────────────────────────────────────────────────────────────────────────
-# Token counting (preferisce token_usage_json reale, fallback tiktoken,
-# ultimo fallback chars/4)
+# Token counting (prefers real token_usage_json, falls back to tiktoken,
+# last fallback chars/4)
 # ────────────────────────────────────────────────────────────────────────────
 
 _TIKTOKEN_ENC: Any = None
 
 
 def _get_tiktoken_encoder() -> Any:
-    """Carica tiktoken pigramente. Nessun errore se mancante."""
+    """Load tiktoken lazily. No error if missing."""
     global _TIKTOKEN_ENC
     if _TIKTOKEN_ENC is not None:
         return _TIKTOKEN_ENC
@@ -81,7 +81,7 @@ def _get_tiktoken_encoder() -> Any:
 
 
 def count_tokens(text: str | None) -> int:
-    """Conta token con tiktoken; fallback chars/4."""
+    """Count tokens with tiktoken; fallback chars/4."""
     if not text:
         return 0
     enc = _get_tiktoken_encoder()
@@ -99,7 +99,7 @@ def count_tokens(text: str | None) -> int:
 
 
 def resolve_db_path(explicit: str | None) -> Path:
-    """Risolve il path del DB con la stessa precedenza dell'osservability."""
+    """Resolve the DB path with the same precedence as observability."""
     if explicit:
         p = Path(explicit).expanduser()
         if not p.exists():
@@ -114,7 +114,7 @@ def resolve_db_path(explicit: str | None) -> Path:
                 return p
             sys.exit(f"DB indicato in ${env} non esiste: {p}")
 
-    # Fallback ai path comuni
+    # Fallback to common paths
     for candidate in (
         Path.cwd() / "moralstack.db",
         Path.cwd() / "data" / "moralstack.db",
@@ -145,7 +145,7 @@ def list_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 
 def latest_benchmark_run(conn: sqlite3.Connection) -> str | None:
-    """Trova l'ultimo run di tipo benchmark (o l'ultimo qualsiasi se niente benchmark)."""
+    """Find the latest benchmark-type run (or the latest of any type if no benchmark)."""
     cur = conn.execute("""
         SELECT run_id FROM runs
         WHERE LOWER(run_type) LIKE '%benchmark%'
@@ -166,7 +166,7 @@ def latest_benchmark_run(conn: sqlite3.Connection) -> str | None:
 
 @dataclass
 class CallStats:
-    """Statistiche aggregate per un modulo+phase+action."""
+    """Aggregate statistics for a module+phase+action."""
 
     module: str
     phase: str
@@ -175,7 +175,7 @@ class CallStats:
     sys_tokens: list[int] = None  # type: ignore[assignment]
     usr_tokens: list[int] = None  # type: ignore[assignment]
     out_tokens: list[int] = None  # type: ignore[assignment]
-    in_tokens_real: list[int] = None  # type: ignore[assignment]  # da token_usage_json
+    in_tokens_real: list[int] = None  # type: ignore[assignment]  # from token_usage_json
     out_tokens_real: list[int] = None  # type: ignore[assignment]
     durations: list[float] = None  # type: ignore[assignment]
     retries: int = 0
@@ -216,15 +216,15 @@ class CallStats:
 
 
 def _extract_real_tokens(tu_json: str | None) -> tuple[int | None, int | None]:
-    """Estrae (input_tokens, output_tokens) dal token_usage_json di OpenAI."""
+    """Extract (input_tokens, output_tokens) from the OpenAI token_usage_json."""
     if not tu_json:
         return None, None
     try:
         d = json.loads(tu_json)
     except (ValueError, TypeError):
         return None, None
-    # Diversi shape supportati: dict OpenAI standard {prompt_tokens, completion_tokens}
-    # o {input_tokens, output_tokens} di altri provider.
+    # Several shapes supported: standard OpenAI dict {prompt_tokens, completion_tokens}
+    # or {input_tokens, output_tokens} from other providers.
     in_tok = d.get("prompt_tokens") or d.get("input_tokens")
     out_tok = d.get("completion_tokens") or d.get("output_tokens")
     return (
@@ -234,7 +234,7 @@ def _extract_real_tokens(tu_json: str | None) -> tuple[int | None, int | None]:
 
 
 def analyze_run(conn: sqlite3.Connection, run_id: str) -> dict[str, CallStats]:
-    """Aggrega tutte le llm_calls per (module, phase, action)."""
+    """Aggregate all llm_calls by (module, phase, action)."""
     cur = conn.execute(
         """
         SELECT module, phase, action, system_prompt, prompt, raw_response,
@@ -250,8 +250,8 @@ def analyze_run(conn: sqlite3.Connection, run_id: str) -> dict[str, CallStats]:
     for row in cur.fetchall():
         module, phase, action, sys_p, usr_p, raw, tu, dur, attempts, err = row
         # Bucketing key: module+phase+action
-        # action distingue i 3 mini-estimator (intent/signals/operational)
-        # quando il phase è "risk_estimation"
+        # action tells the 3 mini-estimators apart (intent/signals/operational)
+        # when the phase is "risk_estimation"
         key = f"{module}/{phase}/{action}"
         b = buckets.setdefault(key, CallStats(module=module, phase=phase, action=action))
         b.n_calls += 1
@@ -264,7 +264,7 @@ def analyze_run(conn: sqlite3.Connection, run_id: str) -> dict[str, CallStats]:
             b.retries += int(attempts) - 1
         if err:
             b.errors += 1
-        # Token reali da OpenAI quando disponibili
+        # Real tokens from OpenAI when available
         in_real, out_real = _extract_real_tokens(tu)
         if in_real is not None:
             b.in_tokens_real.append(in_real)
@@ -352,9 +352,9 @@ def print_table(buckets: dict[str, CallStats], n_requests: int) -> None:
 
 
 def print_replication_analysis(buckets: dict[str, CallStats], n_requests: int) -> None:
-    """Sezione speciale: quanto pesa la replicazione del draft tra moduli post-policy."""
-    # Assumo che il "draft" sia ciò che pasa per critic, hindsight, perspectives
-    # La sua dimensione si stima dal raw_response medio di policy_generate
+    """Special section: how much draft replication weighs across post-policy modules."""
+    # Assume the "draft" is what passes through critic, hindsight, perspectives
+    # Its size is estimated from the average raw_response of policy_generate
     policy_out_tokens = []
     for b in buckets.values():
         if b.phase in ("policy_generate", "policy_rewrite", "speculative_generate"):
@@ -372,10 +372,10 @@ def print_replication_analysis(buckets: dict[str, CallStats], n_requests: int) -
     if downstream_calls == 0:
         return
 
-    # Calls per request medio
+    # Average calls per request
     calls_per_req = downstream_calls / max(1, n_requests)
     replicated_share = (avg_draft * downstream_calls / max(1, downstream_in_tokens)) * 100.0
-    # Saving = draft × (calls - 1) per query, perché 1 occorrenza è inevitabile (shared system)
+    # Saving = draft × (calls - 1) per query, because 1 occurrence is unavoidable (shared system)
     saving_per_query = avg_draft * max(0, calls_per_req - 1)
     saving_total = saving_per_query * n_requests
 

@@ -58,7 +58,7 @@ htmlcov/
 .vscode/
 .idea/
 
-# Claude Code — condividi gli artefatti team, tieni locale il personale
+# Claude Code — share team artifacts, keep personal ones local
 .claude/*
 !.claude/settings.json
 !.claude/rules/

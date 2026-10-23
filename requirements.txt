@@ -1,13 +1,13 @@
 # ============================================================================
 # MoralStack Requirements (OpenAI-only)
 # ============================================================================
-# Auditable AI governance, by design - solo integrazione OpenAI API
+# Auditable AI governance, by design - OpenAI API integration only
 #
-# INSTALLAZIONE:
+# INSTALLATION:
 #   pip install -r requirements.txt
 #
-# PREREQUISITI:
-#   Imposta OPENAI_API_KEY prima di avviare:
+# PREREQUISITES:
+#   Set OPENAI_API_KEY before starting:
 #   export OPENAI_API_KEY=sk-...
 # ============================================================================
 

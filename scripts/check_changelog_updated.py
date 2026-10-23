@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Pre-commit gate: richiede un aggiornamento di CHANGELOG.md quando cambiano file non-infra.
+"""Pre-commit gate: requires a CHANGELOG.md update when non-infra files change.
 
-Blocca il commit se tra i file in stage c'e' almeno un file al di fuori dei prefissi
-esclusi (infra AI/test: ``.claude/``, ``ai/``, ``tests/``) mentre ``CHANGELOG.md`` NON
-e' in stage. Se ``CHANGELOG.md`` e' gia' aggiornato nel commit, il gate passa.
+Blocks the commit if the staged files include at least one file outside the excluded
+prefixes (AI/test infra: ``.claude/``, ``ai/``, ``tests/``) while ``CHANGELOG.md`` is NOT
+staged. If ``CHANGELOG.md`` is already updated in the commit, the gate passes.
 
-Bypass intenzionale (es. commit puramente infrastrutturale che il classificatore non
-riconosce): esporta ``CHANGELOG_GUARD_SKIP=1``.
+Intentional bypass (e.g. a purely infrastructural commit the classifier does not
+recognize): export ``CHANGELOG_GUARD_SKIP=1``.
 
-Fail-open: se ``git`` non e' interrogabile (contesto anomalo), il gate non blocca il
-commit — e' una comodita' di processo, non un controllo di sicurezza.
+Fail-open: if ``git`` cannot be queried (anomalous context), the gate does not block the
+commit — it is a process convenience, not a security control.
 """
 
 from __future__ import annotations
@@ -19,12 +19,12 @@ import subprocess
 import sys
 
 CHANGELOG = "CHANGELOG.md"
-# Prefissi di path che NON richiedono una voce di changelog (infra AI/test).
+# Path prefixes that do NOT require a changelog entry (AI/test infra).
 EXCLUDED_PREFIXES = (".claude/", "ai/", "tests/")
 
 
 def _staged_files() -> list[str]:
-    """Nomi dei file in stage (Added/Copied/Modified/Renamed)."""
+    """Names of staged files (Added/Copied/Modified/Renamed)."""
     result = subprocess.run(
         ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
         capture_output=True,
@@ -40,16 +40,16 @@ def main() -> int:
 
     try:
         staged = _staged_files()
-    except (subprocess.SubprocessError, OSError) as exc:  # fail-open: non bloccare per errori di tooling
+    except (subprocess.SubprocessError, OSError) as exc:  # fail-open: do not block on tooling errors
         sys.stderr.write(f"changelog-guard: impossibile leggere lo stage git ({exc}); gate ignorato.\n")
         return 0
 
     if CHANGELOG in staged:
-        return 0  # changelog gia' aggiornato in questo commit
+        return 0  # changelog already updated in this commit
 
     triggering = [f for f in staged if not any(f.startswith(p) for p in EXCLUDED_PREFIXES)]
     if not triggering:
-        return 0  # solo modifiche infra AI/test in stage
+        return 0  # only AI/test infra changes staged
 
     sys.stderr.write(
         "CHANGELOG.md non e' stato aggiornato, ma queste modifiche in stage richiedono una voce:\n"

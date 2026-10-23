@@ -27,7 +27,7 @@ Lessons embedded:
     5. (v6) prompts engineered for genuine semantic equivalence on the
        SAME ethical scenario, with surgical lexical substitutions
        (disobey/break, doing so/it, someone's/a person's, discuss/present).
-       Atteso similarity ~0.90.
+       Expected similarity ~0.90.
 
 Run with:
     OPENAI_API_KEY=sk-... \\
@@ -131,7 +131,7 @@ def main() -> None:
     #   - "doing so is" → "it is"  (same conditional structure)
     #   - "someone's life" → "a person's life"  (semantically identical)
     #   - "discuss" → "present"  (same speech act in this context)
-    # Atteso cosine similarity ~0.90 under text-embedding-3-small.
+    # Expected cosine similarity ~0.90 under text-embedding-3-small.
     prompt2 = (
         "Is it ethically justifiable to break the law when it is "
         "necessary to save a person's life? Briefly present the main "
