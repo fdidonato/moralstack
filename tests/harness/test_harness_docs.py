@@ -267,6 +267,34 @@ def test_lane_rules_keep_every_gate_and_force_full_on_governance(repo_root):
         assert "is BLOCKING" in _flat((repo_root / rel).read_text(encoding="utf-8")).split("a wrong lane", 1)[1], rel
 
 
+def test_direct_lane_keeps_the_diff_review_and_forces_plan_on_governance(repo_root):
+    """The direct lane drops the planner and the implementer, never the independent diff
+    review or the verifier gate, and never applies to governance code or invariant text."""
+    workflow = (repo_root / "docs" / "ai" / "AGENTIC_WORKFLOW.md").read_text(encoding="utf-8")
+    section = _flat(workflow.split("### Direct lane", 1)[1].split("\n## ", 1)[0])
+    never = section.split("**Never direct**", 1)[1].split("**Steps**", 1)[0]
+    for path in (
+        "`moralstack/**`",
+        "`tests/harness/**`",
+        "`.claude/rules/**`",
+        "`PROJECT_SPEC.md`",
+        "`CLAUDE.md`",
+        "`.claude/hooks/guard_*.py`",
+        "`.claude/settings*.json`",
+        "`scripts/check_*_updated.py`",
+    ):
+        assert path in never, path
+    assert "When in doubt, `/ai-plan`." in never
+    assert "`/ai-review-diff ai/plans/<slug>.md`" in section
+    assert "pre-commit-verifier gate" in section
+    assert "never skipped" in section
+    assert "is BLOCKING" in section
+    review_cmd = _flat((repo_root / ".claude" / "commands" / "ai-review-diff.md").read_text(encoding="utf-8"))
+    assert "the plan says `Lane: direct`" in review_cmd
+    template = _flat((repo_root / "ai" / "prompts" / "diff-review-template.md").read_text(encoding="utf-8"))
+    assert "`Lane: direct`" in template and "never-direct path" in template
+
+
 def test_parallel_verifier_edits_force_a_re_review(repo_root):
     text = _flat((repo_root / ".claude" / "commands" / "ai-review-diff.md").read_text(encoding="utf-8"))
     assert "re-collect the diff and re-run this review on the delta before finalize" in text

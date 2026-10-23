@@ -4,7 +4,7 @@ Coordinated roles for working on this large Python codebase:
 
 | Role | Who | Never does |
 | --- | --- | --- |
-| **Orchestrator** | **Claude Code** (main context): analyzes the codebase, writes plans, prepares handoffs, integrates reviews | Be the final reviewer; write the feature code itself |
+| **Orchestrator** | **Claude Code** (main context): analyzes the codebase, writes plans, prepares handoffs, integrates reviews | Be the final reviewer; write the feature code itself (outside the direct lane) |
 | **Reviewer** | **`adversarial-reviewer` sub-agent** (`.claude/agents/adversarial-reviewer.md`): read-only, isolated context, on a model pinned in its frontmatter that differs from the implementer's; independent reviewer of plans and diffs | Implement the change; edit, commit, push |
 | **Implementer** | **Claude Sonnet sub-agent** (`claude-implementer`, `.claude/agents/claude-implementer.md`): headless implementer of approved plans in an isolated context | Commit, push, refactor out of scope |
 
@@ -68,6 +68,31 @@ cache of 5 minutes):
   verifier edited the tree (fixes applied, or `git status --short` differs from
   the reviewed snapshot), the diff is re-collected and the delta re-reviewed
   before finalize.
+
+### Direct lane (no planner, no implementer sub-agent)
+
+The orchestrator edits directly, then the change gets one independent diff review.
+It exists because the planner → handoff → implementer chain costs more than it
+catches on small changes (measured: implementer contexts of 250-370k tokens, half a
+day for three harness fixes).
+
+- **When**: every touched file is on the lean allowlist or under `docs/**`, plus its
+  `CHANGELOG.md` entry, and there is a single obvious design.
+- **Never direct** (use `/ai-plan`): `moralstack/**`, any `tests/**` outside
+  `tests/harness/**`, a persisted payload or public API, a PROJECT_SPEC §5 invariant
+  or its text (`.claude/rules/**`, `PROJECT_SPEC.md`, `CLAUDE.md`), the harness's own
+  enforcement (`.claude/hooks/guard_*.py`, `.claude/settings*.json`,
+  `scripts/check_*_updated.py`), two or more viable designs. When in doubt, `/ai-plan`.
+- **Steps**: (1) write a short intent note `ai/plans/<slug>.md` — title, `Lane: direct`,
+  goal, files, verification (no design sections); (2) edit, run the scoped tests, then
+  the pre-commit-verifier gate; (3) `/ai-review-diff ai/plans/<slug>.md` — the
+  reviewer judges the diff against the intent note, BLOCKING findings are fixed
+  directly and the delta re-reviewed, and a second re-review that still blocks is
+  escalated to the user; (4) the orchestrator writes the final synthesis with the
+  `/ai-finalize` structure and evidence rules.
+- The diff review, the pre-commit-verifier gate and the escalation rule are never
+  skipped. The lane is checked like the others: a direct diff that touches a
+  never-direct path is BLOCKING.
 
 ## Claude commands (slash commands)
 

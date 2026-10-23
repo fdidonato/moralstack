@@ -50,6 +50,10 @@ Steps:
      (`docs/ai/AGENTIC_WORKFLOW.md` → "Lanes"); **full** (or no `Lane:` line, or
      any file off the allowlist) → pass nothing, the frontmatter's `xhigh`
      applies. On a mismatch, tell the user the change is misrouted.
+   - **direct** (the plan says `Lane: direct`, an intent note) → the same effort
+     rule as lean, keyed on the changed files; tell the reviewer the change is
+     judged against the intent note and that any changed file on a never-direct
+     path (`docs/ai/AGENTIC_WORKFLOW.md` → "Direct lane") is BLOCKING.
    - The **pre-commit-verifier** may run in parallel (same message), but it can
      write (auto-fixes, `pre-commit run -a`) while the reviewer reads. When both
      have finished: if the verifier reports any fix applied, or

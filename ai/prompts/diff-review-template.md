@@ -18,7 +18,11 @@ Look for:
 - dead code;
 - needless complexity;
 - a wrong lane: if the plan says `Lane: lean`, any changed file that is not on
-  the lean allowlist in `docs/ai/AGENTIC_WORKFLOW.md` → "Lanes" is BLOCKING.
+  the lean allowlist in `docs/ai/AGENTIC_WORKFLOW.md` → "Lanes" is BLOCKING;
+  if it says `Lane: direct` (a short intent note instead of a full plan, the
+  change edited by the orchestrator), judge the diff against the note's goal and
+  files, and any changed file on a never-direct path in
+  `docs/ai/AGENTIC_WORKFLOW.md` → "Direct lane" is BLOCKING.
 
 This is the MoralStack governance engine. Explicitly verify the diff does not
 break the invariants in PROJECT_SPEC.md section 5 / `.claude/rules/`
