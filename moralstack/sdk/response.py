@@ -47,7 +47,8 @@ class GovernanceMetadata:
     """Category: CLEARLY_BENIGN | SENSITIVE | CLEARLY_HARMFUL."""
 
     path: str
-    """Processing path: FAST_PATH | DELIBERATIVE_PATH."""
+    """Processing path: FAST_PATH | DELIBERATIVE_PATH | COMPLIANCE_FAST_PATH | DOMAIN_EXCLUDED | ERROR_PATH
+    | NONE (SDK pipeline-error sentinel)."""
 
     domain_overlay: str | None
     """Active domain overlay (e.g. 'healthcare'), or None."""

@@ -273,7 +273,7 @@ class DiagnosticsLayer:
                     response=FinalResponse.safe_default(processing_time),
                     request_id=request.request_id,
                     path_taken=getattr(result, "path_taken", "fast") or "fast",
-                    path="DELIBERATIVE_PATH",
+                    path="ERROR_PATH",
                     total_cycles=getattr(result, "total_cycles", 0),
                     converged=False,
                     error="final_action_undefined",

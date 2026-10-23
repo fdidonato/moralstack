@@ -1856,6 +1856,94 @@ def _pipeline_error_app() -> tuple[TestClient, Any]:
     return TestClient(app), mock_openai
 
 
+def _real_ensure_fallback_result() -> OrchestratorResult:
+    """Real result of ``ensure_final_action_and_return`` when final_action cannot be derived."""
+    from moralstack.orchestration.controller import OrchestrationController
+    from moralstack.orchestration.null_persistence import NullPersistence
+    from moralstack.orchestration.types import OrchestratorConfig, ProcessedRequest
+    from moralstack.utils.output_protection import OutputProtector
+
+    ctrl = OrchestrationController(
+        config=OrchestratorConfig(enable_speculative_generation=False),
+        policy=MagicMock(),
+        risk_estimator=MagicMock(),
+        critic=None,
+        simulator=None,
+        hindsight=None,
+        perspectives=None,
+        constitution_store=None,
+        output_protector=OutputProtector(),
+        protected_system_prompt="system",
+        persistence=NullPersistence(),
+    )
+    try:
+        bad = FinalResponse(content="x", response_type=None, metadata=ResponseMetadata())  # type: ignore[arg-type]
+        return ctrl._diagnostics.ensure_final_action_and_return(
+            OrchestratorResult(response=bad, execution_trace=MagicMock()),
+            ProcessedRequest(prompt="hello", request_id="req-s1"),
+            time.time(),
+            None,
+            attach_trace_fn=lambda res, _req: res,
+        )
+    finally:
+        close = getattr(ctrl._runner, "close", None)
+        if close is not None:
+            close()
+
+
+def _ensure_fallback_app() -> tuple[TestClient, Any]:
+    mock_orchestrator = MagicMock()
+    mock_orchestrator.process = MagicMock(return_value=_real_ensure_fallback_result())
+    mock_openai = MagicMock()
+    mock_openai.chat.completions.create = MagicMock(return_value=_make_upstream_chat_completion("upstream"))
+    app = create_app(openai_client=mock_openai, orchestrator=mock_orchestrator, config=GovernanceConfig())
+    return TestClient(app), mock_openai
+
+
+def test_proxy_sync_ensure_fallback_reports_error_path():
+    client, mock_openai = _ensure_fallback_app()
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o", "messages": [{"role": "user", "content": "Q"}]},
+    )
+    assert response.status_code == 200
+    choice = response.json()["choices"][0]
+    assert choice["message"]["content"] == "[SYSTEM_ERROR]"
+    assert choice["finish_reason"] == "content_filter"
+    assert response.headers.get("X-Moralstack-Decision") == "REFUSE"
+    assert response.headers.get("X-Moralstack-Path") == "ERROR_PATH"
+    mock_openai.chat.completions.create.assert_not_called()
+
+
+def test_proxy_sse_ensure_fallback_reports_error_path():
+    client, mock_openai = _ensure_fallback_app()
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o", "stream": True, "messages": [{"role": "user", "content": "Q"}]},
+    )
+    assert response.status_code == 200
+    deltas: list[str] = []
+    finish_reasons: list[str] = []
+    for line in response.text.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[len("data:") :].strip()
+        if data == "[DONE]":
+            continue
+        choice = json.loads(data)["choices"][0]
+        piece = choice.get("delta", {}).get("content")
+        if piece:
+            deltas.append(piece)
+        if choice.get("finish_reason"):
+            finish_reasons.append(choice["finish_reason"])
+    assert "".join(deltas) == "[SYSTEM_ERROR]"
+    assert finish_reasons and finish_reasons[-1] == "content_filter"
+    assert response.headers.get("X-Moralstack-Decision") == "REFUSE"
+    assert response.headers.get("X-Moralstack-Path") == "ERROR_PATH"
+    mock_openai.chat.completions.create.assert_not_called()
+
+
 def test_proxy_sync_error_result():
     client, mock_openai = _pipeline_error_app()
     response = client.post(

@@ -417,7 +417,9 @@ one INFO line and is not stored (a stored non-canonical label would make a later
   `SYSTEM.TIMEOUT` / `SYSTEM.FAIL_SAFE` principle plus no FINAL row, through
   `reports/pipeline_failure.py::pipeline_failure_principle`; the request page names
   the recorded principle); one WARNING `pipeline failed closed ...`. The codes are in
-  `LEDGER_NON_CACHEABLE_FLIP_REASONS`, so the ledger never stores them.
+  `LEDGER_NON_CACHEABLE_FLIP_REASONS`, so the ledger never stores them. The generic-`except` and
+  `ensure_final_action_and_return` fail-safe REFUSE (`SYSTEM.FAIL_SAFE`) also reports `path="ERROR_PATH"`
+  (`types.py` `for_fail_safe`, `diagnostics.py` fallback).
   `finalize_delivery` then delivers REFUSE / `content_filter`. The handlers and the generic
   `except` also emit one best-effort `PIPELINE_FAILED` orchestration event
   (`_emit_pipeline_failed_event`: `fail_closed_reason`, `triggered_principle`, `error_type`,

@@ -305,7 +305,7 @@ meta = response.governance_metadata
 meta.final_action           # NORMAL_COMPLETE | SAFE_COMPLETE | REFUSE
 meta.risk_score             # 0.0 (benign) — 1.0 (harmful)
 meta.risk_category          # CLEARLY_BENIGN | SENSITIVE | CLEARLY_HARMFUL
-meta.path                   # FAST_PATH | DELIBERATIVE_PATH
+meta.path                   # FAST_PATH | DELIBERATIVE_PATH | COMPLIANCE_FAST_PATH | DOMAIN_EXCLUDED | ERROR_PATH | NONE
 meta.reason_codes           # ["DUAL_USE", "SENSITIVE_DOMAIN", ...]
 meta.triggered_principles   # constitution principles activated
 meta.decision_reason        # human-readable explanation

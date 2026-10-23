@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The fail-safe REFUSE and the final-action fallback report `ERROR_PATH`.** `ResponseMetadata.for_fail_safe` and the
+  `ensure_final_action_and_return` fallback result used `DELIBERATIVE_PATH`. `GovernanceMetadata.path` and
+  `meta_json.path` change for these failure rows, and on the final-action fallback route `X-Moralstack-Path` changes
+  from `DELIBERATIVE_PATH` to `ERROR_PATH` (the generic-except header was already `ERROR_PATH`). `path_taken`, the
+  generic-except debug log label and `final_action` (`REFUSE`) are unchanged. The persisted conversation-state turn
+  summary `winning_rule` (generic-except and ensure-fallback turns), the ensure-fallback `execution_trace` path and the
+  benchmark export's `moralstack_path` for ensure-fallback rows also become `ERROR_PATH`.
 - **`docs/CODEBASE_FACTS.md` is compacted from ~300 KB to ~150 KB.** Rows over 1,500 characters are condensed with
   a `Full detail:` pointer, and FIXED/RESOLVED gaps are moved; the originals are kept verbatim in
   `docs/archive/codebase_facts_detail.md`.

@@ -504,6 +504,9 @@ class ResponseMetadata:
     def for_fail_safe(cls, processing_time_ms: int = 0) -> ResponseMetadata:
         """Metadata for the generic FAIL_SAFE fallback (REFUSE). Same shape as safe_default.
 
+        ``path="ERROR_PATH"``, aligned with ``for_system_error``: a fail-safe refusal is a
+        pipeline failure, not a deliberation.
+
         The refuse is transient: ``system_error`` is stamped on ``reason_codes`` and
         ``hard_violation_flip_reason`` so the ledger never caches it.
         """
@@ -514,7 +517,7 @@ class ResponseMetadata:
             triggered_principles=["SYSTEM.FAIL_SAFE"],
             processing_time_ms=processing_time_ms,
             final_action="REFUSE",
-            path="DELIBERATIVE_PATH",
+            path="ERROR_PATH",
             cycles=0,
             intent_clarity="LOW",
             misuse_plausibility="LOW",
@@ -569,7 +572,8 @@ PathTakenType = Literal[
 class OrchestratorResult:
     """
     Complete result of the Orchestrator.
-    path: FAST_PATH | DELIBERATIVE_PATH; cycles: 0 for FAST_PATH, else deliberation cycle count.
+    path: FAST_PATH | DELIBERATIVE_PATH | COMPLIANCE_FAST_PATH | DOMAIN_EXCLUDED | ERROR_PATH;
+    cycles: 0 for FAST_PATH, else deliberation cycle count.
     """
 
     response: FinalResponse

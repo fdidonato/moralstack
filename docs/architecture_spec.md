@@ -836,7 +836,6 @@ Behaviors observed in the code during this rewrite that a reader might otherwise
 | `EnsembleConfig.conservative_on_failure` and `HindsightConfig.revise_threshold` are not used by the modules | `runtime/modules/perspective_module.py`, `runtime/modules/hindsight_module.py` |
 | `OpenAIPolicy.refuse` has no caller; refusals go through `safe_refusal_generator` | `models/policy.py` |
 | `DeveloperContract` supports a `structured` mode, but contracts are only built in `opaque` mode | `orchestration/contract.py`, `orchestration/conversation_context.py` |
-| The fail-safe metadata reports `path="DELIBERATIVE_PATH"`, while the enclosing `OrchestratorResult` reports `ERROR_PATH` | `orchestration/types.py` (`for_fail_safe`), `controller.process` |
 | The `moralstack-server` console script is a placeholder | `server/proxy.py` (`main`) |
 
 Open hypotheses and their status are tracked in [`CODEBASE_FACTS.md`](./CODEBASE_FACTS.md) → "Future work /

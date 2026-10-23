@@ -600,7 +600,7 @@ class ResponseMetadata:
     processing_time_ms: int  # Processing time
     # Policy-driven (for benchmark and audit)
     final_action: str  # "REFUSE" | "SAFE_COMPLETE" | "NORMAL_COMPLETE"
-    path: str  # "FAST_PATH" | "DELIBERATIVE_PATH"
+    path: str  # "FAST_PATH" | "DELIBERATIVE_PATH" | "COMPLIANCE_FAST_PATH" | "DOMAIN_EXCLUDED" | "ERROR_PATH"
     cycles: int  # 0 for FAST_PATH, otherwise deliberative cycles
     intent_clarity: str  # LOW | MEDIUM | HIGH (semantic signals)
     misuse_plausibility: str  # LOW | MEDIUM | HIGH
@@ -671,7 +671,7 @@ The Orchestrator implements a fail-safe system:
   membership in `CANONICAL_FINAL_ACTIONS` (unchanged), otherwise it logs one INFO line and does not store
 - **Unexpected exceptions** (generic `except (AssertionError, Exception)` in `process()`, and the `ensure_final_action_and_return`
   fallback): `FinalResponse.safe_default` -> `ResponseMetadata.for_fail_safe`, a REFUSE with principle `SYSTEM.FAIL_SAFE`,
-  `metadata.path="DELIBERATIVE_PATH"`, content `[SYSTEM_ERROR]`. Result `path` per producer: generic except `ERROR_PATH`; `ensure` fallback `DELIBERATIVE_PATH`. It also carries
+  `metadata.path="ERROR_PATH"`, content `[SYSTEM_ERROR]`. The result `path` is also `ERROR_PATH` for both producers (generic except; `ensure` fallback, `X-Moralstack-Path: ERROR_PATH`); `path_taken` is `"error"` for the generic except, while the ensure fallback keeps the inner route's `path_taken`. It also carries
   `hard_violation_flip_reason` / `reason_codes` = `system_error`, so it is transient: never stored in the ledger. The generic
   except logs the same `pipeline failed closed` WARNING (`reason=system_error`, `error_type=<class>`)
 - **Module errors**: Catches exceptions and continues with fallback values, except where a missing result would fail open: a

@@ -668,8 +668,43 @@ def test_p8a_for_fail_safe_carries_system_error_flip_reason() -> None:
         assert meta.reason_codes == ["system_error"]
         assert meta.final_action == "REFUSE"
         assert meta.triggered_principles == ["SYSTEM.FAIL_SAFE"]
-        assert meta.path == "DELIBERATIVE_PATH"
+        assert meta.path == "ERROR_PATH"
         assert meta.processing_time_ms == 3
+
+
+def test_s1_for_fail_safe_aligned_with_for_system_error() -> None:
+    fail_safe = ResponseMetadata.for_fail_safe(1)
+    system_error = ResponseMetadata.for_system_error(1, "req-s1")
+    assert fail_safe.path == system_error.path == "ERROR_PATH"
+    assert fail_safe.final_action == system_error.final_action == "REFUSE"
+    assert fail_safe.hard_violation_flip_reason == system_error.hard_violation_flip_reason == "system_error"
+
+
+@pytest.mark.parametrize("exc_cls", GENERIC_EXC)
+def test_s1_generic_except_reports_error_path_everywhere(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, exc_cls: type
+) -> None:
+    from moralstack.observability.governance_audit import build_request_meta_from_result
+    from moralstack.sdk.response import GovernanceMetadata
+
+    result = _fail(_ctrl(request=request), monkeypatch, exc_cls("unexpected"))
+    assert result.path == result.response.metadata.path == "ERROR_PATH"
+    assert result.path_taken == "error"
+    assert build_request_meta_from_result(result)["path"] == "ERROR_PATH"
+    assert GovernanceMetadata.from_result(result).path == "ERROR_PATH"
+    assert result.response.metadata.final_action == "REFUSE"
+
+
+@pytest.mark.parametrize("exc_cls", GENERIC_EXC)
+def test_s1_generic_except_conversation_state_winning_rule_is_error_path(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, exc_cls: type
+) -> None:
+    result = _fail(_ctrl(request=request), monkeypatch, exc_cls("unexpected"), conv=("c1", 1))
+    state = result.conversation_governance_state_out
+    assert state is not None
+    summary = state.turn_decisions_summary[-1]
+    assert summary.final_action == "REFUSE"
+    assert summary.winning_rule == "ERROR_PATH"
 
 
 @pytest.mark.parametrize("exc_cls", GENERIC_EXC)
@@ -707,6 +742,7 @@ def test_p8d_ensure_fallback_refuse_is_not_cached(request: pytest.FixtureRequest
     assert _store_size(ctrl, out) == 0
     meta = out.response.metadata
     assert out.error == "final_action_undefined"
+    assert out.path == meta.path == "ERROR_PATH"
     assert meta.final_action == "REFUSE"
     assert meta.hard_violation_flip_reason == "system_error"
 
