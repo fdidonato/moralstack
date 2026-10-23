@@ -52,13 +52,13 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 `python-dotenv`, `ruamel.yaml`, `langdetect`. UI/server extras add `fastapi`,
 `uvicorn`, `httpx`, `jinja2` (`pyproject.toml:27-56`).
 
-### Console entry points (`pyproject.toml:58-62`)
+### Console entry points (`pyproject.toml:62-66`)
 
 | Script | Target | Notes |
 |---|---|---|
 | `moralstack` | `moralstack.cli.run:main` | CLI runner |
 | `moralstack-ui` | `moralstack.ui.app:main` | dashboard |
-| `moralstack-server` | `moralstack.server.proxy:main` | **reserved** — `main()` raises `NotImplementedError`; use `create_app` instead (`server/proxy.py:782`) |
+| `moralstack-server` | `moralstack.server.proxy:main` | **reserved** — `main()` raises `NotImplementedError`; use `create_app` instead (`server/proxy.py:1016`) |
 | `moralstack-validate-overlay` | `moralstack.cli.validate_overlay:main` | overlay validation |
 
 ---
@@ -398,7 +398,11 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   financial, gaming, healthcare, journalism, legal, medical, mental_health,
   political, relationships, research, science, violent_crime.
 
-### Compliance / COMPL-AI bridge — `moralstack/compliance/`
+### Developer Contract Compliance Layer (DCCL) — `moralstack/compliance/`
+
+Not a COMPL-AI bridge: no package code imports `complai` or `inspect_ai`; COMPL-AI reaches MoralStack from outside
+through the OpenAI-compatible proxy (see `docs/traces/complai_llm_rules_flow.md`).
+
 - `dccl.py` — `DeveloperContractComplianceLayer.evaluate(...)` → `ComplianceVerdict`.
   Three evaluation paths (structured / LLM / hybrid). `validate_draft_against_action`.
 - `safety_override.py` — `classify_safety_override` (P0 categories that can never
@@ -638,7 +642,11 @@ can additionally raise the score with a sensitive-overlay floor
 To engage OpenAI automatic prompt caching, every deliberative LLM module and
 call path was reordered so the system message is a byte-stable, path-specific
 static prefix and the user message carries only per-request dynamic data
-(`response_format` stays `json_object` everywhere; retries/parsers unchanged):
+(retries/parsers unchanged). The split did not change `response_format`, which differs per
+module: the critic uses `json_object` (`runtime/modules/critic_module.py`), while the risk minis,
+simulator, hindsight, perspectives and the domain prefilter use a strict `json_schema`
+(`models/risk/prompts.py`, `utils/structured_output.py`), downgraded to `json_object` by
+`OpenAIPolicy._complete` on models without strict-schema support:
 - **Risk minis** (`models/risk/prompts.py`): `INTENT_CONTEXT_SYSTEM_PROMPT` /
   `HARM_SIGNAL_SYSTEM_PROMPT` (composed by
   `models/risk/signals/prompt_renderer.get_harm_signal_prompts()`) /

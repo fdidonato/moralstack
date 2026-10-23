@@ -87,6 +87,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   governance, the SDK and proxy surfaces, failure handling, observability and configuration, with Mermaid diagrams and
   tables, and lists the gaps observed in the code (unused config fields, placeholder `moralstack-server`). The spec is
   no longer exempt from `tests/harness/test_english_only.py`. Documentation only: no behavior change.
+- **`docs/MORALSTACK_CODEBASE_INDEX.md` corrected where it contradicted the code.** §5.1 claimed `response_format`
+  stays `json_object` everywhere: only the critic uses it, while the risk minis, simulator, hindsight, perspectives
+  and domain prefilter use a strict `json_schema`. The console entry points are cited at `pyproject.toml:62-66` and
+  `server/proxy.py:1016`, and the `moralstack/compliance/` section is titled as the DCCL instead of a COMPL-AI bridge.
 
 ## 1.0.0 — 2026-10-21
 
