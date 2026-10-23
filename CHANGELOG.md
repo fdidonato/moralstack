@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   itself, keeping the pre-commit-verifier gate and one independent `/ai-review-diff` (never for `moralstack/**`,
   non-harness tests or invariant text).
 - **`.mcp.json` pins `@playwright/mcp@0.0.83`** instead of `@latest`.
+- **The parked `docs/eu_ai_act_landscape.md` research note is removed** (recoverable from git history).
 - **Targeted test runs are serial, and the full suite is recorded per tree state.** Selecting part of the suite
   (files, directories, node ids or `-k`) no longer starts up to 8 xdist workers; the full suite stays parallel and an
   explicit `-n` still wins. `scripts/ai/suite_record.py run|check` fingerprints the working tree and reuses a PASSED
