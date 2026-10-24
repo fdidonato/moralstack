@@ -111,6 +111,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   said NORMAL_COMPLETE / SAFE_COMPLETE are forwarded to the upstream client; the code delivers the governed text as a
   synthetic completion for every action and fails closed to a governed refusal (Plan 1). Docstrings only.
 
+### Deprecated
+
+- **Five loaded-but-unread config fields are deprecated and will be removed in 2.0.**
+  `OrchestratorConfig.max_critical_violations`, `early_exit_hindsight_threshold` and `safe_response_on_error`,
+  `HindsightConfig.revise_threshold` and `EnsembleConfig.conservative_on_failure` (env vars
+  `MORALSTACK_ORCHESTRATOR_MAX_CRITICAL_VIOLATIONS`, `..._EARLY_EXIT_HINDSIGHT_THRESHOLD`,
+  `..._SAFE_RESPONSE_ON_ERROR`, `MORALSTACK_HINDSIGHT_REVISE_THRESHOLD`,
+  `MORALSTACK_PERSPECTIVES_CONSERVATIVE_ON_FAILURE`) still parse and still have no effect. A non-default value now
+  emits a `DeprecationWarning` on any construction (environment loads included, where default filters hide it) and one
+  WARNING per load from the environment; defaults stay silent. Under strict warnings (`-W error::DeprecationWarning`) a non-default environment value makes the loader
+  raise: `load_orchestrator_config_from_env()` fails closed with `GovernancePipelineError`, and a non-default
+  hindsight or perspective value fails bootstrap closed ("Failed to initialize deliberation modules").
+  `.env.template` no longer ships these lines active (its `EARLY_EXIT_HINDSIGHT_THRESHOLD=0.75` differed from the
+  code default `0.6`).
+
 ## 1.0.0 — 2026-10-21
 
 ### Upgrading from 0.7.0

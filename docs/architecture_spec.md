@@ -831,9 +831,9 @@ Behaviors observed in the code during this rewrite that a reader might otherwise
 
 | Gap | Location |
 |---|---|
-| `max_critical_violations`, `early_exit_hindsight_threshold` and `safe_response_on_error` are loaded but never read (the last one only logs a deprecation warning) | `orchestration/types.py`, `orchestration/config_loader.py` |
+| `max_critical_violations`, `early_exit_hindsight_threshold` and `safe_response_on_error` are deprecated no-ops (warn when non-default), removal in 2.0 | `orchestration/types.py`, `orchestration/config_loader.py` |
 | `GovernanceConfig.observability_mode`, `jsonl_dir` and `db_path` have no effect; observability is configured only through environment variables | `sdk/config.py`, `sdk/wrapper.py` |
-| `EnsembleConfig.conservative_on_failure` and `HindsightConfig.revise_threshold` are not used by the modules | `runtime/modules/perspective_module.py`, `runtime/modules/hindsight_module.py` |
+| `EnsembleConfig.conservative_on_failure` and `HindsightConfig.revise_threshold` are deprecated no-ops (warn when non-default), removal in 2.0 | `runtime/modules/perspective_module.py`, `runtime/modules/hindsight_module.py` |
 | `OpenAIPolicy.refuse` has no caller; refusals go through `safe_refusal_generator` | `models/policy.py` |
 | `DeveloperContract` supports a `structured` mode, but contracts are only built in `opaque` mode | `orchestration/contract.py`, `orchestration/conversation_context.py` |
 | The `moralstack-server` console script is a placeholder | `server/proxy.py` (`main`) |

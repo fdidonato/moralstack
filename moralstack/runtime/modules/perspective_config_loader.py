@@ -7,12 +7,15 @@ to hardcoded defaults. Used when no explicit EnsembleConfig is passed.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from moralstack.utils.env_helpers import get_env_bool, get_env_float, get_env_int, get_env_str
 
 if TYPE_CHECKING:
     from moralstack.runtime.modules.perspective_module import EnsembleConfig
+
+_LOG = logging.getLogger(__name__)
 
 # Backward-compatible aliases for external consumers
 get_perspective_env_float = get_env_float
@@ -51,6 +54,16 @@ def load_perspective_config_from_env() -> EnsembleConfig:
     timeout_seconds = get_env_float(ENV_TIMEOUT_SECONDS, 60.0, 1.0)
     max_perspectives = get_env_int(ENV_MAX_PERSPECTIVES, 2, 0)
     conservative_on_failure = get_env_bool(ENV_CONSERVATIVE_ON_FAILURE, True)
+    default = True
+    if conservative_on_failure != default:
+        # Deprecated no-op field (removal in 2.0). Best-effort: logging must never fail config loading.
+        try:
+            _LOG.warning(
+                "%s is deprecated and has no effect (removal in 2.0); remove it from the environment",
+                ENV_CONSERVATIVE_ON_FAILURE,
+            )
+        except Exception:
+            _LOG.debug("deprecated env warning failed", exc_info=True)
     enable_caching = get_env_bool(ENV_ENABLE_CACHING, False)
 
     return EnsembleConfig(

@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import warnings
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
@@ -453,13 +454,22 @@ class HindsightConfig:
     # Thresholds for recommendation (calibrated to avoid false positives)
     # NOTE: thresholds lowered to be less conservative on legitimate discussions
     refuse_threshold: float = -0.7  # expected_value < this -> refuse (was -0.5)
-    revise_threshold: float = 0.0  # not read: the REVISE band is fixed at expected_value < 0.0 (was 0.3)
+    revise_threshold: float = 0.0  # DEPRECATED (no effect, removal in 2.0): the REVISE band is fixed at expected_value < 0.0
 
     # If True, evaluates all scenarios in a single call
     use_batch_evaluation: bool = True
 
     # FIX PERFORMANCE: Caching to avoid recomputation on identical inputs
     enable_caching: bool = True  # Enable result caching
+
+    def __post_init__(self) -> None:
+        # Not frozen: warns at construction only (not on later assignment); dataclasses.replace re-warns.
+        if self.revise_threshold != 0.0:
+            warnings.warn(
+                "HindsightConfig.revise_threshold is deprecated and has no effect; it will be removed in MoralStack 2.0.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
 
 
 class LLMHindsightEvaluator:

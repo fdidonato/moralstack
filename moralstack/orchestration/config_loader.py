@@ -61,7 +61,7 @@ def load_orchestrator_config_from_env() -> OrchestratorConfig:
     Build OrchestratorConfig from environment variables.
 
     Only non-empty env values are used; otherwise hardcoded defaults apply.
-    Ints are enforced >= 1 (or >= 0 for max_critical_violations).
+    Ints are enforced >= 1 (or >= 0 for max_critical_violations, which is deprecated).
     Floats are clamped to [0.0, 1.0] where applicable. Timeout >= 1.
 
     Builds RiskThresholds from MORALSTACK_ORCHESTRATOR_RISK_LOW_THRESHOLD and
@@ -80,6 +80,19 @@ def load_orchestrator_config_from_env() -> OrchestratorConfig:
     min_hindsight_score = get_env_float(ENV_MIN_HINDSIGHT_SCORE, 0.8, 0.0, 1.0)
     max_critical_violations = get_env_int(ENV_MAX_CRITICAL_VIOLATIONS, 0, 0)
     early_exit_hindsight_threshold = get_env_float(ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD, 0.6, 0.0, 1.0)
+    for env_name, value, default in (
+        (ENV_MAX_CRITICAL_VIOLATIONS, max_critical_violations, 0),
+        (ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD, early_exit_hindsight_threshold, 0.6),
+    ):
+        if value != default:
+            # Deprecated no-op fields (removal in 2.0). Best-effort: logging must never fail config loading.
+            try:
+                _LOG.warning(
+                    "%s is deprecated and has no effect (removal in 2.0); remove it from the environment",
+                    env_name,
+                )
+            except Exception:
+                _LOG.debug("deprecated env warning failed", exc_info=True)
     enable_simulation = get_env_bool(ENV_ENABLE_SIMULATION, True)
     enable_hindsight = get_env_bool(ENV_ENABLE_HINDSIGHT, True)
     safe_response_on_error = get_env_bool(ENV_SAFE_RESPONSE_ON_ERROR, True)

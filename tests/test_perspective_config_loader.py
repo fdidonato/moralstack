@@ -7,6 +7,8 @@ env when set and non-empty, and fall back to defaults otherwise.
 
 from __future__ import annotations
 
+import pytest
+
 from moralstack.runtime.modules.perspective_config_loader import (
     ENV_CONSERVATIVE_ON_FAILURE,
     ENV_MAX_PERSPECTIVES,
@@ -188,5 +190,6 @@ class TestLoadPerspectiveConfigFromEnv:
 
     def test_conservative_on_failure_false(self, monkeypatch):
         monkeypatch.setenv(ENV_CONSERVATIVE_ON_FAILURE, "false")
-        config = load_perspective_config_from_env()
+        with pytest.warns(DeprecationWarning, match="EnsembleConfig.conservative_on_failure"):
+            config = load_perspective_config_from_env()
         assert config.conservative_on_failure is False

@@ -305,7 +305,7 @@ class ConvergenceEvaluator:
     """
     Evaluates convergence and decision type for a deliberation state.
     Uses OrchestratorConfig for thresholds (max_deliberation_cycles,
-    early_exit_hindsight_threshold, min_hindsight_score).
+    min_hindsight_score).
     """
 
     def __init__(self, config: OrchestratorConfig) -> None:

@@ -60,6 +60,9 @@ from moralstack.orchestration.types import (
 from moralstack.runtime.orchestrator import Orchestrator, create_orchestrator
 from moralstack.utils.output_protection import OutputProtector
 
+# Incidental ``safe=False`` parametrizations: the subject here is fail-closed, not the deprecated flag.
+pytestmark = pytest.mark.filterwarnings("ignore:OrchestratorConfig.safe_response_on_error is deprecated:DeprecationWarning")
+
 CONTROLLER_PATH = Path(__file__).resolve().parent.parent / "moralstack" / "orchestration" / "controller.py"
 
 
@@ -479,9 +482,10 @@ def test_p16a_unsafe_env_flag_is_a_noop_for_content(request: pytest.FixtureReque
     from moralstack.orchestration.config_loader import load_orchestrator_config_from_env
 
     monkeypatch.setenv(ENV_SAFE, "false")
-    cfg = load_orchestrator_config_from_env()
-    assert cfg.safe_response_on_error is False
-    cfg = dataclasses.replace(cfg, enable_speculative_generation=False)
+    with pytest.warns(DeprecationWarning, match="OrchestratorConfig.safe_response_on_error"):
+        cfg = load_orchestrator_config_from_env()
+        assert cfg.safe_response_on_error is False
+        cfg = dataclasses.replace(cfg, enable_speculative_generation=False)
     result = _fail(_ctrl(request=request, config=cfg), monkeypatch, GenerationError(f"Generation failed: {SECRET}"))
     assert result.response.content == "[SYSTEM_ERROR]"
     assert "secret-ish body" not in finalize_delivery(result).text
@@ -491,6 +495,8 @@ def test_p16b_unsafe_env_flag_warns_at_load(monkeypatch: pytest.MonkeyPatch) -> 
     from moralstack.orchestration.config_loader import load_orchestrator_config_from_env
 
     handler = _capture_logger(monkeypatch, "moralstack.orchestration.config_loader._LOG", "p16b")
+    monkeypatch.delenv("MORALSTACK_ORCHESTRATOR_MAX_CRITICAL_VIOLATIONS", raising=False)
+    monkeypatch.delenv("MORALSTACK_ORCHESTRATOR_EARLY_EXIT_HINDSIGHT_THRESHOLD", raising=False)
     monkeypatch.setenv(ENV_SAFE, "false")
     load_orchestrator_config_from_env()
     warnings = [r for r in handler.records if r.levelno == logging.WARNING]
@@ -504,6 +510,8 @@ def test_p16c_default_env_does_not_warn(monkeypatch: pytest.MonkeyPatch) -> None
 
     handler = _capture_logger(monkeypatch, "moralstack.orchestration.config_loader._LOG", "p16c")
     monkeypatch.delenv(ENV_SAFE, raising=False)
+    monkeypatch.delenv("MORALSTACK_ORCHESTRATOR_MAX_CRITICAL_VIOLATIONS", raising=False)
+    monkeypatch.delenv("MORALSTACK_ORCHESTRATOR_EARLY_EXIT_HINDSIGHT_THRESHOLD", raising=False)
     cfg = load_orchestrator_config_from_env()
     assert cfg.safe_response_on_error is True
     assert [r for r in handler.records if r.levelno >= logging.WARNING] == []

@@ -7,6 +7,8 @@ env when set and non-empty, and fall back to defaults otherwise.
 
 from __future__ import annotations
 
+import pytest
+
 from moralstack.runtime.modules.hindsight_config_loader import (
     ENV_ENABLE_CACHING,
     ENV_MAX_RETRIES,
@@ -193,7 +195,8 @@ class TestLoadHindsightConfigFromEnv:
 
     def test_revise_threshold_override(self, monkeypatch):
         monkeypatch.setenv(ENV_REVISE_THRESHOLD, "-0.2")
-        config = load_hindsight_config_from_env()
+        with pytest.warns(DeprecationWarning, match="HindsightConfig.revise_threshold"):
+            config = load_hindsight_config_from_env()
         assert config.revise_threshold == -0.2
 
     def test_use_batch_evaluation_false(self, monkeypatch):

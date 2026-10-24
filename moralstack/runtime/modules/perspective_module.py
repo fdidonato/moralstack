@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from dataclasses import replace as dataclass_replace
@@ -372,10 +373,21 @@ class EnsembleConfig:
     # The critical perspectives (adversary, compliance) are essential to
     # detect potentially dangerous content that the user-centric
     # perspectives might not identify
-    conservative_on_failure: bool = True  # If a perspective fails, use a conservative fallback
+    conservative_on_failure: bool = True  # DEPRECATED (no effect, removal in 2.0)
 
     # FIX PERFORMANCE: Caching to avoid recomputation on identical inputs
     enable_caching: bool = False  # Disabled by default: avoids global state in tests
+
+    def __post_init__(self) -> None:
+        # Not frozen: warns at construction only (not on later assignment); dataclasses.replace re-warns.
+        default = True
+        if self.conservative_on_failure != default:
+            warnings.warn(
+                "EnsembleConfig.conservative_on_failure is deprecated and has no effect; "
+                "it will be removed in MoralStack 2.0.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
 
 
 class LLMPerspectiveEnsemble:
