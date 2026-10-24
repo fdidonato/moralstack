@@ -287,6 +287,24 @@ def use_in_memory_db(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _reset_explicit_observability_config():
+    """Explicit GovernanceConfig observability values are process-global: never leak between tests.
+
+    Only acts when ``moralstack.observability.config`` is already imported (no import cost for
+    ``tests/harness/**``).
+    """
+
+    def _reset() -> None:
+        module = sys.modules.get("moralstack.observability.config")
+        if module is not None:
+            module._reset_explicit_config()
+
+    _reset()
+    yield
+    _reset()
+
+
+@pytest.fixture(autouse=True)
 def _no_prompts_dir_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """A developer-set MORALSTACK_PROMPTS_DIR must never leak into the suite.
 

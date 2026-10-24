@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`GovernanceConfig.observability_mode`, `jsonl_dir` and `db_path` now take effect.** They were read nowhere. Explicit values now beat the `MORALSTACK_OBSERVABILITY_*` env vars process-wide when applied by the first `govern()` / `create_app` before the observability write queue is bound; a later different value is refused with a WARNING and never redirects a live target (parent and child rows must stay in one database). `"off"` (the default), `None` or blank inherits env/defaults and does not disable writing. The `moralstack-ui` process still reads env only.
 - **`suite_record.py check` no longer mismatches after committing, staging or `git rm` of unchanged content.** Tracked and untracked files are hashed as one set (`content_sha256`, `file_count`); schema-1 records are rejected once.
 - **The request page shows the DCCL and the steps around it in the order the code runs them.** DCCL rows persisted
   with `cycle=NULL` were drawn as a second "Initial assessment" group before retrieval and risk, `safety_override`

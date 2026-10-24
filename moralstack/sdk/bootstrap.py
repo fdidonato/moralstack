@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +14,25 @@ from moralstack.utils.env_loader import load_env
 if TYPE_CHECKING:
     from moralstack.runtime.orchestrator import Orchestrator
     from moralstack.sdk.config import GovernanceConfig
+
+
+def _apply_observability_config(config: GovernanceConfig, *, source: str) -> None:
+    """Apply the explicit ``GovernanceConfig`` observability fields process-wide (best-effort).
+
+    Never raises: observability must not break the request (a failure is logged at WARNING and swallowed).
+    See ``moralstack.observability.config.apply_explicit_config`` for precedence and the conflict policy.
+    """
+    try:
+        from moralstack.observability.config import apply_explicit_config
+
+        apply_explicit_config(
+            mode=config.observability_mode,
+            db_path=config.db_path,
+            jsonl_dir=config.jsonl_dir,
+            source=source,
+        )
+    except Exception:
+        logging.getLogger(__name__).warning("MoralStack SDK: applying observability config failed", exc_info=True)
 
 
 def _resolve_api_key(config: GovernanceConfig) -> str:
@@ -178,8 +198,9 @@ def _bootstrap_pipeline(config: GovernanceConfig) -> Orchestrator:
 
     Runtime tuning (cycles, risk thresholds, module temperatures, etc.) comes from
     ``MORALSTACK_*`` environment variables loaded from ``.env``. ``GovernanceConfig``
-    covers provider credentials, constitution path, observability, failure policy,
-    and ledger fast-path toggles.
+    covers provider credentials, constitution path, failure policy, and ledger
+    fast-path toggles. Its observability fields are applied by ``govern()`` /
+    ``create_app`` (``_apply_observability_config``), not here.
     """
     load_env()
 

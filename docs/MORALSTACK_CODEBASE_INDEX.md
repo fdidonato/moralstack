@@ -80,7 +80,7 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   `MORALSTACK_EMBEDDER_PROVIDER=openai`).
 - `config.py` — `GovernanceConfig` (domain_overlay, `prompts_dir` (prompt overrides; env
   `MORALSTACK_PROMPTS_DIR`), failure_policy,
-  observability_mode, jsonl_dir, enable_session_tracking, `embedder_provider`,
+  observability_mode, jsonl_dir, db_path (process-wide; applied via `observability.config.apply_explicit_config`), enable_session_tracking, `embedder_provider`,
   `generation` ("internal" | "upstream_then_verify"), …).
 - `session.py` — `SessionState`: per-client conversation_id + turn counter,
   wraps a `SessionStore`.
@@ -443,7 +443,7 @@ through the OpenAI-compatible proxy (see `docs/traces/complai_llm_rules_flow.md`
   `state_summary_or_none`.
 - `context.py` — contextvars (`set_current_run_id`, `set_current_request_id`,
   `set_current_session_id`, `set_current_turn_number`).
-- `config.py` — `get_observability_mode`, `get_db_path`.
+- `config.py` — `get_observability_mode`, `get_db_path`, `get_jsonl_dir` (explicit > env > default), `apply_explicit_config` (first-applied-wins before the write-queue target is bound).
 - `emit_helpers.py` — `persist_*` / `async_persist_*` telemetry wrappers.
 
 ### Server proxy — `moralstack/server/`

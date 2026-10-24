@@ -106,6 +106,11 @@ class ObservabilityService:
         """Drain the queue and stop the worker thread. Call at process shutdown."""
         self._queue.shutdown(timeout=timeout)
 
+    @property
+    def target_bound(self) -> bool:
+        """True once the write queue received an item or opened its worker connection."""
+        return self._queue.target_bound
+
     def stats(self) -> dict[str, object]:
         """Return observability queue counters."""
         return self._queue.stats()

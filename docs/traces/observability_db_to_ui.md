@@ -44,12 +44,18 @@ Primary code: `moralstack/observability/*`, `moralstack/orchestration/default_pe
 - `file_only` → `JsonlEventSink` only.
 - `dual` → both.
 
-> **SDK config caveat.** `GovernanceConfig.observability_mode` (default `"off"`)
-> is not wired into the runtime `get_observability_mode()` function
-> (`sdk/config.py:58`; `observability/config.py:64-77`). The authoritative
-> source is the `MORALSTACK_OBSERVABILITY_MODE` environment variable; the
-> `"off"` SDK value has no runtime effect. Default when env var is unset:
-> `db_only` if `MORALSTACK_OBSERVABILITY_DB_PATH` is set, else `file_only`.
+> **SDK config precedence.** The getters in `observability/config.py` resolve
+> explicit `GovernanceConfig` values (`observability_mode`, `db_path`, `jsonl_dir`,
+> applied by `apply_explicit_config` from `govern()` / `GovernedClient.__init__` /
+> `create_app`) > env vars > defaults. `"off"` / blank / `None` mean "not set here"
+> (inherit env/defaults; writing is not disabled). Explicit values are process-wide and
+> only *establish* the target: they apply only if the first `apply_explicit_config` call
+> happens before the write-queue target is bound (`ObservabilityWriteQueue.target_bound`:
+> first enqueue or worker connection open). A later different value is refused with a
+> WARNING, because the worker keeps one SQLite connection for its lifetime while parent
+> rows are written synchronously to `get_db_path()`; a redirect would split parents and
+> children across databases. A separate `moralstack-ui` process reads env only.
+> Default when nothing is set: `db_only` if a DB path (explicit or env) is set, else `file_only`.
 
 DB path from `MORALSTACK_OBSERVABILITY_DB_PATH` (legacy alias
 `MORALSTACK_DB_PATH`); JSONL dir from `MORALSTACK_OBSERVABILITY_JSONL_DIR`

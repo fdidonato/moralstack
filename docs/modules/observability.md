@@ -11,7 +11,7 @@ moralstack/observability/
 ├── __init__.py          # exposes: obs (lazy proxy → get_obs()), EventEnvelope, factory helpers
 ├── events.py            # EventEnvelope dataclass + EVENT_* constants + make_envelope()
 ├── context.py           # run_id / request_id / cycle contextvars
-├── config.py            # ObservabilityConfig: mode, db_path, jsonl_dir; env loader
+├── config.py            # getters (get_observability_mode/get_db_path/get_jsonl_dir): explicit > env > default; apply_explicit_config()
 ├── service.py           # ObservabilityService: emit(), emit_batch(), flush(), shutdown()
 ├── router.py            # EventRouter: envelope → active sinks (db_only/dual/file_only)
 ├── read_store.py        # ReadStore Protocol + SqliteReadStore
@@ -428,7 +428,7 @@ response = client.chat.completions.create(
 | `db_only` | Yes (if `MORALSTACK_OBSERVABILITY_DB_PATH` set) | No | Full UI + query access |
 | `dual` | Yes | Yes | Debugging / migration |
 
-> Note: the `GovernanceConfig` fields `observability_mode`, `db_path`, and `jsonl_dir` are reserved for a future wiring layer. Today the active routing is driven exclusively by env vars (`MORALSTACK_OBSERVABILITY_*`).
+> Note: the `GovernanceConfig` fields `observability_mode`, `db_path`, and `jsonl_dir` are wired through `apply_explicit_config` (called by `govern()`, `GovernedClient.__init__` and `create_app`). Precedence is explicit > env (`MORALSTACK_OBSERVABILITY_*`) > default; `"off"`/blank/`None` inherit env/defaults and do not disable writing. Conflict policy: explicit values are process-wide and only *establish* the target, i.e. they apply only if the first call in the process happens before the write-queue target is bound (`ObservabilityWriteQueue.target_bound`, exposed by `ObservabilityService.target_bound`; set on the first enqueue or worker connection open; merely creating the singleton, e.g. via `import moralstack.reports`, does not bind it). A later different value is ignored with a cause-specific WARNING (once per key and value) and never redirects a live target: the worker's SQLite connection is opened once while parent rows are written synchronously to `get_db_path()`, so a redirect would split parents and children across databases. A `govern()` that fails after the apply step (e.g. a pipeline build error) still fixes the target for the process. Residual race: `_enqueue` does not take `_obs_lock`, so a non-SDK emitter can enqueue on an already-existing singleton between the bound check and the publish in `_try_establish`; no SDK/proxy client exists yet while `_applied` is false, so the window is accepted. Getters read env live on every call and never raise.
 
 ---
 

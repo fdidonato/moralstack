@@ -69,12 +69,19 @@ class ObservabilityWriteQueue:
         self._pending_drop_marker_request_id: str | None = None
         self._worker_connection_thread_id: int | None = None
         self._worker_connection_closed_thread_id: int | None = None
+        # Set on the first enqueue or worker-connection open; never cleared.
+        self._target_bound = False
         self._thread = threading.Thread(
             target=self._worker,
             daemon=True,
             name="moralstack-obs-worker",
         )
         self._thread.start()
+
+    @property
+    def target_bound(self) -> bool:
+        """True once an item was enqueued or the worker opened its connection."""
+        return self._target_bound
 
     @staticmethod
     def _env_int(name: str, default: int) -> int:
@@ -173,6 +180,7 @@ class ObservabilityWriteQueue:
                 self._last_error = error
 
     def _enqueue(self, item: Any, *, units: int, label: str) -> None:
+        self._target_bound = True
         with self._stats_lock:
             self._submitted_count += units
         try:
@@ -261,6 +269,7 @@ class ObservabilityWriteQueue:
         )
 
     def _open_worker_connection(self) -> Any:
+        self._target_bound = True
         mode = get_observability_mode()
         if mode not in ("db_only", "dual"):
             return None

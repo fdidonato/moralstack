@@ -112,6 +112,7 @@ client = govern(
         failure_policy="refuse",  # "refuse" (default) | "passthrough"
 
         # Observability
+        # Process-wide; "off" (default) = inherit env/defaults, it does not disable writing.
         observability_mode="file_only",  # "off" | "file_only" | "db_only" | "dual"
         jsonl_dir=".investigations/logs/audit",
 

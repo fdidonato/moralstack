@@ -348,7 +348,8 @@ moralstack-ui
 ## 🔧 Configuration
 
 Minimum required: `OPENAI_API_KEY` in the environment. Everything else has sensible defaults.
-`GovernanceConfig` tunes the SDK per-client:
+`GovernanceConfig` tunes the SDK per-client, except its observability fields (`observability_mode`, `jsonl_dir`,
+`db_path`), which are process-wide (see below):
 
 ```python
 from moralstack import govern, GovernanceConfig
@@ -363,6 +364,11 @@ client = govern(
     ),
 )
 ```
+
+The observability fields override the `MORALSTACK_OBSERVABILITY_*` env vars for the whole process, but only if
+applied before observability is live (the first `govern()` / `create_app` in the process); a later different value is
+ignored with a WARNING and never redirects a live target. `observability_mode="off"` (the default), `None` or blank
+means "not set here": env/defaults apply, and writing is not disabled.
 
 Environment is loaded via `moralstack/utils/env_loader.py`: non-empty `.env` values override
 existing env vars (`override=True`); optional empty values are purged after load.

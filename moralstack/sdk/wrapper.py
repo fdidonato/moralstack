@@ -26,7 +26,12 @@ from moralstack.orchestration.conversation_context import build_conversation_con
 from moralstack.orchestration.delivery import finalize_delivery
 from moralstack.orchestration.types import ProcessedRequest
 from moralstack.prompts.catalog import prompt_run_meta
-from moralstack.sdk.bootstrap import _bootstrap_pipeline, _resolve_generation_mode, _resolve_model
+from moralstack.sdk.bootstrap import (
+    _apply_observability_config,
+    _bootstrap_pipeline,
+    _resolve_generation_mode,
+    _resolve_model,
+)
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.errors import GovernancePipelineError
 from moralstack.sdk.response import GovernedResponse
@@ -677,6 +682,8 @@ class GovernedClient:
         self._orchestrator = orchestrator
         self._config = config
         self._session = SessionState(config)
+        # Direct constructions (not via govern()): a same-value call after govern() is a no-op.
+        _apply_observability_config(config, source="sdk_session")
         self._run_id: str = self._init_run_context(prompt_run_meta(getattr(orchestrator, "prompt_set", None)))
         self.chat = GovernedChat(self)
 
@@ -707,7 +714,7 @@ class GovernedClient:
                     init_db(db_path)
                     create_run(run_id, "sdk_session", meta)
                 except Exception:
-                    pass
+                    _LOG.debug("sdk run row init failed", exc_info=True)
         emit_run_started_file_record(run_id, "sdk_session", meta)
 
         return run_id
@@ -778,5 +785,6 @@ def govern(
     if config is None:
         config = GovernanceConfig()
 
+    _apply_observability_config(config, source="sdk_session")
     orchestrator = _bootstrap_pipeline(config)
     return GovernedClient(client, orchestrator, config)

@@ -54,7 +54,7 @@ from moralstack.orchestration.orchestration_event_taxonomy import PROXY_OUTPUT_F
 from moralstack.orchestration.types import ProcessedRequest
 from moralstack.orchestration.upstream_draft import UpstreamDraftGenerator
 from moralstack.prompts.catalog import prompt_run_meta
-from moralstack.sdk.bootstrap import _resolve_generation_mode, _resolve_model
+from moralstack.sdk.bootstrap import _apply_observability_config, _resolve_generation_mode, _resolve_model
 from moralstack.sdk.config import GovernanceConfig
 from moralstack.sdk.session_store import InMemorySessionStore, SessionStoreProtocol
 from moralstack.server.conversation_correlation import (
@@ -642,6 +642,9 @@ def create_app(
         A FastAPI app ready to be served by uvicorn.
     """
     cfg = config or GovernanceConfig()
+    # Explicit GovernanceConfig observability values (process-wide, first-applied wins) must be in place
+    # before the observability run is initialized below; best-effort, never raises.
+    _apply_observability_config(cfg, source="moralstack-server")
     upstream_generation_model = _resolve_model(cfg)
     logger.info("MoralStack proxy upstream generation model: %s", upstream_generation_model)
     generation_mode = _resolve_generation_mode(cfg)
@@ -653,7 +656,7 @@ def create_app(
         _ttl_seconds, _max_entries = _resolve_correlation_store_env_config()
         correlation_store = ConversationCorrelationStore(ttl_seconds=_ttl_seconds, max_entries=_max_entries)
     # Initialize observability for the proxy lifetime so all governance events
-    # are persisted to DB / JSONL per MORALSTACK_OBSERVABILITY_* env vars.
+    # are persisted to DB / JSONL per explicit GovernanceConfig values, else MORALSTACK_OBSERVABILITY_* env vars.
     # Pattern parallels cli/shell.py: init_db + create_run + set_current_run_id.
     # Each HTTP request then sets its own request_id in the context var.
     run_meta: dict[str, Any] = {
@@ -666,7 +669,8 @@ def create_app(
     else:
         logger.info(
             "MoralStack proxy observability not configured "
-            "(set MORALSTACK_OBSERVABILITY_DB_PATH or MORALSTACK_OBSERVABILITY_MODE=file_only to enable persistence)."
+            "(set MORALSTACK_OBSERVABILITY_DB_PATH / MORALSTACK_OBSERVABILITY_MODE=file_only, "
+            "or GovernanceConfig db_path / observability_mode, to enable persistence)."
         )
 
     from moralstack import __version__ as _moralstack_version
@@ -885,6 +889,8 @@ def _ensure_request_row(
     the observability DB path can be re-pointed afterwards: `build_app()` calls
     `load_env()` with override=True, so a harness that isolates one database per
     run has to re-assert MORALSTACK_OBSERVABILITY_DB_PATH after the app exists.
+    (An explicit `GovernanceConfig.db_path` established by `create_app` takes
+    precedence over env, so such a re-point is then ineffective.)
     Both are therefore ensured here against the path actually being written —
     without them every insert fails the FK (or finds no table) and is swallowed,
     which silently drops the whole request from the audit trail, children

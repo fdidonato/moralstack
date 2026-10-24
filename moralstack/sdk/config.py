@@ -78,14 +78,35 @@ class GovernanceConfig:
     """
 
     # --- Observability ---
+    # The three fields below are PROCESS-WIDE (one observability target per process), not per client.
     observability_mode: str = "off"
-    """Observability mode: 'off' | 'file_only' | 'db_only' | 'dual'."""
+    """
+    Observability mode: 'file_only' | 'db_only' | 'dual'. Precedence: this field, then
+    ``MORALSTACK_OBSERVABILITY_MODE``, then the default (db_only when a DB path is set, else file_only).
+    'off' (the default), ``None`` or blank means "not set here": env/defaults apply — it does NOT disable
+    writing. An explicit value only takes effect if applied before observability is live (the first
+    ``govern()`` / ``create_app`` in the process, before anything is enqueued); a later different value
+    is ignored with a WARNING and never redirects a live target. A ``govern()`` that fails later (e.g. a
+    pipeline build error) still fixes the observability target for the process. In-process report code
+    (``reports/markdown_export.py``, ``reports/model.py``) sees the explicit value; a separate
+    ``moralstack-ui`` process reads env only.
+    """
 
     jsonl_dir: str | None = None
-    """Directory for JSONL audit trail. Requires observability_mode 'file_only' or 'dual'."""
+    """
+    Directory for the JSONL audit trail (used in 'file_only' / 'dual'). Precedence: this field, then
+    ``MORALSTACK_OBSERVABILITY_JSONL_DIR``, then ``logs/observability``. Process-wide; same
+    first-applied-wins rule as ``observability_mode``.
+    """
 
     db_path: str | None = None
-    """SQLite path for audit trail. Requires observability_mode 'db_only' or 'dual'."""
+    """
+    SQLite path for the audit trail (used in 'db_only' / 'dual'). Precedence: this field, then
+    ``MORALSTACK_OBSERVABILITY_DB_PATH`` (legacy alias ``MORALSTACK_DB_PATH``). With no mode set here or in
+    env, a DB path implies 'db_only'. Process-wide; same
+    first-applied-wins rule as ``observability_mode`` (the write-queue worker keeps one connection, so a
+    live target is never redirected).
+    """
 
     # --- Failure policy ---
     failure_policy: str = "refuse"
