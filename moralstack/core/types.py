@@ -91,6 +91,8 @@ class PolicyLLMProtocol(Protocol):
         config: Any = None,
         overrides: Any = None,
     ) -> Any: ...
+
+    # Deprecated (no production caller); removal in 2.0.
     def refuse(self, prompt: str, guidance: str, config: Any = None, language: str | None = None) -> Any: ...
 
 

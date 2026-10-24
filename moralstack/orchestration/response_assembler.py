@@ -238,7 +238,7 @@ class ResponseAssembler:
 
         Requires: draft exists with sufficient length, critic present, zero violations,
         and critic decision is NOT PROCEED (if critic says PROCEED the draft is constructive
-        content, not a refusal; we must generate a real refusal via policy.refuse()).
+        content, not a refusal; we must generate a real refusal via ``safe_refusal_generator``).
         """
         if not state.draft_response or len(state.draft_response.strip()) < 30:
             return False

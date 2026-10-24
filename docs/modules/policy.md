@@ -177,7 +177,7 @@ draft on the primary model while allowing a lighter model for deliberative revis
 `OpenAIPolicy(..., prompt_set=None)` reads the rewrite texts from its `PromptSet` (default: the packaged set):
 `policy.rewrite.user` (template with the original request, the current draft and the revision feedback),
 `policy.rewrite.default_system` (used when the caller passes no `system`) and `policy.rewrite.constraints`
-(appended to either system, with no separator). `refuse()` keeps its inline texts (dead path, not overridable). The
+(appended to either system, with no separator). `refuse()` keeps its inline texts (deprecated, no production caller, not overridable). The
 mini-estimator policies of the risk estimator only run `generate`/`generate_messages`, so they need no prompt text.
 
 The rewrite prompt also includes explicit constraints that prevent lighter models from adding
@@ -193,7 +193,7 @@ information leakage; overall stack judge score ~9.27/10 on benchmark run 12).
 | Variable | Purpose |
 |----------|---------|
 | `OPENAI_API_KEY` | Required API key |
-| `OPENAI_MODEL` | Primary model for `generate()` and `refuse()` |
+| `OPENAI_MODEL` | Primary model for `generate()` (and the deprecated `refuse()`) |
 | `MORALSTACK_POLICY_REWRITE_MODEL` | Optional; model for `rewrite()` (deliberative cycle 2+). Defaults to `OPENAI_MODEL` when unset. `.env.template` sets `gpt-4o` (same as `OPENAI_MODEL`, i.e. no downgrade) since 2026-09-09; it shipped `gpt-4.1-nano` before that. |
 | `OPENAI_TEMPERATURE` | Sampling temperature for the delivered answer (default `0.7`). |
 | `OPENAI_TOP_P` | Nucleus sampling `top_p` for the delivered answer (default `0.9`). |
@@ -229,10 +229,12 @@ The behavior of an **unset** field depends on the entry point, controlled by
   proxy request that omits sampling parameters behave like a plain OpenAI call. The
   omit-vs-default switch is implemented by `_complete(..., omit_unset=...)`.
 
-The REFUSE wording deliberately ignores per-request overrides
-(no `overrides` parameter on `refuse()`) so a low client `max_tokens` cannot truncate a
-safety message — it still honors the `OPENAI_MAX_TOKENS` env default on every path,
-including the proxy.
+REFUSE wording is excluded from per-request overrides on every path:
+`safe_refusal_generator._llm_refusal_call` calls `generate()` with no `overrides`/`config`
+(`orchestration/safe_refusal_generator.py:415`), so it keeps the env default, and the
+deprecated `OpenAIPolicy.refuse()` likewise has no `overrides` parameter. A low client
+`max_tokens` therefore cannot truncate a safety message — it still honors the
+`OPENAI_MAX_TOKENS` env default on every path, including the proxy.
 
 See also `.env.template` and `INSTALL.md`.
 
@@ -258,7 +260,10 @@ print(result.text)  # Revised response
 
 **Important note**: The `guidance` is used as *instructions* for the LLM, it is not included literally in the output.
 
-### refuse()
+### refuse() (deprecated)
+
+Deprecated: emits a `DeprecationWarning` and will be removed in MoralStack 2.0. The governed pipeline never calls it;
+refusals come from `moralstack.orchestration.safe_refusal_generator`.
 
 Generates a reasoned and respectful refusal.
 
@@ -364,7 +369,10 @@ class PolicyLLMProtocol(Protocol):
         config: Any = None,
         language: str | None = None,
     ) -> Any:
-        """Generates reasoned refusal. language: explicit output language when prompt empty or to reduce drift."""
+        """Generates reasoned refusal. language: explicit output language when prompt empty or to reduce drift.
+
+        Deprecated (no production caller); removal in 2.0.
+        """
         ...
 ```
 

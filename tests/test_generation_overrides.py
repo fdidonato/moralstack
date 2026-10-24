@@ -16,6 +16,8 @@ All offline: the OpenAI client is replaced with a capturing fake.
 
 from __future__ import annotations
 
+import pytest
+
 from moralstack.models.base import GenerationConfig, GenerationOverrides
 from moralstack.models.policy import OpenAIPolicy
 
@@ -216,7 +218,10 @@ class TestRefuseExcluded:
         policy, completions = _make_policy(monkeypatch, max_tokens_env="4096")
         # refuse() has no ``overrides`` parameter; a client max_tokens cannot
         # reach it, so the safety message keeps the operator-set default.
-        policy.refuse("prompt", "guidance")
+        with pytest.warns(DeprecationWarning, match="OpenAIPolicy.refuse") as record:
+            result = policy.refuse("prompt", "guidance")
+        assert record[0].filename == __file__
+        assert result.text == "ok"
         assert completions.calls[-1]["max_tokens"] == 4096
 
     def test_refuse_has_no_overrides_param(self):

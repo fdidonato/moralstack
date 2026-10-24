@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -475,6 +476,10 @@ class OpenAIPolicy:
     ) -> GenerationResult:
         """Generates an empathetic and informative refusal.
 
+        Deprecated: the governed pipeline never calls this method (refusals come from
+        ``moralstack.orchestration.safe_refusal_generator``); it will be removed in
+        MoralStack 2.0.
+
         Args:
             prompt: User request (may be empty for regulated domains).
             guidance: Reason for declining.
@@ -482,6 +487,13 @@ class OpenAIPolicy:
             language: Explicit output language (e.g. "English") when prompt is empty
                 or to reduce LLM non-compliance (e.g. Spanish when request is English).
         """
+        warnings.warn(
+            "OpenAIPolicy.refuse() is deprecated: the governed pipeline never calls it "
+            "(refusals come from moralstack.orchestration.safe_refusal_generator); "
+            "it will be removed in MoralStack 2.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         refuse_prompt = (
             f"USER REQUEST:\n{prompt}\n\n"
             f"REASON FOR DECLINING:\n{guidance}\n\n"

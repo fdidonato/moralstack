@@ -318,7 +318,8 @@ records outcome `timeout`) the reason is `fast_path_escalation_unverified`; an e
 `fast_path_escalation_failed`. The REFUSE is built from structured signals only
 (`_decision_as_refuse` keeps `hard_violations`), a rebuilt `DecisionExplanation`
 (`winning_rule="fast_path_fail_closed"`), and the REFUSE branch of
-`ResponseAssembler.assemble`, so `finalize_delivery` reports REFUSE/`content_filter`; the
+`ResponseAssembler.assemble` (refusal text comes from `safe_refusal_generator`, or the static `format_refusal` fallback; the deprecated
+`OpenAIPolicy.refuse()` is never called), so `finalize_delivery` reports REFUSE/`content_filter`; the
 refusal LLM receives a neutral rationale ("The safety check could not be completed.")
 instead of the benign risk rationale. A FINAL trace row (sequence 2, appended after the
 controller-side FINAL row; readers take the last FINAL row) carries

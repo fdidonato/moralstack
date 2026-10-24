@@ -51,6 +51,7 @@ import json
 import os
 import re
 import uuid
+import warnings
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -1707,8 +1708,10 @@ def _builders_openai_policy_client_boundary(out: dict[str, str]) -> None:
         )
         policy.rewrite("ORIGINAL USER PROMPT", "The current draft.", "make it more balanced")
         policy.rewrite("ORIGINAL USER PROMPT", "The current draft.", "make it more balanced", system="EXPLICIT SYSTEM")
-        policy.refuse("ORIGINAL USER PROMPT", "because it is unsafe")
-        policy.refuse("ORIGINAL USER PROMPT", "because it is unsafe", language=" Italian ")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            policy.refuse("ORIGINAL USER PROMPT", "because it is unsafe")
+            policy.refuse("ORIGINAL USER PROMPT", "because it is unsafe", language=" Italian ")
     _add_wire(out, "wire/openai_policy/client_boundary", factory.wire)
 
 

@@ -113,6 +113,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
+- **`OpenAIPolicy.refuse()` is deprecated and will be removed in 2.0.** It now emits a `DeprecationWarning` and is
+  otherwise unchanged (same prompts, same return). The governed pipeline never calls it: refusals come from
+  `moralstack.orchestration.safe_refusal_generator`. `PolicyLLMProtocol.refuse` stays until 2.0.
 - **Five loaded-but-unread config fields are deprecated and will be removed in 2.0.**
   `OrchestratorConfig.max_critical_violations`, `early_exit_hindsight_threshold` and `safe_response_on_error`,
   `HindsightConfig.revise_threshold` and `EnsembleConfig.conservative_on_failure` (env vars
