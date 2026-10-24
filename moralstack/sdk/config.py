@@ -82,7 +82,8 @@ class GovernanceConfig:
     observability_mode: str = "off"
     """
     Observability mode: 'file_only' | 'db_only' | 'dual'. Precedence: this field, then
-    ``MORALSTACK_OBSERVABILITY_MODE``, then the default (db_only when a DB path is set, else file_only).
+    ``MORALSTACK_OBSERVABILITY_MODE`` (legacy alias ``MORALSTACK_PERSIST_MODE``), then the default
+    (db_only when a DB path is set, else file_only).
     'off' (the default), ``None`` or blank means "not set here": env/defaults apply — it does NOT disable
     writing. An explicit value only takes effect if applied before observability is live (the first
     ``govern()`` / ``create_app`` in the process, before anything is enqueued); a later different value

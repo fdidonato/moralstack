@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Docs wording for the observability fields.** The README now says an explicit `GovernanceConfig` observability
+  value applies before the write-queue target is bound; the `observability_mode` docstring names the legacy
+  `MORALSTACK_PERSIST_MODE` alias. Text only, no behavior change.
 - **The fail-safe REFUSE and the final-action fallback report `ERROR_PATH`.** `ResponseMetadata.for_fail_safe` and the
   `ensure_final_action_and_return` fallback result used `DELIBERATIVE_PATH`. `GovernanceMetadata.path` and
   `meta_json.path` change for these failure rows, and on the final-action fallback route `X-Moralstack-Path` changes

@@ -366,7 +366,7 @@ client = govern(
 ```
 
 The observability fields override the `MORALSTACK_OBSERVABILITY_*` env vars for the whole process, but only if
-applied before observability is live (the first `govern()` / `create_app` in the process); a later different value is
+applied before the write-queue target is bound (the first `govern()` / `create_app` in the process); a later different value is
 ignored with a WARNING and never redirects a live target. `observability_mode="off"` (the default), `None` or blank
 means "not set here": env/defaults apply, and writing is not disabled.
 

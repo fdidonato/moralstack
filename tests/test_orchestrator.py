@@ -974,7 +974,7 @@ class TestResponseAssembler:
         assert response.metadata.final_action == "NORMAL_COMPLETE"
 
     def test_refuse_uses_draft_when_valid(self, assembler):
-        """REFUSE: assembler generates refusal via policy.refuse() or fallback; draft is never used.
+        """REFUSE: assembler generates refusal via safe_refusal_generator or fallback; draft is never used.
         (Draft-as-refusal logic is disabled; REFUSE always produces new refusal content.)"""
         critique = MockCritiqueReport(violations=[], has_critical_violations=False)
         state = DeliberationState(
