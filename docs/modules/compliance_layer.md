@@ -341,7 +341,7 @@ Pipeline signal propagation tests in `tests/test_compliance_fast_path.py` and
 The DCCL is implemented inside the orchestrator, so it works identically when
 MoralStack is consumed via:
 
-- Proxy server (`moralstack-server`)
+- Proxy server (`create_app` from `moralstack.server`)
 - SDK Python wrapper (`govern(OpenAI())`)
 - Direct CLI / benchmark scripts
 

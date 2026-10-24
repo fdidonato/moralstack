@@ -1015,12 +1015,3 @@ def _finalize_request(
         # the lifespan hook registered in create_app.
     except Exception as exc:
         logger.warning("Failed to finalize request observability: %s", exc)
-
-
-def main() -> None:
-    """CLI entry point: `moralstack-server`. Starts uvicorn with a stub orchestrator."""
-    raise NotImplementedError(
-        "The `moralstack-server` CLI requires explicit injection of openai_client + orchestrator. "
-        "Use `from moralstack.server import create_app` in your own launcher module instead. "
-        "See examples/server_quickstart.py (Step 12)."
-    )

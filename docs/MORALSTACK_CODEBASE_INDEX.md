@@ -52,13 +52,12 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 `python-dotenv`, `ruamel.yaml`, `langdetect`. UI/server extras add `fastapi`,
 `uvicorn`, `httpx`, `jinja2` (`pyproject.toml:27-56`).
 
-### Console entry points (`pyproject.toml:62-66`)
+### Console entry points (`pyproject.toml:62-65`)
 
 | Script | Target | Notes |
 |---|---|---|
 | `moralstack` | `moralstack.cli.run:main` | CLI runner |
 | `moralstack-ui` | `moralstack.ui.app:main` | dashboard |
-| `moralstack-server` | `moralstack.server.proxy:main` | **reserved** — `main()` raises `NotImplementedError`; use `create_app` instead (`server/proxy.py:1016`) |
 | `moralstack-validate-overlay` | `moralstack.cli.validate_overlay:main` | overlay validation |
 
 ---

@@ -688,7 +688,7 @@ Conversations are identified by the `X-Moralstack-Conversation-Id` header, then
 `extra_body.moralstack_conversation_id`, then a correlation store keyed by principal and history hash (the
 principal comes from `X-Moralstack-Tenant-Id` or an HMAC of the bearer token). Requests in the same
 conversation are serialized by a per-conversation lock (30 s, then 503 with `Retry-After`). Session and
-correlation stores are in-process by default, so the reference launcher runs a single worker:
+correlation stores are in-process by default, so the reference launcher (from a source checkout; `examples/` is not packaged) runs a single worker:
 `uvicorn examples.server_quickstart:app --port 8080`. Contract: [`modules/server_proxy.md`](./modules/server_proxy.md).
 
 ### 10.4 Command-line tools
@@ -698,7 +698,6 @@ correlation stores are in-process by default, so the reference launcher runs a s
 | `moralstack` | Interactive governed shell (`--mock`, `--minimal`, `--no-perspectives`, `--no-simulation`, `--no-hindsight`, ...) |
 | `moralstack-ui` | Observability dashboard (§12) |
 | `moralstack-validate-overlay <path>` | Validates an overlay YAML |
-| `moralstack-server` | Placeholder: raises `NotImplementedError` and points to `examples/server_quickstart.py` |
 
 Examples for every surface live in `examples/` (SDK quickstart, forced overlay, domain detection, multi-turn,
 jailbreak resistance, audit trail, proxy).
@@ -836,7 +835,6 @@ Behaviors observed in the code during this rewrite that a reader might otherwise
 | `EnsembleConfig.conservative_on_failure` and `HindsightConfig.revise_threshold` are deprecated no-ops (warn when non-default), removal in 2.0 | `runtime/modules/perspective_module.py`, `runtime/modules/hindsight_module.py` |
 | `OpenAIPolicy.refuse` has no production caller and is deprecated (removal in 2.0); refusals go through `safe_refusal_generator` | `models/policy.py` |
 | `DeveloperContract` supports a `structured` mode, but contracts are only built in `opaque` mode | `orchestration/contract.py`, `orchestration/conversation_context.py` |
-| The `moralstack-server` console script is a placeholder | `server/proxy.py` (`main`) |
 
 Open hypotheses and their status are tracked in [`CODEBASE_FACTS.md`](./CODEBASE_FACTS.md) → "Future work /
 known gaps"; limitations of the approach itself are in

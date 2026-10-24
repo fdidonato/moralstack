@@ -2169,3 +2169,19 @@ def test_proxy_error_path_headers_unchanged():
     assert response.json()["choices"][0]["finish_reason"] == "content_filter"
     assert "X-Moralstack-Decision" not in response.headers
     mock_openai.chat.completions.create.assert_not_called()
+
+
+def test_no_server_console_script_or_proxy_main():
+    """The stub `moralstack-server` launcher is removed (only the run-meta data string remains)."""
+    import tomllib
+    from pathlib import Path
+
+    from moralstack.server import proxy
+
+    assert not hasattr(proxy, "main")
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
+    assert set(pyproject["project"]["scripts"]) == {
+        "moralstack",
+        "moralstack-ui",
+        "moralstack-validate-overlay",
+    }

@@ -323,8 +323,8 @@ All non-`chat.completions.create()` calls pass through transparently
 **OpenAI-compatible HTTP proxy** — point any OpenAI-compatible client at
 `http://localhost:8080/v1` and get governance with `X-Moralstack-*` response headers. Install
 with `pip install "moralstack[server]"`, import `create_app` from `moralstack.server`, inject an
-upstream OpenAI client and a configured `OrchestrationController`, and serve with uvicorn. (The
-`moralstack-server` entry point is reserved for a future launcher.) See
+upstream OpenAI client and a configured `OrchestrationController`, and serve with uvicorn. (There is no
+server console script; from a source checkout, `uvicorn examples.server_quickstart:app` runs the quickstart.) See
 [docs/modules/server_proxy.md](./docs/modules/server_proxy.md) and
 [`examples/server_quickstart.py`](./examples/server_quickstart.py).
 

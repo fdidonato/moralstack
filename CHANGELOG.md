@@ -129,6 +129,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.env.template` no longer ships these lines active (its `EARLY_EXIT_HINDSIGHT_THRESHOLD=0.75` differed from the
   code default `0.6`).
 
+### Removed
+
+- **The `moralstack-server` console script and `moralstack.server.proxy.main` are removed.** The script only raised
+  `NotImplementedError` (formally breaking in 1.x, but it never worked). Use `create_app` from `moralstack.server` in
+  your own launcher, or, from a source checkout, `uvicorn examples.server_quickstart:app`. The run meta
+  `source: "moralstack-server"` in the audit data is unchanged. Editable installs keep a stale launcher until
+  `pip install -e . --no-deps` is re-run.
+
 ## 1.0.0 — 2026-10-21
 
 ### Upgrading from 0.7.0

@@ -20,8 +20,8 @@ source venv/bin/activate
 python scripts/install.py
 ```
 
-Installs the package in editable mode with all extras (dev, ui). Registers `moralstack`, `moralstack-ui`, and
-`moralstack-server` (stub entrypoint; use `create_app` in your launcher) CLI entry points.
+Installs the package in editable mode with all extras (dev, ui). Registers the `moralstack`, `moralstack-ui`, and
+`moralstack-validate-overlay` CLI entry points.
 
 **Manual (equivalent to install.py):**
 
@@ -48,8 +48,8 @@ pip install -e .[server]
 ```
 
 Use `from moralstack.server import create_app` and pass an upstream OpenAI client plus a configured
-`OrchestrationController`. The `moralstack-server` console script raises `NotImplementedError` until you provide a
-launcher (see design v1.3 and upcoming examples).
+`OrchestrationController`. There is no server console script: write your own launcher, or, from a source checkout, run
+`uvicorn examples.server_quickstart:app`.
 
 **Alternative (legacy):**
 

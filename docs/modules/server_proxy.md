@@ -100,7 +100,7 @@ payload.
 ## Configuration / install
 
 - Optional extras: `[ui]` includes proxy-related deps; `[server]` is a lighter subset (`fastapi`, `uvicorn`, `httpx`).
-- Console script `moralstack-server` points at `moralstack.server.proxy:main`, which intentionally raises `NotImplementedError` until a deployer launcher wires real clients (Step 12 examples).
+- There is no server console script (`moralstack-server` and `moralstack.server.proxy.main` were removed). Use `create_app` from your own launcher when MoralStack is installed as a package; from a source checkout, `uvicorn examples.server_quickstart:app` runs the quickstart (`examples/` is not packaged).
 
 ## Tests
 
