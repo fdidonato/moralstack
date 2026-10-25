@@ -194,8 +194,12 @@ def _outcomes(debug_log: MagicMock) -> list[dict[str, Any]]:
 
 
 @pytest.mark.parametrize(
-    ("exc", "level", "has_traceback"),
-    [(RuntimeError(SECRET), logging.WARNING, True), (OrchestratorTimeoutError("deadline exceeded"), logging.INFO, False)],
+    ("exc", "level", "has_traceback", "designed_guard"),
+    [
+        (RuntimeError(SECRET), logging.WARNING, True, False),
+        (OrchestratorTimeoutError("deadline exceeded"), logging.INFO, False, False),
+        (OrchestratorTimeoutError("unused: the designed guard raises its own"), logging.INFO, False, True),
+    ],
 )
 def test_hindsight_log_level_follows_the_module_policy(
     diags: list[dict[str, Any]],
@@ -204,14 +208,18 @@ def test_hindsight_log_level_follows_the_module_policy(
     exc: BaseException,
     level: int,
     has_traceback: bool,
+    designed_guard: bool,
 ) -> None:
+    kw: dict[str, Any] = {"start_time": time.time() - 1000} if designed_guard else {}
     with caplog.at_level(logging.DEBUG, logger=_RUNNER_MOD):
-        _hindsight_state(exc)
+        _hindsight_state(exc, **kw)
     relevant = [r for r in caplog.records if f"error_type={type(exc).__name__}" in r.getMessage()]
     assert len(relevant) == 1
     assert relevant[0].levelno == level
     assert (relevant[0].exc_info is not None) is has_traceback
     assert SECRET not in relevant[0].getMessage()
+    if level == logging.INFO:
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 def test_hindsight_row_and_payload_are_clean(diags: list[dict[str, Any]], debug_log: MagicMock) -> None:
@@ -278,6 +286,22 @@ def test_soft_revision_unprintable_exception_keeps_draft(monkeypatch: pytest.Mon
     out = runner._soft_revision_pass(_state(), _request())
     assert out.draft_response == "the draft"
     assert "Soft revision failed: _BadStr" in out.errors
+
+
+def test_soft_revision_warning_carries_class_name_and_exc_info(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(f"{_RUNNER_MOD}.build_aggregated_guidance", lambda *_a, **_k: "pending soft guidance")
+    runner = _runner()
+    runner.policy.rewrite.side_effect = RuntimeError(SECRET)
+    with caplog.at_level(logging.DEBUG, logger=_RUNNER_MOD):
+        out = runner._soft_revision_pass(_state(), _request())
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "Soft revision failed" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "RuntimeError" in warnings[0].getMessage()
+    assert SECRET not in warnings[0].getMessage()
+    assert warnings[0].exc_info is not None
+    assert out.errors == [f"Soft revision failed: {SECRET}"]
 
 
 def test_generation_unprintable_exception_without_draft_raises_generation_error() -> None:

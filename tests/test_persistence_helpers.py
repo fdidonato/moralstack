@@ -35,6 +35,8 @@ def test_raising_log_call_is_swallowed_and_persist_still_runs(
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert "RuntimeError" in warnings[0].getMessage()
+    assert warnings[0].exc_info is not None
+    assert "diagnostics logger down" not in warnings[0].getMessage()
 
 
 def test_log_call_receives_the_payload_when_it_works() -> None:
