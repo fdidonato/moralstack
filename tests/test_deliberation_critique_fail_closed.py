@@ -1374,11 +1374,17 @@ NEUTRAL = "The safety check could not be completed."
 
 
 def _spy_refusal_rationale(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
-    """Record the rationale handed to the refusal generator, then raise to use the non-enriched path."""
+    """Record the rationale handed to the refusal generator, then raise to use the non-enriched path.
+
+    The generator prompt prefers ``refusal_context.rationale`` over the ``rationale`` kwarg, so both
+    must agree for an entry to be recorded as that value; a mismatch records both.
+    """
     seen: list[Any] = []
 
     def _spy(**kwargs: Any) -> Any:
-        seen.append(kwargs.get("rationale"))
+        rationale = kwargs.get("rationale")
+        context_rationale = kwargs["refusal_context"].rationale
+        seen.append(rationale if context_rationale == rationale else (rationale, context_rationale))
         raise RuntimeError("stop after the call")
 
     monkeypatch.setattr("moralstack.orchestration.response_assembler.generate_llm_safe_refusal_detailed", _spy)

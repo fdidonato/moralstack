@@ -193,7 +193,7 @@ def test_s3a_incomplete_critique_ignores_stale_guidance(outcome):
     reason = resp.metadata.refusal_reason
     assert reason.startswith("RISK-RATIONALE")
     assert "PREV-GUIDANCE" not in reason and "PREV-GUIDANCE" not in resp.content
-    assert "X" not in resp.content.split("\n\n", 1)[1] or "[REFUSAL_ALTERNATIVES]" in resp.content
+    assert "- X" not in resp.content
     assert "[REFUSAL_ALTERNATIVES]" in resp.content
 
 

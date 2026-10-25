@@ -124,6 +124,20 @@ def test_final_revalidation_error_event_carries_class_name_not_text(monkeypatch)
     assert payload["error_type"] == "RuntimeError"
     assert "error" not in payload
     assert secret not in repr(events)
+    # The in-process outcome keeps the text (no persisted reader), through the guard.
+    assert outcome.error == secret
+
+
+def test_safe_exc_text_falls_back_to_class_name():
+    from moralstack.orchestration.final_revalidation import _safe_exc_text
+
+    class _BadStr(Exception):
+        def __str__(self) -> str:
+            raise RuntimeError("str failed")
+
+    assert _safe_exc_text(ValueError("boom")) == "boom"
+    assert _safe_exc_text(ValueError()) == "ValueError"
+    assert _safe_exc_text(_BadStr()) == "_BadStr"
 
 
 def _s2_setup(store, monkeypatch):
