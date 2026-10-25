@@ -240,7 +240,7 @@ required for the embedder when `embedder_provider="local"`.
 
 `_route_deliberative` runs the `DeliberationRunner` cycles (critic → simulator ∥
 perspectives → hindsight). Each cycle: `ConvergenceEvaluator.determine_decision`
-(`convergence_evaluator.py:314-519`) turns the modules' weighted votes into a
+(`convergence_evaluator.py:283-488`) turns the modules' weighted votes into a
 `DecisionType`; `enforce_convergence_invariants` (`convergence.py:19-65`) then
 decides whether to stop. The simulator never votes REFUSE — REFUSE arises only
 from hard violations or a refuse-vote majority. Stop reasons: `CONVERGED`,
@@ -255,7 +255,7 @@ answer (e.g. `answer exactly 'TRUE' or 'FALSE'`) via
 token and the only violations are SOFT (`violated_hard == False`), a `REVISE`
 is downgraded to `PROCEED` and the soft `violations`/`guidance` are cleared —
 because the convergence evaluator votes `revise` on the *presence of
-violations* (`convergence_evaluator.py:345-350`), not on `decision`. This stops
+violations* (`convergence_evaluator.py:314-319`), not on `decision`. This stops
 the revision loop from flipping a correct binary answer (observed on
 `boolq_contrast`). HARD violations are never affected. Each activation emits a
 best-effort `governance.enumerated_output_gate` diagnostic to

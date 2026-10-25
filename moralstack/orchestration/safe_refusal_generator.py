@@ -208,15 +208,6 @@ def _detect_language_fallback(prompt: str | None) -> str:
         return "English"
 
 
-def domain_from_signals(signals: list[str]) -> str | None:
-    """Map risk signals to an overlay domain for refusal redirection."""
-    for signal in signals:
-        domain = SIGNAL_DOMAIN_MAP.get(signal)
-        if domain:
-            return domain
-    return None
-
-
 def _normalize_refusal_domain(domain: str | None) -> str | None:
     """
     Normalize a refusal domain candidate.

@@ -751,7 +751,7 @@ modules can also be absent, disabled, or skipped by timeout or gating:
 - **Hindsight Evaluator** — retrospective quality score.
 
 The **Convergence Engine** decides the loop outcome (verified):
-- `ConvergenceEvaluator.determine_decision` (`convergence_evaluator.py:314-519`)
+- `ConvergenceEvaluator.determine_decision` (`convergence_evaluator.py:283-488`)
   tallies weighted votes from critic/simulator/perspectives/hindsight into a
   `DecisionType` (PROCEED→CONVERGED, REVISE, REFUSE, CONTINUE, plus
   CONVERGED_WITH_SUGGESTIONS). The **simulator can never vote REFUSE** — REFUSE

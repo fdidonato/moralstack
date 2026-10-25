@@ -59,12 +59,6 @@ class CritiqueError(MoralStackError):
     pass
 
 
-class SimulationError(MoralStackError):
-    """Error in consequence simulation."""
-
-    pass
-
-
 class OrchestratorTimeoutError(MoralStackError):
     """Timeout exceeded during processing."""
 
@@ -737,22 +731,6 @@ class CriticReportProtocol(Protocol):
     system_prompt: str
 
 
-class QuickCheckResultProtocol(Protocol):
-    """Protocol for critic quick_check result."""
-
-    passed: bool
-    critical_violation: Any
-
-
-class ConsequenceLikeProtocol(Protocol):
-    """Protocol for a single simulated consequence. Runner uses .text, .likelihood, .harm_severity, .outcome_valence."""
-
-    text: str
-    likelihood: float
-    harm_severity: float
-    outcome_valence: float
-
-
 class SimulationResultProtocol(Protocol):
     """Protocol for simulator simulate() result."""
 
@@ -797,14 +775,6 @@ class PerspectiveResultProtocol(Protocol):
     concerns: list[str]
     suggestions: list[str]
     rationale: str
-
-
-class PerspectiveAggregationProtocol(Protocol):
-    """Protocol for EnsembleResult.aggregation."""
-
-    weighted_approval: float
-    min_approval: float
-    recommendation: Any  # "proceed" | "revise" | "refuse"
 
 
 class EnsembleResultProtocol(Protocol):

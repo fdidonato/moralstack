@@ -231,7 +231,7 @@ The behavior of an **unset** field depends on the entry point, controlled by
 
 REFUSE wording is excluded from per-request overrides on every path:
 `safe_refusal_generator._llm_refusal_call` calls `generate()` with no `overrides`/`config`
-(`orchestration/safe_refusal_generator.py:415`), so it keeps the env default, and the
+(`orchestration/safe_refusal_generator.py:406`), so it keeps the env default, and the
 deprecated `OpenAIPolicy.refuse()` likewise has no `overrides` parameter. A low client
 `max_tokens` therefore cannot truncate a safety message — it still honors the
 `OPENAI_MAX_TOKENS` env default on every path, including the proxy.

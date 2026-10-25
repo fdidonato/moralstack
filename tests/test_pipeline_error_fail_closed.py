@@ -55,7 +55,6 @@ from moralstack.orchestration.types import (
     ResponseMetadata,
     ResponseType,
     RiskEstimationError,
-    SimulationError,
 )
 from moralstack.runtime.orchestrator import Orchestrator, create_orchestrator
 from moralstack.utils.output_protection import OutputProtector
@@ -146,7 +145,7 @@ def test_no_failsafe_except_clause_in_controller() -> None:
 # =============================================================================
 
 SECRET = "provider said: secret-ish body"
-MS_FAMILY = [GenerationError, RiskEstimationError, CritiqueError, SimulationError, MoralStackError, FailSafeException]
+MS_FAMILY = [GenerationError, RiskEstimationError, CritiqueError, MoralStackError, FailSafeException]
 TIMEOUT_TEXT = "Timeout after 601000ms (max: 600000ms)"
 _CLOSED_SET = {"NORMAL_COMPLETE", "SAFE_COMPLETE", "REFUSE"}
 _CONVS = [None, ("c1", 1)]

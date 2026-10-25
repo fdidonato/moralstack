@@ -85,37 +85,6 @@ def _has_pending_soft_suggestions(state: DeliberationState, config: Orchestrator
     return suggestion_count >= config.soft_revision_min_suggestions
 
 
-def _all_modules_satisfied(state: DeliberationState) -> bool:
-    if state.last_critique:
-        if state.last_critique and state.last_critique.violations:
-            return False
-        if state.last_critique and (state.last_critique.revision_guidance or "").strip():
-            return False
-    if state.perspectives:
-        for p in state.perspectives:
-            if getattr(p, "approval_score", 1.0) < 0.7:
-                return False
-            if getattr(p, "concerns", None):
-                return False
-    if state.hindsight:
-        rec = getattr(state.hindsight, "recommendation", None) or (
-            getattr(state.hindsight, "aggregated", None) and getattr(state.hindsight.aggregated, "recommendation", None)
-        )
-        if rec is not None:
-            rec_str = str(rec).lower() if not hasattr(rec, "value") else getattr(rec, "value", str(rec)).lower()
-            if rec_str in ("refuse", "revise", "reject"):
-                return False
-        if getattr(state.hindsight, "feedback", None):
-            return False
-        if hasattr(state.hindsight, "suggestions") and state.hindsight.suggestions:
-            return False
-    if state.simulations:
-        for sim in state.simulations:
-            if sim.expected_valence < 0:
-                return False
-    return True
-
-
 def _risk_posture_blocks_cycle1_early_stop(
     risk_estimation: RiskEstimationProtocol | None,
     config: OrchestratorConfig,

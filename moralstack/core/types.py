@@ -54,14 +54,6 @@ class Violation:
 # =============================================================================
 
 
-class PrincipleLikeProtocol(Protocol):
-    """Protocol for principle-like objects (e.g. from constitution store get_relevant_principles)."""
-
-    id: str
-    title: str
-    level: str
-
-
 class PolicyLLMProtocol(Protocol):
     """Protocol for the Policy LLM."""
 

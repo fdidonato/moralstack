@@ -182,6 +182,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_OPTIONAL_ENV_VARS` entry and the template block). `append_decision_trace` already emitted only through
   observability and ignored `path=`, so no `decision_trace.jsonl` file was ever written; the module docs said otherwise
   and are corrected. No governance, prompt or payload change.
+- **Dead code (lot A): unused orchestration types and helpers are removed.** Removed: `NullEventEmitter` (its module
+  `orchestration/null_event_emitter.py` and the `moralstack.orchestration` export, so
+  `from moralstack.orchestration import NullEventEmitter` now raises `ImportError`), the orphan
+  `orchestration/path_router_explanation.py`, `SimulationError` (never raised), the `QuickCheckResultProtocol`,
+  `ConsequenceLikeProtocol`, `PerspectiveAggregationProtocol` and `PrincipleLikeProtocol` protocols, and the unused
+  `_all_modules_satisfied` and `domain_from_signals` helpers (formally breaking in 1.x). The `MoralStackError` family
+  that is actually raised, `_handle_error` and `_handle_timeout` are untouched. No governance, prompt or payload change.
 
 ## 1.0.0 — 2026-10-21
 
