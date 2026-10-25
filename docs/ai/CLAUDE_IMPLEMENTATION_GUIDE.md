@@ -55,8 +55,9 @@ do-not-modify files, invariants) and a new implementer; see
 ## Expected output from the implementer
 
 Files modified · tests added · commands run · real results · deviations from the
-plan · residual problems. The orchestrator then verifies only allowed files
-changed and flags any deviation.
+plan · residual problems · background commands still running. The orchestrator
+then verifies only allowed files changed and flags any deviation, and stops an
+implementer that still has background work (`TaskStop`).
 
 ## Limits and guard rails
 
@@ -64,7 +65,9 @@ changed and flags any deviation.
   destructive git are blocked at the tool boundary — not only forbidden in the
   handoff text.
 - It still must not commit/push; the orchestrator verifies HEAD did not move and
-  that only allowed files changed. The collected diff is reviewed by the
+  that only allowed files changed. The one authorized HEAD move is the
+  `git merge --ff-only <sha>` that brings an `isolation: "worktree"` slice up to
+  the local HEAD (`.claude/commands/ai-implement.md` step 3). The collected diff is reviewed by the
   `adversarial-reviewer` sub-agent (`/ai-review-diff`) and the orchestrator
   before any commit.
 - If the implementer hits an ambiguity or a blocking architectural problem, it

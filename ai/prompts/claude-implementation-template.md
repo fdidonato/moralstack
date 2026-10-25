@@ -18,6 +18,9 @@ Rules — non-negotiable:
 - If you find a blocking architectural problem, STOP and report it — do not
   work around it.
 - Do NOT git add, commit, push, or delete files outside your own edits.
+- Never run a command that reads stdin (`cat` without a file, `python -`
+  without a heredoc, `read`): it hangs. Read files with the `Read` tool. Never
+  move a hung command to the background, and do not use `run_in_background`.
 
 This template is filled in per task by the handoff under `ai/handoffs/`. The
 handoff carries: context, objective, approved plan, allowed files, do-not-modify
@@ -32,4 +35,5 @@ Required output at the end of your run:
 - commands run;
 - results (real output);
 - deviations from the plan;
-- residual problems / blockers.
+- residual problems / blockers;
+- background commands still running (command + why), or "none".

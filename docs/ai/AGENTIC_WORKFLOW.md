@@ -64,6 +64,10 @@ cache of 5 minutes):
 - One self-contained handoff per coherent slice, plan sections copied verbatim.
 - Fix passes run a new implementer on a fix handoff; resume the old one only
   within 5 minutes of its last activity.
+- An implementer is stopped (`TaskStop`) once its report is saved if it still has
+  background work. An `isolation: "worktree"` worktree starts from `origin/main`,
+  not the local HEAD: with unpushed commits the prompt authorizes one
+  `git merge --ff-only <sha>` (`/ai-implement` step 3).
 - The diff review and the pre-commit-verifier may run in parallel; if the
   verifier edited the tree (fixes applied, or `git status --short` differs from
   the reviewed snapshot), the diff is re-collected and the delta re-reviewed

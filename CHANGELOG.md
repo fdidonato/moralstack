@@ -48,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The implementer sub-agent no longer leaves hung background commands behind.** `claude-implementer` and the
+  handoff template forbid commands that read stdin and moving a hung command to the background, and the report gains a
+  `Background commands` line; `/ai-implement` stops an implementer that still has background work after its report
+  (`TaskStop`) and, for `isolation: "worktree"` slices, authorizes one `git merge --ff-only` to the local HEAD because
+  the worktree starts from `origin/main`. New harness tests pin these rules and the plan/implement/review contract (no
+  Edit/Write tool for the reviewer, implementer on Sonnet, non-Sonnet reviewer model, no reviewer `model:` override in
+  the review commands).
 - **Docs wording for the observability fields.** The README now says an explicit `GovernanceConfig` observability
   value applies before the write-queue target is bound; the `observability_mode` docstring names the legacy
   `MORALSTACK_PERSIST_MODE` alias. Text only, no behavior change.

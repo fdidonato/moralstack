@@ -314,6 +314,63 @@ def test_implementer_context_economy_keeps_the_evidence_rules(repo_root):
     assert "re-run the failing node(s) with the full traceback" in text
 
 
+def test_review_and_implement_contract_keeps_roles_separate(repo_root):
+    """T1: the plan→implement→review split is structural. The reviewer has no Edit/Write
+    tool (its Bash stays write-capable, restricted by instruction only), the implementer
+    runs on Sonnet, the reviewer is on a non-Sonnet model, the commands that delegate can
+    launch sub-agents, and the review commands never override the reviewer's model (which
+    would collapse the separation)."""
+    agents = repo_root / ".claude" / "agents"
+    reviewer = _frontmatter((agents / "adversarial-reviewer.md").read_text(encoding="utf-8"))
+    implementer = _frontmatter((agents / "claude-implementer.md").read_text(encoding="utf-8"))
+    reviewer_tools = {t.strip() for t in reviewer["tools"].split(",")}
+    assert reviewer_tools <= {"Read", "Grep", "Glob", "Bash"}, reviewer_tools
+    assert implementer["model"].strip() == "sonnet"
+    reviewer_model = reviewer["model"].strip().lower()
+    assert reviewer_model not in {"", "inherit"} and "sonnet" not in reviewer_model, reviewer_model
+    commands = repo_root / ".claude" / "commands"
+    for name in ("ai-plan", "ai-review-plan", "ai-implement", "ai-review-diff", "ai-finalize"):
+        tools = {
+            t.strip()
+            for t in _frontmatter((commands / f"{name}.md").read_text(encoding="utf-8"))["allowed-tools"].split(",")
+        }
+        assert "Agent" in tools, name
+    implement = _flat((commands / "ai-implement.md").read_text(encoding="utf-8"))
+    assert 'Agent(subagent_type: "claude-implementer", model: "sonnet"' in implement
+    for name in ("ai-review-plan", "ai-review-diff"):
+        text = _flat((commands / f"{name}.md").read_text(encoding="utf-8"))
+        assert "Do **not** pass `model:`" in text, name
+        call = re.search(r'`Agent\(subagent_type: "adversarial-reviewer"[^`]*\)`', text)
+        assert call and "model:" not in call.group(0), name
+
+
+def test_implementer_never_leaves_background_work_behind(repo_root):
+    """H1/H2 (2026-10-25): an implementer ran `cat` with no input, it hung on stdin and was
+    moved to the background, and the agent stayed alive ~1 h after its report. The agent is
+    told not to read stdin or background a hung command and to report live background work;
+    the orchestrator checks for it and stops the agent."""
+    agent = _flat((repo_root / ".claude" / "agents" / "claude-implementer.md").read_text(encoding="utf-8"))
+    assert "Never run a command that reads stdin" in agent
+    assert "never move a hung command to the background" in agent
+    assert "**Background commands**" in agent
+    template = _flat((repo_root / "ai" / "prompts" / "claude-implementation-template.md").read_text(encoding="utf-8"))
+    assert "Never run a command that reads stdin" in template
+    assert "background commands still running" in template
+    implement = _flat((repo_root / ".claude" / "commands" / "ai-implement.md").read_text(encoding="utf-8"))
+    assert "is waiting on its own background work" in implement
+    assert "`TaskStop`" in implement
+
+
+def test_worktree_implementers_start_from_the_local_head(repo_root):
+    """W1 (2026-10-20): `isolation: "worktree"` creates the worktree from `origin/main`, not
+    the local HEAD, so an implementer started with unpushed commits works on old code."""
+    implement = _flat((repo_root / ".claude" / "commands" / "ai-implement.md").read_text(encoding="utf-8"))
+    assert 'isolation: "worktree"' in implement
+    assert "`git merge --ff-only <sha>`" in implement
+    workflow = _flat((repo_root / "docs" / "ai" / "AGENTIC_WORKFLOW.md").read_text(encoding="utf-8"))
+    assert "worktree starts from `origin/main`" in workflow
+
+
 def test_cartographer_uses_lsp_and_the_plugin_is_enabled(repo_root):
     """The cartographer's callers come from LSP `incomingCalls`; without `LSP` + `ToolSearch`
     in its tools (LSP is a deferred tool) or with the plugin disabled it silently falls back

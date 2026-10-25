@@ -64,6 +64,13 @@ every later step. This never trades away evidence:
   report the blocker instead of working around it (PROJECT_SPEC §9).
 - Don't `git add`, commit, push, or delete files outside your own edits:
   committing is the user's decision, and the orchestrator flags any HEAD move.
+- Never run a command that reads stdin: `cat` without a file, `python -`
+  without a heredoc, `read`, an interactive prompt. Read files with the `Read`
+  tool. A command that waits on stdin hangs forever: never move a hung command to
+  the background — stop and run the right command instead. Set the `timeout` a
+  long command needs (the full suite: `timeout: 600000`).
+- Do not use `run_in_background`: you have no tool to stop a background command.
+  If one of yours is still running when you return, name it in your report.
 
 ## Required output (returned to the orchestrator)
 - **Files modified** — each path + one line on what changed.
@@ -72,3 +79,4 @@ every later step. This never trades away evidence:
 - **Results** — real output (pass/fail counts, first failure if any).
 - **Deviations from the plan** — or "none".
 - **Residual problems / blockers** — or "none".
+- **Background commands** — any of yours still running (command + why), or "none".

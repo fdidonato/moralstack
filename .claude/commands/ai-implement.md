@@ -40,6 +40,21 @@ Steps:
    `Agent(subagent_type: "claude-implementer", model: "sonnet", prompt: "Implement the handoff at ai/handoffs/<slug>-handoff.md. Read it in full first, implement only what it allows, and return your required-output report.")`.
    Save the sub-agent's returned report to
    `ai/handoffs/<slug>-implementation-report.md` for the audit trail.
+   - **Worktree slices** (parallel implementers with `isolation: "worktree"`):
+     the worktree is created from `origin/main`, not from the local HEAD
+     (observed 2026-10-20), so unpushed local commits are missing from it. When
+     HEAD is ahead of `origin/main`, start the prompt with the one authorized HEAD
+     move: "if `git log -1 --format=%H` is not `<sha>`, run
+     `git merge --ff-only <sha>`; no other HEAD move; if it fails, stop and
+     report" (`<sha>` = the snapshot). Uncommitted state is never in the
+     worktree, and `ai/**` is gitignored: pass the handoff by its absolute
+     main-tree path; a slice that depends on uncommitted changes runs without
+     `isolation`.
+   - **No live background work:** once the report is saved, the implementer is
+     done. If its notification says it "is waiting on its own background work",
+     or its `Background commands` line is not "none", stop it with `TaskStop`
+     (load it with ToolSearch `select:TaskStop`) and note it in the report —
+     never wait on it or declare the step finished while it runs.
 4. Collect the post-implementation diff to `ai/reviews/diff-after-<slug>-<ts>.md`
    via `scripts/ai/collect_git_diff.ps1 -OutPath <path>` (bash:
    `collect_git_diff.sh`; ts = `date +%Y%m%d-%H%M%S`). It never commits.
