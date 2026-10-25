@@ -164,6 +164,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dead code (lot A): the unused `MarkdownReportGenerator` (and its `CallsMap`/`ModuleStats` aliases) is removed from
   `moralstack/cli/report.py`.** The CLI shell instantiated it but never rendered a report, so it no longer creates a
   `./reports/` directory; `CallLogger` is unchanged. No governance, prompt or payload change.
+- **Dead code (lot A): the unread `calibration:` block of `signals.yaml` and its parser are removed.** Removed:
+  `SignalRegistry.calibration`, `signal_by_key`, `signal_by_label`, `signals_in_order`, `any_signal_with_effect`,
+  `any_signal_with_effect_when_intent_present`, `maps_to_self_harm_language`, `compute_counts`,
+  `get_signal_with_forced_action`, `resolve_harm_type`, and the `CalibrationRules`, `HarmTypeDefault` and
+  `DefensiveOverrideApply` dataclasses (formally breaking in 1.x). Hard-signal calibration lives in
+  `moralstack/models/risk/calibration.py`, which is untouched. No governance, prompt or payload change (the rendered
+  prompt hash is identical).
 
 ## 1.0.0 — 2026-10-21
 

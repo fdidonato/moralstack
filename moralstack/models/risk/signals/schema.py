@@ -7,8 +7,7 @@ All fields map 1-to-1 to YAML keys — see signals.yaml for documentation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -31,7 +30,11 @@ class SignalPrompt:
 
 @dataclass(frozen=True)
 class SignalEffects:
-    """Named behavior flags consumed by calibration and rules engine."""
+    """Named behavior flags parsed from signals.yaml.
+
+    Only priority_resolution_in_prompt is read at runtime (prompt_renderer); hard-signal
+    calibration is hand-written in models/risk/calibration.py.
+    """
 
     escalates_to_clearly_harmful: bool = False
     forces_risk_policy_action: str | None = None  # "DENY" | "ALLOW" | ... | None
@@ -56,41 +59,6 @@ class SignalDef:
     harm_type: SignalHarmType
     refusal_domain: str | None
     effects: SignalEffects
-
-
-@dataclass(frozen=True)
-class HarmTypeDefault:
-    label: str
-    triggers_fallback_signal_append: bool = False
-
-
-@dataclass(frozen=True)
-class DefensiveOverrideApply:
-    category: str
-    score_cap: float
-    harm_type_realign_from: list[str] = field(default_factory=list)
-    harm_type_realign_to: str = "none"
-    harm_type_realign_when: str = ""
-
-
-@dataclass(frozen=True)
-class CalibrationRules:
-    """Parsed calibration section of signals.yaml."""
-
-    signal_assignment_order: list[str]
-    fallback_signal_order: list[str]
-    harm_type_default: HarmTypeDefault
-    # Raw YAML sub-sections kept as dicts for rules engine consumption.
-    # The rules engine parses them on first use.
-    defensive_override: dict[str, Any]
-    escalation_clearly_harmful: dict[str, Any]
-    default_potentially_harmful: dict[str, Any]
-    default_action_from_category_score: list[dict[str, Any]]
-    op_risk_action_mapping: dict[str, Any]
-    intent_contradiction_guard: dict[str, Any]
-    non_operational_clamp: dict[str, Any]
-    force_actions: list[dict[str, Any]]
-    calibration_guard: dict[str, Any]
 
 
 @dataclass(frozen=True)

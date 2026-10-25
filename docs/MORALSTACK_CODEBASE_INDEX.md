@@ -335,7 +335,7 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
   calibration guard).
 - `categories.py` — `RiskCategory` (BENIGN, SENSITIVE, MORALLY_NUANCED,
   POTENTIALLY_HARMFUL, CLEARLY_HARMFUL), `OperationalRisk`.
-- `config/signals.yaml` — signal catalog; `prompts.py` — mini-estimator prompts.
+- `config/signals.yaml` — signal catalog (`signals`, `domain_sensitivity`, `prompt`; no `calibration:` section: hard-signal calibration is code in `calibration.py`); `prompts.py` — mini-estimator prompts.
 - `schema.py` — `RiskEstimation`.
 
 ### Prompts — `moralstack/prompts/`
