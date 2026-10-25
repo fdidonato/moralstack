@@ -59,6 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sinks, the stale-critique refusal and `critique_outcome`, the swallowed `log_call` errors, the single ledger writer,
   the blank env keys and the implementer harness rules. A NOT FIXED row records that five WARNINGs and the persistence
   WARNING still put exception text in the message. Documentation only.
+- **`docs/CODEBASE_FACTS.md` records the dead-code lot A results as verified facts.** Two rows cover the decision
+  trace (no dedicated file writer, `path=` ignored, `MORALSTACK_DECISION_TRACE_PATH` gone) and the `SignalRegistry`
+  surface (`signals`, `domain_sensitivity`, `prompt_config`; only `priority_resolution_in_prompt` is read). The lot A
+  residues Hypothesis row no longer says that no `SignalEffects` field is read. Documentation only.
 - **Docs wording for the observability fields.** The README now says an explicit `GovernanceConfig` observability
   value applies before the write-queue target is bound; the `observability_mode` docstring names the legacy
   `MORALSTACK_PERSIST_MODE` alias. Text only, no behavior change.
