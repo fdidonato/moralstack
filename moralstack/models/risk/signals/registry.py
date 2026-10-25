@@ -1,5 +1,5 @@
 """
-SignalRegistry: loads and validates signals.yaml, exposes lookup API.
+SignalRegistry: loads and validates signals.yaml, exposes signals, prompt_config and domain_sensitivity.
 
 Loaded once at module import (lazy singleton). Consumers import the
 module-level `registry` object rather than constructing a new instance.

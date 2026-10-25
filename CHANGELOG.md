@@ -163,7 +163,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pip install -e . --no-deps` is re-run.
 - **Dead code (lot A): the unused `MarkdownReportGenerator` (and its `CallsMap`/`ModuleStats` aliases) is removed from
   `moralstack/cli/report.py`.** The CLI shell instantiated it but never rendered a report, so it no longer creates a
-  `./reports/` directory; `CallLogger` is unchanged. No governance, prompt or payload change.
+  `./reports/` directory; `CallLogger` is unchanged (formally breaking in 1.x for the importable names). No governance,
+  prompt or payload change.
 - **Dead code (lot A): the unread `calibration:` block of `signals.yaml` and its parser are removed.** Removed:
   `SignalRegistry.calibration`, `signal_by_key`, `signal_by_label`, `signals_in_order`, `any_signal_with_effect`,
   `any_signal_with_effect_when_intent_present`, `maps_to_self_harm_language`, `compute_counts`,
@@ -179,7 +180,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dead code (lot A): the dead decision-trace file writer is removed.** Removed from
   `moralstack/runtime/trace/decision_trace.py`: `DEFAULT_TRACE_PATH`, `TRACE_PATH_ENV`, `_get_trace_path`,
   `_ensure_trace_file` and their module state, plus the `MORALSTACK_DECISION_TRACE_PATH` environment variable (its
-  `_OPTIONAL_ENV_VARS` entry and the template block). `append_decision_trace` already emitted only through
+  `_OPTIONAL_ENV_VARS` entry and the template block; formally breaking in 1.x). `append_decision_trace` already emitted only through
   observability and ignored `path=`, so no `decision_trace.jsonl` file was ever written; the module docs said otherwise
   and are corrected. No governance, prompt or payload change.
 - **Dead code (lot A): unused orchestration types and helpers are removed.** Removed: `NullEventEmitter` (its module
