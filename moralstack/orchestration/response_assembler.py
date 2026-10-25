@@ -40,6 +40,10 @@ from moralstack.prompts.catalog import PromptSet, default_prompt_set
 # here to avoid a cyclic import (deliberation_runner depends on this module).
 _SEQ_REFUSAL_OR_FINALIZE = 6
 
+# Mirrors deliberation_runner.CRITIQUE_OUTCOME_FAILED / CRITIQUE_OUTCOME_TIMEOUT; not
+# imported because deliberation_runner imports this module.
+_INCOMPLETE_CRITIQUE_OUTCOMES = frozenset({"failed", "timeout"})
+
 _LOG = logging.getLogger(__name__)
 
 
@@ -279,9 +283,11 @@ class ResponseAssembler:
 
         # Build a real guidance from the available data,
         # do not rely on the critic's revision_guidance, which is empty on REFUSE.
+        # A failed/timed-out final-cycle critique appends no report; last_critique is an earlier cycle's.
+        critique = None if getattr(state, "_critique_outcome", "") in _INCOMPLETE_CRITIQUE_OUTCOMES else state.last_critique
         _critique_guidance = ""
-        if state.last_critique and hasattr(state.last_critique, "revision_guidance"):
-            _critique_guidance = (state.last_critique.revision_guidance or "").strip()
+        if critique and hasattr(critique, "revision_guidance"):
+            _critique_guidance = (critique.revision_guidance or "").strip()
 
         # If the critic produced no guidance (REFUSE case), use the risk estimator's
         # rationale as the basis for the refusal LLM guidance.
@@ -406,12 +412,12 @@ class ResponseAssembler:
                 reason = reason.rstrip(".") + ". " + self.REFUSAL_ENRICHMENT.strip()
 
         alternatives: list[str] = []
-        if state.last_critique and hasattr(state.last_critique, "revision_guidance"):
-            g = (state.last_critique.revision_guidance or "").lower()
+        if critique and hasattr(critique, "revision_guidance"):
+            g = (critique.revision_guidance or "").lower()
             for prefix in ("suggest:", "alternative:"):
                 if prefix in g:
-                    idx = (state.last_critique.revision_guidance or "").lower().find(prefix)
-                    rest = (state.last_critique.revision_guidance or "")[idx + len(prefix) :].strip()
+                    idx = (critique.revision_guidance or "").lower().find(prefix)
+                    rest = (critique.revision_guidance or "")[idx + len(prefix) :].strip()
                     if rest:
                         alternatives.append(rest.split(".")[0].strip() + ("." if not rest.endswith(".") else ""))
                         break

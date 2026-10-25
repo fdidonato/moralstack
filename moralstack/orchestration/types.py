@@ -932,7 +932,7 @@ class DeliberationState:
     _request_analysis_reuse_targets: list[str] = field(default_factory=list, repr=False)
     # Per-cycle outcome of DeliberationRunner._critique (F5): "" (critic not invoked
     # this cycle), "completed", "skipped", "failed", "timeout". Reset at the start of
-    # every cycle; read only by the fail-closed delivery checks, never by convergence.
+    # every cycle; read by the delivery checks, refusal wording and CYCLE_SUMMARY; never by convergence.
     # Must be listed in fork(): the critic runs on a fork in full_parallel mode.
     _critique_outcome: str = field(default="", repr=False)
 

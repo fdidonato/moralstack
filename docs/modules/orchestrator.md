@@ -225,7 +225,9 @@ outcome, not a swallow: it records `DeliberationState._critique_outcome`
 raises (`BaseException` aside); the delivery site
 (`DeliberationRunner.enforce_verified_draft_delivery`, called once from
 `_route_deliberative`) turns a non-completed final-cycle critique into a governed
-REFUSE (see Error Handling).
+REFUSE (see Error Handling). A REFUSE after a `failed`/`timeout` final-cycle critique is worded with the neutral rationale
+(flip or not), and `ResponseAssembler._make_refusal` ignores `last_critique.revision_guidance` in that case (it
+belongs to an earlier cycle).
 
 ### Supporting modules (orchestration)
 

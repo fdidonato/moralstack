@@ -1364,3 +1364,64 @@ def test_i6_deliberative_store_configured_constitution_unavailable_refuses(persi
     meta = result.response.metadata
     assert meta.final_action == "REFUSE"
     assert meta.hard_violation_flip_reason == CODE_FAILED
+
+
+# =============================================================================
+# S3a. Refusal wording after a failed/timed-out final critique
+# =============================================================================
+
+NEUTRAL = "The safety check could not be completed."
+
+
+def _spy_refusal_rationale(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Record the rationale handed to the refusal generator, then raise to use the non-enriched path."""
+    seen: list[Any] = []
+
+    def _spy(**kwargs: Any) -> Any:
+        seen.append(kwargs.get("rationale"))
+        raise RuntimeError("stop after the call")
+
+    monkeypatch.setattr("moralstack.orchestration.response_assembler.generate_llm_safe_refusal_detailed", _spy)
+    return seen
+
+
+def test_s3a_flip_ignores_stale_guidance(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = _spy_refusal_rationale(monkeypatch)
+    state = _draft_state("failed", cycle=2, critiques=[_report(revision_guidance="PREV-GUIDANCE suggest: X")])
+    result = _route(_controller(), state)
+    assert result.response.metadata.hard_violation_flip_reason == CODE_FAILED
+    assert seen == [NEUTRAL]
+    assert "PREV-GUIDANCE" not in result.response.content
+    assert "suggest: X" not in result.response.content
+    assert "PREV-GUIDANCE" not in result.response.metadata.refusal_reason
+    assert result.response.metadata.refusal_reason.startswith(NEUTRAL)
+
+
+@pytest.mark.parametrize("outcome", ["failed", "timeout"])
+def test_s3a_no_flip_refuse_gets_neutral_rationale(outcome: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = _spy_refusal_rationale(monkeypatch)
+    risk = _risk(rationale="Semantic analysis failed: SECRET detail")
+    state = _draft_state(outcome, cycle=2, critiques=[_report(revision_guidance="PREV-GUIDANCE suggest: X")])
+    with patch(
+        "moralstack.orchestration.controller.decide_action", return_value=(_decision("REFUSE"), _explanation("REFUSE"))
+    ):
+        result = _route(_controller(), state, risk=risk)
+    meta = result.response.metadata
+    assert meta.final_action == "REFUSE"
+    assert meta.hard_violation_flip_reason == ""
+    assert seen == [NEUTRAL]
+    for text in (result.response.content, meta.refusal_reason):
+        assert "SECRET" not in text and "PREV-GUIDANCE" not in text
+
+
+def test_s3a_refuse_with_completed_critique_keeps_risk_rationale(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = _spy_refusal_rationale(monkeypatch)
+    risk = _risk(rationale="Semantic analysis failed: SECRET detail")
+    ctrl = _controller()
+    with patch.object(ctrl.assembler, "assemble", wraps=ctrl.assembler.assemble) as assemble:
+        with patch(
+            "moralstack.orchestration.controller.decide_action", return_value=(_decision("REFUSE"), _explanation("REFUSE"))
+        ):
+            _route(ctrl, _draft_state("completed"), risk=risk)
+    assert assemble.call_args.kwargs["risk_estimation"] is risk
+    assert seen == ["Semantic analysis failed: SECRET detail"]

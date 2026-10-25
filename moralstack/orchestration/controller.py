@@ -52,6 +52,8 @@ from moralstack.orchestration.decision_service import decide_action
 from moralstack.orchestration.default_event_emitter import DefaultEventEmitter
 from moralstack.orchestration.deliberation_override import evaluate_deliberation_override
 from moralstack.orchestration.deliberation_runner import (
+    CRITIQUE_OUTCOME_FAILED,
+    CRITIQUE_OUTCOME_TIMEOUT,
     DELIBERATION_CRITIQUE_UNVERIFIED,
     DELIBERATION_FAIL_CLOSED_SOURCE,
     LEDGER_NON_CACHEABLE_FLIP_REASONS,
@@ -2479,6 +2481,12 @@ class OrchestrationController:
             # (correctly flipped) fields -- see
             # _decision_explanation_for_hard_violation_flip.
             expl_for_assembler = _decision_explanation_for_hard_violation_flip(expl_for_assembler, decision1, hv_flip_reason)
+        # Wording only: a REFUSE after a failed/timed-out final critique gets the neutral
+        # rationale whether or not the fail-closed flip happened.
+        neutral_rationale = bool(fc_flip_reason) or (
+            decision1.final_action == "REFUSE"
+            and getattr(state, "_critique_outcome", "") in (CRITIQUE_OUTCOME_FAILED, CRITIQUE_OUTCOME_TIMEOUT)
+        )
         response = self.assembler.assemble(
             request,
             state,
@@ -2486,7 +2494,7 @@ class OrchestrationController:
             risk_score=risk_score,
             processing_time_ms=processing_time,
             constitution=constitution,
-            risk_estimation=(_neutral_refusal_risk_estimation(risk_estimation) if fc_flip_reason else risk_estimation),
+            risk_estimation=(_neutral_refusal_risk_estimation(risk_estimation) if neutral_rationale else risk_estimation),
             outcome=outcome,
             decision_explanation=expl_for_assembler,
             constitution_store=self.constitution_store,

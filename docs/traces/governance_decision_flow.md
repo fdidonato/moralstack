@@ -48,7 +48,7 @@ Session/turn (SDK): `conv_id = session.conversation_id`,
 Proxy equivalent: `conversation_id` resolution + stateless `turn_index`
 (`proxy.py:218-256`), `conv_state = store.get(conversation_id)`.
 
-## 2. Controller setup (`controller.py:1962-1987`)
+## 2. Controller setup (`controller.py:1964-1989`)
 
 - Coerce `str` → `ProcessedRequest`; build `ProcessCallContext`.
 - Set context vars: `set_current_session_id`, `set_current_turn_number`.
@@ -58,12 +58,12 @@ Proxy equivalent: `conversation_id` resolution + stateless `turn_index`
   once per DB path (`_db_initialized_for`): a changed `get_db_path()` triggers a new `init_db`.
 - `trace = self._trace_lifecycle.start_trace(request_id)`.
 
-## 3. Risk estimation (`controller.py:1990-1997`)
+## 3. Risk estimation (`controller.py:1992-1999`)
 
 - If `enable_speculative_generation` and a policy is set: `_run_speculative_overlap`
   runs **risk estimation and a speculative draft in parallel** (two-worker
   `ThreadPoolExecutor`, contextvars copied). The method blocks only for risk;
-  the draft continues in the background (`controller.py:930-988`). The
+  the draft continues in the background (`controller.py:932-990`). The
   speculative draft calls the internal **policy LLM** (`self.policy.generate`),
   not the wrapped/upstream client. This means an internal LLM call may already
   be in-flight before any routing decision — including on paths that will
@@ -82,10 +82,10 @@ Proxy equivalent: `conversation_id` resolution + stateless `turn_index`
     `(None, None)` and the route regenerates internally.
     See `moralstack/orchestration/upstream_draft.py` and
     `.claude/rules/governed-delivery.md`.
-- Else: `risk_estimation = self._estimate_risk(request)` (`controller.py:2531`).
+- Else: `risk_estimation = self._estimate_risk(request)` (`controller.py:2539`).
 
 `_estimate_risk` forwards the developer-contract text and conversation history to
-the estimator (`controller.py:950-968`) and emits `CONTEXT_SHAPE_RECORDED`. The
+the estimator (`controller.py:952-970`) and emits `CONTEXT_SHAPE_RECORDED`. The
 risk estimator declares its reduced history mode as `role_serialized_truncated`
 when only the last-3 window is used. The estimator runs three parallel
 mini-estimators (intent / signals q1–q17 / operational) and calibrates them into
@@ -129,12 +129,12 @@ and emit the event itself — controller-emit and runner-emit are mutually
 exclusive per request. `COMPLIANCE_FAST_PATH` (§4) consumes no principles and
 adds no retrieval.
 
-## 4. DCCL (developer-contract) evaluation (`controller.py:1998-2102`)
+## 4. DCCL (developer-contract) evaluation (`controller.py:2000-2104`)
 
 - `speculative_draft_for_dccl = self._nonblocking_speculative_draft(spec_handle)`
   (only if the background draft already finished).
 - `_run_dccl_evaluation(...)` → `call_ctx.compliance_verdict`
-  (`controller.py:1004-1086`). Emits `COMPLIANCE_LAYER_STARTED` and a verdict event.
+  (`controller.py:1006-1088`). Emits `COMPLIANCE_LAYER_STARTED` and a verdict event.
 - The DCCL LLM prompt includes a budgeted role-ordered transcript from
   `ConversationContext`, not only the final user request. If budget trimming
   occurs, the prompt explicitly says not to claim prior turns are absent.
@@ -162,21 +162,21 @@ adds no retrieval.
 - The compliance fast-path produces `NORMAL_COMPLETE` with path
   `COMPLIANCE_FAST_PATH`, skipping risk routing, critic, simulator, perspectives,
   hindsight; emits `MODULE_DEFERRED_TO_COMPLIANCE` per skipped module
-  (`controller.py:1229-1321`).
+  (`controller.py:1231-1323`).
 
-## 5. Domain overlay & risk floor (`controller.py:2104-2178`)
+## 5. Domain overlay & risk floor (`controller.py:2106-2180`)
 
 - Extract risk score / category / op_risk; record on `trace`.
 - Persist domain (`update_request_domain`) after `_normalize_runtime_domain`
   (drops `core`).
 - Domain-exclusion check: if the active overlay excludes the detected domain →
-  `_route_domain_excluded` (`controller.py:2136-2143`).
+  `_route_domain_excluded` (`controller.py:2138-2145`).
 - `overlay_sensitive = is_overlay_sensitive(...)`; if sensitive, raise the score
   via `apply_risk_floor_if_sensitive` (per-overlay floor or
   `OVERLAY_SENSITIVE_RISK_FLOOR`). The floored score is propagated into a
-  replaced `risk_proto` (`controller.py:2172-2178`).
+  replaced `risk_proto` (`controller.py:2174-2180`).
 
-## 6. Decision (`controller.py:2179-2203`)
+## 6. Decision (`controller.py:2181-2205`)
 
 - `_emit_risk_assessment_trace(...)` — **side effect**: `RISK_ASSESSMENT`
   decision trace.
@@ -186,14 +186,14 @@ adds no retrieval.
 - The decision encodes `final_action` and `path` derived from
   `safe_complete_policy.compute_action_bounds` / `decide_final_action`.
 
-## 7. Route resolution (`controller.py:2205-2206`)
+## 7. Route resolution (`controller.py:2207-2208`)
 
 - `route, borderline_refuse, risk_policy_action = get_route(decision, risk_proto,
   risk_score, config, op_risk)` — route ∈ `{refuse, benign, safe_complete,
   fast_path, deliberative}`.
 - `hard_signal_refuse = is_hard_signal_refuse(decision, risk_proto, op_risk)`.
 
-## 8. Ledger lookup (multi-turn only) (`controller.py:2824-3006`)
+## 8. Ledger lookup (multi-turn only) (`controller.py:2832-3014`)
 
 When a `SemanticDecisionLedger` is configured and `conversation_id` is set:
 - Compute posture (`_compute_governance_posture`: ESCALATED if hard-signal REFUSE,
@@ -228,7 +228,7 @@ the implementation (`"local"` default → `LocalEmbedder` with fastembed or
 `HashingEmbedder` fallback; `"openai"` → `OpenAIEmbedder`). `OPENAI_API_KEY` is not
 required for the embedder when `embedder_provider="local"`.
 
-## 9. Dispatch (`controller.py:2407-end`)
+## 9. Dispatch (`controller.py:2409-end`)
 
 | route | handler | speculative draft |
 |---|---|---|
@@ -347,7 +347,7 @@ unchanged (no new row); `skipped` is accepted (D2) with a WARNING `deliberation 
 delivered under S2`. A closed gate (`critic is None`, or no store and no constitution) is the by-design
 skip and is unchanged. The decision is flipped from the structured outcome only (never from response
 text) with `_decision_as_refuse` (keeps `hard_violations`), a rebuilt `DecisionExplanation`
-(`winning_rule="deliberation_fail_closed"`), the neutral refusal rationale, and a best-effort FINAL
+(`winning_rule="deliberation_fail_closed"`), the neutral refusal rationale (also passed when the decision was already REFUSE and the final-cycle outcome is `failed`/`timeout`; `_make_refusal` then ignores the previous cycle's `revision_guidance`, in the rationale and in the alternatives), and a best-effort FINAL
 trace row (sequence 2) with `hard_violation_source="deliberation_fail_closed"` and `stage_payload`
 `{original_final_action, flip_reason, critique_outcome, cycle}` (`critique_outcome` is `not_invoked`
 for `""`). `ResponseMetadata.original_final_action` / `hard_violation_flip_reason` carry the same
@@ -485,7 +485,7 @@ Emitted across the flow (DB rows + JSONL envelopes per observability mode):
   `proxy_request_events` for multi-turn.
 - SDK flushes observability synchronously after each call (`wrapper.py:300-308`);
   the proxy flushes in `_finalize_request` (`proxy.py:707-708`).
-- `_apply_conversation_metadata_to_result` (controller.py:322-416) builds
+- `_apply_conversation_metadata_to_result` (controller.py:324-418) builds
   `conversation_governance_state_out` and stores the decision in the ledger via
   `_maybe_store_in_ledger` (reuses `call_ctx.ledger_lookup.query_embedding` when
   available to skip the second `embed()` call).
