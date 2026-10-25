@@ -366,46 +366,6 @@ def persist_decision_traces_batch(
         return False
 
 
-def persist_debug_events_batch(
-    entries: list[dict[str, Any]],
-    uow: Any = None,
-) -> bool:
-    """Batch enqueue debug events. Does not raise."""
-    if uow is not None:
-        _warn_uow_once()
-    if not entries:
-        return True
-    default_run = get_current_run_id()
-    default_sess = get_current_session_id()
-    default_turn = get_current_turn_number()
-    envelopes = []
-    for e in entries:
-        run_id = e.get("run_id") or default_run
-        if not run_id:
-            continue
-        payload = e.get("payload", e) if "payload" in e else e
-        envelopes.append(
-            make_envelope(
-                EVENT_DEBUG_EVENT,
-                run_id=run_id,
-                request_id=e.get("request_id") or "",
-                session_id=default_sess,
-                turn_number=default_turn,
-                payload=payload if isinstance(payload, dict) else {"payload": payload},
-            )
-        )
-    if not envelopes:
-        return True
-    try:
-        from moralstack.observability.service import get_obs
-
-        get_obs().emit_batch(envelopes)
-        return True
-    except Exception as e:
-        logger.warning("persistence: persist_debug_events_batch failed: %s", e)
-        return False
-
-
 def persist_orchestration_events_batch(
     entries: list[dict[str, Any]],
     uow: Any = None,

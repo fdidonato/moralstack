@@ -18,7 +18,6 @@ moralstack/observability/
 ├── emit_helpers.py      # persist_* / async_persist_* convenience wrappers
 ├── write_queue.py       # ObservabilityWriteQueue (daemon thread, FIFO)
 └── sinks/
-    ├── base.py          # EventSink Protocol
     ├── sqlite_sink.py   # Schema SQLite + lifecycle writes + batch inserts
     └── jsonl_sink.py    # Per-event-type JSONL under logs/observability/
 ```

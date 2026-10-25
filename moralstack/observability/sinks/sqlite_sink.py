@@ -1625,7 +1625,7 @@ def _json_or_none(obj: Any) -> str | None:
 
 class SqliteEventSink:
     """
-    Implements EventSink by mapping each EventEnvelope to the appropriate
+    Observability sink that maps each EventEnvelope to the appropriate
     SQLite table using the existing batch insert helpers.
 
     Lifecycle events (run.started, request.upserted, …) call the corresponding

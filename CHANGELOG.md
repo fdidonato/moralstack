@@ -193,6 +193,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OrchestrationController(session_store=...)` now raises `TypeError` (formally breaking in 1.x); the stored
   `_session_store` attribute was never read. The controller no longer imports `moralstack.sdk`, which removes a layering
   inversion. Ledger paths and the fail-closed handlers are untouched. No governance, prompt or payload change.
+- **Dead code (lot A): an unused observability helper and sink protocol are removed.** Removed:
+  `persist_debug_events_batch` from `moralstack/observability/emit_helpers.py` (no caller; the live emitters and the other
+  `persist_*` helpers are unchanged) and the `EventSink` protocol with its module `observability/sinks/base.py` (nothing
+  imported it; the sinks only named it in docstrings). Both are formally breaking in 1.x. No governance, prompt or payload
+  change.
 
 ## 1.0.0 — 2026-10-21
 

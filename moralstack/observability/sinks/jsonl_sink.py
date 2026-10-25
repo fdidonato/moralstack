@@ -40,7 +40,7 @@ def _get_file_lock(path: str) -> threading.Lock:
 
 class JsonlEventSink:
     """
-    Implements EventSink by appending one JSON line per envelope to
+    Observability sink that appends one JSON line per envelope to
     {jsonl_dir}/{event_type}.jsonl.
     """
 
