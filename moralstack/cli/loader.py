@@ -3,7 +3,7 @@ Module loader and CLI UI utilities for MoralStack.
 """
 
 import os
-from typing import Any, Callable
+from typing import Any
 
 from .mocks import (
     MockConstitutionStore,
@@ -119,28 +119,6 @@ class ModuleLoader:
         print_colored("  ○  Excluded domains: none (mock)", "blue")
         self.modules = modules
         return modules
-
-    def _load_optional_module(
-        self,
-        name: str,
-        build_fn: Callable[[], tuple[Any, str]],
-        mock_class: type,
-        *,
-        success_status_template: str = "✓ loaded ({display})",
-        success_print_template: str = "  ✓ {name}: ({display})",
-        error_prefix: str = "⚠",
-        error_color: str = "yellow",
-    ) -> Any:
-        """Load optional module with try/except and mock fallback; messages are parameterized."""
-        try:
-            instance, display = build_fn()
-            self.load_status[name] = success_status_template.format(display=display)
-            print_colored(success_print_template.format(name=name, display=display), "green")
-            return instance
-        except Exception as e:
-            print_colored(f"  {error_prefix} {name}: {e}", error_color)
-            self.load_status[name] = "⚠ fallback mock"
-            return mock_class()
 
     def _load_real_modules(self) -> dict[str, Any]:
         """Loads real modules (OpenAI-only)."""

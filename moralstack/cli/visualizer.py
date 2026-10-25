@@ -73,23 +73,6 @@ class DeliberationVisualizer:
             return text
         return f"{self.COLORS.get(color, '')}{text}{self.COLORS['reset']}"
 
-    def _box(self, title: str, content: str, width: int = 78, color: str = "cyan") -> str:
-        """Creates a box with borders."""
-        lines = [
-            self._c(f"╔{'═' * (width - 2)}╗", color),
-            self._c(f"║ {title.center(width - 4)} ║", color),
-            self._c(f"╠{'═' * (width - 2)}╣", color),
-        ]
-
-        for line in content.split("\n"):
-            # Truncate if too long
-            if len(line) > width - 4:
-                line = line[: width - 7] + "..."
-            lines.append(self._c(f"║ {line.ljust(width - 4)} ║", color))
-
-        lines.append(self._c(f"╚{'═' * (width - 2)}╝", color))
-        return "\n".join(lines)
-
     def _header(self, title: str, char: str = "═", width: int = 80) -> str:
         """Creates a header."""
         padding = (width - len(title) - 4) // 2

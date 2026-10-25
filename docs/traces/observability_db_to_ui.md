@@ -343,7 +343,7 @@ compliance / compliance-regenerate row and after the synthetic gate / downgrade 
 The dashboard reads **only** from SQLite (`get_db_path()` required;
 `_ReadStoreProxy` resolves the read store at call time, `ui/app.py:58-95`). It
 reconstructs:
-- **Per request** (`/runs/{run_id}/requests/{request_id}`, `ui/app.py:3561`,
+- **Per request** (`/runs/{run_id}/requests/{request_id}`, `ui/app.py:3542`,
   route `request_detail`): the deliberation timeline / "metro map" — calls
   grouped into visual tiers (`_group_calls_into_tiers_and_enrich`), risk
   mini-estimator breakdown, a synthetic calibration node
@@ -365,7 +365,7 @@ reconstructs:
   (structured signals only, never the `[SYSTEM_*]` text). The request page and the
   conversation timeline flag it, and `_build_delivery_path_summary` plus the
   `request.html` caption name the recorded principle.
-- **Per conversation** (`/conversations/{conversation_id}`, `ui/app.py:3842`,
+- **Per conversation** (`/conversations/{conversation_id}`, `ui/app.py:3823`,
   route `conversation_detail`): full multi-turn timeline via
   `_build_conversation_timeline`; 404 if no requests. Since the
   conversation-spine change, the per-turn loop inside
@@ -443,7 +443,7 @@ Yes, **when persistence is to the DB** (`db_only`/`dual`):
 
 - **`file_only` runs are invisible in the UI.** The dashboard reads SQLite only;
   JSONL-only runs produce no dashboard views (every route gates on
-  `get_db_path()`, e.g. `ui/app.py:3564-3565` in `request_detail`).
+  `get_db_path()`, e.g. `ui/app.py:3545-3546` in `request_detail`).
 - **Proxy assistant text vs. governed content.** For streaming SDK SAFE/NORMAL
   paths the audit `final_response` is recorded empty (the body is consumed by the
   caller) (`wrapper.py:384-392,412-417`).

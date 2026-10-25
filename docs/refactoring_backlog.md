@@ -89,6 +89,8 @@
 | **Tests**     | `test_mstack_cli.py` (412) covers CLI initialization.                                                                                                                                                  |
 | **Risk**      | 🟢 LOW — CLI layer, not safety-critical.                                                                                                                                                               |
 
+An unused _load_optional_module helper was added and then removed as dead code (lot A 2026-10-25); the refactor itself is still open.
+
 ---
 
 ## P1 — High Impact, Medium Risk

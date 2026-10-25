@@ -908,7 +908,7 @@ dashboard (see fragile areas).
 (`get_db_path()`), and renders per-request and per-conversation views by reading
 the observability tables and rebuilding the deliberation timeline / metro map.
 
-Routes (`ui/app.py:1740-2187`): `/`, `/login`, `/logout`, `/auth-status`,
+Routes (`ui/app.py:1732-2168`): `/`, `/login`, `/logout`, `/auth-status`,
 `/runs`, `/runs/{run_id}`, `/runs/{run_id}/requests/{request_id}`,
 `/runs/{run_id}/requests/{request_id}/export.md`,
 `/runs/{run_id}/export_benchmark.md`, `/conversations`,

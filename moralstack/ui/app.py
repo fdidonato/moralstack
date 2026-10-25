@@ -854,14 +854,6 @@ def _is_own_tier_retry(call: dict[str, Any]) -> bool:
     return _is_retry_failed(call) and (call.get("module") or "").strip().lower() in _SEQUENTIAL_RETRY_MODULES
 
 
-def _call_tier_sort_key(call: dict[str, Any]) -> tuple[Any, ...]:
-    """Primary sort: sequence_in_cycle, then id, then started_at (tie-break only)."""
-    seq = call.get("sequence_in_cycle")
-    if seq is None:
-        seq = 9999
-    return (seq, call.get("id") or 0, call.get("started_at") or 0)
-
-
 def _group_calls_into_tiers_and_enrich(calls: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     """Group calls into tiers reflecting architectural execution order.
 
@@ -1999,17 +1991,6 @@ def _execution_summary_from_request(
         "excluded_domain": (excluded_trace.get("excluded_domain", "") or "") if excluded_trace else "",
         "estimation_mode": estimation_mode,
     }
-
-
-def _llm_calls_by_cycle(
-    llm_calls: list[dict[str, Any]],
-) -> list[tuple[int | None, list[dict[str, Any]]]]:
-    """Group llm_calls by cycle; return list of (cycle_num, calls) sorted by cycle."""
-    by_cycle: dict[int | None, list[dict[str, Any]]] = defaultdict(list)
-    for c in llm_calls:
-        cy = c.get("cycle")
-        by_cycle[cy].append(c)
-    return sorted(by_cycle.items(), key=lambda x: x[0] if x[0] is not None else 0)
 
 
 def _extract_mini_estimator_data(

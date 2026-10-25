@@ -211,6 +211,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LRUCache.invalidate`; `build_failed_parse_contract` from `utils/llm_parse_contract.py`; and the unused
   `_env_candidate_paths` helper from `utils/env_loader.py`. All formally breaking in 1.x. `prepare_system_prompt`,
   `inject`, `validate` and `current_canary` are untouched. No governance, prompt or payload change.
+- **Dead code (lot A): unused CLI, UI helpers and the compliance version stamp are removed.** Removed:
+  `ModuleLoader._load_optional_module` (`cli/loader.py`), `DeliberationVisualizer._box` (`cli/visualizer.py`), the UI
+  helpers `_call_tier_sort_key` and `_llm_calls_by_cycle` (`ui/app.py`), and the orphan `moralstack/compliance/_version.py`
+  with its `__compliance_layer_version__` constant (nothing imported it; formally breaking in 1.x for that module-level
+  name). The UI stays read-only. No governance, prompt or payload change.
 
 ## 1.0.0 — 2026-10-21
 
