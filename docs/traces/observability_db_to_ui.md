@@ -319,7 +319,7 @@ risk-routing `domain_prefilter` (-10) -> its `*domain_agent` rows (-10, parallel
 `compliance-regenerate` in the action) -> draft revalidate (-4 real row) -> hard-signal gate / ordinary downgrade
 (synthetic, phase `safety_gate` / `match_downgraded`; the hard-signal gate never coexists with a
 regenerate / revalidate row; an ordinary downgrade has a -4 revalidate row only when the semantic-LLM revalidation
-ran, and no -4 row on the substring / early-return branch, `controller.py:1470-1475`, `:1543-1559`) -> deferred markers (phase `deferred_to_compliance` OR action
+ran, and no -4 row on the substring / early-return branch, `controller.py:1470-1475`, `:1502-1518`) -> deferred markers (phase `deferred_to_compliance` OR action
 `skipped - contract authorized`, one tier labelled `skipped · N modules`) -> path routing (-2, synthetic) -> ledger
 fast-path (-3, synthetic) -> deliberation retrieval prefilter (-1) -> its agents (-1) -> route draft (seq 1) ->
 `quick_check` (action) -> terminal (seq 6: fast-path refusal, domain exclusion). Unmapped cycle-0 sequences land in a
