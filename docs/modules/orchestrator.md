@@ -689,6 +689,7 @@ The Orchestrator implements a fail-safe system:
   | speculative generation (internal or upstream) | `(None, None)` -> internal governed regeneration |
   | `_regenerate_for_contract` | propagates to the `process()` catch-all (`ERROR_PATH`, safe default, `system_error`, not cached) |
   | DCCL draft-match classifier | `(False, "none", conf)` -> normal pipeline |
+  | `revalidate_final_output` retrieval (dormant) | outer `except` -> REFUSE `final_revalidation_error` |
 
   An injected policy must therefore accept the `PolicyLLMProtocol` kwargs (`system`, `config`, `overrides`, `model_override`).
 - **No dedicated `FailSafeException` branch in `process()`**: the `except FailSafeException` clause was removed. It was

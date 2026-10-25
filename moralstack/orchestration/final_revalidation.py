@@ -269,17 +269,14 @@ def revalidate_final_output(
 
         domain = request.get_domain() if hasattr(request, "get_domain") else None
         constitution = store.get_constitution(domain)
-        try:
-            principles = list(
-                store.get_relevant_principles(
-                    query=getattr(request, "prompt", "") or "",
-                    top_k=10,
-                    domain=domain,
-                    retrieval_phase="final_revalidation",
-                )
+        principles = list(
+            store.get_relevant_principles(
+                query=getattr(request, "prompt", "") or "",
+                top_k=10,
+                domain=domain,
+                retrieval_phase="final_revalidation",
             )
-        except TypeError:
-            principles = list(store.get_relevant_principles(getattr(request, "prompt", "") or "", top_k=10, domain=domain))
+        )
 
         report = critic.critique(
             getattr(request, "prompt", "") or "",
