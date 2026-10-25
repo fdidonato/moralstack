@@ -3613,8 +3613,8 @@ class DeliberationRunner:
                 },
             )
         except Exception as e:
-            _LOG.warning("Soft revision failed, keeping original draft: %s", e)
-            state.errors.append(f"Soft revision failed: {e}")
+            _LOG.warning("Soft revision failed, keeping original draft: %s", type(e).__name__, exc_info=e)
+            state.errors.append(f"Soft revision failed: {self._exc_text(e)}")
         return state
 
     def _generate_or_revise(
@@ -3816,9 +3816,9 @@ class DeliberationRunner:
                 },
             )
         except Exception as e:
-            state.errors.append(f"Generation error: {e}")
+            state.errors.append(f"Generation error: {self._exc_text(e)}")
             if not state.draft_response:
-                raise GenerationError(f"Cannot generate response: {e}")
+                raise GenerationError(f"Cannot generate response: {self._exc_text(e)}")
         return state
 
     def _critique_gate_open(self, constitution: Any | None) -> bool:

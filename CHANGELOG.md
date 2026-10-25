@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Soft-revision and generation failures no longer escape on an unprintable exception.** `Soft revision failed: ...`, `Generation error: ...` and the `GenerationError` message now go through the same guarded text (`str(e)`, else the class name) as the other deliberation modules; the soft-revision WARNING logs the class name with the text in `exc_info`.
 - **A raising diagnostics logger no longer turns a completed module call into a module error.** `record_llm_call` now wraps `logger.log_call` in the same swallowing try/except (WARNING) as the persistence branch, so the simulator, perspectives, hindsight and policy call sites are covered like the critique ones (PROJECT_SPEC §5.6).
 - **`examples/audit_export.py` reads the JSONL directory from `MORALSTACK_OBSERVABILITY_JSONL_DIR`.** It read `MORALSTACK_JSONL_DIR`, which nothing else sets, so without `--input` it always looked in the default `logs/observability`; the hint messages name the right variable too.
 - **A blank `OPENAI_MAX_TOKENS=` or `MORALSTACK_UI_PORT=` in the env file no longer crashes startup.** Both are now purged when blank after loading, like the other optional keys, so `int(os.getenv(key, default))` falls back to the default instead of raising `ValueError` on `int("")` (policy and upstream-draft sampling defaults, `moralstack-ui` port).

@@ -245,3 +245,27 @@ def test_chained_cause_never_reaches_row(diags: list[dict[str, Any]]) -> None:
     runner._simulate(_state(), _request())
     assert diags[0]["response"] == "ERROR: ValueError"
     assert SECRET not in repr(diags)
+
+
+# -- soft revision / generation: the state.errors text is guarded too -------------------------
+
+
+def test_soft_revision_unprintable_exception_keeps_draft(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(f"{_RUNNER_MOD}.build_aggregated_guidance", lambda *_a, **_k: "pending soft guidance")
+    runner = _runner()
+    runner.policy.rewrite.side_effect = _BadStr()
+    out = runner._soft_revision_pass(_state(), _request())
+    assert out.draft_response == "the draft"
+    assert "Soft revision failed: _BadStr" in out.errors
+
+
+def test_generation_unprintable_exception_without_draft_raises_generation_error() -> None:
+    from moralstack.orchestration.types import GenerationError
+
+    runner = _runner()
+    runner.policy.generate.side_effect = _BadStr()
+    runner.policy.generate_messages.side_effect = _BadStr()
+    state = DeliberationState(cycle=1, draft_response="")
+    with pytest.raises(GenerationError, match="Cannot generate response: _BadStr"):
+        runner._generate_or_revise(state, _request())
+    assert state.errors == ["Generation error: _BadStr"]
