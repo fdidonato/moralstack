@@ -423,3 +423,7 @@ Moved from "Future work / known gaps" on 2026-10-23: each claim opens with FIXED
 | Gap | Current state | Needed development |
 |---|---|---|
 | **FIXED 2026-10-25 (slice S3a of exc-sinks-q5-stale-critique).** **Hypothesis — a stale `revision_guidance` is used as the refusal rationale** (read 2026-10-14, pre-existing, NOT fixed) | `ResponseAssembler._make_refusal` prefers `last_critique.revision_guidance` (`response_assembler.py:279-292`); after a failed final cycle `last_critique` is the previous cycle's report, so its guidance (or the static fallback text built from it) can describe a different draft | Low (read, not run) | Wording only; the fail-closed REFUSE itself is unaffected. The neutral rationale replaces only `risk_estimation.rationale` |
+
+| Gap | Current state | Needed development |
+|---|---|---|
+| **RESOLVED 2026-10-25 (slice S3b of exc-sinks-q5-stale-critique): CYCLE_SUMMARY now carries `critique_outcome`; `modules_executed` unchanged by decision.** **Hypothesis — `_emit_cycle_summary_trace` counts a stale critique as "executed"** (read 2026-10-14, NOT fixed) | `CYCLE_SUMMARY` (`_emit_cycle_summary_trace`, `deliberation_runner.py:2031`, "executed" check at `:2056`) derives "executed" from `last_critique is not None`; in a cycle whose critique failed it can say the critic ran while the FINAL row reports `critique_outcome=failed` | Low (read, not run) | Not contradictory: two notions of "executed" (a critique object exists vs the critique of this cycle's draft completed). Documented in `docs/traces/governance_decision_flow.md` |

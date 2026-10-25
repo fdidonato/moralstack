@@ -314,7 +314,7 @@ completed critique (no critique, `CriticReport.empty_skipped`, a failed critique
 escalation that starts between 90% and 100% of `timeout_ms`, where the `_critique` guard
 records outcome `timeout`) the reason is `fast_path_escalation_unverified`; an escalation that starts past
 100% of `timeout_ms` is stopped earlier by the `while` guard in `run_deliberative_path`
-(`deliberation_runner.py:2302-2305`), which raises, so the reason is
+(`deliberation_runner.py:2303-2306`), which raises, so the reason is
 `fast_path_escalation_failed`. The REFUSE is built from structured signals only
 (`_decision_as_refuse` keeps `hard_violations`), a rebuilt `DecisionExplanation`
 (`winning_rule="fast_path_fail_closed"`), and the REFUSE branch of
@@ -354,9 +354,11 @@ for `""`). `ResponseMetadata.original_final_action` / `hard_violation_flip_reaso
 values; `finalize_delivery` reports REFUSE/`content_filter`. If the check itself raises, the controller
 falls back to REFUSE `deliberation_critique_unverified` (explanation `None`) so the draft is still never
 delivered. Critique telemetry is best-effort and isolated from the outcome. Note on the trace:
-`CYCLE_SUMMARY` can mark the critic as "executed" (a critique object exists) in the same cycle whose FINAL
+`CYCLE_SUMMARY.modules_executed` can list the critic as "executed" (a critique object exists) in the same cycle whose FINAL
 row reports `critique_outcome=failed`; these are two different notions of "executed", not a
-contradiction. Known gaps (see `docs/CODEBASE_FACTS.md`): the soft-revision rewrite after the final
+contradiction. `CYCLE_SUMMARY.critique_outcome` carries the per-cycle outcome
+(`completed`/`skipped`/`failed`/`timeout`, or `""` when the critic was not invoked, where FINAL rows say
+`not_invoked`). Known gaps (see `docs/CODEBASE_FACTS.md`): the soft-revision rewrite after the final
 cycle is not re-critiqued (D9), and under S2 a degraded retriever that returns zero principles would
 deliver every deliberative draft with only the WARNING.
 

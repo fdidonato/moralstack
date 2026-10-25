@@ -2173,6 +2173,7 @@ class DeliberationRunner:
                 "modules_executed": executed,
                 "modules_skipped": skipped,
                 "modules_cancelled": [],
+                "critique_outcome": getattr(state, "_critique_outcome", "") or "",
                 "critic_decision": critic_decision,
                 "violations_count": violations_count,
                 "violated_hard": violated_hard,

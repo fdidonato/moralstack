@@ -1634,6 +1634,58 @@ class TestObservabilityFixes:
         assert trace.total_cycles == 2
         assert trace.stage_payload["perspectives_weighted_approval"] == pytest.approx(0.7)
 
+    @pytest.mark.parametrize("outcome_value", ["completed", "failed", "timeout", ""])
+    def test_cycle_summary_trace_carries_critique_outcome(self, outcome_value):
+        from moralstack.orchestration.types import ConvergenceOutcome
+
+        orchestrator = create_orchestrator(
+            policy=MockPolicyLLM(),
+            risk_estimator=MockRiskEstimator(default_score=0.8),
+            critic=MockCritic(),
+            simulator=MockSimulator(),
+            constitution_store=MockConstitutionStore(),
+            enable_hindsight=False,
+            enable_perspectives=False,
+        )
+        runner = orchestrator._controller._runner
+        state = DeliberationState(cycle=1, draft_response="draft")
+        state._critique_outcome = outcome_value
+        outcome = ConvergenceOutcome(
+            should_continue=False,
+            converged=True,
+            stop_reason="CONVERGED",
+            cycle=1,
+            max_cycles=3,
+        )
+        captured = {}
+
+        def _capture(trace):
+            captured["trace"] = trace
+
+        with patch("moralstack.orchestration.deliberation_runner.append_decision_trace", side_effect=_capture):
+            runner._emit_cycle_summary_trace(
+                request_id="req-cycle-summary-outcome",
+                state=state,
+                outcome=outcome,
+                max_cycles=3,
+                risk_estimation=MockRiskEstimation(score=0.85),
+            )
+
+        payload = captured["trace"].stage_payload
+        assert payload["critique_outcome"] == outcome_value
+        for key in (
+            "cycle",
+            "critic_decision",
+            "violations_count",
+            "violated_hard",
+            "perspectives_weighted_approval",
+            "modules_executed",
+            "max_cycles",
+        ):
+            assert key in payload
+        # modules_executed is unchanged: no critique object -> no "critic"
+        assert "critic" not in payload["modules_executed"]
+
     def test_token_usage_json_builder_from_deliberative_result(self):
         from moralstack.orchestration.deliberation_runner import _token_usage_json_from_result
 

@@ -318,7 +318,8 @@ These flags reduce wall-clock latency **without changing routing policy** (`deci
   (when the critic has already run) the critic is clean. **Full parallel** scheduling uses a stricter prior-only
   check before the critic runs because the critic is not visible to the gate yet.
 - **Observability**: `SIMULATOR_GATE_DECISION`, `SIMULATOR_EXECUTED`, `SIMULATOR_SKIPPED`; `CYCLE_SUMMARY` includes
-  `simulator_ran_this_cycle`, `simulator_gate_reason_codes`, and `simulator_carry_forward`.
+  `simulator_ran_this_cycle`, `simulator_gate_reason_codes`, `simulator_carry_forward`, and `critique_outcome`
+  (the per-cycle critique outcome; `""` when not invoked, where FINAL rows use `not_invoked`).
 
 ### Request-scoped runner state (deliberation clock and reuse targets)
 

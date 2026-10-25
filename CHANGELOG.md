@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`CYCLE_SUMMARY` decision traces carry `critique_outcome`.** The additive key holds the per-cycle critique outcome (`completed`, `skipped`, `failed`, `timeout`, or `""` when the critic was not invoked; FINAL rows use `not_invoked` for that case), so a reader can tell "a critique object exists" (`modules_executed`, unchanged) from "this cycle's critique completed".
+
 - **The INPUT node of the request page shows the request's developer contract.** Before, it only carried a
   "developer contract" chip and the full prompt; the contract text was visible only inside the module nodes. The node
   now has a collapsed "Developer contract" section with the text, its length and the identity check; when a contract
