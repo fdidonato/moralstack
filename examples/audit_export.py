@@ -72,11 +72,11 @@ def main() -> None:
     if args.input:
         input_path = Path(args.input)
     else:
-        jsonl_dir = Path(os.getenv("MORALSTACK_JSONL_DIR", "logs/observability"))
+        jsonl_dir = Path(os.getenv("MORALSTACK_OBSERVABILITY_JSONL_DIR", "").strip() or "logs/observability")
         latest = resolve_latest_jsonl(jsonl_dir)
         if latest is None:
             print(
-                "No JSONL file found. Set MORALSTACK_OBSERVABILITY_MODE=file_only and MORALSTACK_JSONL_DIR, "
+                "No JSONL file found. Set MORALSTACK_OBSERVABILITY_MODE=file_only and MORALSTACK_OBSERVABILITY_JSONL_DIR, "
                 "then run examples/quickstart.py."
             )
             return
@@ -84,7 +84,7 @@ def main() -> None:
 
     if not input_path.exists():
         print(
-            "Input file not found: {}. Set MORALSTACK_OBSERVABILITY_MODE=file_only and MORALSTACK_JSONL_DIR, "
+            "Input file not found: {}. Set MORALSTACK_OBSERVABILITY_MODE=file_only and MORALSTACK_OBSERVABILITY_JSONL_DIR, "
             "then run examples/quickstart.py.".format(input_path)
         )
         return
