@@ -231,7 +231,7 @@
 
 ---
 
-### 18. `cli/run.py` → `MarkdownReportGenerator` — Large Class (~740 LOC)
+### 18. `cli/run.py` → `MarkdownReportGenerator` — Large Class (~740 LOC) — OBSOLETE (class removed as dead code, lot A 2026-10-25)
 
 |               |                                                                                                                                                                                         |
 |---------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|

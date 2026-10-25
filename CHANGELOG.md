@@ -161,6 +161,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   your own launcher, or, from a source checkout, `uvicorn examples.server_quickstart:app`. The run meta
   `source: "moralstack-server"` in the audit data is unchanged. Editable installs keep a stale launcher until
   `pip install -e . --no-deps` is re-run.
+- **Dead code (lot A): the unused `MarkdownReportGenerator` (and its `CallsMap`/`ModuleStats` aliases) is removed from
+  `moralstack/cli/report.py`.** The CLI shell instantiated it but never rendered a report, so it no longer creates a
+  `./reports/` directory; `CallLogger` is unchanged. No governance, prompt or payload change.
 
 ## 1.0.0 — 2026-10-21
 

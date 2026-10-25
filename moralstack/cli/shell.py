@@ -48,7 +48,7 @@ from .models import (
     _parse_simulator_trace,
     path_reason_from_risk_and_action,
 )
-from .report import CallLogger, MarkdownReportGenerator
+from .report import CallLogger
 from .visualizer import DeliberationVisualizer
 
 
@@ -70,7 +70,6 @@ class MoralStackCLI:
         self.constitution_store = None  # Will be set in setup()
         self.visualizer = DeliberationVisualizer(use_colors=True)
         self.current_trace: Optional[DeliberationTrace] = None
-        self.report_generator = MarkdownReportGenerator(output_dir="reports")
         self.last_prompt: str = ""  # Save prompt for report
         self.cost_tracker: Any = None  # Cost tracking (only with --verbose)
 
