@@ -193,6 +193,27 @@ def _outcomes(debug_log: MagicMock) -> list[dict[str, Any]]:
     return [c.args[2] for c in debug_log.call_args_list if c.args[2].get("component") == "hindsight_diagnostic"]
 
 
+@pytest.mark.parametrize(
+    ("exc", "level", "has_traceback"),
+    [(RuntimeError(SECRET), logging.WARNING, True), (OrchestratorTimeoutError("deadline exceeded"), logging.INFO, False)],
+)
+def test_hindsight_log_level_follows_the_module_policy(
+    diags: list[dict[str, Any]],
+    debug_log: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+    exc: BaseException,
+    level: int,
+    has_traceback: bool,
+) -> None:
+    with caplog.at_level(logging.DEBUG, logger=_RUNNER_MOD):
+        _hindsight_state(exc)
+    relevant = [r for r in caplog.records if f"error_type={type(exc).__name__}" in r.getMessage()]
+    assert len(relevant) == 1
+    assert relevant[0].levelno == level
+    assert (relevant[0].exc_info is not None) is has_traceback
+    assert SECRET not in relevant[0].getMessage()
+
+
 def test_hindsight_row_and_payload_are_clean(diags: list[dict[str, Any]], debug_log: MagicMock) -> None:
     state = _hindsight_state(RuntimeError(SECRET))
     assert diags[0]["action"] == "evaluate (ERROR)"
