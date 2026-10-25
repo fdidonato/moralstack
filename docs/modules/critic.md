@@ -118,7 +118,7 @@ an operator `constitution_dir` that has no HARD principle.
 "no verdict" and **raises**: a provider/transport error from `policy.generate`
 propagates unchanged, and an unparseable reply, a non-object reply (e.g. `[]`) or
 a JSON object **without the `violated` key** raise `JSONParseError`
-(`critic_module.py:727-728`). Before this change the whole call sat in
+(`critic_module.py:726-727`). Before this change the whole call sat in
 `except (JSONParseError, Exception): return QuickCheckResult(passed=True)` and
 a missing key defaulted to "not violated", so any provider blip passed an
 unchecked draft on the fast path, where no full critique runs afterwards. The
@@ -362,12 +362,6 @@ Structured critic output uses OpenAI's `json_object` response format (`response_
 - **Default**: `20`
 - **Type**: int (>= 1)
 - **Meaning**: Maximum number of constitution principles included in the critic prompt.
-
-#### MORALSTACK_CRITIC_INCLUDE_EXAMPLES
-
-- **Default**: `false`
-- **Type**: bool (1/true/yes or 0/false/no)
-- **Meaning**: Whether to include violation examples from principles in the critic prompt.
 
 #### MORALSTACK_CRITIC_MAX_RULE_LEN
 

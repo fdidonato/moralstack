@@ -291,7 +291,6 @@ class CriticConfig:
     temperature: float = 0.1  # Lower for determinism
     top_p: float = 0.9  # Nucleus sampling; configurable via MORALSTACK_CRITIC_TOP_P
     top_k_principles: int = 20  # Reduced to shrink prompt size
-    include_examples: bool = False  # Disabled for speed
     # Chars of each principle's rule the critic actually reads. Rules longer
     # than this are cut mid-sentence, so a clause that sits past the window
     # (typically a carve-out, which English drafting puts last) never reaches

@@ -107,7 +107,7 @@ Two screening tests when writing or reviewing a principle:
 Before spending effort on the wording of a rule, know what survives the trip to
 the model. `format_principles_compact`
 (`constitution/prompt_formatter.py:70-94`), used at both critic call sites
-(`runtime/modules/critic_module.py:401` and `:673`), emits one line per
+(`runtime/modules/critic_module.py:400` and `:672`), emits one line per
 principle:
 
 ```

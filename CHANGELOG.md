@@ -171,6 +171,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DefensiveOverrideApply` dataclasses (formally breaking in 1.x). Hard-signal calibration lives in
   `moralstack/models/risk/calibration.py`, which is untouched. No governance, prompt or payload change (the rendered
   prompt hash is identical).
+- **Dead code (lot A): the unused critic `include_examples` option is removed.** Removed: the `CriticConfig.include_examples`
+  field (so `CriticConfig(include_examples=...)` now raises `TypeError`), `ENV_INCLUDE_EXAMPLES` and the
+  `MORALSTACK_CRITIC_INCLUDE_EXAMPLES` environment variable (formally breaking in 1.x). The option never had a consumer,
+  so the critic prompt and the `violated_hard` path are unchanged; a deployment that still sets the variable is unaffected.
+  No governance, prompt or payload change.
 
 ## 1.0.0 — 2026-10-21
 
