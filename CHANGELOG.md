@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the worktree starts from `origin/main`. New harness tests pin these rules and the plan/implement/review contract (no
   Edit/Write tool for the reviewer, implementer on Sonnet, non-Sonnet reviewer model, no reviewer `model:` override in
   the review commands).
+- **`docs/CODEBASE_FACTS.md` records the 2026-10-25 fixes as verified facts.** Eight rows cover the exception-text
+  sinks, the stale-critique refusal and `critique_outcome`, the swallowed `log_call` errors, the single ledger writer,
+  the blank env keys and the implementer harness rules. A NOT FIXED row records that five WARNINGs and the persistence
+  WARNING still put exception text in the message. Documentation only.
 - **Docs wording for the observability fields.** The README now says an explicit `GovernanceConfig` observability
   value applies before the write-queue target is bound; the `observability_mode` docstring names the legacy
   `MORALSTACK_PERSIST_MODE` alias. Text only, no behavior change.
