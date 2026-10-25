@@ -330,47 +330,6 @@ class OrchestrationController:
             turn_index=turn_index,
         )
 
-    def _store_decision_in_ledger(
-        self,
-        *,
-        prompt: str,
-        contract_hash: str,
-        posture: str,
-        domain: str | None,
-        decision: Decision,
-        risk_score: float,
-        request_type: str,
-        turn_index: int,
-    ) -> bool:
-        """
-        Persist the produced decision into the SemanticDecisionLedger for future reuse.
-
-        Returns:
-            True when the entry was stored; False when the ledger is None or its
-            internal skip rules tripped (e.g. turn_index < 1, posture ESCALATED).
-        """
-        if self._ledger is None:
-            return False
-        cached = CachedDecision(
-            final_action=decision.final_action,
-            risk_score=risk_score,
-            governance_posture=posture,
-            winning_rule=getattr(decision, "path", "") or "",
-            decision_reason=", ".join(getattr(decision, "reason_codes", []) or []),
-            reason_codes=tuple(getattr(decision, "reason_codes", []) or []),
-            triggered_principles=tuple(getattr(decision, "triggered_principles", []) or []),
-        )
-        return self._ledger.store(
-            prompt=prompt,
-            contract_hash=contract_hash,
-            posture=posture,
-            domain=domain,
-            decision=cached,
-            intent_clarity=getattr(decision, "intent_clarity", "HIGH"),
-            request_type=request_type,
-            turn_index=turn_index,
-        )
-
     def _compute_governance_posture(
         self,
         *,

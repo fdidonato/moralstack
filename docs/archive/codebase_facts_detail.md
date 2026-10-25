@@ -431,3 +431,7 @@ Moved from "Future work / known gaps" on 2026-10-23: each claim opens with FIXED
 | Gap | Current state | Needed development |
 |---|---|---|
 | **FIXED 2026-10-25 (commit `fix(observability): swallow log_call errors`): `record_llm_call` now wraps `logger.log_call` in a swallowing try/except with a WARNING (`tests/test_persistence_helpers.py`).** **Hypothesis — `record_llm_call` does not wrap `logger.log_call` for its other callers** (read 2026-10-14, NOT fixed) | `orchestration/persistence_helpers.py:35-38`. The `_critique` call sites are now isolated (`_record_critique_call` / `_record_critique_failure` wrap it); the other modules (simulator, perspectives, hindsight, policy) are not | Low (read, not run) | A raising diagnostics logger can still turn a completed module call into a module error there |
+
+| Gap | Current state | Needed development |
+|---|---|---|
+| **RESOLVED 2026-10-25 (commit `refactor(orchestration): drop dead ledger store`): the uncalled method was removed.** **Hypothesis — `_store_decision_in_ledger` is a second ledger store path with no caller** (found 2026-10-15 by the F6 follow-up diff review; NOT fixed) | `_store_decision_in_ledger` (`orchestration/controller.py:307-346`) has no caller in `moralstack/` or `tests/` (grep 2026-10-15); it builds `CachedDecision` from `decision.final_action` (typed `FinalActionStr`), so it is canonical by type even if revived. **Code-read only** | Low (read, not run) | Candidate for the dead-code track; do not fix inside the F6 follow-ups |

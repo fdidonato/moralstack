@@ -144,6 +144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **The uncalled private `OrchestrationController._store_decision_in_ledger` is removed.** It was a second ledger store path with no caller in `moralstack/` or `tests/`; the ledger is written only by `_maybe_store_in_ledger`. No behavior change; doc line anchors of `controller.py` are re-anchored.
 - **The `moralstack-server` console script and `moralstack.server.proxy.main` are removed.** The script only raised
   `NotImplementedError` (formally breaking in 1.x, but it never worked). Use `create_app` from `moralstack.server` in
   your own launcher, or, from a source checkout, `uvicorn examples.server_quickstart:app`. The run meta

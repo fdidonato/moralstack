@@ -498,14 +498,14 @@ through the OpenAI-compatible proxy (see `docs/traces/complai_llm_rules_flow.md`
 ## 3. Runtime governance flow (high level)
 
 `govern()` → `GovernedClient.chat.completions.create()` → `Orchestrator.process()`
-→ `OrchestrationController.process()` (`orchestration/controller.py:1949`).
+→ `OrchestrationController.process()` (`orchestration/controller.py:1908`).
 
 Inside `process()` (order verified in source):
 1. Normalize request; build `ProcessCallContext`; set session/turn context vars;
-   pre-insert the `requests` row (`controller.py:1964-1987`).
+   pre-insert the `requests` row (`controller.py:1923-1946`).
 2. **Risk estimation** — speculative overlap (risk + draft in parallel) when
    `enable_speculative_generation`, else direct `_estimate_risk`
-   (`controller.py:1992-1999`). `_speculative_generate` selects the draft generator:
+   (`controller.py:1951-1958`). `_speculative_generate` selects the draft generator:
    `request.upstream_draft_generator` (opt-in `generation="upstream_then_verify"` +
    client `model`, wired by the SDK/proxy) when present, else `self.policy` (default,
    byte-identical). An empty/whitespace upstream draft is treated as "no draft" →
@@ -517,7 +517,7 @@ Inside `process()` (order verified in source):
    reuse rows and `ResponseAssembler.assemble` — see `upstream_draft.py` above and
    `.claude/rules/governed-delivery.md`.
 3. **DCCL evaluation** on the (possibly non-blocking) speculative draft
-   (`_run_dccl_evaluation`, `controller.py:2000`). The LLM path receives a
+   (`_run_dccl_evaluation`, `controller.py:1959`). The LLM path receives a
    budgeted role-ordered transcript from `ConversationContext`; when the draft
    is about to be reused, the mismatch guard prevents a last-user-only draft from
    becoming final if governance saw broader prior context. **Hard-signal gate (P0
@@ -530,24 +530,24 @@ Inside `process()` (order verified in source):
    validated aligned draft (and no hard signal) → **compliance fast-path**
    (`_route_compliance_match`), skipping risk routing and deliberation.
 4. Apply overlay sensitivity risk floor (`apply_risk_floor_if_sensitive`),
-   normalize domain, domain-exclusion check (`controller.py:2126-2180`).
+   normalize domain, domain-exclusion check (`controller.py:2085-2139`).
 5. **Decision** — `decide_action(...)` then `apply_safe_complete_gating(...)`
-   (`controller.py:2182-2194`).
+   (`controller.py:2141-2153`).
 6. **Routing** — `get_route(...)` → one of `refuse | benign | safe_complete |
    fast_path | deliberative`; `is_hard_signal_refuse(...)`
-   (`controller.py:2207-2208`).
+   (`controller.py:2166-2167`).
 7. **Ledger lookup** (multi-turn) — when a ledger + conversation_id exist, a
    cache hit may patch the decision/route to skip deliberation, unless the
    request carries hard-signal evidence (`ledger_hard_signal_block_reason`,
-   PROJECT_SPEC §5.3; `controller.py:2832-3014`). The patched decision carries
+   PROJECT_SPEC §5.3; `controller.py:2791-2973`). The patched decision carries
    `cached_decision_reused` as its last reason code, so a replayed decision is
    distinguishable from a deliberated one in the audit trail. Note that the
    ledger key is `(contract_hash, posture, domain)` and the storage is
    process-local: hits are **not** confined to the current conversation.
-8. Dispatch to the matching `_route_*` handler (`controller.py:2409-end`).
+8. Dispatch to the matching `_route_*` handler (`controller.py:2368-end`).
 9. `_apply_conversation_metadata_to_result` stamps conversation linkage, builds
    `conversation_governance_state_out`, emits conversation events, and stores the
-   decision in the ledger (`controller.py:428-530`), except transient fail-closed
+   decision in the ledger (`controller.py:387-489`), except transient fail-closed
    REFUSEs (`LEDGER_NON_CACHEABLE_FLIP_REASONS`: the `deliberation_critique_*` and
    `fast_path_escalation_*` codes, and the pipeline-failure codes `system_error` /
    `system_timeout`), which are never stored.
@@ -764,7 +764,7 @@ The **Convergence Engine** decides the loop outcome (verified):
   cycle≥max ⇒ stop (`CYCLES_EXHAUSTED`); else continue while cycles remain.
 
 The controller emits a `DELIBERATION_AGGREGATE` decision trace
-(`controller.py:738-803`). Fast paths (`run_fast_path`, `run_benign_fast_path`)
+(`controller.py:697-762`). Fast paths (`run_fast_path`, `run_benign_fast_path`)
 skip the deliberative loop.
 
 ---
@@ -822,7 +822,7 @@ See `docs/traces/openai_compatible_multiturn.md`.
   `conversation_id` via header/extra_body/lineage.
 - **State**: `ConversationGovernanceState` carries posture, last contract hash,
   hard constraints, and `turn_decisions_summary`. The controller extends it per
-  turn (`_extend_state_out_v04`, `controller.py:483-548`).
+  turn (`_extend_state_out_v04`, `controller.py:442-507`).
 - **Cache**: `SemanticDecisionLedger` can short-circuit deliberation on a
   same-conversation cache hit, gated by `ConversationalFastPathRunner.is_safe_to_apply`
   (cached REFUSE always applied; ESCALATED never cached; `turn_index < 1` skipped)
@@ -830,7 +830,7 @@ See `docs/traces/openai_compatible_multiturn.md`.
   hard-signal evidence or a hard-signal REFUSE).
 - **Risk in context**: history + developer contract are passed into the risk
   estimator so context-dependent prompts are not mis-scored
-  (`controller.py:946-1059`).
+  (`controller.py:905-1018`).
 - **Request transcript**: SDK and proxy both attach `ConversationContext` to
   `ProcessedRequest`. DCCL and speculative generation can use a role-serialized
   transcript; risk/deliberative modules may use smaller declared windows.
@@ -1053,7 +1053,7 @@ codebase contains targeted accommodations for it:
   `llm_rules` resends the full history with no stable `conversation_id`
   (module docstring).
 - `controller._estimate_risk` passes the developer contract + history to the
-  risk estimator citing "compl-ai llm_rules-benign Q74" (`controller.py:952-956`).
+  risk estimator citing "compl-ai llm_rules-benign Q74" (`controller.py:911-915`).
 - `examples/server_quickstart.py` documents the recommended COMPL-AI launch
   (uvicorn, single worker, port 8080).
 - `scripts/benchmark_moralstack.py` is MoralStack's **own** 84-question
