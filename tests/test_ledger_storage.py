@@ -102,7 +102,7 @@ class TestInMemoryLedgerStoragePutGet:
         assert s.size() == 0
 
 
-class TestInMemoryLedgerStorageLRU:
+class TestInMemoryLedgerStorageFifoEviction:
     def test_eviction_when_over_capacity(self):
         s = InMemoryLedgerStorage(max_entries=2, ttl_seconds=3600)
         k = LedgerKey(contract_hash="a", posture="NORMAL", domain=None)
@@ -116,7 +116,7 @@ class TestInMemoryLedgerStorageLRU:
         assert prompts == {"middle", "newest"}
 
     def test_eviction_across_keys(self):
-        """LRU is global, not per-key."""
+        """Insertion-order (FIFO) eviction is global, not per-key."""
         s = InMemoryLedgerStorage(max_entries=2, ttl_seconds=3600)
         k1 = LedgerKey(contract_hash="a", posture="NORMAL", domain=None)
         k2 = LedgerKey(contract_hash="b", posture="NORMAL", domain=None)
