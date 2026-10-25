@@ -84,8 +84,6 @@ class TestCLIConfig:
         assert config.use_mock is False
         assert config.minimal is False
         assert config.verbose is False
-        assert config.max_cycles == 2
-        assert config.enable_perspectives is True
 
     def test_custom_values(self):
         """Test custom configuration."""
@@ -93,13 +91,11 @@ class TestCLIConfig:
             use_mock=True,
             minimal=True,
             verbose=True,
-            max_cycles=5,
         )
 
         assert config.use_mock is True
         assert config.minimal is True
         assert config.verbose is True
-        assert config.max_cycles == 5
 
 
 # =============================================================================
@@ -363,23 +359,6 @@ class TestArgumentParser:
             config = parse_args()
 
         assert config.max_parallel_agents == 4
-
-    def test_disable_modules(self):
-        """Test disabling modules."""
-        with patch(
-            "sys.argv",
-            [
-                "mstack_run.py",
-                "--no-perspectives",
-                "--no-simulation",
-                "--no-hindsight",
-            ],
-        ):
-            config = parse_args()
-
-        assert config.enable_perspectives is False
-        assert config.enable_simulation is False
-        assert config.enable_hindsight is False
 
     def test_clean_start_flag(self):
         """Test flag --clean-start."""

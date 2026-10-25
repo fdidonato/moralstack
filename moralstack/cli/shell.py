@@ -1151,24 +1151,6 @@ Examples:
         dest="clean_db",
         help="When using db_only mode, also delete the database file",
     )
-    parser.add_argument(
-        "--no-perspectives",
-        action="store_true",
-        dest="no_perspectives",
-        help="Disable perspectives module",
-    )
-    parser.add_argument(
-        "--no-simulation",
-        action="store_true",
-        dest="no_simulation",
-        help="Disable simulation module",
-    )
-    parser.add_argument(
-        "--no-hindsight",
-        action="store_true",
-        dest="no_hindsight",
-        help="Disable hindsight module",
-    )
 
     args = parser.parse_args()
     openai_model = args.openai_model or os.getenv("OPENAI_MODEL", "gpt-4o")
@@ -1182,9 +1164,6 @@ Examples:
         openai_api_key=args.openai_key,
         openai_model=openai_model,
         max_parallel_agents=max_parallel_agents,
-        enable_perspectives=not getattr(args, "no_perspectives", False),
-        enable_simulation=not getattr(args, "no_simulation", False),
-        enable_hindsight=not getattr(args, "no_hindsight", False),
     )
 
 

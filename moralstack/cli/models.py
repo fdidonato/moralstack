@@ -490,7 +490,3 @@ class CLIConfig:
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o"
     max_parallel_agents: int = 4
-    max_cycles: int = 2
-    enable_perspectives: bool = True
-    enable_simulation: bool = True
-    enable_hindsight: bool = True

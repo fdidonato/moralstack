@@ -216,6 +216,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helpers `_call_tier_sort_key` and `_llm_calls_by_cycle` (`ui/app.py`), and the orphan `moralstack/compliance/_version.py`
   with its `__compliance_layer_version__` constant (nothing imported it; formally breaking in 1.x for that module-level
   name). The UI stays read-only. No governance, prompt or payload change.
+- **Dead code (lot A): the no-op module disable flags are removed.** Removed: the `--no-perspectives`, `--no-simulation`
+  and `--no-hindsight` CLI flags (now an argparse error) and the `CLIConfig` fields `max_cycles`, `enable_perspectives`,
+  `enable_simulation` and `enable_hindsight` (so `CLIConfig(max_cycles=...)` and the `enable_*` kwargs now raise
+  `TypeError`); formally breaking in 1.x. The flags never took effect: the shell reads the module switches from the
+  environment-derived `OrchestratorConfig`, not from `CLIConfig`. No governance, prompt or payload change.
 
 ## 1.0.0 — 2026-10-21
 

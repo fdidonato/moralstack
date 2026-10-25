@@ -695,7 +695,7 @@ correlation stores are in-process by default, so the reference launcher (from a 
 
 | Command | Purpose |
 |---|---|
-| `moralstack` | Interactive governed shell (`--mock`, `--minimal`, `--no-perspectives`, `--no-simulation`, `--no-hindsight`, ...) |
+| `moralstack` | Interactive governed shell (`--mock`, `--minimal`, ...) |
 | `moralstack-ui` | Observability dashboard (§12) |
 | `moralstack-validate-overlay <path>` | Validates an overlay YAML |
 
