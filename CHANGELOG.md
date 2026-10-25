@@ -189,6 +189,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ConsequenceLikeProtocol`, `PerspectiveAggregationProtocol` and `PrincipleLikeProtocol` protocols, and the unused
   `_all_modules_satisfied` and `domain_from_signals` helpers (formally breaking in 1.x). The `MoralStackError` family
   that is actually raised, `_handle_error` and `_handle_timeout` are untouched. No governance, prompt or payload change.
+- **Dead code (lot A): the unused `session_store` constructor argument of `OrchestrationController` is removed.**
+  `OrchestrationController(session_store=...)` now raises `TypeError` (formally breaking in 1.x); the stored
+  `_session_store` attribute was never read. The controller no longer imports `moralstack.sdk`, which removes a layering
+  inversion. Ledger paths and the fail-closed handlers are untouched. No governance, prompt or payload change.
 
 ## 1.0.0 — 2026-10-21
 

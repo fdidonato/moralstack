@@ -37,7 +37,7 @@ The repo carries explicit accommodations for COMPL-AI:
   `conversation_correlation.py:1-12`).
 - `controller._estimate_risk` feeds the developer contract + history to the risk
   estimator, with a comment citing "compl-ai llm_rules-benign Q74"
-  (`controller.py:911-915`) — context-dependent prompts (e.g. a deployer-expected
+  (`controller.py:908-912`) — context-dependent prompts (e.g. a deployer-expected
   auth token) must not be mis-scored as obfuscated.
 - SDK and proxy attach a shared `ConversationContext` to `ProcessedRequest`.
   DCCL and speculative generation can see a role-serialized transcript rather
@@ -155,12 +155,12 @@ deduplicated — duplicate turn rows can distort benchmark accounting.
 ### 4.4 Cache (ledger) reuse
 On a same-conversation hit, `ConversationalFastPathRunner.is_safe_to_apply` gates
 reuse: cached REFUSE always applied, ESCALATED never cached, `turn_index < 1`
-skipped (`controller.py:2842-2977`). The gate is risk-blind, so a second rule
+skipped (`controller.py:2839-2974`). The gate is risk-blind, so a second rule
 (`ledger_hard_signal_block_reason`) refuses to reuse a cached non-REFUSE decision
 when the current request has hard-signal evidence or is a hard-signal REFUSE. A wrong
 collision (4.1) could cause reuse across logically distinct samples. The P0
 hard-signal supremacy invariant holds because that guard runs before the cache patch
-and `is_hard_signal_refuse` is re-evaluated after it (`controller.py:2879`).
+and `is_hard_signal_refuse` is re-evaluated after it (`controller.py:2876`).
 
 ### 4.5 Endpoint selection
 COMPL-AI / IFBench runs should point at the production proxy launched via

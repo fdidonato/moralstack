@@ -2,7 +2,7 @@
 Test suite for Step 6 — controller wiring to conversational mode.
 
 These tests exercise:
-1. Backward compatibility: when ledger=None and session_store=None, the controller
+1. Backward compatibility: when ledger=None, the controller
    behaves identically to baseline (existing tests in the repo cover this; we add
    construction-time invariants here).
 2. Ledger lookup is invoked when ledger and conversation_id are provided.
@@ -60,7 +60,6 @@ class StubEmbedder:
 def _build_controller_minimal(
     *,
     ledger: SemanticDecisionLedger | None = None,
-    session_store: Any = None,
 ):
     """
     Build a minimal OrchestrationController with mocked dependencies.
@@ -88,7 +87,6 @@ def _build_controller_minimal(
         output_protector=MagicMock(),
         protected_system_prompt="test prompt",
         ledger=ledger,
-        session_store=session_store,
     )
 
 
@@ -98,19 +96,11 @@ class TestControllerInitBackwardCompat:
     def test_default_no_v04_params(self):
         orch = _build_controller_minimal()
         assert orch._ledger is None
-        assert orch._session_store is None
 
     def test_construction_with_ledger(self):
         ledger = SemanticDecisionLedger(StubEmbedder(), InMemoryLedgerStorage())
         orch = _build_controller_minimal(ledger=ledger)
         assert orch._ledger is ledger
-
-    def test_construction_with_session_store(self):
-        from moralstack.sdk.session_store import InMemorySessionStore
-
-        store = InMemorySessionStore()
-        orch = _build_controller_minimal(session_store=store)
-        assert orch._session_store is store
 
 
 class TestLookupHelper:

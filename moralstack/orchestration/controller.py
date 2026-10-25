@@ -140,7 +140,6 @@ from moralstack.orchestration.types import (
 )
 from moralstack.prompts.catalog import PromptSet, default_prompt_set
 from moralstack.runtime.trace.decision_trace import DecisionTrace, append_decision_trace, normalize_trace_fields
-from moralstack.sdk.session_store import SessionStoreProtocol
 
 _LOG = logging.getLogger(__name__)
 
@@ -232,7 +231,6 @@ class OrchestrationController:
         event_emitter: EventEmitter | None = None,
         *,
         ledger: SemanticDecisionLedger | None = None,
-        session_store: SessionStoreProtocol | None = None,
         prompt_set: PromptSet | None = None,
     ) -> None:
         self.config = config
@@ -284,7 +282,6 @@ class OrchestrationController:
             prompt_set=self._prompt_set,
         )
         self._ledger: SemanticDecisionLedger | None = ledger
-        self._session_store: SessionStoreProtocol | None = session_store
         self._fast_path_runner = ConversationalFastPathRunner()
 
     @property
