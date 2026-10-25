@@ -1402,13 +1402,6 @@ class ConstitutionRetriever:
         if prefilter is not None and hasattr(prefilter, "set_cost_tracker"):
             prefilter.set_cost_tracker(tracker)
 
-    def invalidate_cache(self) -> None:
-        """Invalidate all caches (agents, prefilter)."""
-        self._domain_agents.clear()
-        self._enhanced_agents.clear()
-        if self._domain_prefilter is not None and hasattr(self._domain_prefilter, "clear_cache"):
-            self._domain_prefilter.clear_cache(reason="forced_refresh")
-
     def retrieve(
         self,
         query: str,

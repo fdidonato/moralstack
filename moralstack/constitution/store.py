@@ -7,7 +7,6 @@ YAML loading: ruamel.yaml only. Validation: Pydantic only. Fail-fast.
 
 from __future__ import annotations
 
-from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -341,8 +340,6 @@ class ConstitutionStore:
         # Cache
         self._core_principles: list[Principle] | None = None
         self._overlays: dict[str, Overlay] = {}
-        self._matching_cache: OrderedDict[str, list[str]] = OrderedDict()
-        self._matching_cache_max_size: int = 500
         self._available_domains_cache: list[str] | None = None
 
         self._cost_tracker: Any = None
@@ -701,19 +698,6 @@ class ConstitutionStore:
             List ordered by application priority.
         """
         return resolve_conflict(principles)
-
-    def reload(self) -> None:
-        """
-        Reloads configuration from file.
-
-        Useful for hot-reload without restart.
-        Invalidates all caches, including the agents' ones.
-        """
-        self._core_principles = None
-        self._overlays.clear()
-        self._matching_cache.clear()  # Also clear the matching cache
-        self._available_domains_cache = None  # Reset domain cache
-        self._retriever.invalidate_cache()
 
 
 # =============================================================================

@@ -198,6 +198,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `persist_*` helpers are unchanged) and the `EventSink` protocol with its module `observability/sinks/base.py` (nothing
   imported it; the sinks only named it in docstrings). Both are formally breaking in 1.x. No governance, prompt or payload
   change.
+- **Dead code (lot A): the unused constitution cache-reset path is removed.** Removed: `ConstitutionStore.reload` (and the
+  `_matching_cache` / `_matching_cache_max_size` attributes it cleared, which nothing else used) and
+  `ConstitutionRetriever.invalidate_cache`; neither had a caller (formally breaking in 1.x). Principle retrieval, the
+  `core` retrieval-only rule and domain overlays are unchanged. No governance, prompt or payload change.
 
 ## 1.0.0 — 2026-10-21
 

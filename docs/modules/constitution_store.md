@@ -220,6 +220,7 @@ Public API: `get_relevant_principles`, `retrieve`, `detect_relevant_domains`. **
 instance attribute on a store built once per process and shared by concurrent request threads, so a request could
 read another request's `detected_domain`/`prefiltered_domains` (see the P0 fix entry in `CHANGELOG.md` and
 `docs/CODEBASE_FACTS.md`). External integrators must use `retrieve(...).debug_info` instead.
+`reload()` and `ConstitutionRetriever.invalidate_cache()` were removed (dead code, lot A 2026-10-25: no callers).
 
 ### `retrieve(...)` — the request-scoped retrieval channel
 

@@ -713,8 +713,8 @@ Deployer overrides and the static prefixes (prompt externalization, Phase A): th
   conditions.
 - The effective `max_parallel_agents` default is **4** (bumped from 2) across
   all runtime sources: `ConstitutionRetrieverConfig.max_parallel_agents`
-  (`retriever.py:1466`), `ConstitutionStoreConfig.max_parallel_agents` /
-  `ConstitutionStore.__init__` kwarg default (`store.py:231`,`:267` — the store
+  (`retriever.py:1459`), `ConstitutionStoreConfig.max_parallel_agents` /
+  `ConstitutionStore.__init__` kwarg default (`store.py:230`,`:266` — the store
   overrides the retriever default on every store-mediated path), `CLIConfig.max_parallel_agents`
   (`cli/models.py:492`), and `resolve_constitution_max_parallel_agents`'s env
   fallback (`pipeline/deliberation_stack.py:64`, env var
