@@ -347,7 +347,7 @@ unchanged (no new row); `skipped` is accepted (D2) with a WARNING `deliberation 
 delivered under S2`. A closed gate (`critic is None`, or no store and no constitution) is the by-design
 skip and is unchanged. The decision is flipped from the structured outcome only (never from response
 text) with `_decision_as_refuse` (keeps `hard_violations`), a rebuilt `DecisionExplanation`
-(`winning_rule="deliberation_fail_closed"`), the neutral refusal rationale (also passed when the decision was already REFUSE and the final-cycle outcome is `failed`/`timeout`; `_make_refusal` then ignores the previous cycle's `revision_guidance`, in the rationale and in the alternatives), and a best-effort FINAL
+(`winning_rule="deliberation_fail_closed"`), the neutral refusal rationale (also passed when the decision was already REFUSE and the final-cycle outcome is `failed`/`timeout`; `_make_refusal` then ignores the previous cycle's `revision_guidance`, in the rationale and in the alternatives; on that no-flip branch the neutral sentence, also in `ResponseMetadata.refusal_reason`, is wording only, not the cause of the REFUSE, which stays in the structured decision fields), and a best-effort FINAL
 trace row (sequence 2) with `hard_violation_source="deliberation_fail_closed"` and `stage_payload`
 `{original_final_action, flip_reason, critique_outcome, cycle}` (`critique_outcome` is `not_invoked`
 for `""`). `ResponseMetadata.original_final_action` / `hard_violation_flip_reason` carry the same
