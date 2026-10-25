@@ -465,7 +465,8 @@ def test_o4b_failure_diagnostic_row_still_written(diags: Any) -> None:
     assert len(diags) == 1
     diag, persist_kwargs = diags[0]
     assert diag["action"] == "critique (ERROR)"
-    assert diag["response"] == "ERROR: boom"
+    assert diag["response"] == "ERROR: RuntimeError"
+    assert "boom" not in diag["response"]
     assert persist_kwargs is None
 
 

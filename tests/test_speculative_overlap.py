@@ -97,6 +97,51 @@ def test_join_for_consumer_exception_emits_discarded(executor: ThreadPoolExecuto
     h.shutdown_executor()
 
 
+class _BadStr(Exception):
+    def __str__(self) -> str:
+        raise ValueError("unprintable")
+
+
+def test_join_for_consumer_failure_payload_has_class_name_only(executor: ThreadPoolExecutor) -> None:
+    secret = "sk-SECRET boom"
+    emitter = _RecordingEmitter()
+    fut: Future[tuple[str | None, dict | None]] = Future()
+    fut.set_exception(RuntimeError(secret))
+    h = SpeculativeOverlapHandle(
+        risk_estimation=object(),
+        spec_future=fut,
+        executor=executor,
+        spec_started_at_ms=0,
+        event_emitter=emitter,
+    )
+    assert h.join_for_consumer("fast_path", "run_fast_path") is None
+    discarded = [e for e in emitter.orchestration_events if e.get("event_type") == SPECULATIVE_RESULT_DISCARDED]
+    assert len(discarded) == 1
+    payload = discarded[0]["payload"]
+    assert payload["reason"] == "speculative_failed"
+    assert payload["error_type"] == "RuntimeError"
+    assert "error" not in payload
+    assert secret not in repr(emitter.orchestration_events)
+    h.shutdown_executor()
+
+
+def test_join_for_consumer_unprintable_exception_does_not_escape(executor: ThreadPoolExecutor) -> None:
+    emitter = _RecordingEmitter()
+    fut: Future[tuple[str | None, dict | None]] = Future()
+    fut.set_exception(_BadStr())
+    h = SpeculativeOverlapHandle(
+        risk_estimation=object(),
+        spec_future=fut,
+        executor=executor,
+        spec_started_at_ms=0,
+        event_emitter=emitter,
+    )
+    assert h.join_for_consumer("fast_path", "run_fast_path") is None
+    discarded = [e for e in emitter.orchestration_events if e.get("event_type") == SPECULATIVE_RESULT_DISCARDED]
+    assert discarded[0]["payload"]["error_type"] == "_BadStr"
+    h.shutdown_executor()
+
+
 def test_abandon_skips_join_and_emits_events(executor: ThreadPoolExecutor) -> None:
     emitter = _RecordingEmitter()
 

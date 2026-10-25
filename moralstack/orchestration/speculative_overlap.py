@@ -90,12 +90,21 @@ class SpeculativeOverlapHandle:
         try:
             draft, meta = self._spec_future.result()
         except Exception as e:
+            try:
+                _LOG.warning(
+                    "speculative draft join failed route=%s error_type=%s",
+                    route,
+                    type(e).__name__,
+                    exc_info=e,
+                )
+            except Exception:
+                _LOG.debug("speculative join failure log failed", exc_info=True)
             self._emit(
                 SPECULATIVE_RESULT_DISCARDED,
                 {
                     "reason": "speculative_failed",
                     "route": route,
-                    "error": str(e)[:300],
+                    "error_type": type(e).__name__,
                 },
             )
             return None

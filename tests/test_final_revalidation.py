@@ -65,3 +65,61 @@ def test_final_revalidation_blocks_partial_contract_literal_before_critic():
     assert result.response.content == refusal_text
     assert result.response.response_type == ResponseType.FULL_REFUSAL
     assert result.response.metadata.final_action == "REFUSE"
+
+
+def test_final_revalidation_error_event_carries_class_name_not_text(monkeypatch):
+    secret = "sk-SECRET boom"
+    events: list[dict] = []
+    monkeypatch.setattr(
+        "moralstack.orchestration.final_revalidation._emit_event",
+        lambda **kw: events.append(kw),
+    )
+
+    class _Store:
+        def get_constitution(self, *args, **kwargs):
+            raise RuntimeError(secret)
+
+        def get_relevant_principles(self, *args, **kwargs):
+            return []
+
+    contract = DeveloperContract.from_text("Stay on topic.")
+    request = SimpleNamespace(
+        request_id="req-err",
+        prompt="hello",
+        developer_contract=contract,
+        conversation_history=[],
+        get_domain=lambda: "general",
+    )
+    result = SimpleNamespace(
+        request_id="req-err",
+        response=SimpleNamespace(
+            content="plain answer",
+            response_type=ResponseType.DIRECT,
+            metadata=SimpleNamespace(
+                final_action="SAFE_COMPLETE",
+                must_refuse=False,
+                refusal_reason="",
+                reason_codes=[],
+                hard_violations=[],
+            ),
+        ),
+    )
+    policy = SimpleNamespace(generate=lambda **_: SimpleNamespace(text="I cannot help."), model="test-policy")
+    orchestrator = SimpleNamespace(critic=object(), constitution_store=_Store(), policy=policy)
+
+    outcome = revalidate_final_output(
+        orchestrator=orchestrator,
+        request=request,
+        result=result,
+        final_text="plain answer",
+        final_text_source="safe_complete_upstream",
+        run_id="r",
+    )
+
+    assert outcome.status == "error"
+    errors = [e for e in events if e["status"] == "error"]
+    assert len(errors) == 1
+    payload = errors[0]["payload"]
+    assert payload["error_type"] == "RuntimeError"
+    assert "error" not in payload
+    assert secret not in repr(events)

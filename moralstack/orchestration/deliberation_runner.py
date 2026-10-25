@@ -4014,6 +4014,51 @@ class DeliberationRunner:
         except Exception:
             _LOG.warning("critique telemetry failed (the critique itself is kept)", exc_info=True)
 
+    @staticmethod
+    def _exc_text(error: BaseException) -> str:
+        """Exception text that cannot raise: ``str(error)``, else the class name.
+
+        An empty message or a ``__str__`` that raises both fall back to the class name.
+        """
+        try:
+            return str(error) or type(error).__name__
+        except Exception:
+            return type(error).__name__
+
+    @staticmethod
+    def _log_module_exception(
+        module: str,
+        request: ProcessedRequest,
+        state: DeliberationState,
+        error: BaseException,
+    ) -> None:
+        """Guarded server-side log for a failed optional deliberation module.
+
+        The designed ``OrchestratorTimeoutError`` skip is INFO without traceback; any
+        other exception is a WARNING with the untruncated text and chained causes
+        (``exc_info``), by design. Never raises.
+        """
+        try:
+            if isinstance(error, OrchestratorTimeoutError):
+                _LOG.info(
+                    "deliberation %s skipped request_id=%s cycle=%s error_type=%s",
+                    module,
+                    request.request_id or "",
+                    state.cycle,
+                    type(error).__name__,
+                )
+            else:
+                _LOG.warning(
+                    "deliberation %s failed request_id=%s cycle=%s error_type=%s",
+                    module,
+                    request.request_id or "",
+                    state.cycle,
+                    type(error).__name__,
+                    exc_info=error,
+                )
+        except Exception:
+            _LOG.debug("deliberation %s failure log failed", module, exc_info=True)
+
     def _record_critique_failure(
         self,
         state: DeliberationState,
@@ -4024,13 +4069,14 @@ class DeliberationRunner:
     ) -> DeliberationState:
         """Record a critique that did not complete (or whose post-processing failed).
 
-        Appends ``Critique error: ...`` to ``state.errors``, sets the per-cycle outcome
-        when one is given, emits a WARNING (type plus a 200-char excerpt: provider
-        exceptions can embed response bodies) and writes the diagnostic-only
-        ``critique (ERROR)`` row. Never raises; the delivery site fails closed on the
-        recorded outcome (``enforce_verified_draft_delivery``).
+        Appends ``Critique error: ...`` to ``state.errors`` (guarded text), sets the
+        per-cycle outcome when one is given, emits a WARNING (type plus a 200-char
+        excerpt: provider exceptions can embed response bodies) and writes the
+        diagnostic-only ``critique (ERROR)`` row, which carries the class name only.
+        Never raises; the delivery site fails closed on the recorded outcome
+        (``enforce_verified_draft_delivery``).
         """
-        state.errors.append(f"Critique error: {error}")
+        state.errors.append(f"Critique error: {self._exc_text(error)}")
         if outcome is not None:
             state._critique_outcome = outcome
         _LOG.warning(
@@ -4039,7 +4085,7 @@ class DeliberationRunner:
             state.cycle,
             outcome,
             type(error).__name__,
-            str(error)[:200],
+            self._exc_text(error)[:200],
         )
         try:
             record_llm_call(
@@ -4048,7 +4094,7 @@ class DeliberationRunner:
                     "module": "critic",
                     "action": "critique (ERROR)",
                     "prompt": f"Prompt: {request.prompt}",
-                    "response": f"ERROR: {error}",
+                    "response": f"ERROR: {type(error).__name__}",
                     "duration_ms": 0.0,
                 },
                 None,
@@ -4250,14 +4296,15 @@ class DeliberationRunner:
                 request_id=request.request_id or "",
             )
         except Exception as e:
-            state.errors.append(f"Simulation error: {e}")
+            state.errors.append(f"Simulation error: {self._exc_text(e)}")
+            self._log_module_exception("simulation", request, state, e)
             record_llm_call(
                 self.logger,
                 {
                     "module": "simulator",
                     "action": "simulate (ERROR)",
                     "prompt": f"Prompt: {request.prompt}",
-                    "response": f"ERROR: {e}",
+                    "response": f"ERROR: {type(e).__name__}",
                     "duration_ms": 0.0,
                 },
                 None,
@@ -4353,25 +4400,25 @@ class DeliberationRunner:
                 },
             )
         except Exception as e:
-            state.errors.append(f"Hindsight error: {e}")
+            state.errors.append(f"Hindsight error: {self._exc_text(e)}")
+            self._log_module_exception("hindsight", request, state, e)
             record_llm_call(
                 self.logger,
                 {
                     "module": "hindsight",
                     "action": "evaluate (ERROR)",
                     "prompt": f"Prompt: {request.prompt}",
-                    "response": f"ERROR: {e}",
+                    "response": f"ERROR: {type(e).__name__}",
                     "duration_ms": 0.0,
                 },
                 None,
             )
             err_extra: dict[str, Any] = {
                 "error_type": type(e).__name__,
-                "error_message": str(e),
                 "state_cycle": state.cycle,
             }
             if isinstance(e, OrchestratorTimeoutError):
-                if "before hindsight" in str(e):
+                if "before hindsight" in self._exc_text(e):
                     diag_outcome = "evaluate_aborted_timeout_guard"
                 else:
                     diag_outcome = "evaluate_failed_orchestrator_timeout"
@@ -4467,14 +4514,15 @@ class DeliberationRunner:
                 state.perspectives = [result]
             state._perspectives_aggregation = result
         except Exception as e:
-            state.errors.append(f"Perspectives error: {e}")
+            state.errors.append(f"Perspectives error: {self._exc_text(e)}")
+            self._log_module_exception("perspectives", request, state, e)
             record_llm_call(
                 self.logger,
                 {
                     "module": "perspectives",
                     "action": "evaluate (ERROR)",
                     "prompt": f"Prompt: {request.prompt}",
-                    "response": f"ERROR: {e}",
+                    "response": f"ERROR: {type(e).__name__}",
                     "duration_ms": 0.0,
                 },
                 None,

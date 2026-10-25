@@ -383,7 +383,7 @@ def revalidate_final_output(
                 "final_text_after_revalidation": refusal,
                 "final_response_length_before": length_before,
                 "final_response_length_after": len(refusal),
-                "error": str(exc)[:500],
+                "error_type": type(exc).__name__,
             },
         )
         return FinalRevalidationOutcome(
@@ -392,8 +392,16 @@ def revalidate_final_output(
             final_text_source="refusal_post_revalidation",
             final_action="REFUSE",
             fallback_source=fallback_source,
-            error=str(exc),
+            error=_safe_exc_text(exc),
         )
+
+
+def _safe_exc_text(exc: BaseException) -> str:
+    """``str(exc)`` that cannot raise; falls back to the class name (empty or unprintable)."""
+    try:
+        return str(exc) or type(exc).__name__
+    except Exception:
+        return type(exc).__name__
 
 
 def _message_sections_from_messages(messages: list[dict[str, Any]]) -> dict[str, Any]:
