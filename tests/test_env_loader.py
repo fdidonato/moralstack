@@ -44,3 +44,15 @@ def test_find_project_root_when_in_moralstack_project():
     if result is None:
         pytest.skip("Not running from moralstack project (no pyproject.toml found)")
     assert (result / "pyproject.toml").exists() or (result / ".env").exists()
+
+
+@pytest.mark.parametrize("key", ["OPENAI_MAX_TOKENS", "MORALSTACK_UI_PORT"])
+def test_blank_int_env_vars_are_purged(key, monkeypatch):
+    """A blank value (``KEY=`` in the env file) is removed, so ``int(os.getenv(key, default))``
+    falls back to the default instead of raising ValueError on ``int("")``."""
+    from moralstack.utils import env_loader
+
+    assert key in env_loader._OPTIONAL_ENV_VARS
+    monkeypatch.setenv(key, "")
+    env_loader._purge_empty_env_vars()
+    assert key not in os.environ
