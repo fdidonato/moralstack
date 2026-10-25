@@ -78,6 +78,8 @@ class HindsightScores:
     total: float  # Weighted average
 ```
 
+The never-called `_parse_float_score` helper was removed (dead code, lot A 2026-10-25); response parsing is unchanged.
+
 ### HindsightEvaluation
 
 ```python

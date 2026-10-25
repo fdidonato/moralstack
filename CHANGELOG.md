@@ -202,6 +202,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_matching_cache` / `_matching_cache_max_size` attributes it cleared, which nothing else used) and
   `ConstitutionRetriever.invalidate_cache`; neither had a caller (formally breaking in 1.x). Principle retrieval, the
   `core` retrieval-only rule and domain overlays are unchanged. No governance, prompt or payload change.
+- **Dead code (lot A): the unused private `_parse_float_score` helper is removed** from
+  `moralstack/runtime/modules/hindsight_module.py`. Nothing called it; hindsight response parsing is unchanged. No
+  governance, prompt or payload change.
 
 ## 1.0.0 — 2026-10-21
 

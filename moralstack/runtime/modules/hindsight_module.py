@@ -353,15 +353,6 @@ RETRY_BATCH_PROMPT = RETRY_HINDSIGHT_BATCH
 # =============================================================================
 
 
-def _parse_float_score(value: Any, default: float = 0.0, min_val: float = -1.0, max_val: float = 1.0) -> float:
-    """Parses a float value with clamping and fallback."""
-    try:
-        score = float(value)
-        return max(min_val, min(max_val, score))
-    except (ValueError, TypeError):
-        return default
-
-
 def parse_hindsight_response(
     text: str,
     scenario_id: str = "default",
