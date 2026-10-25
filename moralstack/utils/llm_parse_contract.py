@@ -55,18 +55,6 @@ def merge_parse_contract_into_summary(
     return json.dumps(base, ensure_ascii=False)
 
 
-def build_failed_parse_contract(*, strict_json_requested: bool, message: str) -> dict[str, Any]:
-    """Parse metadata when extract_json / validation fails (for observability only)."""
-    c = _contract_base(
-        strict_json_requested=strict_json_requested,
-        response_contract=RESPONSE_CONTRACT_JSON_OBJECT,
-        parse_status=PARSE_STATUS_FAILED,
-        fallback_used=False,
-    )
-    c["retry_reason"] = message[:500]
-    return c
-
-
 def parse_dict_with_contract(
     raw: str,
     *,

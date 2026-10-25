@@ -130,19 +130,6 @@ class LRUCache(Generic[T]):
             self._hits = 0
             self._misses = 0
 
-    def invalidate(self, key: str) -> bool:
-        """
-        Invalidates a specific entry.
-
-        Returns:
-            True if the entry existed and was removed
-        """
-        with self._lock:
-            if key in self._cache:
-                del self._cache[key]
-                return True
-            return False
-
     @property
     def stats(self) -> dict[str, Any]:
         """Cache statistics."""

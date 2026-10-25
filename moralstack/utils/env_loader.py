@@ -165,16 +165,3 @@ def load_env() -> bool:
     result = load_dotenv(env_path, override=True)
     _purge_empty_env_vars()
     return result
-
-
-def _env_candidate_paths() -> list[Path]:
-    """Return candidate directories for .env, in search order."""
-    candidates: list[Path] = []
-    _here = Path(__file__).resolve()
-    pkg_root = _here.parent.parent.parent
-    candidates.append(pkg_root)
-    cwd = Path.cwd().resolve()
-    for p in [cwd, *cwd.parents]:
-        if p not in candidates:
-            candidates.append(p)
-    return candidates

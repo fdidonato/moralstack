@@ -162,36 +162,8 @@ class DelimiterProtection:
     - Clear separation of "roles"
     """
 
-    # Unique delimiters that should not appear in normal content
-    SYSTEM_START = "◆SYS◆"
-    SYSTEM_END = "◆/SYS◆"
-    USER_START = "◆USR◆"
-    USER_END = "◆/USR◆"
-
     # Pattern to detect any delimiter
     DELIMITER_PATTERN = re.compile(r"◆/?(?:SYS|USR)◆")
-
-    def wrap_system(self, content: str) -> str:
-        """Wraps the system content in the delimiters."""
-        return f"{self.SYSTEM_START}\n{content}\n{self.SYSTEM_END}"
-
-    def wrap_user(self, content: str) -> str:
-        """Wraps the user content in the delimiters."""
-        return f"{self.USER_START}\n{content}\n{self.USER_END}"
-
-    def build_prompt(
-        self,
-        system_content: str,
-        user_content: str,
-    ) -> str:
-        """
-        Builds a complete prompt with structural separation.
-        """
-        return f"""{self.wrap_system(system_content)}
-
-{self.wrap_user(user_content)}
-
-Response:"""
 
     def validate(self, output: str) -> tuple[bool, str]:
         """
@@ -229,14 +201,6 @@ Response:"""
             cleaned = "[Risposta non generata correttamente]"
 
         return False, cleaned
-
-    def sanitize_user_input(self, user_input: str) -> str:
-        """
-        Removes any delimiters from the user input.
-
-        Prevents the user from injecting our delimiters.
-        """
-        return self.DELIMITER_PATTERN.sub("", user_input)
 
 
 class OutputProtector:
@@ -309,20 +273,6 @@ class OutputProtector:
             enhanced = self._canary.inject(enhanced)
 
         return enhanced
-
-    def prepare_user_input(self, user_input: str) -> str:
-        """
-        Sanitizes the user input.
-
-        Args:
-            user_input: Original user input
-
-        Returns:
-            Sanitized input (removes injected delimiters)
-        """
-        if self._delimiters:
-            return self._delimiters.sanitize_user_input(user_input)
-        return user_input
 
     def validate(self, output: str) -> ProtectionResult:
         """

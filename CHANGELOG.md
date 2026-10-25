@@ -205,6 +205,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dead code (lot A): the unused private `_parse_float_score` helper is removed** from
   `moralstack/runtime/modules/hindsight_module.py`. Nothing called it; hindsight response parsing is unchanged. No
   governance, prompt or payload change.
+- **Dead code (lot A): unused utility helpers are removed.** Removed: `OutputProtector.prepare_user_input`;
+  `DelimiterProtection.build_prompt`, `wrap_system`, `wrap_user` and `sanitize_user_input` with the `SYSTEM_START`,
+  `SYSTEM_END`, `USER_START` and `USER_END` constants (`DELIMITER_PATTERN` and the live leakage `validate` stay);
+  `LRUCache.invalidate`; `build_failed_parse_contract` from `utils/llm_parse_contract.py`; and the unused
+  `_env_candidate_paths` helper from `utils/env_loader.py`. All formally breaking in 1.x. `prepare_system_prompt`,
+  `inject`, `validate` and `current_canary` are untouched. No governance, prompt or payload change.
 
 ## 1.0.0 — 2026-10-21
 
