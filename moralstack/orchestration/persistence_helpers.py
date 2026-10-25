@@ -30,12 +30,16 @@ def record_llm_call(
     """
     Optionally log a diagnostics call and/or persist an LLM call.
     If diagnostics_payload is not None and logger has log_call, calls logger.log_call(**diagnostics_payload).
-    If persist_kwargs is not None, calls async_persist_llm_call(**persist_kwargs). Runtime errors are logged, not raised.
+    If persist_kwargs is not None, calls async_persist_llm_call(**persist_kwargs). Runtime errors are logged, not raised
+    (both branches: a raising diagnostics logger must not turn a completed module call into a module error).
     """
     if diagnostics_payload is not None:
         log_call = _get_log_call(logger)
         if logger is not None and log_call is not None:
-            log_call(**diagnostics_payload)
+            try:
+                log_call(**diagnostics_payload)
+            except Exception as e:
+                _LOG.warning("diagnostics log_call failed: %s", type(e).__name__, exc_info=True)
     if persist_kwargs is not None:
         try:
             async_persist_llm_call(**persist_kwargs)
