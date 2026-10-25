@@ -85,8 +85,9 @@ measured on the 2026-08-20 COMPL-AI replay as 11 of 135 refusals.
 
 ## Output Locations
 
-- **decision_trace.jsonl** — One PRE_POLICY and at most one FINAL per request; full explanation fields including
-  `why_not_normal_complete`.
+- **`decision.trace` events** — One PRE_POLICY and at most one FINAL per request, emitted by `append_decision_trace`
+  through observability: SQLite `decision_traces` and/or `logs/observability/decision.trace.jsonl` per
+  `MORALSTACK_OBSERVABILITY_MODE`; full explanation fields including `why_not_normal_complete`.
 - **.debug/debug.log** — NDJSON lines with `event: "DECISION_EXPLANATION"` (via `orch_debug_log`) for auditing.
 - **benchmark_results JSONL** — `moralstack_decision_reason`, `moralstack_reason_codes`, `moralstack_overlay`,
   `moralstack_winning_rule`, `moralstack_why_not_refuse`, `moralstack_why_not_safe_complete`,

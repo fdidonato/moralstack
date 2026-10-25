@@ -176,6 +176,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MORALSTACK_CRITIC_INCLUDE_EXAMPLES` environment variable (formally breaking in 1.x). The option never had a consumer,
   so the critic prompt and the `violated_hard` path are unchanged; a deployment that still sets the variable is unaffected.
   No governance, prompt or payload change.
+- **Dead code (lot A): the dead decision-trace file writer is removed.** Removed from
+  `moralstack/runtime/trace/decision_trace.py`: `DEFAULT_TRACE_PATH`, `TRACE_PATH_ENV`, `_get_trace_path`,
+  `_ensure_trace_file` and their module state, plus the `MORALSTACK_DECISION_TRACE_PATH` environment variable (its
+  `_OPTIONAL_ENV_VARS` entry and the template block). `append_decision_trace` already emitted only through
+  observability and ignored `path=`, so no `decision_trace.jsonl` file was ever written; the module docs said otherwise
+  and are corrected. No governance, prompt or payload change.
 
 ## 1.0.0 — 2026-10-21
 

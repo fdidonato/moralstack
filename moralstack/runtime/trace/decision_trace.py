@@ -1,56 +1,16 @@
 """
 Decision Trace: structured, serializable model for every MoralStack request.
-Persisted to a JSONL file, indexed by request_id.
+Emitted as a decision.trace observability event (SQLite and/or JSONL per MORALSTACK_OBSERVABILITY_MODE), keyed by request_id.
 """
 
 from __future__ import annotations
 
-import io
 import json
 import logging
-import os
-import threading
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_TRACE_PATH = "logs/decision_trace.jsonl"
-TRACE_PATH_ENV = "MORALSTACK_DECISION_TRACE_PATH"
-
-_trace_lock = threading.Lock()
-_trace_file: io.TextIOWrapper | None = None
-_trace_file_path: str | None = None
-
-
-def _get_trace_path(path_override: str | None = None) -> str:
-    """Resolves the path: override > env > default. Returns an absolute path for consistency."""
-    raw = path_override if path_override is not None else os.getenv(TRACE_PATH_ENV, DEFAULT_TRACE_PATH)
-    return os.path.abspath(raw)
-
-
-def _ensure_trace_file(path: str) -> io.TextIOWrapper | None:
-    """Lazily opens the trace file and returns it. None on error."""
-    global _trace_file, _trace_file_path
-    if _trace_file is not None and _trace_file_path == path:
-        return _trace_file
-    if _trace_file is not None:
-        try:
-            _trace_file.close()
-        except OSError:
-            pass
-        _trace_file = None
-        _trace_file_path = None
-    try:
-        dirname = os.path.dirname(path)
-        if dirname:
-            os.makedirs(dirname, exist_ok=True)
-        _trace_file = open(path, "a", encoding="utf-8")
-        _trace_file_path = path
-        return _trace_file
-    except OSError as e:
-        logger.warning("decision_trace: impossibile aprire %s: %s", path, e)
-        return None
 
 
 @dataclass
