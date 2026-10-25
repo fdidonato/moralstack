@@ -1031,16 +1031,20 @@ class OrchestrationController:
                     if hasattr(result, "score")
                     else str(result)
                 )
-                self.logger.log_call(
-                    module="risk_estimator",
-                    action="estimate",
-                    prompt=request.prompt,
-                    response=response_text,
-                    duration_ms=elapsed,
-                )
+                try:
+                    self.logger.log_call(
+                        module="risk_estimator",
+                        action="estimate",
+                        prompt=request.prompt,
+                        response=response_text,
+                        duration_ms=elapsed,
+                    )
+                except Exception as log_error:
+                    # Diagnostics only (§5.6): a raising logger must not fail a completed estimation.
+                    _LOG.warning("risk diagnostics log_call failed: %s", type(log_error).__name__, exc_info=True)
             return cast(RiskEstimation, result)
         except Exception as e:
-            raise RiskEstimationError(f"Risk estimation failed: {e}")
+            raise RiskEstimationError(f"Risk estimation failed: {DeliberationRunner._exc_text(e)}")
 
     def _speculative_generate(
         self,
