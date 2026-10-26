@@ -666,11 +666,9 @@ class OrchestratorConfig:
     # with simulator and perspectives instead of acting as a sequential gate.
     # Hard violations are still honoured: sim/persp results are discarded when
     # the critic finds a hard violation. Default True for latency savings.
+    # Read only when no risk estimation is available; otherwise the dynamic
+    # scheduler picks the layout from risk posture.
     parallel_critic_with_modules: bool = True
-    # When True (default), each deliberation cycle picks critic_gated vs
-    # full_parallel from risk posture; when False, only parallel_critic_with_modules
-    # selects between them (legacy static fork).
-    enable_dynamic_parallel_scheduler: bool = True
     # When True, risk estimation and speculative draft generation run in
     # parallel. The draft is used directly for benign/fast/deliberative
     # routes and discarded on REFUSE. Zero impact on decision quality.

@@ -281,22 +281,22 @@ config = OrchestratorConfig(
 | `cycle1_early_convergence_min_weighted_approval` | 0.78 | Minimum weighted perspectives approval for cycle-1 early convergence. Perspectives with weights: vulnerable ×1.2, compliance ×1.1, adversary ×0.8, user/observer ×1.0. |
 | `cycle1_early_convergence_max_semantic_harm` | 0.35 | Maximum simulator `semantic_expected_harm` for cycle-1 early convergence (when simulation is enabled). Queries with harm above this threshold always get cycle 2. |
 | `cycle1_early_convergence_min_per_perspective_approval` | 0.70 | Minimum `approval_score` for each individual perspective. If any single perspective scores below this, cycle 2 is forced. |
-| `parallel_critic_with_modules`         | `True`  | Legacy static fork when `enable_dynamic_parallel_scheduler` is `False` or risk estimation is unavailable: when `True` and `parallel_module_calls` is `True`, critic runs in parallel with simulator and perspectives. See [Latency-oriented parameters](#latency-oriented-parameters). |
-| `enable_dynamic_parallel_scheduler`   | `True`  | When `True` and `parallel_module_calls` is `True`, each cycle selects `critic_gated` vs `full_parallel` from risk posture (execution only; governance unchanged). See [Latency-oriented parameters](#latency-oriented-parameters). |
+| `parallel_critic_with_modules`         | `True`  | Fallback fork when risk estimation is unavailable: when `True` and `parallel_module_calls` is `True`, critic runs in parallel with simulator and perspectives. See [Latency-oriented parameters](#latency-oriented-parameters). |
 | `enable_speculative_generation`        | `True`  | When `True`, risk estimation and speculative draft generation run in parallel before routing. The draft is reused on benign, fast, and deliberative routes when applicable. See [Latency-oriented parameters](#latency-oriented-parameters). |
 
 ### Latency-oriented parameters
 
 These flags reduce wall-clock latency **without changing routing policy** (`decide_action`, `get_route`, overlay floors, or convergence invariants). They do not change how `final_action` is computed from risk and module outputs.
 
-**`enable_dynamic_parallel_scheduler` (default `True`)**
+**Dynamic parallel scheduler (always on)**
 
-- **Requires** `parallel_module_calls=True`. When both are `True`, `DeliberationRunner` chooses **`critic_gated`** (critic first; simulator and perspectives only if no hard violation) vs **`full_parallel`** (critic, simulator, perspectives concurrently) **per cycle** using existing risk fields (`risk_category`, `operational_risk`, `intent_to_harm`, `requested_instructions`, `risk_policy_action`, prior-cycle hard critiques). Emits `PARALLEL_STRATEGY_SELECTED` and enriches `CYCLE_SUMMARY` traces (`scheduler_reason_codes`, `critic_short_circuit`).
+- **Requires** `parallel_module_calls=True`. When it is `True`, `DeliberationRunner` chooses **`critic_gated`** (critic first; simulator and perspectives only if no hard violation) vs **`full_parallel`** (critic, simulator, perspectives concurrently) **per cycle** using existing risk fields (`risk_category`, `operational_risk`, `intent_to_harm`, `requested_instructions`, `risk_policy_action`, prior-cycle hard critiques). Emits `PARALLEL_STRATEGY_SELECTED` and enriches `CYCLE_SUMMARY` traces (`scheduler_reason_codes`, `critic_short_circuit`).
 - **When `critic_gated` short-circuits** (hard violation after critic): simulator and perspectives are not invoked; emits `CRITIC_SHORT_CIRCUIT_TRIGGERED`.
-- **When `False`**: the runner uses the legacy **`parallel_critic_with_modules`** boolean alone to choose the fork (same behavior as before dynamic scheduling).
+- **Without a risk estimation**: the runner falls back to the **`parallel_critic_with_modules`** boolean (`CONFIG_FALLBACK_NO_RISK_ESTIMATION`). The static fork switch (`enable_dynamic_parallel_scheduler`, reason code `LEGACY_STATIC_PARALLEL_CRITIC_CONFIG`) was removed after 2.0.0; none of the 114 run databases censused on 2026-10-26 recorded that reason code.
 
 **`parallel_critic_with_modules` (default `True`)**
 
+- **Applies only without a risk estimation** (the `CONFIG_FALLBACK_NO_RISK_ESTIMATION` branch of `_select_parallel_strategy`); when a risk estimation is present the risk posture picks the layout, whatever this flag says.
 - **Requires** `parallel_module_calls=True`. When both are `True`, each deliberation cycle runs **critic**, **simulator**, and **perspectives** concurrently (three parallel LLM calls per cycle when those modules are enabled).
 - **When `False`**: the runner uses a two-stage layout: critic runs first; only if there is no hard violation do simulator and perspectives run in parallel. This avoids paying for simulator/perspective calls when the critic would reject the draft, but adds sequential critic latency before sim/persp start.
 - **Hard violations**: If the critic reports a hard violation, simulator and perspective results from that cycle are **discarded** and do not affect merged state. Convergence and refusal logic see the same critic outcome as in the gated layout; you may pay extra token cost in the rare hard-violation case.
@@ -776,21 +776,11 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
   `MORALSTACK_ORCHESTRATOR_ENABLE_SIMULATION`, and `MORALSTACK_ORCHESTRATOR_ENABLE_HINDSIGHT` determine which modules run
   and thus which calls are recorded and visible in the UI.
 
-#### MORALSTACK_ORCHESTRATOR_ENABLE_DYNAMIC_PARALLEL_SCHEDULER
-
-- **Default**: `true`
-- **Type**: bool
-- **Description**: When `true` and `MORALSTACK_ORCHESTRATOR_PARALLEL_MODULE_CALLS` is `true`, each deliberation cycle
-  selects `critic_gated` vs `full_parallel` from existing risk posture signals (execution scheduling only). When `false`,
-  the static fork uses only `MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES`. See
-  [Latency-oriented parameters](#latency-oriented-parameters).
-
 #### MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES
 
 - **Default**: `true`
 - **Type**: bool
-- **Description**: Legacy static fork when `MORALSTACK_ORCHESTRATOR_ENABLE_DYNAMIC_PARALLEL_SCHEDULER` is `false` or risk
-  estimation is unavailable: when `true` and `MORALSTACK_ORCHESTRATOR_PARALLEL_MODULE_CALLS` is `true`, the critic runs in parallel
+- **Description**: Fallback fork when risk estimation is unavailable: when `true` and `MORALSTACK_ORCHESTRATOR_PARALLEL_MODULE_CALLS` is `true`, the critic runs in parallel
   with the simulator and perspectives (full parallel evaluation). When `false`, the critic runs first as a gate; simulator
   and perspectives run in parallel only after the critic reports no hard violation. See
   [Latency-oriented parameters](#latency-oriented-parameters).

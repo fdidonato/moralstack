@@ -42,7 +42,7 @@ from moralstack.models.delib_context import DelibContext
 from moralstack.models.risk import RiskCategory, RiskPolicyAction
 from moralstack.models.risk.schema import RiskEstimation
 from moralstack.orchestration.controller import OrchestrationController
-from moralstack.orchestration.deliberation_runner import DeliberationRunner
+from moralstack.orchestration.deliberation_runner import DeliberationRunner, ParallelStrategySelection
 from moralstack.orchestration.delivery import GOVERNED_REFUSAL_SOURCE, finalize_delivery
 from moralstack.orchestration.ledger import SemanticDecisionLedger
 from moralstack.orchestration.ledger_storage import InMemoryLedgerStorage
@@ -613,24 +613,31 @@ def test_o9_fork_copies_every_field() -> None:
 
 @pytest.mark.parametrize("raises", [True, False], ids=["raises", "clean"])
 @pytest.mark.parametrize("mode", ["sequential", "critic_gated", "full_parallel"])
-def test_o10_outcome_survives_every_scheduler(persisted: Any, mode: str, raises: bool) -> None:
+def test_o10_outcome_survives_every_scheduler(
+    persisted: Any, monkeypatch: pytest.MonkeyPatch, mode: str, raises: bool
+) -> None:
     cfg = OrchestratorConfig(
         max_deliberation_cycles=1,
         enable_simulation=False,
         enable_perspectives=False,
         enable_hindsight=False,
         parallel_module_calls=(mode != "sequential"),
-        parallel_critic_with_modules=(mode == "full_parallel"),
-        enable_dynamic_parallel_scheduler=False,
     )
     critic = _StubCritic([RuntimeError("boom")] if raises else None)
     runner = _runner(critic, policy=_DraftPolicy(), config=cfg, output_protector=_passthrough_protector())
+    if mode != "sequential":
+        # Force the strategy under test; the dispatch after the selection stays real.
+        forced = ParallelStrategySelection(strategy=mode, reason_codes=("TEST_FORCED_STRATEGY",), posture_summary={})
+        monkeypatch.setattr(runner, "_select_parallel_strategy", lambda **_kw: forced)
     try:
         state, _score, _outcome = runner.run_deliberative_path(_request(), _risk(), time.time(), constitution=CONSTITUTION)
     finally:
         runner.close()
     assert len(critic.calls) == 1
     assert state._critique_outcome == ("failed" if raises else "completed")
+    if mode != "sequential":
+        assert state._parallel_scheduler_strategy == mode
+        assert state._parallel_scheduler_reason_codes == ["TEST_FORCED_STRATEGY"]
 
 
 def test_o10b_full_parallel_hard_violation_early_return_keeps_completed(persisted: Any) -> None:
@@ -639,7 +646,6 @@ def test_o10b_full_parallel_hard_violation_early_return_keeps_completed(persiste
         enable_simulation=False,
         enable_perspectives=False,
         enable_hindsight=False,
-        enable_dynamic_parallel_scheduler=False,
     )
     hard_report = _report(violated_hard=True, decision="REFUSE", violations=[])
     runner = _runner(_StubCritic([hard_report]), config=cfg)

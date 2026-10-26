@@ -25,7 +25,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from moralstack.core.types import UserContext
-from moralstack.orchestration.deliberation_runner import DeliberationRunner
+from moralstack.orchestration.deliberation_runner import DeliberationRunner, ParallelStrategySelection
 from moralstack.orchestration.orchestration_event_taxonomy import RELEVANT_PRINCIPLES_REUSED
 from moralstack.orchestration.types import (
     DeliberationDependencies,
@@ -165,19 +165,20 @@ def _make_runner(store: Any, critic: Any, *, parallel_module_calls: bool) -> Del
         max_deliberation_cycles=1,
         timeout_ms=60_000,
         parallel_module_calls=parallel_module_calls,
-        # Force the strategy deterministically instead of relying on the
-        # risk-based dynamic scheduler: full_parallel is the strategy that
-        # forks the critic (`_run_full_parallel_evaluation`,
-        # `state_critic = state.fork()`), which is exactly what T10b/T11b
-        # must exercise.
-        enable_dynamic_parallel_scheduler=False,
-        parallel_critic_with_modules=True,
         enable_simulation=False,
         enable_perspectives=False,
         enable_hindsight=False,
         enable_soft_revision=False,
     )
-    return DeliberationRunner(cfg, deps, protected_system_prompt="sys", logger=None, assembler=MagicMock())
+    runner = DeliberationRunner(cfg, deps, protected_system_prompt="sys", logger=None, assembler=MagicMock())
+    # Force the strategy deterministically instead of relying on the
+    # risk-based dynamic scheduler: full_parallel is the strategy that
+    # forks the critic (`_run_full_parallel_evaluation`,
+    # `state_critic = state.fork()`), which is exactly what T10b/T11b
+    # must exercise.
+    forced = ParallelStrategySelection(strategy="full_parallel", reason_codes=("TEST_FORCED_STRATEGY",), posture_summary={})
+    runner._select_parallel_strategy = lambda **_kw: forced  # type: ignore[method-assign]
+    return runner
 
 
 @pytest.mark.parametrize("parallel_module_calls", [False, True], ids=["sequential", "full_parallel"])
@@ -242,6 +243,9 @@ def test_slow_request_does_not_make_concurrent_request_skip_critique(parallel_mo
     assert not any(
         "Critique error" in e for e in state_b.errors
     ), f"B's critique was incorrectly skipped due to A's clock: {state_b.errors}"
+    if parallel_module_calls:
+        # The forced full_parallel selection (see _make_runner) must be the one that ran.
+        assert state_b._parallel_scheduler_reason_codes == ["TEST_FORCED_STRATEGY"]
 
 
 @pytest.mark.parametrize("parallel_module_calls", [False, True], ids=["sequential", "full_parallel"])

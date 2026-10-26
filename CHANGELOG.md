@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   live intent mapping in `models/risk/utils.py` (`creative_request` and low-risk `sensitive_topic` mapped to
   `factual`), so its tests pinned rules the pipeline does not apply. Importing the module now raises `ImportError`
   (breaking). No governance, prompt or payload change.
+- **Dead code (lot C): the static parallel-scheduler fork is removed; the dynamic scheduler is always on.** Removed:
+  `OrchestratorConfig.enable_dynamic_parallel_scheduler` (so `OrchestratorConfig(enable_dynamic_parallel_scheduler=...)`
+  now raises `TypeError`), the `MORALSTACK_ORCHESTRATOR_ENABLE_DYNAMIC_PARALLEL_SCHEDULER` environment variable and its
+  template line, and the fork that emitted the `LEGACY_STATIC_PARALLEL_CRITIC_CONFIG` reason code (breaking). None of
+  114 run databases (110 with 15,015 `PARALLEL_STRATEGY_SELECTED` events) recorded that reason code. A deployment that
+  still sets the variable is unaffected unless it set it to `false`; it now gets the per-cycle `critic_gated` /
+  `full_parallel` choice. `parallel_critic_with_modules` stays: it is the fallback when no risk estimation is available.
+  Execution scheduling only: no governance, `final_action`, prompt or payload change.
 
 ## 2.0.0 — 2026-10-26
 

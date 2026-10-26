@@ -14,7 +14,6 @@ def _minimal_runner(cfg: OrchestratorConfig | None = None) -> DeliberationRunner
     cfg = cfg or OrchestratorConfig(
         max_deliberation_cycles=1,
         parallel_module_calls=True,
-        enable_dynamic_parallel_scheduler=True,
     )
     deps = DeliberationDependencies(
         policy=None,
@@ -81,7 +80,6 @@ def test_select_fallback_no_risk_estimation():
             max_deliberation_cycles=1,
             parallel_module_calls=True,
             parallel_critic_with_modules=True,
-            enable_dynamic_parallel_scheduler=True,
         )
     )
     state = DeliberationState()
@@ -96,7 +94,6 @@ def test_select_fallback_no_risk_respects_parallel_critic_false():
             max_deliberation_cycles=1,
             parallel_module_calls=True,
             parallel_critic_with_modules=False,
-            enable_dynamic_parallel_scheduler=True,
         )
     )
     sel = runner._select_parallel_strategy(risk_estimation=None, state=DeliberationState())

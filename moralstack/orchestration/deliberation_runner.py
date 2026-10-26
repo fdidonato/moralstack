@@ -3248,17 +3248,7 @@ class DeliberationRunner:
         state._critic_short_circuit = False
         state._scheduler_skipped_modules = []
 
-        if self.config.enable_dynamic_parallel_scheduler:
-            selection = self._select_parallel_strategy(risk_estimation=risk_estimation, state=state)
-        else:
-            legacy: Literal["full_parallel", "critic_gated"] = (
-                "full_parallel" if self.config.parallel_critic_with_modules else "critic_gated"
-            )
-            selection = ParallelStrategySelection(
-                strategy=legacy,
-                reason_codes=("LEGACY_STATIC_PARALLEL_CRITIC_CONFIG",),
-                posture_summary={},
-            )
+        selection = self._select_parallel_strategy(risk_estimation=risk_estimation, state=state)
 
         state._parallel_scheduler_strategy = selection.strategy
         state._parallel_scheduler_reason_codes = list(selection.reason_codes)

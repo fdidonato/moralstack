@@ -46,7 +46,6 @@ ENV_SIMULATOR_GATE_DELTA_CHARS_THRESHOLD = "MORALSTACK_ORCHESTRATOR_SIMULATOR_GA
 ENV_SIMULATOR_GATE_SKIP_MAX_PRIOR_SEMANTIC_HARM = "MORALSTACK_ORCHESTRATOR_SIMULATOR_GATE_SKIP_MAX_PRIOR_SEMANTIC_HARM"
 ENV_BORDERLINE_REFUSE_UPPER = "MORALSTACK_ORCHESTRATOR_BORDERLINE_REFUSE_UPPER"
 ENV_PARALLEL_CRITIC_WITH_MODULES = "MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES"
-ENV_ENABLE_DYNAMIC_PARALLEL_SCHEDULER = "MORALSTACK_ORCHESTRATOR_ENABLE_DYNAMIC_PARALLEL_SCHEDULER"
 ENV_ENABLE_SPECULATIVE_GENERATION = "MORALSTACK_ORCHESTRATOR_ENABLE_SPECULATIVE_GENERATION"
 ENV_CYCLE1_EARLY_CONVERGENCE_MIN_WEIGHTED_APPROVAL = "MORALSTACK_ORCHESTRATOR_CYCLE1_EARLY_CONVERGENCE_MIN_WEIGHTED_APPROVAL"
 ENV_CYCLE1_EARLY_CONVERGENCE_MAX_SEMANTIC_HARM = "MORALSTACK_ORCHESTRATOR_CYCLE1_EARLY_CONVERGENCE_MAX_SEMANTIC_HARM"
@@ -126,7 +125,6 @@ def load_orchestrator_config_from_env() -> OrchestratorConfig:
     )
     borderline_refuse_upper = get_env_float(ENV_BORDERLINE_REFUSE_UPPER, 0.95, 0.0, 1.0)
     parallel_critic_with_modules = get_env_bool(ENV_PARALLEL_CRITIC_WITH_MODULES, True)
-    enable_dynamic_parallel_scheduler = get_env_bool(ENV_ENABLE_DYNAMIC_PARALLEL_SCHEDULER, True)
     enable_speculative_generation = get_env_bool(ENV_ENABLE_SPECULATIVE_GENERATION, True)
     regulated_informational_normal_complete = get_env_bool(ENV_REGULATED_INFORMATIONAL_NORMAL_COMPLETE, False)
 
@@ -155,7 +153,6 @@ def load_orchestrator_config_from_env() -> OrchestratorConfig:
         cycle1_early_convergence_min_per_perspective_approval=cycle1_early_convergence_min_per_perspective_approval,
         borderline_refuse_upper=borderline_refuse_upper,
         parallel_critic_with_modules=parallel_critic_with_modules,
-        enable_dynamic_parallel_scheduler=enable_dynamic_parallel_scheduler,
         enable_speculative_generation=enable_speculative_generation,
         regulated_informational_normal_complete=regulated_informational_normal_complete,
     )
