@@ -108,7 +108,7 @@ Python `>=3.11` (`pyproject.toml:11`). Runtime deps: `openai>=2.24`, `pydantic>=
 - `decision/safe_complete_policy.py` — **single source of truth** for action
   bounds. `Action` enum (`NORMAL_COMPLETE < SAFE_COMPLETE < REFUSE`),
   `PolicyContext`, `PolicyBounds`, `compute_action_bounds`, `decide_final_action`.
-- `decision_policy.py`, `decision_correctness.py` — supporting decision logic.
+- `decision_correctness.py` — supporting decision logic.
 - `modules/` — deliberative modules and their config loaders:
   `critic_module.LLMConstitutionalCritic`, `simulator_module.LLMConsequenceSimulator`,
   `perspective_module` (`create_minimal_ensemble`), `hindsight_module.LLMHindsightEvaluator`.
@@ -1064,8 +1064,7 @@ See `docs/traces/complai_llm_rules_flow.md`.
 ## 16. Test layout
 
 Notable groups in `tests/`:
-- Decision/policy: `test_decide_action.py`, `test_decision_policy.py`,
-  `test_safe_complete_*.py`, `test_decision_correctness.py`.
+- Decision/policy: `test_decide_action.py`, `test_safe_complete_*.py`, `test_decision_correctness.py`.
 - Governance invariants: `tests/governance_invariants/` (e.g.
   `test_q17_hard_signal_invariant.py`).
 - Risk: `test_risk*.py`, `test_calibration_guard.py`, `test_signal*.py`,

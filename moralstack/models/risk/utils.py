@@ -11,10 +11,9 @@ def _intent_type_from_request_type(
     intent_operational: bool = False,
     risk_score: float = 0.5,
 ) -> str:
-    """Derives intent_type from request_type for SAFE_COMPLETE policy
-    (same mapping as decision_policy).
+    """Derives intent_type from request_type for SAFE_COMPLETE policy.
 
-    Per sensitive_topic: non-operational + low risk_score → factual (informative/descriptive).
+    sensitive_topic always maps to advice; creative_request maps to creative, not factual.
     """
     if not request_type:
         return ""

@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   derives `conversation_id` from `ConversationCorrelationStore` and `canonical_history_hash`, which are unchanged.
   `from moralstack.server.fingerprint import compute_conversation_fingerprint` now raises `ImportError` (breaking). No
   governance, prompt, header or payload change.
+- **Dead code (lot C): the test-only `moralstack/runtime/decision_policy.py` is removed.** Nothing in `moralstack/`
+  imported `safe_complete_required`, `normal_complete_allowed` or `intent_type_from_request_type`; action bounds come
+  from `moralstack.runtime.decision.safe_complete_policy`, which is unchanged. The removed copy had diverged from the
+  live intent mapping in `models/risk/utils.py` (`creative_request` and low-risk `sensitive_topic` mapped to
+  `factual`), so its tests pinned rules the pipeline does not apply. Importing the module now raises `ImportError`
+  (breaking). No governance, prompt or payload change.
 
 ## 2.0.0 — 2026-10-26
 
