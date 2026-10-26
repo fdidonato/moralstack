@@ -262,7 +262,7 @@ print(result.text)  # Revised response
 
 ### refuse() (deprecated)
 
-Deprecated: emits a `DeprecationWarning` and will be removed in MoralStack 2.0. The governed pipeline never calls it;
+Deprecated: emits a `DeprecationWarning` and will be removed in MoralStack 3.0. The governed pipeline never calls it;
 refusals come from `moralstack.orchestration.safe_refusal_generator`.
 
 Generates a reasoned and respectful refusal.
@@ -371,7 +371,7 @@ class PolicyLLMProtocol(Protocol):
     ) -> Any:
         """Generates reasoned refusal. language: explicit output language when prompt empty or to reduce drift.
 
-        Deprecated (no production caller); removal in 2.0.
+        Deprecated (no production caller); removal in 3.0.
         """
         ...
 ```

@@ -230,7 +230,7 @@ inside the worker, was silently dropped by `async_persist_llm_call`, and its bil
 
 - **Default**: `true`
 - **Type**: bool
-- **Meaning**: Deprecated no-op, removal in 2.0: loaded into `EnsembleConfig.conservative_on_failure` but never read. `false`
+- **Meaning**: Deprecated no-op, removal in 3.0: loaded into `EnsembleConfig.conservative_on_failure` but never read. `false`
   emits a `DeprecationWarning` on `EnsembleConfig` construction and one WARNING per environment load. `EnsembleConfig` is not
   frozen, so it warns at construction only (not on later attribute assignment); `dataclasses.replace` re-warns. Under strict warnings (`-W error::DeprecationWarning`) a non-default environment value
   also fails

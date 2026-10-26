@@ -373,7 +373,7 @@ class EnsembleConfig:
     # The critical perspectives (adversary, compliance) are essential to
     # detect potentially dangerous content that the user-centric
     # perspectives might not identify
-    conservative_on_failure: bool = True  # DEPRECATED (no effect, removal in 2.0)
+    conservative_on_failure: bool = True  # DEPRECATED (no effect, removal in 3.0)
 
     # FIX PERFORMANCE: Caching to avoid recomputation on identical inputs
     enable_caching: bool = False  # Disabled by default: avoids global state in tests
@@ -384,7 +384,7 @@ class EnsembleConfig:
         if self.conservative_on_failure != default:
             warnings.warn(
                 "EnsembleConfig.conservative_on_failure is deprecated and has no effect; "
-                "it will be removed in MoralStack 2.0.",
+                "it will be removed in MoralStack 3.0.",
                 DeprecationWarning,
                 stacklevel=3,
             )

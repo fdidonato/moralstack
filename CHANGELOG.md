@@ -141,10 +141,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
-- **`OpenAIPolicy.refuse()` is deprecated and will be removed in 2.0.** It now emits a `DeprecationWarning` and is
+- **`OpenAIPolicy.refuse()` is deprecated and will be removed in 3.0.** It now emits a `DeprecationWarning` and is
   otherwise unchanged (same prompts, same return). The governed pipeline never calls it: refusals come from
-  `moralstack.orchestration.safe_refusal_generator`. `PolicyLLMProtocol.refuse` stays until 2.0.
-- **Five loaded-but-unread config fields are deprecated and will be removed in 2.0.**
+  `moralstack.orchestration.safe_refusal_generator`. `PolicyLLMProtocol.refuse` stays until 3.0.
+- **Five loaded-but-unread config fields are deprecated and will be removed in 3.0.**
   `OrchestratorConfig.max_critical_violations`, `early_exit_hindsight_threshold` and `safe_response_on_error`,
   `HindsightConfig.revise_threshold` and `EnsembleConfig.conservative_on_failure` (env vars
   `MORALSTACK_ORCHESTRATOR_MAX_CRITICAL_VIOLATIONS`, `..._EARLY_EXIT_HINDSIGHT_THRESHOLD`,
@@ -161,30 +161,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The uncalled private `OrchestrationController._store_decision_in_ledger` is removed.** It was a second ledger store path with no caller in `moralstack/` or `tests/`; the ledger is written only by `_maybe_store_in_ledger`. No behavior change; doc line anchors of `controller.py` are re-anchored by content, including the continuation anchor of the `draft_revalidate` row in the observability trace; anchors that were already stale stay tracked as a known gap.
 - **The `moralstack-server` console script and `moralstack.server.proxy.main` are removed.** The script only raised
-  `NotImplementedError` (formally breaking in 1.x, but it never worked). Use `create_app` from `moralstack.server` in
+  `NotImplementedError` (breaking, but it never worked). Use `create_app` from `moralstack.server` in
   your own launcher, or, from a source checkout, `uvicorn examples.server_quickstart:app`. The run meta
   `source: "moralstack-server"` in the audit data is unchanged. Editable installs keep a stale launcher until
   `pip install -e . --no-deps` is re-run.
 - **Dead code (lot A): the unused `MarkdownReportGenerator` (and its `CallsMap`/`ModuleStats` aliases) is removed from
   `moralstack/cli/report.py`.** The CLI shell instantiated it but never rendered a report, so it no longer creates a
-  `./reports/` directory; `CallLogger` is unchanged (formally breaking in 1.x for the importable names). No governance,
+  `./reports/` directory; `CallLogger` is unchanged (breaking for the importable names). No governance,
   prompt or payload change.
 - **Dead code (lot A): the unread `calibration:` block of `signals.yaml` and its parser are removed.** Removed:
   `SignalRegistry.calibration`, `signal_by_key`, `signal_by_label`, `signals_in_order`, `any_signal_with_effect`,
   `any_signal_with_effect_when_intent_present`, `maps_to_self_harm_language`, `compute_counts`,
   `get_signal_with_forced_action`, `resolve_harm_type`, and the `CalibrationRules`, `HarmTypeDefault` and
-  `DefensiveOverrideApply` dataclasses (formally breaking in 1.x). Hard-signal calibration lives in
+  `DefensiveOverrideApply` dataclasses (breaking). Hard-signal calibration lives in
   `moralstack/models/risk/calibration.py`, which is untouched. No governance, prompt or payload change (the rendered
   prompt hash is identical).
 - **Dead code (lot A): the unused critic `include_examples` option is removed.** Removed: the `CriticConfig.include_examples`
   field (so `CriticConfig(include_examples=...)` now raises `TypeError`), `ENV_INCLUDE_EXAMPLES` and the
-  `MORALSTACK_CRITIC_INCLUDE_EXAMPLES` environment variable (formally breaking in 1.x). The option never had a consumer,
+  `MORALSTACK_CRITIC_INCLUDE_EXAMPLES` environment variable (breaking). The option never had a consumer,
   so the critic prompt and the `violated_hard` path are unchanged; a deployment that still sets the variable is unaffected.
   No governance, prompt or payload change.
 - **Dead code (lot A): the dead decision-trace file writer is removed.** Removed from
   `moralstack/runtime/trace/decision_trace.py`: `DEFAULT_TRACE_PATH`, `TRACE_PATH_ENV`, `_get_trace_path`,
   `_ensure_trace_file` and their module state, plus the `MORALSTACK_DECISION_TRACE_PATH` environment variable (its
-  `_OPTIONAL_ENV_VARS` entry and the template block; formally breaking in 1.x). `append_decision_trace` already emitted only through
+  `_OPTIONAL_ENV_VARS` entry and the template block; breaking). `append_decision_trace` already emitted only through
   observability and ignored `path=`, so no `decision_trace.jsonl` file was ever written; the module docs said otherwise
   and are corrected. No governance, prompt or payload change.
 - **Dead code (lot A): unused orchestration types and helpers are removed.** Removed: `NullEventEmitter` (its module
@@ -192,20 +192,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `from moralstack.orchestration import NullEventEmitter` now raises `ImportError`), the orphan
   `orchestration/path_router_explanation.py`, `SimulationError` (never raised), the `QuickCheckResultProtocol`,
   `ConsequenceLikeProtocol`, `PerspectiveAggregationProtocol` and `PrincipleLikeProtocol` protocols, and the unused
-  `_all_modules_satisfied` and `domain_from_signals` helpers (formally breaking in 1.x). The `MoralStackError` family
+  `_all_modules_satisfied` and `domain_from_signals` helpers (breaking). The `MoralStackError` family
   that is actually raised, `_handle_error` and `_handle_timeout` are untouched. No governance, prompt or payload change.
 - **Dead code (lot A): the unused `session_store` constructor argument of `OrchestrationController` is removed.**
-  `OrchestrationController(session_store=...)` now raises `TypeError` (formally breaking in 1.x); the stored
+  `OrchestrationController(session_store=...)` now raises `TypeError` (breaking); the stored
   `_session_store` attribute was never read. The controller no longer imports `moralstack.sdk`, which removes a layering
   inversion. Ledger paths and the fail-closed handlers are untouched. No governance, prompt or payload change.
 - **Dead code (lot A): an unused observability helper and sink protocol are removed.** Removed:
   `persist_debug_events_batch` from `moralstack/observability/emit_helpers.py` (no caller; the live emitters and the other
   `persist_*` helpers are unchanged) and the `EventSink` protocol with its module `observability/sinks/base.py` (nothing
-  imported it; the sinks only named it in docstrings). Both are formally breaking in 1.x. No governance, prompt or payload
+  imported it; the sinks only named it in docstrings). Both are breaking. No governance, prompt or payload
   change.
 - **Dead code (lot A): the unused constitution cache-reset path is removed.** Removed: `ConstitutionStore.reload` (and the
   `_matching_cache` / `_matching_cache_max_size` attributes it cleared, which nothing else used) and
-  `ConstitutionRetriever.invalidate_cache`; neither had a caller (formally breaking in 1.x). Principle retrieval, the
+  `ConstitutionRetriever.invalidate_cache`; neither had a caller (breaking). Principle retrieval, the
   `core` retrieval-only rule and domain overlays are unchanged. No governance, prompt or payload change.
 - **Dead code (lot A): the unused private `_parse_float_score` helper is removed** from
   `moralstack/runtime/modules/hindsight_module.py`. Nothing called it; hindsight response parsing is unchanged. No
@@ -214,17 +214,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DelimiterProtection.build_prompt`, `wrap_system`, `wrap_user` and `sanitize_user_input` with the `SYSTEM_START`,
   `SYSTEM_END`, `USER_START` and `USER_END` constants (`DELIMITER_PATTERN` and the live leakage `validate` stay);
   `LRUCache.invalidate`; `build_failed_parse_contract` from `utils/llm_parse_contract.py`; and the unused
-  `_env_candidate_paths` helper from `utils/env_loader.py`. All formally breaking in 1.x. `prepare_system_prompt`,
+  `_env_candidate_paths` helper from `utils/env_loader.py`. All breaking. `prepare_system_prompt`,
   `inject`, `validate` and `current_canary` are untouched. No governance, prompt or payload change.
 - **Dead code (lot A): unused CLI, UI helpers and the compliance version stamp are removed.** Removed:
   `ModuleLoader._load_optional_module` (`cli/loader.py`), `DeliberationVisualizer._box` (`cli/visualizer.py`), the UI
   helpers `_call_tier_sort_key` and `_llm_calls_by_cycle` (`ui/app.py`), and the orphan `moralstack/compliance/_version.py`
-  with its `__compliance_layer_version__` constant (nothing imported it; formally breaking in 1.x for that module-level
+  with its `__compliance_layer_version__` constant (nothing imported it; breaking for that module-level
   name). The UI stays read-only. No governance, prompt or payload change.
 - **Dead code (lot A): the no-op module disable flags are removed.** Removed: the `--no-perspectives`, `--no-simulation`
   and `--no-hindsight` CLI flags (now an argparse error) and the `CLIConfig` fields `max_cycles`, `enable_perspectives`,
   `enable_simulation` and `enable_hindsight` (so `CLIConfig(max_cycles=...)` and the `enable_*` kwargs now raise
-  `TypeError`); formally breaking in 1.x. The flags never took effect: the shell reads the module switches from the
+  `TypeError`); breaking. The flags never took effect: the shell reads the module switches from the
   environment-derived `OrchestratorConfig`, not from `CLIConfig`. No governance, prompt or payload change.
 
 ## 1.0.0 — 2026-10-21

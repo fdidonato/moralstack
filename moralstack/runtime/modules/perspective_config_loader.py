@@ -56,10 +56,10 @@ def load_perspective_config_from_env() -> EnsembleConfig:
     conservative_on_failure = get_env_bool(ENV_CONSERVATIVE_ON_FAILURE, True)
     default = True
     if conservative_on_failure != default:
-        # Deprecated no-op field (removal in 2.0). Best-effort: logging must never fail config loading.
+        # Deprecated no-op field (removal in 3.0). Best-effort: logging must never fail config loading.
         try:
             _LOG.warning(
-                "%s is deprecated and has no effect (removal in 2.0); remove it from the environment",
+                "%s is deprecated and has no effect (removal in 3.0); remove it from the environment",
                 ENV_CONSERVATIVE_ON_FAILURE,
             )
         except Exception:

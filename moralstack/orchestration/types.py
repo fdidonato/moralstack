@@ -638,11 +638,11 @@ class OrchestratorConfig:
     enable_perspectives: bool = True
     num_simulations: int = 3
     min_hindsight_score: float = 0.8
-    max_critical_violations: int = 0  # DEPRECATED (no effect, removal in 2.0)
-    early_exit_hindsight_threshold: float = 0.6  # DEPRECATED (no effect, removal in 2.0)
+    max_critical_violations: int = 0  # DEPRECATED (no effect, removal in 3.0)
+    early_exit_hindsight_threshold: float = 0.6  # DEPRECATED (no effect, removal in 3.0)
     enable_simulation: bool = True
     enable_hindsight: bool = True
-    safe_response_on_error: bool = True  # DEPRECATED (no effect, removal in 2.0)
+    safe_response_on_error: bool = True  # DEPRECATED (no effect, removal in 3.0)
     skip_optional_modules_threshold: float = 0.95
     soft_timeout_threshold: float = 0.90
     parallel_module_calls: bool = True
@@ -693,7 +693,7 @@ class OrchestratorConfig:
         ):
             if getattr(self, name) != default:
                 warnings.warn(
-                    f"OrchestratorConfig.{name} is deprecated and has no effect; it will be removed in MoralStack 2.0.",
+                    f"OrchestratorConfig.{name} is deprecated and has no effect; it will be removed in MoralStack 3.0.",
                     DeprecationWarning,
                     stacklevel=3,
                 )

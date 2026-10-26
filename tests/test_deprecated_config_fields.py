@@ -130,7 +130,7 @@ def test_orchestrator_loader_warns_once_per_non_default_var(monkeypatch: pytest.
     msgs = handler.warnings()
     assert len(msgs) == 1
     assert ENV_MAX_CRITICAL_VIOLATIONS in msgs[0]
-    assert "removal in 2.0" in msgs[0]
+    assert "removal in 3.0" in msgs[0]
 
 
 def test_orchestrator_loader_early_exit_warns_once(monkeypatch: pytest.MonkeyPatch) -> None:

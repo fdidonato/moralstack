@@ -61,10 +61,10 @@ def load_hindsight_config_from_env() -> HindsightConfig:
     refuse_threshold = get_env_float(ENV_REFUSE_THRESHOLD, -0.7, -1.0, 1.0)
     revise_threshold = get_env_float(ENV_REVISE_THRESHOLD, 0.0, -1.0, 1.0)
     if revise_threshold != 0.0:
-        # Deprecated no-op field (removal in 2.0). Best-effort: logging must never fail config loading.
+        # Deprecated no-op field (removal in 3.0). Best-effort: logging must never fail config loading.
         try:
             _LOG.warning(
-                "%s is deprecated and has no effect (removal in 2.0); remove it from the environment",
+                "%s is deprecated and has no effect (removal in 3.0); remove it from the environment",
                 ENV_REVISE_THRESHOLD,
             )
         except Exception:

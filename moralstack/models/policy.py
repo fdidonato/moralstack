@@ -490,7 +490,7 @@ class OpenAIPolicy:
         warnings.warn(
             "OpenAIPolicy.refuse() is deprecated: the governed pipeline never calls it "
             "(refusals come from moralstack.orchestration.safe_refusal_generator); "
-            "it will be removed in MoralStack 2.0.",
+            "it will be removed in MoralStack 3.0.",
             DeprecationWarning,
             stacklevel=2,
         )

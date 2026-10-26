@@ -856,7 +856,7 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
 
 - **Default**: `0`
 - **Type**: int (>= 0)
-- **Description**: Deprecated no-op (removal in 2.0): loaded into `OrchestratorConfig.max_critical_violations` but never read. A non-default
+- **Description**: Deprecated no-op (removal in 3.0): loaded into `OrchestratorConfig.max_critical_violations` but never read. A non-default
   value emits a `DeprecationWarning` on any construction (environment loads included, where default warning filters hide it)
   and one WARNING per load from the environment. Under strict warnings (`-W error::DeprecationWarning`) a non-default
   environment value raises too (bootstrap fails closed: "Failed to initialize orchestrator").
@@ -865,7 +865,7 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
 
 - **Default**: `0.6`
 - **Type**: float (0–1)
-- **Description**: Deprecated no-op (removal in 2.0): loaded into `OrchestratorConfig.early_exit_hindsight_threshold` but never read. A
+- **Description**: Deprecated no-op (removal in 3.0): loaded into `OrchestratorConfig.early_exit_hindsight_threshold` but never read. A
   non-default value (default `0.6`) emits a `DeprecationWarning` on any construction (environment loads included, where
   default warning filters hide it) and one WARNING per load from the environment. Under strict warnings
   (`-W error::DeprecationWarning`) a non-default environment value raises too (bootstrap fails closed: "Failed to initialize orchestrator").
@@ -878,7 +878,7 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
 - **Type**: bool
 - **Description**: Deprecated no-op (F6). Pipeline errors caught in `process()` always deliver a fixed governed refusal (`[SYSTEM_ERROR]` /
   `[SYSTEM_TIMEOUT]`); setting it to `false` is ignored and logs one WARNING when the config is
-  loaded. The field stays in `OrchestratorConfig` for compatibility (removal in 2.0); a non-default value also emits
+  loaded. The field stays in `OrchestratorConfig` for compatibility (removal in 3.0); a non-default value also emits
   a `DeprecationWarning` on any construction (environment loads included, where default warning filters hide it). Under
   strict warnings (`-W error::DeprecationWarning`) a non-default value, from the environment too, raises (bootstrap fails closed: "Failed to initialize orchestrator").
 

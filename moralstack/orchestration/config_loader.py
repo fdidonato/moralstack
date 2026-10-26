@@ -85,10 +85,10 @@ def load_orchestrator_config_from_env() -> OrchestratorConfig:
         (ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD, early_exit_hindsight_threshold, 0.6),
     ):
         if value != default:
-            # Deprecated no-op fields (removal in 2.0). Best-effort: logging must never fail config loading.
+            # Deprecated no-op fields (removal in 3.0). Best-effort: logging must never fail config loading.
             try:
                 _LOG.warning(
-                    "%s is deprecated and has no effect (removal in 2.0); remove it from the environment",
+                    "%s is deprecated and has no effect (removal in 3.0); remove it from the environment",
                     env_name,
                 )
             except Exception:
