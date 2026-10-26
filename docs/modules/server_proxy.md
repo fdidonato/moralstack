@@ -10,7 +10,6 @@ Normative reference: multiturn design v1.3 section 4.
 
 - `moralstack.server.create_app` — factory: `create_app(openai_client=..., orchestrator=..., config=..., session_store=...)`.
 - `moralstack.server.conversation_correlation.ConversationCorrelationStore` — process-local lineage mapping for OpenAI-style full-history replays when no explicit `conversation_id` is provided.
-- `compute_conversation_fingerprint` — deterministic diagnostic hash from the opening message stem (through the first `user` message); not the authoritative `conversation_id` (use `msconv-*` from the correlation store or client headers).
 - `build_governance_headers` — header dict from `OrchestratorResult`.
 
 ## Governance response headers
@@ -106,5 +105,4 @@ payload.
 ## Tests
 
 - `tests/test_server_proxy.py` — integration tests with `TestClient`; async overlap tests (`httpx.AsyncClient` + `ASGITransport`); JSONL alignment under concurrent distinct `conversation_id` with a real orchestrator.
-- `tests/test_server_fingerprint.py` — fingerprint unit tests.
 - `tests/test_conversation_correlation.py` — lineage hash and `ConversationCorrelationStore` behaviour.

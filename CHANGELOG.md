@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **Dead code (lot C): the test-only `moralstack/server/fingerprint.py` is removed.** `compute_conversation_fingerprint`
+  (an `msf-<16hex>` diagnostic hash of the opening message stem) had no caller outside its own unit tests; the proxy
+  derives `conversation_id` from `ConversationCorrelationStore` and `canonical_history_hash`, which are unchanged.
+  `from moralstack.server.fingerprint import compute_conversation_fingerprint` now raises `ImportError` (breaking). No
+  governance, prompt, header or payload change.
+
 ## 2.0.0 — 2026-10-26
 
 ### Added

@@ -479,8 +479,6 @@ through the OpenAI-compatible proxy (see `docs/traces/complai_llm_rules_flow.md`
   `X-Moralstack-Draft-Origin` / `X-Moralstack-Draft-Model` only when
   `metadata.draft_origin == "upstream"` (opt-in `generation="upstream_then_verify"`);
   internal mode never adds these headers.
-- `fingerprint.py` — request fingerprinting (calls the unchanged `canonical_history_hash`;
-  verified unaffected by the principal-keying change).
 
 ### UI — `moralstack/ui/`
 - `app.py` — FastAPI dashboard (`moralstack-ui`). Reads exclusively from the
@@ -1076,8 +1074,7 @@ Notable groups in `tests/`:
   `test_conversation_state_v04.py`, `test_multiturn_context_propagation.py`,
   `test_conversational_fast_path.py`.
 - SDK: `test_sdk_*.py` (wrapper, session, stream, dccl, integration, …).
-- Server/proxy: `test_server_proxy.py`, `test_conversation_correlation.py`,
-  `test_server_fingerprint.py`.
+- Server/proxy: `test_server_proxy.py`, `test_conversation_correlation.py`.
 - Observability: `test_observability_*.py`, `test_persistence_*.py`, `test_observability_config.py`.
 - UI/reports: `test_ui_*.py`, `test_reports.py`, `test_conversation_export.py`.
 - Byte-equality: `test_system_prompt_byte_equality.py`,
