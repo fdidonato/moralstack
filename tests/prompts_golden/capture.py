@@ -51,7 +51,6 @@ import json
 import os
 import re
 import uuid
-import warnings
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -1005,7 +1004,7 @@ def _builders_policy_and_helpers(out: dict[str, str]) -> None:
             )
 
 
-def _builders_policy_rewrite_refuse(out: dict[str, str]) -> None:
+def _builders_policy_rewrite(out: dict[str, str]) -> None:
     for case, kwargs in (
         ("default_system", {}),
         ("explicit_system", {"system": "EXPLICIT SYSTEM PROMPT"}),
@@ -1016,10 +1015,6 @@ def _builders_policy_rewrite_refuse(out: dict[str, str]) -> None:
         extra = {k: v for k, v in kwargs.items() if k == "system"}
         policy.rewrite("ORIGINAL USER PROMPT", draft, "make it more balanced", **extra)
         _add_wire(out, f"wire/policy_rewrite/{case}", policy.wire)
-    for case, language in (("no_language", None), ("language", " Italian ")):
-        policy = RecordingPolicy(with_native_messages=False)
-        policy.refuse("ORIGINAL USER PROMPT", "because it is unsafe", language=language)
-        _add_wire(out, f"wire/policy_refuse/{case}", policy.wire)
 
 
 def _builders_compliance(out: dict[str, str]) -> None:
@@ -1679,7 +1674,7 @@ def _builders_openai_policy_client_boundary(out: dict[str, str]) -> None:
     """The REAL ``OpenAIPolicy`` on a fake ``openai.OpenAI``: the messages that reach the provider client.
 
     Covers ``generate`` (with and without ``system``), ``generate_messages`` (passed through unchanged),
-    ``rewrite`` and ``refuse`` (inline system/user texts) - the policy boundary of the wire.
+    ``rewrite`` (inline system/user texts) - the policy boundary of the wire.
     """
     from moralstack.models.policy import OpenAIPolicy
 
@@ -1697,10 +1692,6 @@ def _builders_openai_policy_client_boundary(out: dict[str, str]) -> None:
         )
         policy.rewrite("ORIGINAL USER PROMPT", "The current draft.", "make it more balanced")
         policy.rewrite("ORIGINAL USER PROMPT", "The current draft.", "make it more balanced", system="EXPLICIT SYSTEM")
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            policy.refuse("ORIGINAL USER PROMPT", "because it is unsafe")
-            policy.refuse("ORIGINAL USER PROMPT", "because it is unsafe", language=" Italian ")
     _add_wire(out, "wire/openai_policy/client_boundary", factory.wire)
 
 
@@ -1781,7 +1772,7 @@ def _capture_builders() -> dict[str, str]:
     _builders_prefilter_and_agents(out)
     _builders_refusal_exclusion(out)
     _builders_policy_and_helpers(out)
-    _builders_policy_rewrite_refuse(out)
+    _builders_policy_rewrite(out)
     _builders_compliance(out)
     _builders_controller_inline(out)
     _builders_sdk_wrapper(out)

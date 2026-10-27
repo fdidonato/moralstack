@@ -18,7 +18,6 @@ depend on a file that Phase B is allowed to migrate.
 from __future__ import annotations
 
 import threading
-import warnings
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -133,14 +132,6 @@ class RecordingPolicy:
         from moralstack.models.policy import OpenAIPolicy
 
         return OpenAIPolicy.rewrite(self, *args, **kwargs)  # type: ignore[arg-type]
-
-    def refuse(self, *args: Any, **kwargs: Any) -> GenResult:
-        """Run the REAL ``OpenAIPolicy.refuse`` composition on top of the recorded ``generate``."""
-        from moralstack.models.policy import OpenAIPolicy
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            return OpenAIPolicy.refuse(self, *args, **kwargs)  # type: ignore[arg-type]
 
     def snapshot(self) -> list[WireCall]:
         with self._lock:

@@ -4,7 +4,7 @@
 
 The Policy LLM is the generative model responsible for text production in MoralStack.
 
-**For testers and integrators**: The module exposes `generate`, `rewrite` and `refuse`. The Orchestrator uses `rewrite`
+**For testers and integrators**: The module exposes `generate` and `rewrite`. The Orchestrator uses `rewrite`
 with aggregated guidance from Critic, Simulator, Hindsight and Perspectives. For isolated tests it is possible to mock
 the Policy or use a lightweight model. In the current implementation, MoralStack uses an external LLM provider (OpenAI)
 for policy reasoning. The policy abstraction is designed to be extensible in the future, but currently there is only one
@@ -177,7 +177,7 @@ draft on the primary model while allowing a lighter model for deliberative revis
 `OpenAIPolicy(..., prompt_set=None)` reads the rewrite texts from its `PromptSet` (default: the packaged set):
 `policy.rewrite.user` (template with the original request, the current draft and the revision feedback),
 `policy.rewrite.default_system` (used when the caller passes no `system`) and `policy.rewrite.constraints`
-(appended to either system, with no separator). `refuse()` keeps its inline texts (deprecated, no production caller, not overridable). The
+(appended to either system, with no separator). The
 mini-estimator policies of the risk estimator only run `generate`/`generate_messages`, so they need no prompt text.
 
 The rewrite prompt also includes explicit constraints that prevent lighter models from adding
@@ -193,7 +193,7 @@ information leakage; overall stack judge score ~9.27/10 on benchmark run 12).
 | Variable | Purpose |
 |----------|---------|
 | `OPENAI_API_KEY` | Required API key |
-| `OPENAI_MODEL` | Primary model for `generate()` (and the deprecated `refuse()`) |
+| `OPENAI_MODEL` | Primary model for `generate()` |
 | `MORALSTACK_POLICY_REWRITE_MODEL` | Optional; model for `rewrite()` (deliberative cycle 2+). Defaults to `OPENAI_MODEL` when unset. `.env.template` sets `gpt-4o` (same as `OPENAI_MODEL`, i.e. no downgrade) since 2026-09-09; it shipped `gpt-4.1-nano` before that. |
 | `OPENAI_TEMPERATURE` | Sampling temperature for the delivered answer (default `0.7`). |
 | `OPENAI_TOP_P` | Nucleus sampling `top_p` for the delivered answer (default `0.9`). |
@@ -231,8 +231,7 @@ The behavior of an **unset** field depends on the entry point, controlled by
 
 REFUSE wording is excluded from per-request overrides on every path:
 `safe_refusal_generator._llm_refusal_call` calls `generate()` with no `overrides`/`config`
-(`orchestration/safe_refusal_generator.py:406`), so it keeps the env default, and the
-deprecated `OpenAIPolicy.refuse()` likewise has no `overrides` parameter. A low client
+(`orchestration/safe_refusal_generator.py:406`), so it keeps the env default. A low client
 `max_tokens` therefore cannot truncate a safety message — it still honors the
 `OPENAI_MAX_TOKENS` env default on every path, including the proxy.
 
@@ -259,23 +258,6 @@ print(result.text)  # Revised response
 ```
 
 **Important note**: The `guidance` is used as *instructions* for the LLM, it is not included literally in the output.
-
-### refuse() (deprecated)
-
-Deprecated: emits a `DeprecationWarning` and will be removed in MoralStack 3.0. The governed pipeline never calls it;
-refusals come from `moralstack.orchestration.safe_refusal_generator`.
-
-Generates a reasoned and respectful refusal.
-
-```python
-result = policy.refuse(
-    prompt="Problematic user request",
-    guidance="Explain that we cannot provide instructions for illegal activities",
-    language="English",  # Optional: explicit output language (e.g. when prompt is empty for regulated domains)
-)
-
-print(result.text)  # Natural refusal, not the literal guidance
-```
 
 ---
 
@@ -360,19 +342,6 @@ class PolicyLLMProtocol(Protocol):
         config: Any = None,
     ) -> Any:
         """Revises response with guidance."""
-        ...
-
-    def refuse(
-        self,
-        prompt: str,
-        guidance: str,
-        config: Any = None,
-        language: str | None = None,
-    ) -> Any:
-        """Generates reasoned refusal. language: explicit output language when prompt empty or to reduce drift.
-
-        Deprecated (no production caller); removal in 3.0.
-        """
         ...
 ```
 

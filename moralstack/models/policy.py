@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import os
-import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -466,66 +465,6 @@ class OpenAIPolicy:
             model_override=self._rewrite_model,
             overrides=overrides,
         )
-
-    def refuse(
-        self,
-        prompt: str,
-        guidance: str,
-        config: GenerationConfig | None = None,
-        language: str | None = None,
-    ) -> GenerationResult:
-        """Generates an empathetic and informative refusal.
-
-        Deprecated: the governed pipeline never calls this method (refusals come from
-        ``moralstack.orchestration.safe_refusal_generator``); it will be removed in
-        MoralStack 2.0.
-
-        Args:
-            prompt: User request (may be empty for regulated domains).
-            guidance: Reason for declining.
-            config: Optional generation config.
-            language: Explicit output language (e.g. "English") when prompt is empty
-                or to reduce LLM non-compliance (e.g. Spanish when request is English).
-        """
-        warnings.warn(
-            "OpenAIPolicy.refuse() is deprecated: the governed pipeline never calls it "
-            "(refusals come from moralstack.orchestration.safe_refusal_generator); "
-            "it will be removed in MoralStack 3.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        refuse_prompt = (
-            f"USER REQUEST:\n{prompt}\n\n"
-            f"REASON FOR DECLINING:\n{guidance}\n\n"
-            "Generate an empathetic and varied response. "
-            "The response MUST: (1) acknowledge the user's request with tact, "
-            "(2) explain clearly and articulately why you cannot fulfill it (risk/ethics), "
-            "(3) actively suggest safe alternatives, legitimate resources, or ways to rephrase. "
-            "IMPORTANT: Do not use boilerplate or fixed templates. "
-            "Vary the opening and style based on the context. "
-            "DO NOT respond with just a one-sentence refusal."
-        )
-        if language and str(language).strip():
-            refuse_prompt = (
-                f"CRITICAL: The user's request is in {language.strip()}. "
-                f"You MUST respond entirely in {language.strip()}. "
-                "Do not add translations.\n\n"
-                f"{refuse_prompt}"
-            )
-        refuse_system = (
-            "You are a compassionate ethical assistant. "
-            "You help users navigate complex topics safely. "
-            "When you must refuse a request, you do so by educating and "
-            "redirecting, not just blocking. "
-            "Avoid repetitive opening phrases like 'I'm sorry'. "
-            "Instead, vary your tone based on the user's intent. "
-            "Provide deep reasoning and helpful, specific alternatives. "
-        )
-        if language and str(language).strip():
-            refuse_system += f"CRITICAL: You MUST respond entirely in {language.strip()}. Do not add translations."
-        else:
-            refuse_system += "Always respond in the SAME LANGUAGE as the user's request."
-        return self.generate(refuse_prompt, system=refuse_system, config=config)
 
 
 # Re-export for compatibility (some modules imported GenerationConfig from policy)

@@ -447,7 +447,7 @@ Include disclaimer on the informational nature of the response. suggest: Recomme
 
 The `suggest:` prefix is parsed by the Response Assembler when formatting fallback refusals. The guidance is passed to
 `policy.rewrite()` for revision; the final refusal is assembled by `safe_refusal_generator`, which receives the
-guidance as the refusal rationale (the deprecated `policy.refuse()` is not called).
+guidance as the refusal rationale.
 
 ---
 

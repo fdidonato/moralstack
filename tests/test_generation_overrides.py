@@ -6,7 +6,7 @@ Covers:
   ``generate_messages`` when no config and no override is given.
 - Per-request overrides winning over the policy defaults on the delivered-answer
   generators (``generate`` / ``generate_messages`` / ``rewrite``).
-- ``refuse`` ignoring per-request overrides (no transport, keeps the env default).
+- The live refusal call (``_llm_refusal_call``) ignoring per-request overrides (keeps the env default).
 - Proxy passthrough mode (``passthrough_unset=True``): a field the client did
   not send is **omitted** from the OpenAI call (model default) instead of
   falling back to the env default; sent fields are still applied.
@@ -15,8 +15,6 @@ All offline: the OpenAI client is replaced with a capturing fake.
 """
 
 from __future__ import annotations
-
-import pytest
 
 from moralstack.models.base import GenerationConfig, GenerationOverrides
 from moralstack.models.policy import OpenAIPolicy
@@ -211,24 +209,25 @@ class TestRewriteEnumeratedInvariance:
 
 
 # --------------------------------------------------------------------------- #
-# REFUSE ignores per-request overrides (no transport into refuse)
+# Deprecated refuse() removed; live refusal path ignores per-request overrides
 # --------------------------------------------------------------------------- #
-class TestRefuseExcluded:
-    def test_refuse_uses_env_default_not_override(self, monkeypatch):
+class TestRefuseRemoved:
+    def test_refuse_is_removed(self):
+        from moralstack.core.types import PolicyLLMProtocol
+
+        assert not hasattr(OpenAIPolicy, "refuse")
+        assert not hasattr(PolicyLLMProtocol, "refuse")
+
+    def test_llm_refusal_call_uses_env_default_not_override(self, monkeypatch):
+        from moralstack.orchestration.safe_refusal_generator import _llm_refusal_call
+
         policy, completions = _make_policy(monkeypatch, max_tokens_env="4096")
-        # refuse() has no ``overrides`` parameter; a client max_tokens cannot
-        # reach it, so the safety message keeps the operator-set default.
-        with pytest.warns(DeprecationWarning, match="OpenAIPolicy.refuse") as record:
-            result = policy.refuse("prompt", "guidance")
-        assert record[0].filename == __file__
-        assert result.text == "ok"
-        assert completions.calls[-1]["max_tokens"] == 4096
-
-    def test_refuse_has_no_overrides_param(self):
-        import inspect
-
-        sig = inspect.signature(OpenAIPolicy.refuse)
-        assert "overrides" not in sig.parameters
+        # The live refusal path calls generate() without ``overrides``: a client
+        # max_tokens cannot reach it, so the operator-set default applies.
+        text, _usage = _llm_refusal_call(llm_client=policy, system="sys", user_msg="user")
+        assert text == "ok"
+        assert len(completions.calls) == 1
+        assert completions.calls[0]["max_tokens"] == 4096
 
 
 # --------------------------------------------------------------------------- #

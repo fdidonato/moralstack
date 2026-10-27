@@ -252,7 +252,6 @@ class MockPolicyLLM:
         self.call_count = 0
         self.generate_calls = 0
         self.rewrite_calls = 0
-        self.refuse_calls = 0
 
     def generate(self, *args: Any, **kwargs: Any) -> MockGenerationResult:
         self.call_count += 1
@@ -264,12 +263,6 @@ class MockPolicyLLM:
         self.rewrite_calls += 1
         draft = kwargs.get("draft", args[2] if len(args) > 2 else "")
         return MockGenerationResult(text=f"Revised: {str(draft)[:50]}...")
-
-    def refuse(self, *args: Any, **kwargs: Any) -> MockGenerationResult:
-        self.call_count += 1
-        self.refuse_calls += 1
-        guidance = kwargs.get("enriched_reason", kwargs.get("guidance", args[2] if len(args) > 2 else ""))
-        return MockGenerationResult(text=f"I cannot help with that. {guidance}")
 
 
 class MockCritic:
@@ -429,9 +422,6 @@ class FailingMockLLM:
         if self.fail_on in ["all", "rewrite"]:
             raise RuntimeError("LLM rewrite failed")
         return MockGenerationResult(text="Revised")
-
-    def refuse(self, *args: Any, **kwargs: Any) -> MockGenerationResult:
-        return MockGenerationResult(text="Refused")
 
 
 # =============================================================================

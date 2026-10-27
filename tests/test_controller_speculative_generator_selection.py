@@ -104,10 +104,9 @@ class TestGeneratorSelection:
         assert "draft_origin" not in persist_kwargs.get("parsed_summary_json", "")
 
     def test_selection_affects_only_speculative_call_site(self):
-        """`ctrl.policy.rewrite`/`refuse` are untouched by generator selection."""
+        """`ctrl.policy.rewrite` is untouched by generator selection."""
         governance_gen = _FakeGenerator("governance-model-G", "governance text")
         governance_gen.rewrite = MagicMock(return_value=_FakeGenerationResult("rewritten"))
-        governance_gen.refuse = MagicMock(return_value=_FakeGenerationResult("refusal"))
         ctrl = _make_controller(governance_gen)
         upstream_gen = _FakeGenerator("client-model-C", "client draft text")
 
@@ -117,7 +116,6 @@ class TestGeneratorSelection:
         ctrl._speculative_generate(req)
 
         governance_gen.rewrite.assert_not_called()
-        governance_gen.refuse.assert_not_called()
         assert ctrl.policy is governance_gen
 
     def test_multi_turn_uses_generate_messages_on_selected_generator(self):

@@ -84,9 +84,6 @@ class PolicyLLMProtocol(Protocol):
         overrides: Any = None,
     ) -> Any: ...
 
-    # Deprecated (no production caller); removal in 3.0.
-    def refuse(self, prompt: str, guidance: str, config: Any = None, language: str | None = None) -> Any: ...
-
 
 class RiskEstimatorProtocol(Protocol):
     """Protocol for the Risk Estimator."""

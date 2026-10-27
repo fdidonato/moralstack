@@ -82,6 +82,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the REVISE band stays at `expected_value < 0.0`. Construct both dataclasses by keyword: a positional 9th argument now
   binds to `use_batch_evaluation` (`HindsightConfig`) / `enable_caching` (`EnsembleConfig`). No governance,
   `final_action`, prompt or payload change.
+- **`OpenAIPolicy.refuse()` and `PolicyLLMProtocol.refuse` are removed.** `policy.refuse(...)` raises
+  `AttributeError` (breaking). The pipeline never called it: refusals come from `safe_refusal_generator` with the
+  `refusal.system` / `refusal.user` prompts, which calls `generate()` without per-request overrides. Custom policies no
+  longer need `refuse`. No governance, `final_action`, delivered-prompt or payload change.
 
 ## 2.0.0 — 2026-10-26
 

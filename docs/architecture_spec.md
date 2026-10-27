@@ -830,7 +830,6 @@ Behaviors observed in the code during this rewrite that a reader might otherwise
 
 | Gap | Location |
 |---|---|
-| `OpenAIPolicy.refuse` has no production caller and is deprecated (removal in 3.0); refusals go through `safe_refusal_generator` | `models/policy.py` |
 | `DeveloperContract` supports a `structured` mode, but contracts are only built in `opaque` mode | `orchestration/contract.py`, `orchestration/conversation_context.py` |
 
 Open hypotheses and their status are tracked in [`CODEBASE_FACTS.md`](./CODEBASE_FACTS.md) → "Future work /
