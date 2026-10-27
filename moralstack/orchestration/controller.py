@@ -1745,7 +1745,7 @@ class OrchestrationController:
         """Governed fail-closed REFUSE for a pipeline failure caught in ``process()`` (F6, §5.7).
 
         The label comes from the exception class, never from text. The delivered content is
-        always the fixed ``sentinel``, regardless of the deprecated no-op ``safe_response_on_error``: the exception
+        always the fixed ``sentinel``: the exception
         text stays in ``result.error`` and the truncated server-side WARNING, never in the
         delivered answer. No LLM call and no FINAL decision-trace row: the UI recognizes a
         pipeline failure by a ``SYSTEM.*`` failure principle (ERROR / TIMEOUT / FAIL_SAFE)

@@ -7,15 +7,12 @@ to hardcoded defaults. Used when no explicit OrchestratorConfig is passed.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from moralstack.utils.env_helpers import get_env_bool, get_env_float, get_env_int, get_env_str
 
 if TYPE_CHECKING:
     from moralstack.orchestration.types import OrchestratorConfig
-
-_LOG = logging.getLogger(__name__)
 
 # Backward-compatible aliases for external consumers
 get_orchestrator_env_float = get_env_float
@@ -31,11 +28,8 @@ ENV_TIMEOUT_MS = "MORALSTACK_ORCHESTRATOR_TIMEOUT_MS"
 ENV_ENABLE_PERSPECTIVES = "MORALSTACK_ORCHESTRATOR_ENABLE_PERSPECTIVES"
 ENV_NUM_SIMULATIONS = "MORALSTACK_ORCHESTRATOR_NUM_SIMULATIONS"
 ENV_MIN_HINDSIGHT_SCORE = "MORALSTACK_ORCHESTRATOR_MIN_HINDSIGHT_SCORE"
-ENV_MAX_CRITICAL_VIOLATIONS = "MORALSTACK_ORCHESTRATOR_MAX_CRITICAL_VIOLATIONS"
-ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD = "MORALSTACK_ORCHESTRATOR_EARLY_EXIT_HINDSIGHT_THRESHOLD"
 ENV_ENABLE_SIMULATION = "MORALSTACK_ORCHESTRATOR_ENABLE_SIMULATION"
 ENV_ENABLE_HINDSIGHT = "MORALSTACK_ORCHESTRATOR_ENABLE_HINDSIGHT"
-ENV_SAFE_RESPONSE_ON_ERROR = "MORALSTACK_ORCHESTRATOR_SAFE_RESPONSE_ON_ERROR"
 ENV_SKIP_OPTIONAL_MODULES_THRESHOLD = "MORALSTACK_ORCHESTRATOR_SKIP_OPTIONAL_MODULES_THRESHOLD"
 ENV_SOFT_TIMEOUT_THRESHOLD = "MORALSTACK_ORCHESTRATOR_SOFT_TIMEOUT_THRESHOLD"
 ENV_PARALLEL_MODULE_CALLS = "MORALSTACK_ORCHESTRATOR_PARALLEL_MODULE_CALLS"
@@ -59,7 +53,7 @@ def load_orchestrator_config_from_env() -> OrchestratorConfig:
     Build OrchestratorConfig from environment variables.
 
     Only non-empty env values are used; otherwise hardcoded defaults apply.
-    Ints are enforced >= 1 (or >= 0 for max_critical_violations, which is deprecated).
+    Ints are enforced >= 1 (>= 0 for simulator_gate_delta_chars_threshold).
     Floats are clamped to [0.0, 1.0] where applicable. Timeout >= 1.
 
     Builds RiskThresholds from MORALSTACK_ORCHESTRATOR_RISK_LOW_THRESHOLD and
@@ -76,33 +70,8 @@ def load_orchestrator_config_from_env() -> OrchestratorConfig:
     enable_perspectives = get_env_bool(ENV_ENABLE_PERSPECTIVES, True)
     num_simulations = get_env_int(ENV_NUM_SIMULATIONS, 3, 1)
     min_hindsight_score = get_env_float(ENV_MIN_HINDSIGHT_SCORE, 0.8, 0.0, 1.0)
-    max_critical_violations = get_env_int(ENV_MAX_CRITICAL_VIOLATIONS, 0, 0)
-    early_exit_hindsight_threshold = get_env_float(ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD, 0.6, 0.0, 1.0)
-    for env_name, value, default in (
-        (ENV_MAX_CRITICAL_VIOLATIONS, max_critical_violations, 0),
-        (ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD, early_exit_hindsight_threshold, 0.6),
-    ):
-        if value != default:
-            # Deprecated no-op fields (removal in 3.0). Best-effort: logging must never fail config loading.
-            try:
-                _LOG.warning(
-                    "%s is deprecated and has no effect (removal in 3.0); remove it from the environment",
-                    env_name,
-                )
-            except Exception:
-                _LOG.debug("deprecated env warning failed", exc_info=True)
     enable_simulation = get_env_bool(ENV_ENABLE_SIMULATION, True)
     enable_hindsight = get_env_bool(ENV_ENABLE_HINDSIGHT, True)
-    safe_response_on_error = get_env_bool(ENV_SAFE_RESPONSE_ON_ERROR, True)
-    if not safe_response_on_error:
-        # F6 (PROJECT_SPEC §5.7): the flag is a deprecated no-op; the field is kept for compatibility. Best-effort.
-        try:
-            _LOG.warning(
-                "%s=false is ignored: pipeline errors always deliver a fixed governed refusal (PROJECT_SPEC §5.7)",
-                ENV_SAFE_RESPONSE_ON_ERROR,
-            )
-        except Exception:
-            _LOG.debug("safe_response_on_error deprecation warning failed", exc_info=True)
     skip_optional_modules_threshold = get_env_float(ENV_SKIP_OPTIONAL_MODULES_THRESHOLD, 0.95, 0.0, 1.0)
     soft_timeout_threshold = get_env_float(ENV_SOFT_TIMEOUT_THRESHOLD, 0.90, 0.0, 1.0)
     parallel_module_calls = get_env_bool(ENV_PARALLEL_MODULE_CALLS, True)
@@ -133,11 +102,8 @@ def load_orchestrator_config_from_env() -> OrchestratorConfig:
         enable_perspectives=enable_perspectives,
         num_simulations=num_simulations,
         min_hindsight_score=min_hindsight_score,
-        max_critical_violations=max_critical_violations,
-        early_exit_hindsight_threshold=early_exit_hindsight_threshold,
         enable_simulation=enable_simulation,
         enable_hindsight=enable_hindsight,
-        safe_response_on_error=safe_response_on_error,
         skip_optional_modules_threshold=skip_optional_modules_threshold,
         soft_timeout_threshold=soft_timeout_threshold,
         parallel_module_calls=parallel_module_calls,

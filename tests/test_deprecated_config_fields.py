@@ -1,27 +1,28 @@
-"""Deprecated no-op config fields (known-gaps-cleanup S2).
+"""Deprecated and removed no-op config fields (known-gaps-cleanup S2, 3.0 removals).
+
+``HindsightConfig.revise_threshold`` and ``EnsembleConfig.conservative_on_failure`` still parse and
+still have no effect. A non-default value warns (``DeprecationWarning`` on construction, one WARNING
+per env load); defaults are silent.
 
 ``OrchestratorConfig.max_critical_violations`` / ``early_exit_hindsight_threshold`` /
-``safe_response_on_error``, ``HindsightConfig.revise_threshold`` and
-``EnsembleConfig.conservative_on_failure`` still parse and still have no effect. A non-default
-value warns (``DeprecationWarning`` on construction, one WARNING per env load); defaults are silent.
+``safe_response_on_error`` are removed: the keyword raises ``TypeError``, the matching environment
+variables are silently ignored and the ``ENV_*`` constants are gone. This file is the home of the
+removal tests (renaming it is a follow-up).
 """
 
 from __future__ import annotations
 
 import logging
 import warnings
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from types import ModuleType
 from unittest.mock import MagicMock
 
 import pytest
 
-from moralstack.orchestration.config_loader import (
-    ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD,
-    ENV_MAX_CRITICAL_VIOLATIONS,
-    ENV_SAFE_RESPONSE_ON_ERROR,
-    load_orchestrator_config_from_env,
-)
+from moralstack.orchestration import config_loader
+from moralstack.orchestration.config_loader import load_orchestrator_config_from_env
 from moralstack.orchestration.convergence_evaluator import ConvergenceEvaluator
 from moralstack.orchestration.types import DeliberationState, OrchestratorConfig
 from moralstack.runtime.modules.hindsight_config_loader import ENV_REVISE_THRESHOLD, load_hindsight_config_from_env
@@ -42,7 +43,11 @@ from moralstack.runtime.modules.perspective_module import (
 )
 from tests.test_perspective_module import FailingMockPolicyLLM
 
-ORCH_ENVS = (ENV_MAX_CRITICAL_VIOLATIONS, ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD, ENV_SAFE_RESPONSE_ON_ERROR)
+ORCH_ENVS = (
+    "MORALSTACK_ORCHESTRATOR_MAX_CRITICAL_VIOLATIONS",
+    "MORALSTACK_ORCHESTRATOR_EARLY_EXIT_HINDSIGHT_THRESHOLD",
+    "MORALSTACK_ORCHESTRATOR_SAFE_RESPONSE_ON_ERROR",
+)
 ALL_ENVS = (*ORCH_ENVS, ENV_REVISE_THRESHOLD, ENV_CONSERVATIVE_ON_FAILURE)
 
 LOGGERS = {
@@ -91,9 +96,6 @@ def _capture(logger_name: str) -> Iterator[_Records]:
 @pytest.mark.parametrize(
     ("cls", "field", "value"),
     [
-        (OrchestratorConfig, "max_critical_violations", 1),
-        (OrchestratorConfig, "early_exit_hindsight_threshold", 0.75),
-        (OrchestratorConfig, "safe_response_on_error", False),
         (HindsightConfig, "revise_threshold", 0.3),
         (EnsembleConfig, "conservative_on_failure", False),
     ],
@@ -119,41 +121,57 @@ def test_default_construction_is_silent() -> None:
     assert [w for w in caught if issubclass(w.category, DeprecationWarning)] == []
 
 
+# --- (b2) removed fields: the keyword is gone, the env var is ignored, the constant is gone -----
+
+
+@pytest.mark.parametrize(
+    ("cls", "field", "value"),
+    [
+        (OrchestratorConfig, "max_critical_violations", 1),
+        (OrchestratorConfig, "early_exit_hindsight_threshold", 0.75),
+        (OrchestratorConfig, "safe_response_on_error", False),
+    ],
+)
+def test_removed_field_kwarg_raises_type_error(cls: type, field: str, value: object) -> None:
+    with pytest.raises(TypeError, match=field):
+        cls(**{field: value})
+    assert not hasattr(cls(), field)
+
+
+@pytest.mark.parametrize(
+    ("module", "name"),
+    [
+        (config_loader, "ENV_MAX_CRITICAL_VIOLATIONS"),
+        (config_loader, "ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD"),
+        (config_loader, "ENV_SAFE_RESPONSE_ON_ERROR"),
+    ],
+)
+def test_removed_env_constant_is_gone(module: ModuleType, name: str) -> None:
+    assert not hasattr(module, name)
+
+
+@pytest.mark.parametrize(
+    ("env", "value", "loader", "logger_name"),
+    [
+        (ORCH_ENVS[0], "2", load_orchestrator_config_from_env, LOGGERS["orch"]),
+        (ORCH_ENVS[1], "0.75", load_orchestrator_config_from_env, LOGGERS["orch"]),
+        (ORCH_ENVS[2], "false", load_orchestrator_config_from_env, LOGGERS["orch"]),
+    ],
+)
+def test_removed_env_var_is_ignored(
+    monkeypatch: pytest.MonkeyPatch, env: str, value: str, loader: Callable[[], object], logger_name: str
+) -> None:
+    baseline = loader()
+    monkeypatch.setenv(env, value)
+    with _capture(logger_name) as handler, warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cfg = loader()
+    assert cfg == baseline
+    assert handler.warnings() == []
+    assert [w for w in caught if issubclass(w.category, DeprecationWarning)] == []
+
+
 # --- (c) loaders: one WARNING per non-default env var ---------------------------------------
-
-
-def test_orchestrator_loader_warns_once_per_non_default_var(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(ENV_MAX_CRITICAL_VIOLATIONS, "2")
-    with _capture(LOGGERS["orch"]) as handler, pytest.warns(DeprecationWarning):
-        cfg = load_orchestrator_config_from_env()
-    assert cfg.max_critical_violations == 2
-    msgs = handler.warnings()
-    assert len(msgs) == 1
-    assert ENV_MAX_CRITICAL_VIOLATIONS in msgs[0]
-    assert "removal in 3.0" in msgs[0]
-
-
-def test_orchestrator_loader_early_exit_warns_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD, "0.75")
-    with _capture(LOGGERS["orch"]) as handler, pytest.warns(DeprecationWarning):
-        cfg = load_orchestrator_config_from_env()
-    assert cfg.early_exit_hindsight_threshold == 0.75
-    msgs = handler.warnings()
-    assert len(msgs) == 1
-    assert ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD in msgs[0]
-
-
-def test_orchestrator_loader_three_vars_three_distinct_warnings(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(ENV_MAX_CRITICAL_VIOLATIONS, "2")
-    monkeypatch.setenv(ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD, "0.75")
-    monkeypatch.setenv(ENV_SAFE_RESPONSE_ON_ERROR, "false")
-    with _capture(LOGGERS["orch"]) as handler, pytest.warns(DeprecationWarning):
-        load_orchestrator_config_from_env()
-    msgs = handler.warnings()
-    assert len(msgs) == 3
-    assert len(set(msgs)) == 3
-    for name in ORCH_ENVS:
-        assert sum(name in m for m in msgs) == 1
 
 
 def test_hindsight_loader_warns_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -180,9 +198,6 @@ def test_perspective_loader_warns_once(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_default_valued_env_is_silent(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(ENV_MAX_CRITICAL_VIOLATIONS, "0")
-    monkeypatch.setenv(ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD, "0.6")
-    monkeypatch.setenv(ENV_SAFE_RESPONSE_ON_ERROR, "true")
     monkeypatch.setenv(ENV_REVISE_THRESHOLD, "0.0")
     monkeypatch.setenv(ENV_CONSERVATIVE_ON_FAILURE, "true")
     with (
@@ -238,45 +253,9 @@ def test_ensemble_output_ignores_conservative_on_failure() -> None:
     assert "user" in outputs[0][1]
 
 
-def _clean_state() -> DeliberationState:
-    critique = type(
-        "C",
-        (),
-        {
-            "violations": [],
-            "violated_hard": False,
-            "decision": "PROCEED",
-            "revision_guidance": "",
-            "has_critical_violations": False,
-        },
-    )()
-    persp = type("P", (), {"perspective_id": "user", "approval_score": 0.9, "concerns": [], "suggestions": []})()
-    return DeliberationState(cycle=1, critiques=[critique], perspectives=[persp])
-
-
-def _critical_state() -> DeliberationState:
-    # One critical violation, so the deprecated max_critical_violations would matter if it were wired in.
-    # (early_exit_hindsight_threshold is probed by _hindsight_cycle2_state.)
-    critique = type(
-        "C",
-        (),
-        {
-            "violations": ["v"],
-            "violated_hard": False,
-            "decision": "PROCEED",
-            "revision_guidance": "",
-            "has_critical_violations": True,
-        },
-    )()
-    persp = type("P", (), {"perspective_id": "user", "approval_score": 0.9, "concerns": [], "suggestions": []})()
-    hind = type("H", (), {"expected_value": 0.7, "recommendation": "proceed"})()
-    return DeliberationState(cycle=1, critiques=[critique], perspectives=[persp], hindsight=hind)
-
-
 def _hindsight_cycle2_state() -> DeliberationState:
     # Cycle 2, no violations, hindsight 0.7: under defaults CONTINUE (below min_hindsight_score 0.8,
-    # convergence_evaluator.py:493). A reader of early_exit_hindsight_threshold next to it would
-    # flip to CONVERGED at 0.6 but not at 0.99.
+    # convergence_evaluator.py:462).
     critique = type(
         "C",
         (),
@@ -291,19 +270,6 @@ def _hindsight_cycle2_state() -> DeliberationState:
     persp = type("P", (), {"perspective_id": "user", "approval_score": 0.5, "concerns": [], "suggestions": []})()
     hind = type("H", (), {"expected_value": 0.7, "recommendation": "proceed"})()
     return DeliberationState(cycle=2, critiques=[critique], perspectives=[persp], hindsight=hind)
-
-
-def test_convergence_decisions_ignore_deprecated_thresholds() -> None:
-    decisions = []
-    for mcv, eeh in ((0, 0.6), (5, 0.99)):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            cfg = OrchestratorConfig(max_critical_violations=mcv, early_exit_hindsight_threshold=eeh)
-        for state in (_clean_state(), _critical_state(), _hindsight_cycle2_state()):
-            decision = ConvergenceEvaluator(cfg).determine_decision(state)
-            snap = state._convergence_evaluation_snapshot
-            decisions.append((decision, (snap or {}).get("convergence_reason_codes")))
-    assert decisions[:3] == decisions[3:]
 
 
 def test_hindsight_cycle2_state_stays_meaningful() -> None:

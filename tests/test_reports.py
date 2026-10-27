@@ -523,7 +523,7 @@ class TestCliReportPipelineFailure:
         from tests.test_pipeline_error_fail_closed import _ctrl, _fail
 
         exc_cls = getattr(orch_types, exc_name, None) or ValueError
-        result = _fail(_ctrl(safe=True, request=request), monkeypatch, exc_cls("x"))
+        result = _fail(_ctrl(request=request), monkeypatch, exc_cls("x"))
         assert result.response.metadata.triggered_principles == [principle]
 
         report = request_report_from_cli(self._cli_trace("full_refusal"), None, result, "Hi")

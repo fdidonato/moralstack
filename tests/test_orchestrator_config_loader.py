@@ -11,20 +11,17 @@ import pytest
 
 from moralstack.orchestration.config_loader import (
     ENV_BORDERLINE_REFUSE_UPPER,
-    ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD,
     ENV_ENABLE_HINDSIGHT,
     ENV_ENABLE_HINDSIGHT_GATING,
     ENV_ENABLE_PERSPECTIVES,
     ENV_ENABLE_SIMULATION,
     ENV_ENABLE_SIMULATOR_GATING,
-    ENV_MAX_CRITICAL_VIOLATIONS,
     ENV_MAX_DELIBERATION_CYCLES,
     ENV_MIN_HINDSIGHT_SCORE,
     ENV_NUM_SIMULATIONS,
     ENV_PARALLEL_MODULE_CALLS,
     ENV_RISK_LOW_THRESHOLD,
     ENV_RISK_MEDIUM_THRESHOLD,
-    ENV_SAFE_RESPONSE_ON_ERROR,
     ENV_SIMULATOR_GATE_DELTA_CHARS_THRESHOLD,
     ENV_SIMULATOR_GATE_SEMANTIC_HARM_THRESHOLD,
     ENV_SKIP_OPTIONAL_MODULES_THRESHOLD,
@@ -146,11 +143,8 @@ class TestLoadOrchestratorConfigFromEnv:
         ENV_ENABLE_PERSPECTIVES,
         ENV_NUM_SIMULATIONS,
         ENV_MIN_HINDSIGHT_SCORE,
-        ENV_MAX_CRITICAL_VIOLATIONS,
-        ENV_EARLY_EXIT_HINDSIGHT_THRESHOLD,
         ENV_ENABLE_SIMULATION,
         ENV_ENABLE_HINDSIGHT,
-        ENV_SAFE_RESPONSE_ON_ERROR,
         ENV_SKIP_OPTIONAL_MODULES_THRESHOLD,
         ENV_SOFT_TIMEOUT_THRESHOLD,
         ENV_PARALLEL_MODULE_CALLS,
@@ -172,11 +166,8 @@ class TestLoadOrchestratorConfigFromEnv:
         assert config.enable_perspectives is True
         assert config.num_simulations == 3
         assert config.min_hindsight_score == 0.8
-        assert config.max_critical_violations == 0
-        assert config.early_exit_hindsight_threshold == 0.6
         assert config.enable_simulation is True
         assert config.enable_hindsight is True
-        assert config.safe_response_on_error is True
         assert config.skip_optional_modules_threshold == 0.95
         assert config.soft_timeout_threshold == 0.90
         assert config.parallel_module_calls is True

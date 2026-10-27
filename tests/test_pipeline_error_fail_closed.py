@@ -59,21 +59,17 @@ from moralstack.orchestration.types import (
 from moralstack.runtime.orchestrator import Orchestrator, create_orchestrator
 from moralstack.utils.output_protection import OutputProtector
 
-# Incidental ``safe=False`` parametrizations: the subject here is fail-closed, not the deprecated flag.
-pytestmark = pytest.mark.filterwarnings("ignore:OrchestratorConfig.safe_response_on_error is deprecated:DeprecationWarning")
-
 CONTROLLER_PATH = Path(__file__).resolve().parent.parent / "moralstack" / "orchestration" / "controller.py"
 
 
 def _ctrl(
     *,
-    safe: bool = True,
     ledger: Any = None,
     request: pytest.FixtureRequest,
     config: OrchestratorConfig | None = None,
 ) -> OrchestrationController:
     ctrl = OrchestrationController(
-        config=config or OrchestratorConfig(safe_response_on_error=safe, enable_speculative_generation=False),
+        config=config or OrchestratorConfig(enable_speculative_generation=False),
         policy=MagicMock(),
         risk_estimator=MagicMock(),
         critic=None,
@@ -106,7 +102,7 @@ def _fail(
 def test_failsafe_exception_behaves_like_moralstack_error(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ctrl = _ctrl(safe=True, request=request)
+    ctrl = _ctrl(request=request)
     result = _fail(ctrl, monkeypatch, FailSafeException("x"))
 
     assert result.response.metadata.triggered_principles == ["SYSTEM.ERROR"]
@@ -238,30 +234,27 @@ def _assert_governed_refuse(
 
 
 @pytest.mark.parametrize("conv", _CONVS)
-@pytest.mark.parametrize("safe", [True, False])
 @pytest.mark.parametrize("exc_cls", MS_FAMILY)
 def test_p1_handler_result_is_governed_refuse(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, exc_cls: type, safe: bool, conv: Any
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, exc_cls: type, conv: Any
 ) -> None:
     exc = exc_cls(f"Generation failed: {SECRET}")
-    result = _fail(_ctrl(safe=safe, request=request), monkeypatch, exc, conv=conv)
+    result = _fail(_ctrl(request=request), monkeypatch, exc, conv=conv)
     _assert_governed_refuse(
         result, principle="SYSTEM.ERROR", reason="system_error", sentinel="[SYSTEM_ERROR]", error_text=str(exc)
     )
 
 
 @pytest.mark.parametrize("conv", _CONVS)
-@pytest.mark.parametrize("safe", [True, False])
 def test_p2_timeout_result_is_governed_refuse(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, safe: bool, conv: Any
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, conv: Any
 ) -> None:
-    result = _fail(_ctrl(safe=safe, request=request), monkeypatch, OrchestratorTimeoutError(TIMEOUT_TEXT), conv=conv)
+    result = _fail(_ctrl(request=request), monkeypatch, OrchestratorTimeoutError(TIMEOUT_TEXT), conv=conv)
     _assert_governed_refuse(
         result, principle="SYSTEM.TIMEOUT", reason="system_timeout", sentinel="[SYSTEM_TIMEOUT]", error_text=TIMEOUT_TEXT
     )
 
 
-@pytest.mark.parametrize("safe", [True, False])
 @pytest.mark.parametrize(
     "exc_cls,message,fragment,sentinel",
     [
@@ -277,9 +270,8 @@ def test_p3_delivered_content_never_has_exception_text(
     message: str,
     fragment: str,
     sentinel: str,
-    safe: bool,
 ) -> None:
-    result = _fail(_ctrl(safe=safe, request=request), monkeypatch, exc_cls(message))
+    result = _fail(_ctrl(request=request), monkeypatch, exc_cls(message))
     assert result.response.content == sentinel
     assert fragment not in finalize_delivery(result).text
     assert fragment not in _meta_json(result.response.metadata)
@@ -474,46 +466,31 @@ def test_p15_handlers_make_no_llm_call(request: pytest.FixtureRequest, monkeypat
     assert ctrl.policy.mock_calls == []
 
 
-ENV_SAFE = "MORALSTACK_ORCHESTRATOR_SAFE_RESPONSE_ON_ERROR"
+def test_p16a_removed_env_flag_is_ignored_for_content(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import warnings
 
-
-def test_p16a_unsafe_env_flag_is_a_noop_for_content(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     from moralstack.orchestration.config_loader import load_orchestrator_config_from_env
 
-    monkeypatch.setenv(ENV_SAFE, "false")
-    with pytest.warns(DeprecationWarning, match="OrchestratorConfig.safe_response_on_error"):
+    monkeypatch.setenv("MORALSTACK_ORCHESTRATOR_SAFE_RESPONSE_ON_ERROR", "false")
+    monkeypatch.setenv("MORALSTACK_ORCHESTRATOR_MAX_CRITICAL_VIOLATIONS", "2")
+    # The filter wraps only the loader call: wrapping _fail would turn a third-party warning into SYSTEM.FAIL_SAFE.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         cfg = load_orchestrator_config_from_env()
-        assert cfg.safe_response_on_error is False
-        cfg = dataclasses.replace(cfg, enable_speculative_generation=False)
-    result = _fail(_ctrl(request=request, config=cfg), monkeypatch, GenerationError(f"Generation failed: {SECRET}"))
+    assert not hasattr(cfg, "safe_response_on_error")
+    assert not hasattr(cfg, "max_critical_violations")
+    # Speculative generation off: otherwise the controller calls the MagicMock policy and mock_calls == [] is not real.
+    cfg = dataclasses.replace(cfg, enable_speculative_generation=False)
+    ctrl = _ctrl(request=request, config=cfg)
+    result = _fail(ctrl, monkeypatch, GenerationError(f"Generation failed: {SECRET}"))
     assert result.response.content == "[SYSTEM_ERROR]"
+    assert result.response.metadata.final_action == "REFUSE"
+    assert result.path == "ERROR_PATH"
+    assert result.response.metadata.triggered_principles == ["SYSTEM.ERROR"]
+    assert ctrl.policy.mock_calls == []
     assert "secret-ish body" not in finalize_delivery(result).text
-
-
-def test_p16b_unsafe_env_flag_warns_at_load(monkeypatch: pytest.MonkeyPatch) -> None:
-    from moralstack.orchestration.config_loader import load_orchestrator_config_from_env
-
-    handler = _capture_logger(monkeypatch, "moralstack.orchestration.config_loader._LOG", "p16b")
-    monkeypatch.delenv("MORALSTACK_ORCHESTRATOR_MAX_CRITICAL_VIOLATIONS", raising=False)
-    monkeypatch.delenv("MORALSTACK_ORCHESTRATOR_EARLY_EXIT_HINDSIGHT_THRESHOLD", raising=False)
-    monkeypatch.setenv(ENV_SAFE, "false")
-    load_orchestrator_config_from_env()
-    warnings = [r for r in handler.records if r.levelno == logging.WARNING]
-    assert len(warnings) == 1
-    assert "MORALSTACK_ORCHESTRATOR_SAFE_RESPONSE_ON_ERROR=false is ignored" in warnings[0].getMessage()
-    assert "(PROJECT_SPEC §5.7)" in warnings[0].getMessage()
-
-
-def test_p16c_default_env_does_not_warn(monkeypatch: pytest.MonkeyPatch) -> None:
-    from moralstack.orchestration.config_loader import load_orchestrator_config_from_env
-
-    handler = _capture_logger(monkeypatch, "moralstack.orchestration.config_loader._LOG", "p16c")
-    monkeypatch.delenv(ENV_SAFE, raising=False)
-    monkeypatch.delenv("MORALSTACK_ORCHESTRATOR_MAX_CRITICAL_VIOLATIONS", raising=False)
-    monkeypatch.delenv("MORALSTACK_ORCHESTRATOR_EARLY_EXIT_HINDSIGHT_THRESHOLD", raising=False)
-    cfg = load_orchestrator_config_from_env()
-    assert cfg.safe_response_on_error is True
-    assert [r for r in handler.records if r.levelno >= logging.WARNING] == []
 
 
 # --- U1: UI detection of the new row shape ------------------------------------
@@ -568,12 +545,11 @@ class _FailingPolicy(MockPolicy):
         raise RuntimeError(SECRET)
 
 
-def _orchestrator(*, safe: bool = True, estimator: Any = None, policy: Any = None, ledger: Any = None) -> Orchestrator:
+def _orchestrator(*, estimator: Any = None, policy: Any = None, ledger: Any = None) -> Orchestrator:
     return Orchestrator(
         config=OrchestratorConfig(
             max_deliberation_cycles=1,
             timeout_ms=60_000,
-            safe_response_on_error=safe,
             enable_speculative_generation=False,
         ),
         policy=policy or MockPolicy(),
@@ -587,8 +563,7 @@ def _orchestrator(*, safe: bool = True, estimator: Any = None, policy: Any = Non
     )
 
 
-@pytest.mark.parametrize("safe", [True, False])
-def test_i1_natural_failures_end_to_end(safe: bool) -> None:
+def test_i1_natural_failures_end_to_end() -> None:
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
     from fastapi.testclient import TestClient
@@ -596,7 +571,7 @@ def test_i1_natural_failures_end_to_end(safe: bool) -> None:
     from moralstack.sdk.config import GovernanceConfig
     from moralstack.server.proxy import create_app
 
-    orch = _orchestrator(safe=safe, estimator=_RaisingEstimator())
+    orch = _orchestrator(estimator=_RaisingEstimator())
     direct = orch.process(ProcessedRequest(prompt="hello", request_id="req-i1"))
     assert direct.response.metadata.final_action == "REFUSE"
     assert direct.response.metadata.hard_violation_flip_reason == "system_error"
@@ -767,13 +742,12 @@ def test_p8c_generic_except_logging_failure_never_breaks_the_request(
     assert result.response.content == "[SYSTEM_ERROR]"
 
 
-@pytest.mark.parametrize("safe", [True, False])
 @pytest.mark.parametrize("exc_cls", GENERIC_EXC)
 def test_p11_generic_except_shape_unchanged(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, exc_cls: type, safe: bool
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, exc_cls: type
 ) -> None:
     exc = exc_cls("unexpected")
-    result = _fail(_ctrl(safe=safe, request=request), monkeypatch, exc)
+    result = _fail(_ctrl(request=request), monkeypatch, exc)
     meta = result.response.metadata
     assert meta.final_action == "REFUSE"
     assert meta.triggered_principles == ["SYSTEM.FAIL_SAFE"]
@@ -1280,14 +1254,13 @@ class _UnprintableGeneric(ValueError):
         raise RuntimeError("no str for you")
 
 
-@pytest.mark.parametrize("safe", [True, False])
 def test_a1_generic_except_unprintable_exception_refuses(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, ctrl_log: _ListHandler, safe: bool
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, ctrl_log: _ListHandler
 ) -> None:
     spy = _EventSpy()
     monkeypatch.setattr(_SPY_TARGET, spy)
     mdebug = _debug_spy(monkeypatch)
-    result = _fail(_ctrl(safe=safe, request=request), monkeypatch, _UnprintableGeneric("x"))  # must not raise
+    result = _fail(_ctrl(request=request), monkeypatch, _UnprintableGeneric("x"))  # must not raise
     assert result.response.metadata.final_action == "REFUSE"
     assert result.response.metadata.triggered_principles == ["SYSTEM.FAIL_SAFE"]
     assert result.response.content == "[SYSTEM_ERROR]"

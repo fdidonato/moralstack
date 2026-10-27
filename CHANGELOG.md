@@ -65,6 +65,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with reason code `CONFIG_FALLBACK_NO_RISK_ESTIMATION`, the former default. None of 115 run databases (15,018
   `PARALLEL_STRATEGY_SELECTED` events) recorded that reason code. Execution scheduling only: no governance,
   `final_action`, prompt or payload change.
+- **The three deprecated `OrchestratorConfig` no-op fields are removed.** Removed: `max_critical_violations`,
+  `early_exit_hindsight_threshold`, `safe_response_on_error` (passing one raises `TypeError`), the
+  `MORALSTACK_ORCHESTRATOR_{MAX_CRITICAL_VIOLATIONS,EARLY_EXIT_HINDSIGHT_THRESHOLD,SAFE_RESPONSE_ON_ERROR}` environment
+  variables (now silently ignored), their commented template lines and the `ENV_*` constants of
+  `moralstack.orchestration.config_loader` (breaking). A leftover value no longer logs a WARNING or emits a
+  `DeprecationWarning`, so under `-W error::DeprecationWarning` it no longer fails bootstrap. The fields were not read
+  (`safe_response_on_error` no longer since F6): a pipeline error still delivers the fixed governed refusal. Construct
+  the dataclass by keyword. No governance, `final_action`, prompt or payload change.
 
 ## 2.0.0 — 2026-10-26
 

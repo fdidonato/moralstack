@@ -643,7 +643,7 @@ The Orchestrator implements a fail-safe system:
   (`pipeline failed closed ...`), never cached in the ledger
 - **Pipeline errors**: a `MoralStackError` caught in `process()` (`RiskEstimationError`, `GenerationError`, ...) goes to
   `_handle_error`, the same governed REFUSE with `system_error`, principle `SYSTEM.ERROR` and content `[SYSTEM_ERROR]`
-  (both handlers share `_pipeline_failure_result`). The content is the fixed sentinel in every mode: the exception text stays
+  (both handlers share `_pipeline_failure_result`). The content is the fixed sentinel always: the exception text stays
   in `result.error` and the truncated WARNING, never in the delivered answer. No LLM call and no FINAL trace row (the UI
   recognizes a pipeline failure by a `SYSTEM.ERROR` / `SYSTEM.TIMEOUT` / `SYSTEM.FAIL_SAFE` principle plus the absence of
   FINAL, through the shared predicate `pipeline_failure_principle` in `reports/pipeline_failure.py`, structured signals
@@ -826,35 +826,7 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
 - **Type**: float (0–1)
 - **Description**: Minimum hindsight score for the deliberative cycle to converge.
 
-#### MORALSTACK_ORCHESTRATOR_MAX_CRITICAL_VIOLATIONS
-
-- **Default**: `0`
-- **Type**: int (>= 0)
-- **Description**: Deprecated no-op (removal in 3.0): loaded into `OrchestratorConfig.max_critical_violations` but never read. A non-default
-  value emits a `DeprecationWarning` on any construction (environment loads included, where default warning filters hide it)
-  and one WARNING per load from the environment. Under strict warnings (`-W error::DeprecationWarning`) a non-default
-  environment value raises too (bootstrap fails closed: "Failed to initialize orchestrator").
-
-#### MORALSTACK_ORCHESTRATOR_EARLY_EXIT_HINDSIGHT_THRESHOLD
-
-- **Default**: `0.6`
-- **Type**: float (0–1)
-- **Description**: Deprecated no-op (removal in 3.0): loaded into `OrchestratorConfig.early_exit_hindsight_threshold` but never read. A
-  non-default value (default `0.6`) emits a `DeprecationWarning` on any construction (environment loads included, where
-  default warning filters hide it) and one WARNING per load from the environment. Under strict warnings
-  (`-W error::DeprecationWarning`) a non-default environment value raises too (bootstrap fails closed: "Failed to initialize orchestrator").
-
 ### Safety and error handling
-
-#### MORALSTACK_ORCHESTRATOR_SAFE_RESPONSE_ON_ERROR
-
-- **Default**: `true`
-- **Type**: bool
-- **Description**: Deprecated no-op (F6). Pipeline errors caught in `process()` always deliver a fixed governed refusal (`[SYSTEM_ERROR]` /
-  `[SYSTEM_TIMEOUT]`); setting it to `false` is ignored and logs one WARNING when the config is
-  loaded. The field stays in `OrchestratorConfig` for compatibility (removal in 3.0); a non-default value also emits
-  a `DeprecationWarning` on any construction (environment loads included, where default warning filters hide it). Under
-  strict warnings (`-W error::DeprecationWarning`) a non-default value, from the environment too, raises (bootstrap fails closed: "Failed to initialize orchestrator").
 
 #### MORALSTACK_ORCHESTRATOR_BORDERLINE_REFUSE_UPPER
 

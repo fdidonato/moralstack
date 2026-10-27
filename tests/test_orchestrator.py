@@ -828,8 +828,8 @@ class TestOrchestratorErrorHandling:
     """Tests for error handling."""
 
     def test_generation_error_safe_fallback(self):
-        """Generation error uses safe fallback."""
-        config = OrchestratorConfig(safe_response_on_error=True)
+        """Generation error uses governed refusal."""
+        config = OrchestratorConfig()
 
         orchestrator = Orchestrator(
             config=config,
