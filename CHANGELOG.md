@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty Prompt / System Prompt / Raw Response sections are hidden. JSON raw responses and parsed summaries are indented.
   The "Result / Summary" block and the module nodes' result pill are removed. Display only: no persisted data, export,
   governance or payload change.
+- **`docs/CODEBASE_FACTS.md` records the dead-code lot C seeded-simulator results.** A verified row states that no
+  conversation-event `extra` payload embeds a `SimulationResult`; the simulator Structured Outputs row cites current
+  lines; a Hypothesis row covers the 4 run databases not checked for seeded rows, and a known-gap row notes that
+  `docs/modules/observability.md` omits hindsight from the `wire_calls` users. Documentation only.
 
 ### Removed
 
