@@ -7,15 +7,12 @@ env when set and non-empty, and fall back to defaults otherwise.
 
 from __future__ import annotations
 
-import pytest
-
 from moralstack.runtime.modules.hindsight_config_loader import (
     ENV_ENABLE_CACHING,
     ENV_MAX_RETRIES,
     ENV_MAX_TOKENS,
     ENV_MODEL,
     ENV_REFUSE_THRESHOLD,
-    ENV_REVISE_THRESHOLD,
     ENV_TEMPERATURE,
     ENV_TOP_P,
     ENV_USE_BATCH_EVALUATION,
@@ -140,7 +137,6 @@ class TestLoadHindsightConfigFromEnv:
             ENV_WEIGHT_HELPFULNESS,
             ENV_WEIGHT_HONESTY,
             ENV_REFUSE_THRESHOLD,
-            ENV_REVISE_THRESHOLD,
             ENV_USE_BATCH_EVALUATION,
             ENV_ENABLE_CACHING,
         ):
@@ -154,7 +150,6 @@ class TestLoadHindsightConfigFromEnv:
         assert config.weight_helpfulness == 0.3
         assert config.weight_honesty == 0.2
         assert config.refuse_threshold == -0.7
-        assert config.revise_threshold == 0.0
         assert config.use_batch_evaluation is True
         assert config.enable_caching is True
 
@@ -192,12 +187,6 @@ class TestLoadHindsightConfigFromEnv:
         monkeypatch.setenv(ENV_REFUSE_THRESHOLD, "-0.5")
         config = load_hindsight_config_from_env()
         assert config.refuse_threshold == -0.5
-
-    def test_revise_threshold_override(self, monkeypatch):
-        monkeypatch.setenv(ENV_REVISE_THRESHOLD, "-0.2")
-        with pytest.warns(DeprecationWarning, match="HindsightConfig.revise_threshold"):
-            config = load_hindsight_config_from_env()
-        assert config.revise_threshold == -0.2
 
     def test_use_batch_evaluation_false(self, monkeypatch):
         monkeypatch.setenv(ENV_USE_BATCH_EVALUATION, "false")

@@ -349,17 +349,6 @@ Hindsight evaluation uses OpenAI's `json_object` response format (`response_form
 - **Type**: float (-1 to 1)
 - **Description**: Expected value below this threshold triggers a REFUSE recommendation.
 
-#### MORALSTACK_HINDSIGHT_REVISE_THRESHOLD
-
-- **Default**: `0.0`
-- **Type**: float (-1 to 1)
-- **Description**: Loaded into `HindsightConfig.revise_threshold` but not read by the aggregation: the REVISE band
-  is fixed at `expected_value < 0.0` (see [Recommendations](#recommendations)). Deprecated no-op, removal in 3.0: a non-zero
-  value emits a `DeprecationWarning` on `HindsightConfig` construction and one WARNING per environment load.
-  `HindsightConfig` is not frozen, so it warns at construction only (not on later attribute assignment);
-  `dataclasses.replace` re-warns. Under strict warnings (`-W error::DeprecationWarning`) a non-default environment value
-  also fails bootstrap closed ("Failed to initialize deliberation modules").
-
 ### Evaluation mode
 
 #### MORALSTACK_HINDSIGHT_USE_BATCH_EVALUATION

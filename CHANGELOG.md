@@ -73,6 +73,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DeprecationWarning`, so under `-W error::DeprecationWarning` it no longer fails bootstrap. The fields were not read
   (`safe_response_on_error` no longer since F6): a pipeline error still delivers the fixed governed refusal. Construct
   the dataclass by keyword. No governance, `final_action`, prompt or payload change.
+- **The two remaining deprecated no-op config fields are removed.** Removed: `HindsightConfig.revise_threshold` and
+  `EnsembleConfig.conservative_on_failure` (passing one raises `TypeError`), the
+  `MORALSTACK_HINDSIGHT_REVISE_THRESHOLD` and `MORALSTACK_PERSPECTIVES_CONSERVATIVE_ON_FAILURE` environment variables
+  (now silently ignored), their commented template lines and the `ENV_REVISE_THRESHOLD` / `ENV_CONSERVATIVE_ON_FAILURE`
+  constants of the two config loaders (breaking). A leftover value no longer logs a WARNING or emits a
+  `DeprecationWarning`, so under `-W error::DeprecationWarning` it no longer fails bootstrap. The fields were never read:
+  the REVISE band stays at `expected_value < 0.0`. Construct both dataclasses by keyword: a positional 9th argument now
+  binds to `use_batch_evaluation` (`HindsightConfig`) / `enable_caching` (`EnsembleConfig`). No governance,
+  `final_action`, prompt or payload change.
 
 ## 2.0.0 — 2026-10-26
 

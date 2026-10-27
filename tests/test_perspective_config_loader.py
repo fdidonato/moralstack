@@ -7,10 +7,7 @@ env when set and non-empty, and fall back to defaults otherwise.
 
 from __future__ import annotations
 
-import pytest
-
 from moralstack.runtime.modules.perspective_config_loader import (
-    ENV_CONSERVATIVE_ON_FAILURE,
     ENV_MAX_PERSPECTIVES,
     ENV_MAX_RETRIES,
     ENV_MAX_TOKENS,
@@ -119,8 +116,8 @@ class TestGetPerspectiveEnvBool:
 
     def test_false_values(self, monkeypatch):
         for val in ("0", "false", "FALSE", "no", "No"):
-            monkeypatch.setenv(ENV_CONSERVATIVE_ON_FAILURE, val)
-            assert get_perspective_env_bool(ENV_CONSERVATIVE_ON_FAILURE, True) is False
+            monkeypatch.setenv(ENV_PARALLEL_EVALUATION, val)
+            assert get_perspective_env_bool(ENV_PARALLEL_EVALUATION, True) is False
 
 
 class TestLoadPerspectiveConfigFromEnv:
@@ -136,7 +133,6 @@ class TestLoadPerspectiveConfigFromEnv:
             "MORALSTACK_PERSPECTIVES_MAX_WORKERS",
             "MORALSTACK_PERSPECTIVES_TIMEOUT_SECONDS",
             ENV_MAX_PERSPECTIVES,
-            ENV_CONSERVATIVE_ON_FAILURE,
             "MORALSTACK_PERSPECTIVES_ENABLE_CACHING",
         ):
             monkeypatch.delenv(key, raising=False)
@@ -149,7 +145,6 @@ class TestLoadPerspectiveConfigFromEnv:
         assert config.max_workers == 3
         assert config.timeout_seconds == 60.0
         assert config.max_perspectives == 2
-        assert config.conservative_on_failure is True
         assert config.enable_caching is False
 
     def test_max_retries_override(self, monkeypatch):
@@ -187,9 +182,3 @@ class TestLoadPerspectiveConfigFromEnv:
         monkeypatch.setenv(ENV_MAX_PERSPECTIVES, "5")
         config = load_perspective_config_from_env()
         assert config.max_perspectives == 5
-
-    def test_conservative_on_failure_false(self, monkeypatch):
-        monkeypatch.setenv(ENV_CONSERVATIVE_ON_FAILURE, "false")
-        with pytest.warns(DeprecationWarning, match="EnsembleConfig.conservative_on_failure"):
-            config = load_perspective_config_from_env()
-        assert config.conservative_on_failure is False

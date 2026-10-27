@@ -7,15 +7,12 @@ to hardcoded defaults. Used when no explicit HindsightConfig is passed.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from moralstack.utils.env_helpers import get_env_bool, get_env_float, get_env_int, get_env_str
 
 if TYPE_CHECKING:
     from moralstack.runtime.modules.hindsight_module import HindsightConfig
-
-_LOG = logging.getLogger(__name__)
 
 # Backward-compatible aliases for external consumers
 get_hindsight_env_float = get_env_float
@@ -33,7 +30,6 @@ ENV_WEIGHT_SAFETY = "MORALSTACK_HINDSIGHT_WEIGHT_SAFETY"
 ENV_WEIGHT_HELPFULNESS = "MORALSTACK_HINDSIGHT_WEIGHT_HELPFULNESS"
 ENV_WEIGHT_HONESTY = "MORALSTACK_HINDSIGHT_WEIGHT_HONESTY"
 ENV_REFUSE_THRESHOLD = "MORALSTACK_HINDSIGHT_REFUSE_THRESHOLD"
-ENV_REVISE_THRESHOLD = "MORALSTACK_HINDSIGHT_REVISE_THRESHOLD"
 ENV_USE_BATCH_EVALUATION = "MORALSTACK_HINDSIGHT_USE_BATCH_EVALUATION"
 ENV_ENABLE_CACHING = "MORALSTACK_HINDSIGHT_ENABLE_CACHING"
 
@@ -59,16 +55,6 @@ def load_hindsight_config_from_env() -> HindsightConfig:
     weight_helpfulness = get_env_float(ENV_WEIGHT_HELPFULNESS, 0.3, 0.0, 1.0)
     weight_honesty = get_env_float(ENV_WEIGHT_HONESTY, 0.2, 0.0, 1.0)
     refuse_threshold = get_env_float(ENV_REFUSE_THRESHOLD, -0.7, -1.0, 1.0)
-    revise_threshold = get_env_float(ENV_REVISE_THRESHOLD, 0.0, -1.0, 1.0)
-    if revise_threshold != 0.0:
-        # Deprecated no-op field (removal in 3.0). Best-effort: logging must never fail config loading.
-        try:
-            _LOG.warning(
-                "%s is deprecated and has no effect (removal in 3.0); remove it from the environment",
-                ENV_REVISE_THRESHOLD,
-            )
-        except Exception:
-            _LOG.debug("deprecated env warning failed", exc_info=True)
     use_batch_evaluation = get_env_bool(ENV_USE_BATCH_EVALUATION, True)
     enable_caching = get_env_bool(ENV_ENABLE_CACHING, True)
 
@@ -81,7 +67,6 @@ def load_hindsight_config_from_env() -> HindsightConfig:
         weight_helpfulness=weight_helpfulness,
         weight_honesty=weight_honesty,
         refuse_threshold=refuse_threshold,
-        revise_threshold=revise_threshold,
         use_batch_evaluation=use_batch_evaluation,
         enable_caching=enable_caching,
     )

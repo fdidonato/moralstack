@@ -7,15 +7,12 @@ to hardcoded defaults. Used when no explicit EnsembleConfig is passed.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from moralstack.utils.env_helpers import get_env_bool, get_env_float, get_env_int, get_env_str
 
 if TYPE_CHECKING:
     from moralstack.runtime.modules.perspective_module import EnsembleConfig
-
-_LOG = logging.getLogger(__name__)
 
 # Backward-compatible aliases for external consumers
 get_perspective_env_float = get_env_float
@@ -33,7 +30,6 @@ ENV_PARALLEL_EVALUATION = "MORALSTACK_PERSPECTIVES_PARALLEL_EVALUATION"
 ENV_MAX_WORKERS = "MORALSTACK_PERSPECTIVES_MAX_WORKERS"
 ENV_TIMEOUT_SECONDS = "MORALSTACK_PERSPECTIVES_TIMEOUT_SECONDS"
 ENV_MAX_PERSPECTIVES = "MORALSTACK_PERSPECTIVES_MAX_PERSPECTIVES"
-ENV_CONSERVATIVE_ON_FAILURE = "MORALSTACK_PERSPECTIVES_CONSERVATIVE_ON_FAILURE"
 ENV_ENABLE_CACHING = "MORALSTACK_PERSPECTIVES_ENABLE_CACHING"
 
 
@@ -53,17 +49,6 @@ def load_perspective_config_from_env() -> EnsembleConfig:
     max_workers = get_env_int(ENV_MAX_WORKERS, 3, 1)
     timeout_seconds = get_env_float(ENV_TIMEOUT_SECONDS, 60.0, 1.0)
     max_perspectives = get_env_int(ENV_MAX_PERSPECTIVES, 2, 0)
-    conservative_on_failure = get_env_bool(ENV_CONSERVATIVE_ON_FAILURE, True)
-    default = True
-    if conservative_on_failure != default:
-        # Deprecated no-op field (removal in 3.0). Best-effort: logging must never fail config loading.
-        try:
-            _LOG.warning(
-                "%s is deprecated and has no effect (removal in 3.0); remove it from the environment",
-                ENV_CONSERVATIVE_ON_FAILURE,
-            )
-        except Exception:
-            _LOG.debug("deprecated env warning failed", exc_info=True)
     enable_caching = get_env_bool(ENV_ENABLE_CACHING, False)
 
     return EnsembleConfig(
@@ -75,6 +60,5 @@ def load_perspective_config_from_env() -> EnsembleConfig:
         max_workers=max_workers,
         timeout_seconds=timeout_seconds,
         max_perspectives=max_perspectives,
-        conservative_on_failure=conservative_on_failure,
         enable_caching=enable_caching,
     )
