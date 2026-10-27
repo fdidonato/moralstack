@@ -74,7 +74,10 @@ def test_simulator_batch_wire_is_what_the_policy_received(native, retry, context
     policy = _make_policy(native=native, retry=retry)
     sim = LLMConsequenceSimulator(policy, SimulatorConfig(max_retries=2, enable_caching=False))
     result = sim.simulate(PROMPT, ANSWER, num_scenarios=3, delib_context=cap._delib_context(), **_context(context))
-    assert result.wire is not None and result.wire_calls is None
+    from moralstack.orchestration.deliberation_runner import _wire_keys
+
+    assert result.wire is not None and getattr(result, "wire_calls", None) is None
+    assert "wire_calls" not in _wire_keys(result)
     assert _decode(result.wire, result.prompt, result.system_prompt) == _last_ok_call(policy, "simulator.batch")
 
 
@@ -205,8 +208,8 @@ def _perspectives_twice():
 def test_a_cache_hit_carries_no_wire(twice):
     first, second = twice()
     assert not first.from_cache
-    assert getattr(first, "wire", None) is not None or first.wire_calls is not None
-    assert second.from_cache and getattr(second, "wire", None) is None and second.wire_calls is None
+    assert getattr(first, "wire", None) is not None or getattr(first, "wire_calls", None) is not None
+    assert second.from_cache and getattr(second, "wire", None) is None and getattr(second, "wire_calls", None) is None
 
 
 def test_hindsight_individual_path_with_several_consequences_records_every_call():

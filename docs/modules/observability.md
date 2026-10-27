@@ -730,7 +730,7 @@ meaning of any existing field: it describes the exact `messages` list sent, stor
   `Violations: N, Guidance: ...` that tests pin; it stays untouched. Retry-failed rows of every module carry an inline
   `wire` in their summary (the failed attempt's messages, system prompt inlined; the row has no `system_prompt`). The
   perspectives row lists the successful calls, in the order of its joined prompts. The module result objects carry the
-  record in an additive optional field (`CriticReport.wire`, `SimulationResult.wire`/`wire_calls`,
+  record in an additive optional field (`CriticReport.wire`, `SimulationResult.wire`,
   `HindsightResult.wire`/`wire_calls`, `EnsembleResult.wire_calls`, `RefusalGenerationResult.wire_calls`); a cache hit
   clears it. Batch-3 rows whose summary is a JSON object (DCCL, safety classifier, speculative, critic `quick_check`)
   add `wire` next to their existing keys; rows with no summary before (policy, draft-match, contract regeneration, refusal,

@@ -132,9 +132,6 @@ class SimulationResult:
     from_cache: bool = False
     wire: dict[str, Any] | None = None
     """Exact messages of the single call that produced this result (wire record v1). Additive audit data."""
-    wire_calls: dict[str, Any] | None = None
-    """``{"wire_calls": [...], "wire_strings": [...]}`` for the seeded path (one record per model call, failed
-    attempts included, like the joined ``prompt``). A cache hit carries neither."""
 
     @classmethod
     def empty(cls) -> SimulationResult:
@@ -339,7 +336,7 @@ class LLMConsequenceSimulator:
                 context_fingerprint=context_fingerprint,
             )
             if cached_result is not None:
-                return replace(cast(SimulationResult, cached_result), from_cache=True, wire=None, wire_calls=None)
+                return replace(cast(SimulationResult, cached_result), from_cache=True, wire=None)
 
         k = num_scenarios or self.config.default_num_scenarios
         k = max(1, min(k, 10))  # Limit range
@@ -501,7 +498,6 @@ class LLMConsequenceSimulator:
         cached_prompt_tokens: int | None = None,
         token_usage_source: TokenUsageSource = "unknown",
         wire: dict[str, Any] | None = None,
-        wire_calls: dict[str, Any] | None = None,
     ) -> SimulationResult:
         """
         Builds SimulationResult with aggregated metrics.
@@ -558,7 +554,6 @@ class LLMConsequenceSimulator:
             cached_prompt_tokens=cached_prompt_tokens,
             token_usage_source=token_usage_source,
             wire=wire,
-            wire_calls=wire_calls,
         )
 
 

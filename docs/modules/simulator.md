@@ -369,7 +369,7 @@ configurations on the same suite.
 
 Simulator generation uses OpenAI's `json_object` response format (`response_format={"type": "json_object"}` on `GenerationConfig`), which guarantees valid JSON and greatly reduces retries caused by malformed JSON.
 
-Wire record (A4b-2/3): `SimulationResult.wire` (batch) or `SimulationResult.wire_calls` (seeded: one record per model call of the row, failed attempts included, like the joined `prompt`) hold the exact messages sent; the runner adds them to the row's `parsed_summary_json` (`wire` / `wire_calls` + `wire_strings`). Retry-failed rows carry the failed attempt's messages inline under `wire`. A cache hit carries none.
+Wire record (A4b-2/3): `SimulationResult.wire` holds the exact messages sent by the batch call; the runner adds it to the row's `parsed_summary_json` (`wire`). Retry-failed rows carry the failed attempt's messages inline under `wire`. A cache hit carries none.
 
 Each failed parse attempt is persisted as a billable `simulator_retry` / `retry_failed_attempt_N` row (prompt `"Retry reason: …"`). Since 2026-10-20 the row's `parsed_summary_json` names the path: `{"simulator_path": "batch"}` (additive key), which the UI request page shows as `failed: simulator batch`. Simulator retry rows stay in the parallel simulator+perspectives tier of the graph, because the simulator runs concurrently with the perspectives.
 
