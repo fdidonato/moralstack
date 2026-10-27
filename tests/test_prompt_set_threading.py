@@ -739,7 +739,6 @@ def _build_full_orchestrator(policy: Any, prompt_set: PromptSet) -> Orchestrator
         max_deliberation_cycles=1,
         timeout_ms=120_000,
         parallel_module_calls=False,
-        parallel_critic_with_modules=False,
         enable_speculative_generation=False,
         enable_soft_revision=False,
     )

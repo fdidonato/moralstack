@@ -247,3 +247,19 @@ class TestLoadOrchestratorConfigFromEnv:
         config = load_orchestrator_config_from_env()
         with pytest.raises(AttributeError):
             config.max_deliberation_cycles = 5
+
+    def test_removed_parallel_critic_env_var_is_ignored(self, monkeypatch):
+        key = "MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES"
+        monkeypatch.setenv(key, "false")
+        a = load_orchestrator_config_from_env()
+        monkeypatch.delenv(key)
+        b = load_orchestrator_config_from_env()
+        assert a == b
+        assert not hasattr(a, "parallel_critic_with_modules")
+
+
+def test_orchestrator_config_rejects_removed_parallel_critic_with_modules():
+    from moralstack.orchestration.types import OrchestratorConfig
+
+    with pytest.raises(TypeError):
+        OrchestratorConfig(parallel_critic_with_modules=True)

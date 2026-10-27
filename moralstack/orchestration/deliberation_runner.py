@@ -3135,11 +3135,11 @@ class DeliberationRunner:
         Uses only existing risk/cycle signals; does not affect governance semantics.
         """
         if risk_estimation is None:
-            strat: ParallelSchedulerStrategy = (
-                "full_parallel" if self.config.parallel_critic_with_modules else "critic_gated"
-            )
+            # Defensive only: no production caller passes None (run_deliberative_path reads
+            # risk_estimation.score before any cycle). Config-independent; the reason code
+            # keeps its persisted name for audit continuity.
             return ParallelStrategySelection(
-                strategy=strat,
+                strategy="full_parallel",
                 reason_codes=("CONFIG_FALLBACK_NO_RISK_ESTIMATION",),
                 posture_summary={},
             )

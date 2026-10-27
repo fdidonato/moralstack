@@ -6,6 +6,7 @@ from dataclasses import replace
 from unittest.mock import MagicMock
 
 from moralstack.models.risk.schema import RiskEstimation
+from moralstack.orchestration.config_loader import load_orchestrator_config_from_env
 from moralstack.orchestration.deliberation_runner import DeliberationRunner, ParallelStrategySelection
 from moralstack.orchestration.types import DeliberationDependencies, DeliberationState, OrchestratorConfig
 
@@ -79,25 +80,24 @@ def test_select_fallback_no_risk_estimation():
         OrchestratorConfig(
             max_deliberation_cycles=1,
             parallel_module_calls=True,
-            parallel_critic_with_modules=True,
         )
     )
     state = DeliberationState()
     sel = runner._select_parallel_strategy(risk_estimation=None, state=state)
     assert sel.strategy == "full_parallel"
     assert sel.reason_codes == ("CONFIG_FALLBACK_NO_RISK_ESTIMATION",)
+    assert sel.posture_summary == {}
 
 
-def test_select_fallback_no_risk_respects_parallel_critic_false():
-    runner = _minimal_runner(
-        OrchestratorConfig(
-            max_deliberation_cycles=1,
-            parallel_module_calls=True,
-            parallel_critic_with_modules=False,
-        )
-    )
+def test_select_fallback_no_risk_ignores_removed_parallel_critic_env(monkeypatch):
+    monkeypatch.setenv("MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES", "false")
+    runner = _minimal_runner(load_orchestrator_config_from_env())
     sel = runner._select_parallel_strategy(risk_estimation=None, state=DeliberationState())
-    assert sel.strategy == "critic_gated"
+    assert sel == ParallelStrategySelection(
+        strategy="full_parallel",
+        reason_codes=("CONFIG_FALLBACK_NO_RISK_ESTIMATION",),
+        posture_summary={},
+    )
 
 
 def test_execution_strategy_parallel_scheduler_rollup():

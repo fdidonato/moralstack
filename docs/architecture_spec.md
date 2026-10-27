@@ -795,7 +795,7 @@ The main orchestrator defaults, from `OrchestratorConfig` (`orchestration/types.
 |---|---|---|---|
 | `max_deliberation_cycles` | 2 | `enable_speculative_generation` | `True` |
 | `risk_thresholds.low` / `.medium` | 0.3 / 0.7 | `parallel_module_calls` | `True` |
-| `borderline_refuse_upper` | 0.95 | `parallel_critic_with_modules` | `True` |
+| `borderline_refuse_upper` | 0.95 | | |
 | `timeout_ms` | 600000 | `enable_hindsight_gating` | `True` |
 | `num_simulations` | 3 | `enable_simulator_gating` | `False` |
 | `min_hindsight_score` | 0.8 | `enable_soft_revision` | `True` |

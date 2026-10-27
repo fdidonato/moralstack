@@ -52,8 +52,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   template line, and the fork that emitted the `LEGACY_STATIC_PARALLEL_CRITIC_CONFIG` reason code (breaking). None of
   114 run databases (110 with 15,015 `PARALLEL_STRATEGY_SELECTED` events) recorded that reason code. A deployment that
   still sets the variable is unaffected unless it set it to `false`; it now gets the per-cycle `critic_gated` /
-  `full_parallel` choice. `parallel_critic_with_modules` stays: it is the fallback when no risk estimation is available.
-  Execution scheduling only: no governance, `final_action`, prompt or payload change.
+  `full_parallel` choice. Execution scheduling only: no governance, `final_action`, prompt or payload change.
+- **Dead code (lot C): `parallel_critic_with_modules` is removed; with no risk estimation the parallel scheduler always
+  picks `full_parallel`.** Removed: `OrchestratorConfig.parallel_critic_with_modules`
+  (`OrchestratorConfig(parallel_critic_with_modules=...)` now raises `TypeError`), the
+  `MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES` environment variable (now silently ignored) and its template
+  line (breaking). The flag was read only when `_select_parallel_strategy` got no risk estimation, which no production
+  path does (`run_deliberative_path` reads the risk score first); that defensive branch now returns `full_parallel`
+  with reason code `CONFIG_FALLBACK_NO_RISK_ESTIMATION`, the former default. None of 115 run databases (15,018
+  `PARALLEL_STRATEGY_SELECTED` events) recorded that reason code. Execution scheduling only: no governance,
+  `final_action`, prompt or payload change.
 
 ## 2.0.0 — 2026-10-26
 

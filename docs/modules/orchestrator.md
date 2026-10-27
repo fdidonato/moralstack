@@ -281,7 +281,6 @@ config = OrchestratorConfig(
 | `cycle1_early_convergence_min_weighted_approval` | 0.78 | Minimum weighted perspectives approval for cycle-1 early convergence. Perspectives with weights: vulnerable ×1.2, compliance ×1.1, adversary ×0.8, user/observer ×1.0. |
 | `cycle1_early_convergence_max_semantic_harm` | 0.35 | Maximum simulator `semantic_expected_harm` for cycle-1 early convergence (when simulation is enabled). Queries with harm above this threshold always get cycle 2. |
 | `cycle1_early_convergence_min_per_perspective_approval` | 0.70 | Minimum `approval_score` for each individual perspective. If any single perspective scores below this, cycle 2 is forced. |
-| `parallel_critic_with_modules`         | `True`  | Fallback fork when risk estimation is unavailable: when `True` and `parallel_module_calls` is `True`, critic runs in parallel with simulator and perspectives. See [Latency-oriented parameters](#latency-oriented-parameters). |
 | `enable_speculative_generation`        | `True`  | When `True`, risk estimation and speculative draft generation run in parallel before routing. The draft is reused on benign, fast, and deliberative routes when applicable. See [Latency-oriented parameters](#latency-oriented-parameters). |
 
 ### Latency-oriented parameters
@@ -292,15 +291,8 @@ These flags reduce wall-clock latency **without changing routing policy** (`deci
 
 - **Requires** `parallel_module_calls=True`. When it is `True`, `DeliberationRunner` chooses **`critic_gated`** (critic first; simulator and perspectives only if no hard violation) vs **`full_parallel`** (critic, simulator, perspectives concurrently) **per cycle** using existing risk fields (`risk_category`, `operational_risk`, `intent_to_harm`, `requested_instructions`, `risk_policy_action`, prior-cycle hard critiques). Emits `PARALLEL_STRATEGY_SELECTED` and enriches `CYCLE_SUMMARY` traces (`scheduler_reason_codes`, `critic_short_circuit`).
 - **When `critic_gated` short-circuits** (hard violation after critic): simulator and perspectives are not invoked; emits `CRITIC_SHORT_CIRCUIT_TRIGGERED`.
-- **Without a risk estimation**: the runner falls back to the **`parallel_critic_with_modules`** boolean (`CONFIG_FALLBACK_NO_RISK_ESTIMATION`). The static fork switch (`enable_dynamic_parallel_scheduler`, reason code `LEGACY_STATIC_PARALLEL_CRITIC_CONFIG`) was removed after 2.0.0; none of the 114 run databases censused on 2026-10-26 recorded that reason code.
-
-**`parallel_critic_with_modules` (default `True`)**
-
-- **Applies only without a risk estimation** (the `CONFIG_FALLBACK_NO_RISK_ESTIMATION` branch of `_select_parallel_strategy`); when a risk estimation is present the risk posture picks the layout, whatever this flag says.
-- **Requires** `parallel_module_calls=True`. When both are `True`, each deliberation cycle runs **critic**, **simulator**, and **perspectives** concurrently (three parallel LLM calls per cycle when those modules are enabled).
-- **When `False`**: the runner uses a two-stage layout: critic runs first; only if there is no hard violation do simulator and perspectives run in parallel. This avoids paying for simulator/perspective calls when the critic would reject the draft, but adds sequential critic latency before sim/persp start.
-- **Hard violations**: If the critic reports a hard violation, simulator and perspective results from that cycle are **discarded** and do not affect merged state. Convergence and refusal logic see the same critic outcome as in the gated layout; you may pay extra token cost in the rare hard-violation case.
-- **Set to `false`** if you prioritize minimizing LLM spend on hard-violation paths over latency.
+- **Hard violations under `full_parallel`**: simulator and perspective results of a cycle whose critic reports a hard violation are discarded (`_run_full_parallel_evaluation`); convergence and refusal see the same critic outcome as under `critic_gated`, at the cost of the calls already made.
+- **Without a risk estimation** (defensive; no production path passes `None`, since `run_deliberative_path` reads `risk_estimation.score` first): the scheduler returns `full_parallel` with reason code `CONFIG_FALLBACK_NO_RISK_ESTIMATION`, whatever the configuration. The `parallel_critic_with_modules` flag that used to pick this fork was removed after 2.0.0 (none of 115 run databases censused on 2026-10-27 recorded the reason code), like the static fork switch (`enable_dynamic_parallel_scheduler`, reason code `LEGACY_STATIC_PARALLEL_CRITIC_CONFIG`; none of the 114 run databases censused on 2026-10-26 recorded it).
 
 **`enable_speculative_generation` (default `True`)**
 
@@ -770,20 +762,12 @@ There is no dedicated model for the orchestrator (it is not an LLM module).
 
 - **Default**: `true`
 - **Type**: bool
-- **Description**: When true, the deliberation runner uses parallel execution for module calls within each cycle (see
-  also `MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES`). LLM calls are persisted (with run/request/cycle context)
+- **Description**: When true, the deliberation runner uses parallel execution for module calls within each cycle (the
+  dynamic scheduler picks `critic_gated` or `full_parallel` per cycle; see
+  [Latency-oriented parameters](#latency-oriented-parameters)). LLM calls are persisted (with run/request/cycle context)
   and appear in moralstack-ui; `MORALSTACK_ORCHESTRATOR_ENABLE_PERSPECTIVES`,
   `MORALSTACK_ORCHESTRATOR_ENABLE_SIMULATION`, and `MORALSTACK_ORCHESTRATOR_ENABLE_HINDSIGHT` determine which modules run
   and thus which calls are recorded and visible in the UI.
-
-#### MORALSTACK_ORCHESTRATOR_PARALLEL_CRITIC_WITH_MODULES
-
-- **Default**: `true`
-- **Type**: bool
-- **Description**: Fallback fork when risk estimation is unavailable: when `true` and `MORALSTACK_ORCHESTRATOR_PARALLEL_MODULE_CALLS` is `true`, the critic runs in parallel
-  with the simulator and perspectives (full parallel evaluation). When `false`, the critic runs first as a gate; simulator
-  and perspectives run in parallel only after the critic reports no hard violation. See
-  [Latency-oriented parameters](#latency-oriented-parameters).
 
 #### MORALSTACK_ORCHESTRATOR_ENABLE_SPECULATIVE_GENERATION
 
