@@ -875,7 +875,7 @@ See `docs/traces/openai_compatible_multiturn.md`.
   early return; `_log_final_trace` copies it onto the FINAL row. **It is NOT a
   "did the module execute" flag:** a full-parallel simulation runs but is
   discarded on a critic hard violation without merging `state.simulations`
-  (`deliberation_runner._run_full_parallel_evaluation:3264-3272`), so the
+  (`deliberation_runner._run_full_parallel_evaluation:3498-3506`), so the
   simulator can have executed while this reads `False` — correct, because those
   FINAL metrics are then defaults. A carried-forward result counts as measured.
   Never read it as a plain bool.
