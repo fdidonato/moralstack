@@ -835,8 +835,6 @@ def _retry_subject(call: dict[str, Any]) -> str:
         return f"failed: perspective {summary.get('perspective_name') or summary.get('perspective_id')}"
     if summary.get("scenario_id"):
         return f"failed: scenario {summary['scenario_id']}"
-    if summary.get("simulator_path") == "seeded":
-        return f"failed: simulator seed {summary.get('seed') or '?'}"
     if summary.get("simulator_path") == "batch":
         return "failed: simulator batch"
     return ""

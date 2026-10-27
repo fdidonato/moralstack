@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dead code (lot C): the seeded simulator mode is removed; the simulator always uses the batch path.** Removed:
   `SCENARIO_SEEDS` (also from `moralstack.runtime.modules`), `SEEDED_PROMPT_TEMPLATE`, `SIMULATOR_SEEDED_SYSTEM_PROMPT`
-  (both modules), `SIMULATOR_SEEDED_STATIC_RUBRIC`, `SimulationResult.wire_calls` (public dataclass field, always `None` once the seeded path was gone), `SimulatorConfig.use_seeded_generation` (`SimulatorConfig(use_seeded_generation=...)` now raises `TypeError`), the `MORALSTACK_SIMULATOR_USE_SEEDED_GENERATION` environment variable (now silently ignored) and its template line; fragment IDs `simulator.seeded.rubric_intro`, `.rubric_close`,
+  (both modules), `SIMULATOR_SEEDED_STATIC_RUBRIC`, `SimulationResult.wire_calls` (public dataclass field, always `None` once the seeded path was gone), `SimulatorConfig.use_seeded_generation` (`SimulatorConfig(use_seeded_generation=...)` now raises `TypeError`), the `MORALSTACK_SIMULATOR_USE_SEEDED_GENERATION` environment variable (now silently ignored) and its template line, the `failed: simulator seed …` UI label (historical seeded `retry_failed` rows now show no subject label); fragment IDs `simulator.seeded.rubric_intro`, `.rubric_close`,
   `.output_footer`, `.user`, `.seeds` and composition `simulator.seeded.system` — a `prompts_dir` override naming any of
   them now fails to load with `PromptConfigError("unknown fragment ID")` (breaking). 0 seeded calls among 15,701
   simulator calls in 110 of 114 run databases. `verify_prompt_audit.py` no longer recognizes seeded rows; the packaged

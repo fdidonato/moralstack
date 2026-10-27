@@ -294,7 +294,7 @@ the retried call's tier and the pipe into the retried call reads `retry after fa
 with siblings keep their failed attempts in the shared tier (the risk minis; simulator and perspectives, which share tier 3):
 drawing those as a chain would be a causal falsehood. In every case the `retry_failed` badge uses the failure style
 (`badge-fail`) and the node names who failed (`failed: <mini>` / `failed: perspective <name>` / `failed: scenario <id>` /
-`failed: simulator seed <s>` / `failed: simulator batch`, from the additive `parsed_summary_json` keys). `retry_failed` rows are
+`failed: simulator batch`, from the additive `parsed_summary_json` keys). `retry_failed` rows are
 ignored by `_tier_started_after` (their `started_at` is the emit time, zero duration), so they cannot hide the real
 `gate: proceed` label of the next tier. The `quick_check` tier is keyed on the row's action, not on cycle 0 / seq 2 alone, because
 the synthetic "critic deferred to compliance" marker also sits at cycle 0 / seq 2 and keeps its own tier. A `quick_check` with

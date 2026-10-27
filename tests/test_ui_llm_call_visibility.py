@@ -269,7 +269,7 @@ def test_simulator_and_perspectives_failures_share_one_tier_without_a_chain_acro
     _seed_deliberation_prefix(run_id, request_id)
     _critic_row(run_id, request_id)
     # failed rows are emitted mid-run: their started_at is EARLIER than the critic's end (it must not hide the gate)
-    _failed_row(run_id, request_id, "simulator", 1, {"simulator_path": "seeded", "seed": "economic"}, T0 + 900)
+    _failed_row(run_id, request_id, "simulator", 1, {"simulator_path": "batch"}, T0 + 900)
     _failed_row(
         run_id, request_id, "perspectives", 1, {"perspective_id": "user", "perspective_name": "Direct User"}, T0 + 950
     )
@@ -284,7 +284,18 @@ def test_simulator_and_perspectives_failures_share_one_tier_without_a_chain_acro
     after = seq[captions[0] + 1 :]
     assert sorted(after) == sorted(["retry_failed_attempt_1", "retry_failed_attempt_1", "simulate", "evaluate"]), seq
     assert not any("retry after failed attempt" in s for s in seq), seq
-    assert "failed: simulator seed economic" in body and "failed: perspective Direct User" in body
+    assert "failed: simulator batch" in body and "failed: perspective Direct User" in body
+
+
+def test_retry_subject_legacy_seeded_row_degrades_to_empty():
+    from moralstack.ui.app import _retry_subject
+
+    def row(summary: dict) -> dict:
+        return {"call_outcome": "retry_failed", "parsed_summary_json": json.dumps(summary)}
+
+    # a historical row persisted by the removed seeded simulator carries no label any more
+    assert _retry_subject(row({"simulator_path": "seeded", "seed": "x"})) == ""
+    assert _retry_subject(row({"simulator_path": "batch"})) == "failed: simulator batch"
 
 
 def test_one_failed_perspective_leaves_the_succeeding_simulator_in_the_shared_tier(ui_client):
