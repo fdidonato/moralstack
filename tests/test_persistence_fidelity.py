@@ -645,20 +645,7 @@ def _scenarios() -> list[Scenario]:
                     parallel=True,
                     replies=_deliberation_replies(),
                 )
-        # Seeded simulator and single (non-batch) hindsight.
-        for native in (True, False):
-            for retry in (False, True):
-                tag = f"seeded/{'native' if native else 'legacy'}/{'retry' if retry else 'first'}"
-                add(
-                    tag.replace("/", "-"),
-                    tag,
-                    context,
-                    families={"simulator"},
-                    native=native,
-                    retry=retry,
-                    seeded=True,
-                    replies=_deliberation_replies(),
-                )
+        # Single (non-batch) hindsight.
         for retry in (False, True):
             tag = f"single/native/{'retry' if retry else 'first'}"
             add(
@@ -810,7 +797,6 @@ _LABEL_FAMILY = {
     "critic.full": ("critic", ""),
     "critic.quick": ("critic_quick", ""),
     "simulator.batch": ("simulator", ""),
-    "simulator.seeded": ("simulator", ""),
     "hindsight.batch": ("hindsight", ""),
     "hindsight.single": ("hindsight", ""),
     "dccl": ("dccl", ""),
@@ -825,8 +811,6 @@ _LABEL_FAMILY = {
 def _call_family(call: WireCall) -> tuple[str, str]:
     if call.label.startswith("perspectives"):
         return ("perspectives", "")
-    if call.label.startswith("simulator.seeded"):
-        return ("simulator", "")
     return _LABEL_FAMILY.get(call.label, (call.label, ""))
 
 
@@ -1577,8 +1561,6 @@ def test_scenarios_cover_every_context_of_every_path():
         "native/retry/parallel",
         "legacy/first/parallel",
         "legacy/retry/parallel",
-        "seeded/native/first",
-        "seeded/legacy/retry",
         "single/native/first",
         "single/native/retry",
         "revision/native/first",

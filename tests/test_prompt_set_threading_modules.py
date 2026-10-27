@@ -234,15 +234,6 @@ def _run_simulator_batch(ps: PromptSet | None, contract: Any = None, history: An
     return policy.calls[-1].system, result.system_prompt
 
 
-def _run_simulator_seeded(ps: PromptSet | None, contract: Any = None, history: Any = None) -> tuple[str, str]:
-    policy = _Policy(_SIM_OK)
-    sim = LLMConsequenceSimulator(
-        policy=policy, config=SimulatorConfig(max_retries=1, use_seeded_generation=True, enable_caching=False), prompt_set=ps
-    )
-    result = sim.simulate("request", "response", 2, developer_contract=contract, conversation_history=history)
-    return policy.calls[-1].system, result.system_prompt
-
-
 def _run_hindsight_batch(ps: PromptSet | None, contract: Any = None, history: Any = None) -> tuple[str, str]:
     policy = _Policy(_HIND_BATCH_OK)
     evaluator = LLMHindsightEvaluator(
@@ -291,15 +282,6 @@ _SIM_BATCH_IDS = [
     "simulator.schema_skeleton",
     "simulator.enums",
     "common.output_json_only",
-]
-_SIM_SEEDED_IDS = [
-    "simulator.base",
-    "simulator.seeded.rubric_intro",
-    "simulator.harm_type_mapping_rule",
-    "simulator.seeded.rubric_close",
-    "simulator.enums",
-    "simulator.schema_skeleton",
-    "simulator.seeded.output_footer",
 ]
 _HIND_BATCH_IDS = [
     "hindsight.base",
@@ -394,23 +376,6 @@ def test_simulator_batch_markers(marker_set: PromptSet) -> None:
     assert result.system_prompt == call.system
 
 
-def test_simulator_seeded_markers_seeds_and_user(marker_set: PromptSet) -> None:
-    policy = _Policy(_SIM_OK)
-    sim = LLMConsequenceSimulator(
-        policy=policy,
-        config=SimulatorConfig(max_retries=1, use_seeded_generation=True, enable_caching=False),
-        prompt_set=marker_set,
-    )
-    # The marker set appends one more line to the seeds list: asking for 6 scenarios reaches it.
-    result = sim.simulate("request", "response", 6)
-    for call in policy.calls:
-        _has_all(call.system, _SIM_SEEDED_IDS)
-        _has_all(call.prompt, ["simulator.seeded.user"])
-        assert "PERSPECTIVE:" in call.prompt
-    assert any(marker_for("simulator.seeded.seeds") in call.prompt for call in policy.calls)
-    assert result.system_prompt == policy.calls[0].system
-
-
 def test_simulator_retry_text_comes_from_the_set(marker_set: PromptSet) -> None:
     policy = _Policy(_NOT_JSON, _SIM_OK)
     sim = LLMConsequenceSimulator(
@@ -418,7 +383,7 @@ def test_simulator_retry_text_comes_from_the_set(marker_set: PromptSet) -> None:
         config=SimulatorConfig(max_retries=2, use_seeded_generation=False, enable_caching=False),
         prompt_set=marker_set,
     )
-    sim.simulate("request", "response", 2)
+    result = sim.simulate("request", "response", 2)
     _has_all(
         policy.calls[1].prompt,
         [
@@ -429,6 +394,8 @@ def test_simulator_retry_text_comes_from_the_set(marker_set: PromptSet) -> None:
             "simulator.retry.footer",
         ],
     )
+    assert marker_for("simulator.retry.footer") not in policy.calls[0].prompt
+    _has_all(result.prompt, ["retry.prefix"])
 
 
 def test_hindsight_batch_markers(marker_set: PromptSet) -> None:
@@ -518,7 +485,6 @@ _CONTEXTS = [(None, None), (_CONTRACT, None), (None, _HISTORY), (_CONTRACT, _HIS
             lambda: PERSPECTIVE_SYSTEM_PROMPT + "\n\n" + perspectives_prompt.build_perspectives_system_prompt(),
         ),
         (_run_simulator_batch, lambda: simulator_prompt.SIMULATOR_BATCH_SYSTEM_PROMPT),
-        (_run_simulator_seeded, lambda: simulator_prompt.SIMULATOR_SEEDED_SYSTEM_PROMPT),
         (_run_hindsight_batch, lambda: hindsight_prompt.HINDSIGHT_BATCH_SYSTEM_PROMPT),
     ],
 )
@@ -585,7 +551,6 @@ def test_critic_quick_check_keeps_its_base_even_when_the_full_rules_are_conditio
         _run_critic,
         _run_perspectives,
         _run_simulator_batch,
-        _run_simulator_seeded,
         _run_hindsight_batch,
         _run_hindsight_single,
     ],
@@ -821,20 +786,6 @@ def test_builders_read_the_given_set(marker_set: PromptSet) -> None:
         ["perspectives.identity_block", "perspectives.turn_context"],
     )
     _has_all(perspectives_prompt.build_perspectives_system_prompt(prompt_set=marker_set), _PERSPECTIVE_SYSTEM_IDS[1:])
-
-
-def test_simulator_seeded_retry_text_comes_from_the_set(marker_set: PromptSet) -> None:
-    policy = _Policy(_NOT_JSON, _SIM_OK)
-    sim = LLMConsequenceSimulator(
-        policy=policy,
-        config=SimulatorConfig(max_retries=2, use_seeded_generation=True, enable_caching=False),
-        prompt_set=marker_set,
-    )
-    result = sim.simulate("request", "response", 1)
-    assert len(policy.calls) == 2
-    _has_all(policy.calls[1].prompt, ["retry.prefix", "simulator.retry.values_heading", "simulator.retry.footer"])
-    assert marker_for("simulator.retry.footer") not in policy.calls[0].prompt
-    _has_all(result.prompt, ["retry.prefix"])
 
 
 def test_critic_legacy_generate_retry_text_comes_from_the_set(marker_set: PromptSet) -> None:

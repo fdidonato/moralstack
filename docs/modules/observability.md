@@ -661,7 +661,7 @@ meaning of any existing field: it describes the exact `messages` list sent, stor
 `sha256` of the whole list.
 
 - **Where.** `parsed_summary_json["wire"]` for a row that records one call. A row that aggregates several calls
-  (perspectives, the seeded simulator, the refusal's two attempts) uses `parsed_summary_json["wire_calls"]` (records in
+  (perspectives, the refusal's two attempts) uses `parsed_summary_json["wire_calls"]` (records in
   call order) and `parsed_summary_json["wire_strings"]` (one string table shared by all of them, so a system prompt common
   to every call is stored once). A cache hit makes no call and carries no wire. The record travels in the same
   `llm.call` envelope to SQLite and to `llm.call.jsonl`.
@@ -698,7 +698,7 @@ meaning of any existing field: it describes the exact `messages` list sent, stor
   to it, with its system prompt inlined because those rows have no `system_prompt`), and aggregated rows are not split.
 - **Status.** A4b is complete: every chat-completion LLM-call row carries the record, and `KNOWN_GAPS` in
   `tests/test_persistence_fidelity.py` is empty. Two rows carry none by design: `embedder/embed` (an embeddings call,
-  not a chat completion) and `upstream_provider/generate final response` (no caller records it). Batch 2: estimator mini rows, critic, simulator (batch and seeded),
+  not a chat completion) and `upstream_provider/generate final response` (no caller records it). Batch 2: estimator mini rows, critic, simulator,
   hindsight and perspectives rows (and their retry-failed rows). Batch 3: the DCCL `evaluate`, `safety_override` and
   `draft_revalidate` rows; the contract-regeneration (`generate (compliance-regenerate)`) row, which has no `system_prompt`
   column so its wire inlines the system message; the speculative draft row (internal and upstream); the policy rows
@@ -725,11 +725,10 @@ meaning of any existing field: it describes the exact `messages` list sent, stor
   changed. `rewrite` rows record the adapter's own `prompt_used` / `system_used` (the
   rewrite prompt is composed inside the policy) and carry no wire when the adapter recorded none.
 - **Where each module puts it.** Estimator mini rows, simulator, hindsight and perspectives rows: `parsed_summary_json`
-  (`wire`, or `wire_calls` + `wire_strings` for the seeded simulator, the perspectives row and a multi-consequence
+  (`wire`, or `wire_calls` + `wire_strings` for the perspectives row and a multi-consequence
   hindsight row). **Critic rows: `parsed_json`** (`{"wire": {...}}`), because the critic's `parsed_summary_json` is the plain text
   `Violations: N, Guidance: ...` that tests pin; it stays untouched. Retry-failed rows of every module carry an inline
   `wire` in their summary (the failed attempt's messages, system prompt inlined; the row has no `system_prompt`). The
-  seeded simulator's `wire_calls` lists every call of the row including failed attempts (its joined `prompt` does); the
   perspectives row lists the successful calls, in the order of its joined prompts. The module result objects carry the
   record in an additive optional field (`CriticReport.wire`, `SimulationResult.wire`/`wire_calls`,
   `HindsightResult.wire`/`wire_calls`, `EnsembleResult.wire_calls`, `RefusalGenerationResult.wire_calls`); a cache hit

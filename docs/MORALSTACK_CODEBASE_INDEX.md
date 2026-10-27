@@ -654,8 +654,7 @@ simulator, hindsight, perspectives and the domain prefilter use a strict `json_s
   short, UNCHANGED `CRITIC_SYSTEM_PROMPT` + `{"violated"}` contract
   (`runtime/modules/critic_module.py`) — never merged with the full-critique prompt.
 - **Simulator** (`prompts/simulator_prompt.py`): path-specific
-  `SIMULATOR_BATCH_SYSTEM_PROMPT` / `SIMULATOR_SEEDED_SYSTEM_PROMPT` (batch vs
-  seeded contracts never collide).
+  `SIMULATOR_BATCH_SYSTEM_PROMPT` (batch contract).
 - **Hindsight** (`runtime/modules/hindsight_module.py` /
   `prompts/hindsight_prompt.py`): `HINDSIGHT_SINGLE_SYSTEM_PROMPT` (single-scenario
   + non-batch aggregate) vs `HINDSIGHT_BATCH_SYSTEM_PROMPT` (`"evaluations"`-rooted).
@@ -688,7 +687,7 @@ simulator, hindsight, perspectives and the domain prefilter use a strict `json_s
 
 Verified by `tests/test_static_prefix_stability.py`.
 
-Deployer overrides and the static prefixes (prompt externalization, Phase A): the system prompts above are now compositions of named fragments in `moralstack/prompts/data/*.yaml`, and `prompts_dir` / `MORALSTACK_PROMPTS_DIR` can replace the `text` and/or `when` of a fragment (see §Prompts above and `docs/prompt_overrides.md`). With no override the rendered bytes are the ones this section describes (pinned by `tests/prompts_golden`). A `when` condition (`contract_present`, `contract_absent`, `history_present`, `history_absent`) is legal only on fragments used solely by context-aware compositions (critic full, hindsight batch, perspectives, the three risk prompts, simulator batch/seeded); it makes the static prefix vary with the request context, so a `when`-conditional override splits the provider prompt-cache hit rate across up to 2 (contract) or 4 (contract x history) distinct prefixes per module and the module result caches key the non-default set under its own `ps:<fp16>:<contract><history>` tag. The quick-check `CRITIC_SYSTEM_PROMPT` shares `critic.base` with the full critic, so an override of that fragment reaches both. Overrides are audited (`runs.meta_json.prompt_config`, per-call `wire`), not blocked; the code-level gates are not overridable.
+Deployer overrides and the static prefixes (prompt externalization, Phase A): the system prompts above are now compositions of named fragments in `moralstack/prompts/data/*.yaml`, and `prompts_dir` / `MORALSTACK_PROMPTS_DIR` can replace the `text` and/or `when` of a fragment (see §Prompts above and `docs/prompt_overrides.md`). With no override the rendered bytes are the ones this section describes (pinned by `tests/prompts_golden`). A `when` condition (`contract_present`, `contract_absent`, `history_present`, `history_absent`) is legal only on fragments used solely by context-aware compositions (critic full, hindsight batch, perspectives, the three risk prompts, simulator batch); it makes the static prefix vary with the request context, so a `when`-conditional override splits the provider prompt-cache hit rate across up to 2 (contract) or 4 (contract x history) distinct prefixes per module and the module result caches key the non-default set under its own `ps:<fp16>:<contract><history>` tag. The quick-check `CRITIC_SYSTEM_PROMPT` shares `critic.base` with the full critic, so an override of that fragment reaches both. Overrides are audited (`runs.meta_json.prompt_config`, per-call `wire`), not blocked; the code-level gates are not overridable.
 
 ---
 

@@ -389,7 +389,7 @@ def _system_markers() -> dict[str, Any]:
     from moralstack.orchestration._policy_helpers import POLICY_SYSTEM_PROMPT
     from moralstack.prompts.critic_prompt import CRITIC_FULL_SYSTEM_PROMPT
     from moralstack.prompts.hindsight_prompt import HINDSIGHT_BATCH_SYSTEM_PROMPT
-    from moralstack.prompts.simulator_prompt import SIMULATOR_BATCH_SYSTEM_PROMPT, SIMULATOR_SEEDED_SYSTEM_PROMPT
+    from moralstack.prompts.simulator_prompt import SIMULATOR_BATCH_SYSTEM_PROMPT
     from moralstack.runtime.modules.critic_module import CRITIC_SYSTEM_PROMPT
     from moralstack.runtime.modules.hindsight_module import HINDSIGHT_SINGLE_SYSTEM_PROMPT
     from moralstack.runtime.modules.perspective_module import PERSPECTIVE_SYSTEM_PROMPT
@@ -401,7 +401,6 @@ def _system_markers() -> dict[str, Any]:
         "critic.full": CRITIC_FULL_SYSTEM_PROMPT,
         "critic.quick": CRITIC_SYSTEM_PROMPT,
         "simulator.batch": SIMULATOR_BATCH_SYSTEM_PROMPT,
-        "simulator.seeded": SIMULATOR_SEEDED_SYSTEM_PROMPT,
         "hindsight.batch": HINDSIGHT_BATCH_SYSTEM_PROMPT,
         "hindsight.single": HINDSIGHT_SINGLE_SYSTEM_PROMPT,
         "perspectives": PERSPECTIVE_SYSTEM_PROMPT,
@@ -420,7 +419,6 @@ _REPLY_BY_MARKER: dict[str, str] = {
     "critic.full": _CRITIC_JSON,
     "critic.quick": _QUICK_OK_JSON,
     "simulator.batch": _SIM_JSON,
-    "simulator.seeded": _SIM_JSON,
     "hindsight.batch": _HIND_BATCH_JSON,
     "hindsight.single": _HIND_SINGLE_JSON,
     "perspectives": _PERSPECTIVE_JSON,
@@ -519,12 +517,6 @@ def _make_policy(
         if name == "perspectives":
             m = _PERSPECTIVE_RE.search(user)
             return f"perspectives:{m.group(1)}" if m else "perspectives"
-        if name == "simulator.seeded":
-            from moralstack.runtime.modules.simulator_module import SCENARIO_SEEDS
-
-            for i, seed in enumerate(SCENARIO_SEEDS):
-                if seed in user:
-                    return f"simulator.seeded:{i}"
         return name
 
     return RecordingPolicy(
@@ -644,7 +636,6 @@ def _capture_constants() -> dict[str, str]:
         SIGNAL_DOMAIN_MAP,
     )
     from moralstack.runtime.modules.perspective_module import DEFAULT_PERSPECTIVES
-    from moralstack.runtime.modules.simulator_module import SCENARIO_SEEDS
     from moralstack.utils.output_protection import OutputProtector
 
     for p in DEFAULT_PERSPECTIVES:
@@ -653,8 +644,6 @@ def _capture_constants() -> dict[str, str]:
     for ht, bullets in _HARM_TYPE_CATEGORIES.items():
         for i, bullet in enumerate(bullets):
             out[f"const/orchestration.safe_refusal_generator._HARM_TYPE_CATEGORIES.{ht}.{i}"] = bullet
-    for i, seed in enumerate(SCENARIO_SEEDS):
-        out[f"const/runtime.modules.simulator_module.SCENARIO_SEEDS.{i}"] = seed
     # Literals that reach a model through a lookup (language names in the language prefix, the overlay domain
     # named in the refusal prompt, the terms listed in the leak-avoidance block).
     for iso, language in _ISO_TO_LANGUAGE.items():
@@ -1887,28 +1876,25 @@ def _wire_critic(out: dict[str, str]) -> None:
 def _wire_simulator(out: dict[str, str]) -> None:
     from moralstack.runtime.modules.simulator_module import LLMConsequenceSimulator, SimulatorConfig
 
-    for mode, seeded in (("batch", False), ("seeded", True)):
-        for ctx_name, (contract, history) in _context_cases().items():
-            for native_name, native in _NATIVE.items():
-                for attempt_name, fail_first in _ATTEMPTS.items():
-                    policy = _make_policy(native=native, fail_first=fail_first)
-                    sim = LLMConsequenceSimulator(
-                        policy, SimulatorConfig(max_retries=3, use_seeded_generation=seeded, enable_caching=False)
+    for ctx_name, (contract, history) in _context_cases().items():
+        for native_name, native in _NATIVE.items():
+            for attempt_name, fail_first in _ATTEMPTS.items():
+                policy = _make_policy(native=native, fail_first=fail_first)
+                sim = LLMConsequenceSimulator(policy, SimulatorConfig(max_retries=3, enable_caching=False))
+                with _record_persistence() as rec:
+                    result = sim.simulate(
+                        "How do I pick a strong password?",
+                        "Use a long passphrase and a password manager.",
+                        num_scenarios=3,
+                        delib_context=_delib_context(),
+                        developer_contract=contract,
+                        conversation_history=history,
                     )
-                    with _record_persistence() as rec:
-                        result = sim.simulate(
-                            "How do I pick a strong password?",
-                            "Use a long passphrase and a password manager.",
-                            num_scenarios=3,
-                            delib_context=_delib_context(),
-                            developer_contract=contract,
-                            conversation_history=history,
-                        )
-                    key = f"{mode}_{native_name}_{ctx_name}_{attempt_name}"
-                    _add_wire(out, f"wire/simulator/{key}", policy.snapshot())
-                    rec.add_to(out, f"wire/simulator/{key}")
-                    out[f"wire/simulator/{key}/persisted/system_prompt"] = result.system_prompt
-                    out[f"wire/simulator/{key}/persisted/prompt"] = result.prompt
+                key = f"batch_{native_name}_{ctx_name}_{attempt_name}"
+                _add_wire(out, f"wire/simulator/{key}", policy.snapshot())
+                rec.add_to(out, f"wire/simulator/{key}")
+                out[f"wire/simulator/{key}/persisted/system_prompt"] = result.system_prompt
+                out[f"wire/simulator/{key}/persisted/prompt"] = result.prompt
 
 
 def _wire_hindsight(out: dict[str, str]) -> None:

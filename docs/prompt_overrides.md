@@ -95,7 +95,7 @@ fragments:
   skeleton (a `double_braces` transform on that one part), preserving today's retry text byte for byte.
 - **Shared fragments.** A few fragments are used by several compositions, so an override of their text reaches all of
   them: `critic.base` is both the full critic system prompt and the quick check's, and `simulator.enums` /
-  `simulator.schema_skeleton` are used by the batch, seeded and retry simulator prompts. This is also why a `when`
+  `simulator.schema_skeleton` are used by the batch and retry simulator prompts. This is also why a `when`
   on them is rejected (see below).
 - **Templates and the contract.** `compliance.dccl.fallback_user` declares a `{contract}` placeholder, because the
   DCCL evaluator must read the developer contract to judge compliance. Omitting it (allowed, with a WARNING) blinds
@@ -167,7 +167,7 @@ that follows its tag.
 | `risk.intent.*`, `risk.signals.*`, `risk.operational.*`, `risk.context_preface` | `risk.yaml` | the three risk-estimator system prompts (cut into fragments), user templates, principles block, renderer sentences |
 | `critic.*` | `critic.yaml` | critic base, rules (incl. the developer-contract rules), retry, user templates |
 | `perspectives.*` | `perspectives.yaml` | perspectives system body, identity texts, turn context, retry |
-| `simulator.*` | `simulator.yaml` | batch / seeded / retry system prompts, enums, schema skeleton, seeds, domain guidance |
+| `simulator.*` | `simulator.yaml` | batch / retry system prompts, enums, schema skeleton, domain guidance |
 | `hindsight.*` | `hindsight.yaml` | batch / single system prompts, retries, user templates |
 | `context.module_preface` | `context.yaml` | the preface sent before developer/history messages |
 | `policy.*` | `policy.yaml` | policy system prompt, language rules, anti-leak rules, canary line, SAFE_COMPLETE / CONSTRAINED instructions, rewrite, hard-violation guidance, contract regeneration |
@@ -308,28 +308,23 @@ logged and listed in `safety_fragments_overridden`). Every packaged fragment has
 | `risk.signals.evaluation_order_item` | `risk.yaml` | template | standalone | no | yes |
 | `risk.signals.output_schema_header` | `risk.yaml` | template | standalone | no | yes |
 | `risk.signals.output_schema_footer` | `risk.yaml` | text | standalone | no | yes |
-| `simulator.base` | `simulator.yaml` | text | `simulator.batch.system`, `simulator.seeded.system` | yes |  |
+| `simulator.base` | `simulator.yaml` | text | `simulator.batch.system` | yes |  |
 | `simulator.batch.contract_intro` | `simulator.yaml` | text | `simulator.batch.system` | yes |  |
 | `simulator.devcontract_evaluation` | `simulator.yaml` | text | `simulator.batch.system` | yes |  |
 | `simulator.batch.constraints` | `simulator.yaml` | text | `simulator.batch.system` | yes |  |
-| `simulator.harm_type_mapping_rule` | `simulator.yaml` | text | `simulator.batch.system`, `simulator.seeded.system` | yes |  |
+| `simulator.harm_type_mapping_rule` | `simulator.yaml` | text | `simulator.batch.system` | yes |  |
 | `simulator.batch.skeleton_heading` | `simulator.yaml` | text | `simulator.batch.system` | yes |  |
-| `simulator.schema_skeleton` | `simulator.yaml` | text | `simulator.batch.system`, `simulator.seeded.system`, `simulator.retry` | no |  |
-| `simulator.enums` | `simulator.yaml` | text | `simulator.batch.system`, `simulator.seeded.system`, `simulator.retry` | no |  |
-| `simulator.seeded.rubric_intro` | `simulator.yaml` | text | `simulator.seeded.system` | yes |  |
-| `simulator.seeded.rubric_close` | `simulator.yaml` | text | `simulator.seeded.system` | yes |  |
-| `simulator.seeded.output_footer` | `simulator.yaml` | text | `simulator.seeded.system` | yes |  |
+| `simulator.schema_skeleton` | `simulator.yaml` | text | `simulator.batch.system`, `simulator.retry` | no |  |
+| `simulator.enums` | `simulator.yaml` | text | `simulator.batch.system`, `simulator.retry` | no |  |
 | `simulator.retry.values_heading` | `simulator.yaml` | text | `simulator.retry` | no |  |
 | `simulator.retry.footer` | `simulator.yaml` | text | `simulator.retry` | no |  |
 | `simulator.batch.user` | `simulator.yaml` | template | standalone | no |  |
-| `simulator.seeded.user` | `simulator.yaml` | template | standalone | no |  |
-| `simulator.seeded.seeds` | `simulator.yaml` | lines | standalone | no |  |
 | `simulator.domain_guidance.cybersecurity` | `simulator.yaml` | text | standalone | no |  |
 | `simulator.domain_guidance.default` | `simulator.yaml` | text | standalone | no |  |
 
 Context-aware compositions (the only ones that can drop a part): `critic.full.system`, `hindsight.batch.system`,
 `perspectives.system_body`, `risk.intent.system`, `risk.signals.system_head`, `risk.operational.system`,
-`simulator.batch.system`, `simulator.seeded.system`. The others (`critic.quick.system`, `critic.retry`,
+`simulator.batch.system`. The others (`critic.quick.system`, `critic.retry`,
 `hindsight.single.system`, `hindsight.retry.single`, `hindsight.retry.batch`, `simulator.retry`) always render the
 same bytes.
 

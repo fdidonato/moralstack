@@ -23,15 +23,11 @@ from moralstack.observability.wire import (
     generate_messages_for,
     inline_wire_summary,
     safe_encode_wire,
-    safe_encode_wire_calls,
 )
 from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.catalog import PromptContext, PromptSet, default_prompt_set
 from moralstack.prompts.retry import RETRY_SIMULATOR
-from moralstack.prompts.simulator_prompt import (  # noqa: F401 - default re-exports, kept importable
-    SIMULATOR_BATCH_SYSTEM_PROMPT,
-    SIMULATOR_SEEDED_SYSTEM_PROMPT,
-)
+from moralstack.prompts.simulator_prompt import SIMULATOR_BATCH_SYSTEM_PROMPT  # noqa: F401 - default re-export
 from moralstack.runtime.modules.message_context import build_module_messages
 from moralstack.utils.cache import build_context_fingerprint, get_global_cache
 from moralstack.utils.json_utils import JSONParseError
@@ -166,17 +162,8 @@ class SimulationResult:
 # Protocols
 # =============================================================================
 
-# Default re-exports of the packaged fragments (byte-identical to the former literals). Runtime code reads
-# the module's own ``PromptSet`` (``self._prompt_set``), never these constants.
-SCENARIO_SEEDS = list(default_prompt_set().lines("simulator.seeded.seeds"))
-
-# Prompt-caching reorder (A3): dynamic-only. The static rubric (incl. the
-# "Generate a consequence based on this perspective:" framing, Requirements,
-# enums, and schema skeleton) lives in the ``simulator.seeded.system`` composition
-# (moralstack/prompts/data/simulator.yaml) and is sent once per call as the
-# system prefix; only the per-request seed/request/response remain here.
-SEEDED_PROMPT_TEMPLATE = default_prompt_set().template("simulator.seeded.user")
-
+# Default re-export of the packaged fragment (byte-identical to the former literal). Runtime code reads
+# the module's own ``PromptSet`` (``self._prompt_set``), never this constant.
 RETRY_PROMPT = RETRY_SIMULATOR
 
 
@@ -285,7 +272,7 @@ class LLMConsequenceSimulator:
         Args:
             policy: Policy LLM for scenario generation
             config: Configuration (optional)
-            prompt_set: PromptSet to read prompts, seeds and retries from (default: packaged set)
+            prompt_set: PromptSet to read prompts and retries from (default: packaged set)
         """
         self.policy = policy
         self._prompt_set = prompt_set or default_prompt_set()
@@ -325,10 +312,8 @@ class LLMConsequenceSimulator:
         FIX PERFORMANCE: Uses caching to avoid recomputation on identical inputs.
         If the (request, response) pair has already been simulated, returns the cached result.
 
-        Sampling strategy:
-        - 1 worst-case scenario
-        - 1 best-case scenario
-        - (k-2) probable scenarios
+        Requests exactly k consequences in one call, with a balanced mix (at least one positive
+        outcome and at least one risk/harm scenario; ``simulator.batch.system``).
 
         Args:
             request: Original user request
@@ -359,24 +344,14 @@ class LLMConsequenceSimulator:
         k = num_scenarios or self.config.default_num_scenarios
         k = max(1, min(k, 10))  # Limit range
 
-        if self.config.use_seeded_generation:
-            result = self._simulate_with_seeds(
-                request,
-                response,
-                k,
-                delib_context,
-                developer_contract=developer_contract,
-                conversation_history=conversation_history,
-            )
-        else:
-            result = self._simulate_batch(
-                request,
-                response,
-                k,
-                delib_context,
-                developer_contract=developer_contract,
-                conversation_history=conversation_history,
-            )
+        result = self._simulate_batch(
+            request,
+            response,
+            k,
+            delib_context,
+            developer_contract=developer_contract,
+            conversation_history=conversation_history,
+        )
 
         # FIX PERFORMANCE: Save to cache for future use
         if self.config.enable_caching:
@@ -512,175 +487,6 @@ class LLMConsequenceSimulator:
         raise RuntimeError(
             f"Simulator structured parsing failed after {parse_attempts} attempts: {last_error}"
         ) from last_error
-
-    def _simulate_with_seeds(
-        self,
-        request: str,
-        response: str,
-        num_scenarios: int,
-        delib_context: Any = None,
-        *,
-        developer_contract: DeveloperContract | None = None,
-        conversation_history: list[Turn] | None = None,
-    ) -> SimulationResult:
-        """
-        Generates scenarios using separate seeds for greater diversity.
-
-        Each seed drives a different perspective (worst-case, best-case, etc).
-        More expensive but produces more varied scenarios.
-        """
-        consequences: list[Consequence] = []
-        raw_responses: list[str] = []
-        prompts_used: list[str] = []
-        total_attempts = 0
-        total_tokens_used = 0
-        total_prompt_tokens = 0
-        total_completion_tokens = 0
-        has_prompt_tokens = False
-        has_completion_tokens = False
-        seed_token_usages: list[TokenUsage] = []
-        sent_calls: list[tuple[list[dict[str, str]], str]] = []
-
-        # Select appropriate seeds
-        selected_seeds = self._select_seeds(num_scenarios)
-
-        # Per-call system prompt (``when`` evaluated against this call); also what gets persisted.
-        seeded_system_prompt = self._prompt_set.render(
-            "simulator.seeded.system", PromptContext.from_contract(developer_contract, conversation_history)
-        )
-        retry_text = self._prompt_set.text("simulator.retry")
-
-        for seed in selected_seeds:
-            prompt = self._prompt_set.format(
-                "simulator.seeded.user",
-                seed=seed,
-                request=request,
-                response=response,
-            )
-            legacy_prompt = prompt + _build_context_block(developer_contract, conversation_history)
-
-            for attempt in range(self.config.max_retries):
-                total_attempts += 1
-                attempt_token_usage: TokenUsage | None = None
-                seed_raw_response = ""
-
-                sent: tuple[list[dict[str, str]], str] | None = None
-
-                try:
-                    if hasattr(self.policy, "generate_messages"):
-                        messages = build_module_messages(
-                            system_prompt=seeded_system_prompt,
-                            user_prompt=prompt,
-                            developer_contract=developer_contract,
-                            conversation_history=conversation_history,
-                            retry_prompt="" if attempt == 0 else retry_text,
-                            prompt_set=self._prompt_set,
-                        )
-                        sent = (messages, "messages")
-                        result = self.policy.generate_messages(
-                            messages=messages,
-                            config=self._generation_config,
-                        )
-                    else:
-                        legacy_user = legacy_prompt if attempt == 0 else f"{legacy_prompt}\n\n{retry_text}"
-                        sent = (generate_messages_for(legacy_user, seeded_system_prompt), "generate")
-                        result = self.policy.generate(
-                            prompt=legacy_user,
-                            system=seeded_system_prompt,
-                            config=self._generation_config,
-                        )
-
-                    seed_raw_response = result.text
-                    attempt_token_usage = TokenUsage.from_generation_result(result)
-                    sent_calls.append(sent)  # same moment as ``prompts_used``: the row's joined prompt lists these calls
-                    raw_responses.append(seed_raw_response)
-                    prompts_used.append(prompt if attempt == 0 else f"{prompt}\n\n{retry_text}")
-                    total_tokens_used += attempt_token_usage.total_tokens
-                    pt = getattr(result, "prompt_tokens", None)
-                    if pt is not None:
-                        total_prompt_tokens += int(pt)
-                        has_prompt_tokens = True
-                    ct = getattr(result, "completion_tokens", None)
-                    if ct is not None:
-                        total_completion_tokens += int(ct)
-                        has_completion_tokens = True
-                    parsed = parse_simulator_response(seed_raw_response)
-                    seed_token_usages.append(attempt_token_usage)
-                    consequences.extend(parsed)
-                    break
-                except (JSONParseError, Exception) as e:
-                    if attempt_token_usage is not None:
-                        try:
-                            from moralstack.observability.emit_helpers import async_persist_llm_call
-
-                            async_persist_llm_call(
-                                phase="simulator_retry",
-                                module="simulator",
-                                action=f"retry_failed_attempt_{attempt + 1}",
-                                model=getattr(self.policy, "model", None) or "",
-                                prompt=f"Retry reason: {str(e)[:200]}",
-                                raw_response=seed_raw_response or "",
-                                duration_ms=0.0,
-                                attempts=attempt + 1,
-                                call_outcome="retry_failed",
-                                billable_provider_call=True,
-                                token_usage_json=attempt_token_usage.to_json(),
-                                parsed_summary_json=json.dumps(
-                                    {
-                                        "simulator_path": "seeded",
-                                        "seed": str(seed)[:60],
-                                        **inline_wire_summary(sent, f"Retry reason: {str(e)[:200]}"),
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                            )
-                        except Exception:
-                            pass
-                    continue
-
-        if not consequences:
-            raise RuntimeError(f"Simulator produced no valid structured output after {total_attempts} attempts")
-        # combine() sums only the seeds whose provider reported cache details, and
-        # returns None when none did — so "unknown" never collapses into "zero".
-        combined = TokenUsage.combine(seed_token_usages) if seed_token_usages else None
-        combined_source = combined.source if combined is not None else "missing"
-        return self._build_result(
-            consequences=consequences,
-            raw_response="\n---\n".join(raw_responses),
-            parse_attempts=total_attempts,
-            prompt="\n---\n".join(prompts_used) if prompts_used else "",
-            system_prompt=seeded_system_prompt,
-            tokens_used=total_tokens_used,
-            prompt_tokens=(total_prompt_tokens if has_prompt_tokens else None),
-            completion_tokens=(total_completion_tokens if has_completion_tokens else None),
-            cached_prompt_tokens=(combined.cached_input_tokens if combined is not None else None),
-            token_usage_source=combined_source,
-            # No prompt reference: the row's prompt is the calls' prompts joined; the system prompt is shared.
-            wire_calls=safe_encode_wire_calls(sent_calls, prompt_col="", system_prompt_col=seeded_system_prompt),
-        )
-
-    def _select_seeds(self, num_scenarios: int) -> list[str]:
-        """
-        Selects appropriate seeds for the number of scenarios.
-
-        Ensures diversity by always including worst-case and best-case
-        if possible.
-        """
-        seeds = self._prompt_set.lines("simulator.seeded.seeds")
-        if num_scenarios >= len(seeds):
-            return list(seeds[:num_scenarios])
-
-        # Priority: worst-case (index 0,1), best-case (3), others
-        priority_order = [0, 1, 3, 2, 4]  # Indices in the seeds list
-
-        selected: list[str] = []
-        for idx in priority_order:
-            if len(selected) >= num_scenarios:
-                break
-            if idx < len(seeds):
-                selected.append(seeds[idx])
-
-        return selected
 
     def _build_result(
         self,

@@ -78,27 +78,6 @@ def test_simulator_batch_wire_is_what_the_policy_received(native, retry, context
     assert _decode(result.wire, result.prompt, result.system_prompt) == _last_ok_call(policy, "simulator.batch")
 
 
-@pytest.mark.parametrize("retry", ATTEMPTS)
-@pytest.mark.parametrize("native", BRANCHES)
-def test_simulator_seeded_wire_calls_list_every_call_of_the_row(native, retry):
-    from moralstack.runtime.modules.simulator_module import LLMConsequenceSimulator, SimulatorConfig
-
-    policy = _make_policy(native=native, retry=retry)
-    sim = LLMConsequenceSimulator(policy, SimulatorConfig(max_retries=2, enable_caching=False, use_seeded_generation=True))
-    result = sim.simulate(
-        PROMPT, ANSWER, num_scenarios=3, delib_context=cap._delib_context(), **_context("contract_history")
-    )
-    assert result.wire is None and result.wire_calls is not None
-    records = result.wire_calls["wire_calls"]
-    decoded = [
-        decode_wire(r, prompt_col="", system_prompt_col=result.system_prompt, strings=result.wire_calls["wire_strings"])
-        for r in records
-    ]
-    assert decoded == [_sent_messages(c) for c in policy.snapshot() if c.label.startswith("simulator")]
-    # failed attempts are in the joined prompt, so they are in the wire calls too
-    assert len(records) == len(result.prompt.split("\n---\n")) or retry
-
-
 @pytest.mark.parametrize("context", CONTEXTS)
 @pytest.mark.parametrize("retry", ATTEMPTS)
 @pytest.mark.parametrize("native", BRANCHES)

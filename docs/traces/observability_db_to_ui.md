@@ -231,8 +231,8 @@ audit trail still shows the full prompt actually sent:
   `SimulationResult` / `HindsightResult` / `PerspectiveResult`.`system_prompt`
   field): each now carries the path-specific static constant actually sent
   (e.g. `CRITIC_FULL_SYSTEM_PROMPT` vs the unchanged quick-check
-  `CRITIC_SYSTEM_PROMPT`; `SIMULATOR_BATCH_SYSTEM_PROMPT` vs
-  `SIMULATOR_SEEDED_SYSTEM_PROMPT`; `HINDSIGHT_SINGLE_SYSTEM_PROMPT` — also
+  `CRITIC_SYSTEM_PROMPT`; `SIMULATOR_BATCH_SYSTEM_PROMPT`;
+  `HINDSIGHT_SINGLE_SYSTEM_PROMPT` — also
   used by the non-batch aggregate `_evaluate_individual` result — vs
   `HINDSIGHT_BATCH_SYSTEM_PROMPT`). No new columns or schema change; only the
   string content differs from pre-reorder. See `docs/MORALSTACK_CODEBASE_INDEX.md`

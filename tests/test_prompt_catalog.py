@@ -1271,3 +1271,35 @@ def test_policy_rewrite_contract_regeneration_and_draft_match_fragments_match_th
     ):
         got = ds.format("compliance.draft_match.user", action=action[:500], draft=draft[:1000])
         assert got == _snapshot_value(snapshot_table, f"wire/draft_match/{case}/call#0/prompt"), case
+
+
+# --------------------------------------------------------------------------------------
+# removed seeded simulator mode (dead-code lot C)
+# --------------------------------------------------------------------------------------
+
+REMOVED_SEEDED_SIMULATOR_IDS = [
+    "simulator.seeded.rubric_intro",
+    "simulator.seeded.rubric_close",
+    "simulator.seeded.output_footer",
+    "simulator.seeded.user",
+    "simulator.seeded.seeds",
+    "simulator.seeded.system",
+]
+
+
+@pytest.mark.parametrize("fid", REMOVED_SEEDED_SIMULATOR_IDS)
+def test_removed_seeded_simulator_ids_fail_closed(tmp_path: Path, fid: str) -> None:
+    """An override naming a removed seeded-simulator ID fails to load (documented breaking change)."""
+    with pytest.raises(PromptConfigError, match="unknown fragment ID") as info:
+        packaged_with_override(tmp_path, {fid: {"text": "x"}})
+    assert info.value.fragment_id == fid
+
+
+def test_default_catalog_has_no_seeded_simulator_symbols() -> None:
+    from moralstack.prompts import simulator_prompt
+    from moralstack.runtime.modules import simulator_module
+
+    ds = default_prompt_set()
+    assert not [i for i in list(ds.fragment_ids()) + list(ds.composition_ids()) if i.startswith("simulator.seeded.")]
+    assert not hasattr(simulator_prompt, "SIMULATOR_SEEDED_SYSTEM_PROMPT")
+    assert not hasattr(simulator_module, "SCENARIO_SEEDS")

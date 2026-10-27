@@ -27,7 +27,6 @@ __all__ = [
     "SimulatorConfig",
     "LLMConsequenceSimulator",
     "create_simulator",
-    "SCENARIO_SEEDS",
     # Hindsight module
     "HindsightConfig",
     "HindsightEvaluation",
@@ -64,7 +63,6 @@ _LAZY_ATTRS: dict[str, str] = {
     "SimulatorConfig": "moralstack.runtime.modules.simulator_module",
     "LLMConsequenceSimulator": "moralstack.runtime.modules.simulator_module",
     "create_simulator": "moralstack.runtime.modules.simulator_module",
-    "SCENARIO_SEEDS": "moralstack.runtime.modules.simulator_module",
     "HindsightConfig": "moralstack.runtime.modules.hindsight_module",
     "HindsightEvaluation": "moralstack.runtime.modules.hindsight_module",
     "HindsightRecommendation": "moralstack.runtime.modules.hindsight_module",

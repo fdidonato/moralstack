@@ -274,7 +274,7 @@ def build_matchers(ps: PromptSet) -> dict[tuple[str, str], Matcher]:
     hindsight = _merge(_variants(ps, "hindsight.batch.system"), _variants(ps, "hindsight.single.system"))
     base = ps.text("perspectives.base") + "\n\n"
     perspectives = {base + text: labels for text, labels in _variants(ps, "perspectives.system_body").items()}
-    simulator = _merge(_variants(ps, "simulator.batch.system"), _variants(ps, "simulator.seeded.system"))
+    simulator = _variants(ps, "simulator.batch.system")
     policy_generate = _policy_matcher(ps, rewrite=False)
     policy_rewrite = _policy_matcher(ps, rewrite=True)
 

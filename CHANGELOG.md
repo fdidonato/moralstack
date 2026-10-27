@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Dead code (lot C): the seeded simulator mode is removed; the simulator always uses the batch path.** Removed:
+  `SCENARIO_SEEDS` (also from `moralstack.runtime.modules`), `SEEDED_PROMPT_TEMPLATE`, `SIMULATOR_SEEDED_SYSTEM_PROMPT`
+  (both modules), `SIMULATOR_SEEDED_STATIC_RUBRIC`; fragment IDs `simulator.seeded.rubric_intro`, `.rubric_close`,
+  `.output_footer`, `.user`, `.seeds` and composition `simulator.seeded.system` — a `prompts_dir` override naming any of
+  them now fails to load with `PromptConfigError("unknown fragment ID")` (breaking). 0 seeded calls among 15,701
+  simulator calls in 110 of 114 run databases. `verify_prompt_audit.py` no longer recognizes seeded rows; the packaged
+  prompt `default_fingerprint` changes. No governance, `final_action`, batch prompt or batch payload change.
 - **Dead code (lot C): the test-only `moralstack/server/fingerprint.py` is removed.** `compute_conversation_fingerprint`
   (an `msf-<16hex>` diagnostic hash of the opening message stem) had no caller outside its own unit tests; the proxy
   derives `conversation_id` from `ConversationCorrelationStore` and `canonical_history_hash`, which are unchanged.

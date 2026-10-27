@@ -46,8 +46,6 @@ KNOWN_NAMES = frozenset(
         "const/runtime.modules.critic_module.RETRY_PROMPT",
         # simulator
         "const/prompts.simulator_prompt.SIMULATOR_BATCH_SYSTEM_PROMPT",
-        "const/prompts.simulator_prompt.SIMULATOR_SEEDED_SYSTEM_PROMPT",
-        "const/prompts.simulator_prompt.SIMULATOR_SEEDED_STATIC_RUBRIC",
         "const/prompts.simulator_prompt.SIMULATOR_FULL_STATIC_PREFIX",
         "const/prompts.simulator_prompt.SIMULATOR_FULL_TEMPLATE",
         "const/prompts.simulator_prompt.SIMULATOR_ENUMS",
@@ -55,9 +53,7 @@ KNOWN_NAMES = frozenset(
         "const/prompts.simulator_prompt.HARM_TYPE_MAPPING_RULE",
         "const/prompts.simulator_prompt.DEFAULT_DOMAIN_GUIDANCE",
         "const/prompts.simulator_prompt.DEVELOPER_CONTRACT_EVALUATION",
-        "const/runtime.modules.simulator_module.SEEDED_PROMPT_TEMPLATE",
         "const/runtime.modules.simulator_module.RETRY_PROMPT",
-        "const/runtime.modules.simulator_module.SCENARIO_SEEDS.0",
         # hindsight
         "const/prompts.hindsight_prompt.HINDSIGHT_BATCH_SYSTEM_PROMPT",
         "const/prompts.hindsight_prompt.HINDSIGHT_BATCH_FULL_TEMPLATE",
@@ -147,7 +143,7 @@ KNOWN_NAMES = frozenset(
         "wire/estimator/native_contract_history_retry/risk.intent#1/m0/content",
         "wire/critic/native_contract_history_retry/critic.full#1/m0/content",
         "wire/critic_quick_check/pre_retrieved/critic.quick#0/prompt",
-        "wire/simulator/seeded_native_nocontext_first/simulator.seeded:0#0/m0/content",
+        "wire/simulator/batch_native_nocontext_first/simulator.batch#0/m0/content",
         "wire/hindsight/batch_native_nocontext_first/hindsight.batch#0/m0/content",
         "wire/hindsight/single_first/hindsight.single#0/system",
         "wire/perspectives/evaluate_native_nocontext_first/perspectives:Direct User#0/kind",

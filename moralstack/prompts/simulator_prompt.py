@@ -36,12 +36,11 @@ DEFAULT_DOMAIN_GUIDANCE = _DEFAULT.text("simulator.domain_guidance.default")
 DEVELOPER_CONTRACT_EVALUATION = _DEFAULT.text("simulator.devcontract_evaluation")
 
 
-# Prompt-caching reorder (Part A / A3): the base short framing shared by
-# both the batch and seeded LLM paths (single source of truth: ``simulator.base``).
+# Prompt-caching reorder (Part A / A3): the base framing of the batch system prompt
+# (single source of truth: ``simulator.base``).
 _SIMULATOR_BASE_SYSTEM_PROMPT = _DEFAULT.text("simulator.base")
 
-# BATCH path system prompt (simulator_module.py _simulate_batch). Must NEVER be reused
-# for the seeded path (different static contract — see A3 plan).
+# BATCH path system prompt (simulator_module.py _simulate_batch).
 SIMULATOR_BATCH_SYSTEM_PROMPT = _DEFAULT.render("simulator.batch.system", NO_CONTEXT)
 
 # FULL/BATCH static contract (incl. "exactly N" / num_scenarios): the batch system prompt after the base
@@ -51,13 +50,6 @@ SIMULATOR_FULL_STATIC_PREFIX = SIMULATOR_BATCH_SYSTEM_PROMPT[len(_SIMULATOR_BASE
 # Dynamic-only: per-request fields last (static contract lives entirely
 # in SIMULATOR_BATCH_SYSTEM_PROMPT above).
 SIMULATOR_FULL_TEMPLATE = _DEFAULT.template("simulator.batch.user")
-
-SIMULATOR_SEEDED_SYSTEM_PROMPT = _DEFAULT.render("simulator.seeded.system", NO_CONTEXT)
-
-# SEEDED path static rubric — generates ONE consequence from a seed; distinct
-# contract from the batch path (no "exactly N"/num_scenarios text): the seeded system prompt after the base
-# framing and its "\n\n" separator.
-SIMULATOR_SEEDED_STATIC_RUBRIC = SIMULATOR_SEEDED_SYSTEM_PROMPT[len(_SIMULATOR_BASE_SYSTEM_PROMPT) + 2 :]
 
 
 def build_simulator_prompt(

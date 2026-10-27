@@ -39,32 +39,26 @@ To reduce token usage:
 
 ## Prompt-Caching Static/Dynamic Split (Part A)
 
-The simulator has **two independent LLM paths with path-specific system prompts**
-(`moralstack/prompts/simulator_prompt.py`), so a seeded call can never receive the
-batch-only contract and vice versa:
+The simulator has a single LLM path, **batch**, with its own system prompt
+(`moralstack/prompts/simulator_prompt.py`):
 
 - **Batch** (`_simulate_batch`): `SIMULATOR_BATCH_SYSTEM_PROMPT` = base framing +
   `SIMULATOR_FULL_STATIC_PREFIX` (the "exactly N consequences" contract, enums, JSON
   schema skeleton). `build_simulator_prompt()` returns dynamic-only content (TURN
   PARAMETERS/REQUEST/RESPONSE/RISK CONTEXT/DOMAIN/`num_scenarios`).
-- **Seeded** (`_simulate_with_seeds`, `SimulatorConfig.use_seeded_generation=True`):
-  `SIMULATOR_SEEDED_SYSTEM_PROMPT` = base framing + the seeded rubric (one
-  consequence per seed) + enums + schema skeleton. `SEEDED_PROMPT_TEMPLATE`
-  (`simulator_module.py`) is dynamic-only: `PERSPECTIVE:{seed}` + REQUEST + RESPONSE.
 
-Both system prompts are byte-stable across requests for their own path (verified by
-`tests/test_static_prefix_stability.py`) and retries are unchanged.
+The batch system prompt is byte-stable across requests (verified by
+`tests/test_static_prefix_stability.py`) and retries are unchanged. The former seeded
+path (one call per seed) was removed in dead-code lot C.
 
 ### Prompt set (prompt externalization, A2b)
 
 The simulator texts live in `moralstack/prompts/data/simulator.yaml` (`simulator.batch.system`,
-`simulator.seeded.system`, `simulator.retry` compositions, the user templates, the seeds as a `lines`
-fragment, domain guidance). `LLMConsequenceSimulator(..., prompt_set=None)` (and `create_simulator`)
+`simulator.retry` compositions, the user template, domain guidance). `LLMConsequenceSimulator(..., prompt_set=None)` (and `create_simulator`)
 reads them from its own `PromptSet`; `None` is the packaged default. The module constants
-(`SIMULATOR_BATCH_SYSTEM_PROMPT`, `SIMULATOR_SEEDED_SYSTEM_PROMPT`, `RETRY_PROMPT`, `SCENARIO_SEEDS`,
-`SEEDED_PROMPT_TEMPLATE`, ...) are default re-exports with identical bytes.
+(`SIMULATOR_BATCH_SYSTEM_PROMPT`, `RETRY_PROMPT`, ...) are default re-exports with identical bytes.
 
-- The batch and seeded system prompts are rendered per call with a `PromptContext` (contract / history
+- The batch system prompt is rendered per call with a `PromptContext` (contract / history
   present), and the persisted `SimulationResult.system_prompt` is that rendered string.
 - `simulator.enums` and `simulator.schema_skeleton` also appear in the retry composition, so a
   non-`always` `when` on them is a load error.
@@ -377,7 +371,7 @@ Simulator generation uses OpenAI's `json_object` response format (`response_form
 
 Wire record (A4b-2/3): `SimulationResult.wire` (batch) or `SimulationResult.wire_calls` (seeded: one record per model call of the row, failed attempts included, like the joined `prompt`) hold the exact messages sent; the runner adds them to the row's `parsed_summary_json` (`wire` / `wire_calls` + `wire_strings`). Retry-failed rows carry the failed attempt's messages inline under `wire`. A cache hit carries none.
 
-Each failed parse attempt is persisted as a billable `simulator_retry` / `retry_failed_attempt_N` row (prompt `"Retry reason: …"`). Since 2026-10-20 the row's `parsed_summary_json` names the path: `{"simulator_path": "batch"}` or `{"simulator_path": "seeded", "seed": <seed>}` (additive keys), which the UI request page shows as `failed: simulator batch` / `failed: simulator seed <s>`. Simulator retry rows stay in the parallel simulator+perspectives tier of the graph, because the simulator runs concurrently with the perspectives.
+Each failed parse attempt is persisted as a billable `simulator_retry` / `retry_failed_attempt_N` row (prompt `"Retry reason: …"`). Since 2026-10-20 the row's `parsed_summary_json` names the path: `{"simulator_path": "batch"}` (additive key), which the UI request page shows as `failed: simulator batch`. Simulator retry rows stay in the parallel simulator+perspectives tier of the graph, because the simulator runs concurrently with the perspectives.
 
 #### MORALSTACK_SIMULATOR_MAX_TOKENS
 

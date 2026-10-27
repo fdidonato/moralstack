@@ -8,7 +8,7 @@ For each deliberative module AND call path, asserts:
     deterministic composition thereof, for risk signals);
   - the per-request dynamic data still appears somewhere (system OR user, per
     module), proving the reorder MOVED data rather than dropping it;
-  - path contracts never collide (batch vs seeded, single vs batch, quick
+  - path contracts never collide (single vs batch, quick
     vs full critique).
 
 Offline/deterministic only: no OpenAI SDK, no real network. Reuses the
@@ -38,10 +38,7 @@ from moralstack.orchestration.contract import DeveloperContract
 from moralstack.prompts.critic_prompt import CRITIC_FULL_SYSTEM_PROMPT
 from moralstack.prompts.hindsight_prompt import HINDSIGHT_BATCH_SYSTEM_PROMPT
 from moralstack.prompts.perspectives_prompt import build_perspectives_system_prompt
-from moralstack.prompts.simulator_prompt import (
-    SIMULATOR_BATCH_SYSTEM_PROMPT,
-    SIMULATOR_SEEDED_SYSTEM_PROMPT,
-)
+from moralstack.prompts.simulator_prompt import SIMULATOR_BATCH_SYSTEM_PROMPT
 from moralstack.runtime.modules.critic_module import (
     CRITIC_SYSTEM_PROMPT,
     CriticConfig,
@@ -60,7 +57,6 @@ from moralstack.runtime.modules.perspective_module import (
     LLMPerspectiveEnsemble,
 )
 from moralstack.runtime.modules.simulator_module import (
-    SCENARIO_SEEDS,
     Consequence,
     LLMConsequenceSimulator,
     ScenarioType,
@@ -382,7 +378,7 @@ class TestCriticFullStaticPrefixStability:
 
 
 # =============================================================================
-# A3 — Simulator (batch & seeded, SEPARATELY; path contracts don't collide)
+# A3 — Simulator (batch)
 # =============================================================================
 
 _VALID_SIMULATOR_BATCH = json.dumps(
@@ -414,24 +410,6 @@ _VALID_SIMULATOR_BATCH = json.dumps(
     }
 )
 
-_VALID_SIMULATOR_SEEDED = json.dumps(
-    {
-        "consequences": [
-            {
-                "text": "seeded outcome",
-                "likelihood": 0.5,
-                "scenario_type": "social_impact",
-                "outcome_valence": 0.0,
-                "affected_stakeholders": [],
-                "harm_type": "none",
-                "harm_severity": 0.0,
-                "harm_scope": "individual",
-                "reversibility": 1.0,
-            }
-        ]
-    }
-)
-
 
 class TestSimulatorStaticPrefixStability:
     def test_batch_system_stable_and_equals_constant(self):
@@ -446,39 +424,6 @@ class TestSimulatorStaticPrefixStability:
         assert policy.calls[0].system == policy.calls[1].system == SIMULATOR_BATCH_SYSTEM_PROMPT
         assert "exactly N" in SIMULATOR_BATCH_SYSTEM_PROMPT
         assert "num_scenarios" in SIMULATOR_BATCH_SYSTEM_PROMPT
-
-    def test_seeded_system_stable_no_batch_only_text(self):
-        policy = _CapturingPolicy(default_response=_VALID_SIMULATOR_SEEDED)
-        sim = LLMConsequenceSimulator(
-            policy=policy, config=SimulatorConfig(max_retries=1, use_seeded_generation=True, enable_caching=False)
-        )
-        sim.simulate("request A", "response A", num_scenarios=2)
-        sim.simulate("a very different request B", "a very different response B", num_scenarios=2)
-
-        assert policy.calls
-        for call in policy.calls:
-            assert call.system == SIMULATOR_SEEDED_SYSTEM_PROMPT
-        # Negative asserts: seeded system has NO batch-only "exactly N"/num_scenarios text.
-        assert "exactly N" not in SIMULATOR_SEEDED_SYSTEM_PROMPT
-        assert "num_scenarios" not in SIMULATOR_SEEDED_SYSTEM_PROMPT
-        # Seeded user prompt still contains PERSPECTIVE + REQUEST + RESPONSE.
-        assert "PERSPECTIVE:" in policy.calls[0].prompt
-        assert "REQUEST: request A" in policy.calls[0].prompt
-        assert "RESPONSE: response A" in policy.calls[0].prompt
-
-    def test_batch_and_seeded_constants_not_equal(self):
-        assert SIMULATOR_BATCH_SYSTEM_PROMPT != SIMULATOR_SEEDED_SYSTEM_PROMPT
-
-    def test_seeded_all_five_scenario_seeds_share_identical_system(self):
-        assert len(SCENARIO_SEEDS) == 5
-        policy = _CapturingPolicy(default_response=_VALID_SIMULATOR_SEEDED)
-        sim = LLMConsequenceSimulator(
-            policy=policy, config=SimulatorConfig(max_retries=1, use_seeded_generation=True, enable_caching=False)
-        )
-        sim.simulate("req", "resp", num_scenarios=5)
-        assert len(policy.calls) == 5
-        systems = {c.system for c in policy.calls}
-        assert systems == {SIMULATOR_SEEDED_SYSTEM_PROMPT}
 
 
 # =============================================================================
