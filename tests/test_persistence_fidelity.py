@@ -810,7 +810,7 @@ def _call_family(call: WireCall) -> tuple[str, str]:
 
 
 # Families whose several model calls are persisted as ONE row (joined with SEGMENT_SEPARATOR).
-AGGREGATING = frozenset({"perspectives", "simulator"})
+AGGREGATING = frozenset({"perspectives"})
 # Families with a legacy ``generate()`` branch next to the native ``generate_messages`` one.
 DUAL_BRANCH = frozenset({"estimator", "critic", "simulator", "hindsight", "perspectives", "dccl", "speculative"})
 # Families whose native calls carry the module context preface in front of the user prompt.
