@@ -373,8 +373,6 @@ class LLMConsequenceSimulator:
     ) -> SimulationResult:
         """
         Generates all scenarios in a single LLM call.
-
-        More efficient but less control over diversity.
         """
         ctx = delib_context or DelibContext(user_prompt=request, draft_text_full=response)
         from moralstack.prompts.simulator_prompt import build_simulator_prompt

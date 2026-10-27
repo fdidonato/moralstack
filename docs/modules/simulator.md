@@ -42,7 +42,7 @@ To reduce token usage:
 The simulator has a single LLM path, **batch**, with its own system prompt
 (`moralstack/prompts/simulator_prompt.py`):
 
-- **Batch** (`_simulate_batch`): `SIMULATOR_BATCH_SYSTEM_PROMPT` = base framing +
+- **Batch** (`_simulate_batch`, one LLM call for all k scenarios): `SIMULATOR_BATCH_SYSTEM_PROMPT` = base framing +
   `SIMULATOR_FULL_STATIC_PREFIX` (the "exactly N consequences" contract, enums, JSON
   schema skeleton). `build_simulator_prompt()` returns dynamic-only content (TURN
   PARAMETERS/REQUEST/RESPONSE/RISK CONTEXT/DOMAIN/`num_scenarios`).

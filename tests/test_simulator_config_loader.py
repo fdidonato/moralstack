@@ -178,6 +178,7 @@ class TestLoadSimulatorConfigFromEnv:
         monkeypatch.setenv("MORALSTACK_SIMULATOR_USE_SEEDED_GENERATION", "true")
         config = load_simulator_config_from_env()
         assert not hasattr(config, "use_seeded_generation")
+        assert config.enable_caching is True
 
     def test_enable_caching_false(self, monkeypatch):
         monkeypatch.setenv(ENV_ENABLE_CACHING, "false")
