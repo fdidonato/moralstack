@@ -147,7 +147,7 @@ hashing (`proxy.py:218-219`).
 ### 4.3 Retries
 A client retry resends an identical body → identical history hash → same
 conversation_id and same stateless `turn_index`. `ProcessedRequest.request_id` is
-a fresh `uuid4` per instance (`types.py:190`) and the proxy builds a new
+a fresh `uuid4` per instance (`orchestration/types.py:223`) and the proxy builds a new
 `ProcessedRequest` per HTTP call, so a retry creates a **second** `requests` row
 at the same `(conversation_id, turn_index)` (`proxy.py:531-546`). Retries are not
 deduplicated — duplicate turn rows can distort benchmark accounting.

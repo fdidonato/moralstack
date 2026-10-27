@@ -91,7 +91,7 @@ class OpenAIPolicyConfig:
 class OpenAIPolicy:
     """
     Policy LLM based exclusively on the OpenAI API.
-    Implements generate, rewrite, refuse with retry and timeout.
+    Implements generate and rewrite with retry and timeout.
     """
 
     def __init__(

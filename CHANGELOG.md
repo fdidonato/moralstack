@@ -22,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now names the multi-consequence hindsight row among the `wire_calls` users. Three more stale `path:line` anchors
   (`types.py`, `env_loader.py`) point at the current lines, as do the hidden-risk-default Hypothesis row
   (`controller.py`) and the `MORALSTACK_CODEBASE_INDEX.md` note on discarded full-parallel results; the recorded
-  full-suite baseline is now 5763 passed (was 2950). Documentation only.
+  full-suite baseline is now 5763 passed (was 2950). After the 3.0 removals the `path:line` anchors into the
+  edited files are re-pointed and the baseline is 5738 passed; the `OpenAIPolicy` docstring no longer lists `refuse`.
+  Documentation only.
 
 ### Removed
 

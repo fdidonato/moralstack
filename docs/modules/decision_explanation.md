@@ -48,7 +48,7 @@ run. It takes **two** steps, and either one alone is a no-op end to end:
    cached reason codes, so the marker is always the last entry and the cached codes keep their original order.
 2. The controller replaces the now-stale `DecisionExplanation` with
    `decision_explanation_for_ledger_reuse(...)` immediately after the patch. This is required because
-   `ResponseMetadata.from_decision` (`orchestration/types.py:403-407`) **prioritizes `decision_explanation.reason_codes` over
+   `ResponseMetadata.from_decision` (`orchestration/types.py:402-406`) **prioritizes `decision_explanation.reason_codes` over
    `decision.reason_codes`** whenever an explanation is supplied — the explanation the controller holds was built by
    `decide_action`, before the ledger was consulted. The rebuilt explanation runs the codes through
    `policy_reason_codes_to_reason_codes` so they are persisted mapped, like every other explanation, and sets
