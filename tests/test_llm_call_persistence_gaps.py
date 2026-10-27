@@ -325,7 +325,7 @@ def test_simulator_batch_retry_failed_row_names_the_failed_call(recorder: _Recor
         def generate(self, **kwargs: Any) -> _Gen:
             return replies.pop(0)
 
-    simulator = LLMConsequenceSimulator(_Policy(), SimulatorConfig(max_retries=2, use_seeded_generation=False))
+    simulator = LLMConsequenceSimulator(_Policy(), SimulatorConfig(max_retries=2))
     with _request_scope(cycle=1):
         simulator._simulate_batch("req", "resp", 1)
     (row,) = recorder.payloads(call_outcome="retry_failed")

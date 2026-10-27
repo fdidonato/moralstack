@@ -7,6 +7,8 @@ env when set and non-empty, and fall back to defaults otherwise.
 
 from __future__ import annotations
 
+import pytest
+
 from moralstack.runtime.modules.simulator_config_loader import (
     ENV_DEFAULT_NUM_SCENARIOS,
     ENV_ENABLE_CACHING,
@@ -15,13 +17,13 @@ from moralstack.runtime.modules.simulator_config_loader import (
     ENV_MODEL,
     ENV_TEMPERATURE,
     ENV_TOP_P,
-    ENV_USE_SEEDED_GENERATION,
     get_simulator_env_bool,
     get_simulator_env_float,
     get_simulator_env_int,
     get_simulator_env_str,
     load_simulator_config_from_env,
 )
+from moralstack.runtime.modules.simulator_module import SimulatorConfig
 
 
 class TestGetSimulatorEnvFloat:
@@ -102,23 +104,23 @@ class TestGetSimulatorEnvBool:
     """Tests for get_simulator_env_bool."""
 
     def test_missing_key_returns_default(self, monkeypatch):
-        monkeypatch.delenv(ENV_USE_SEEDED_GENERATION, raising=False)
-        assert get_simulator_env_bool(ENV_USE_SEEDED_GENERATION, False) is False
-        assert get_simulator_env_bool(ENV_USE_SEEDED_GENERATION, True) is True
+        monkeypatch.delenv(ENV_ENABLE_CACHING, raising=False)
+        assert get_simulator_env_bool(ENV_ENABLE_CACHING, False) is False
+        assert get_simulator_env_bool(ENV_ENABLE_CACHING, True) is True
 
     def test_empty_key_returns_default(self, monkeypatch):
-        monkeypatch.setenv(ENV_USE_SEEDED_GENERATION, "")
-        assert get_simulator_env_bool(ENV_USE_SEEDED_GENERATION, False) is False
+        monkeypatch.setenv(ENV_ENABLE_CACHING, "")
+        assert get_simulator_env_bool(ENV_ENABLE_CACHING, False) is False
 
     def test_true_values(self, monkeypatch):
         for val in ("1", "true", "TRUE", "yes", "Yes"):
-            monkeypatch.setenv(ENV_USE_SEEDED_GENERATION, val)
-            assert get_simulator_env_bool(ENV_USE_SEEDED_GENERATION, False) is True
+            monkeypatch.setenv(ENV_ENABLE_CACHING, val)
+            assert get_simulator_env_bool(ENV_ENABLE_CACHING, False) is True
 
     def test_false_values(self, monkeypatch):
         for val in ("0", "false", "FALSE", "no", "No"):
-            monkeypatch.setenv(ENV_USE_SEEDED_GENERATION, val)
-            assert get_simulator_env_bool(ENV_USE_SEEDED_GENERATION, True) is False
+            monkeypatch.setenv(ENV_ENABLE_CACHING, val)
+            assert get_simulator_env_bool(ENV_ENABLE_CACHING, True) is False
 
 
 class TestLoadSimulatorConfigFromEnv:
@@ -131,7 +133,6 @@ class TestLoadSimulatorConfigFromEnv:
             ENV_TEMPERATURE,
             ENV_TOP_P,
             ENV_DEFAULT_NUM_SCENARIOS,
-            ENV_USE_SEEDED_GENERATION,
             ENV_ENABLE_CACHING,
         ):
             monkeypatch.delenv(key, raising=False)
@@ -141,7 +142,6 @@ class TestLoadSimulatorConfigFromEnv:
         assert config.temperature == 0.8
         assert config.top_p == 0.95
         assert config.default_num_scenarios == 3
-        assert config.use_seeded_generation is False
         assert config.enable_caching is True
 
     def test_max_retries_override(self, monkeypatch):
@@ -174,10 +174,10 @@ class TestLoadSimulatorConfigFromEnv:
         config = load_simulator_config_from_env()
         assert config.default_num_scenarios == 5
 
-    def test_use_seeded_generation_true(self, monkeypatch):
-        monkeypatch.setenv(ENV_USE_SEEDED_GENERATION, "true")
+    def test_removed_seeded_env_var_is_ignored(self, monkeypatch):
+        monkeypatch.setenv("MORALSTACK_SIMULATOR_USE_SEEDED_GENERATION", "true")
         config = load_simulator_config_from_env()
-        assert config.use_seeded_generation is True
+        assert not hasattr(config, "use_seeded_generation")
 
     def test_enable_caching_false(self, monkeypatch):
         monkeypatch.setenv(ENV_ENABLE_CACHING, "false")
@@ -188,3 +188,8 @@ class TestLoadSimulatorConfigFromEnv:
         monkeypatch.setenv(ENV_TEMPERATURE, "")
         config = load_simulator_config_from_env()
         assert config.temperature == 0.8
+
+
+def test_simulator_config_rejects_removed_use_seeded_generation():
+    with pytest.raises(TypeError):
+        SimulatorConfig(use_seeded_generation=False)

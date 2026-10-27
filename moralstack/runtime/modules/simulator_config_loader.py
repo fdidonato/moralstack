@@ -27,7 +27,6 @@ ENV_MAX_TOKENS = "MORALSTACK_SIMULATOR_MAX_TOKENS"
 ENV_TEMPERATURE = "MORALSTACK_SIMULATOR_TEMPERATURE"
 ENV_TOP_P = "MORALSTACK_SIMULATOR_TOP_P"
 ENV_DEFAULT_NUM_SCENARIOS = "MORALSTACK_SIMULATOR_DEFAULT_NUM_SCENARIOS"
-ENV_USE_SEEDED_GENERATION = "MORALSTACK_SIMULATOR_USE_SEEDED_GENERATION"
 ENV_ENABLE_CACHING = "MORALSTACK_SIMULATOR_ENABLE_CACHING"
 
 
@@ -48,7 +47,6 @@ def load_simulator_config_from_env() -> SimulatorConfig:
     temperature = get_env_float(ENV_TEMPERATURE, 0.8, 0.0, 2.0)
     top_p = get_env_float(ENV_TOP_P, 0.95, 0.0, 1.0)
     default_num_scenarios = get_env_int(ENV_DEFAULT_NUM_SCENARIOS, 3, 1)
-    use_seeded_generation = get_env_bool(ENV_USE_SEEDED_GENERATION, False)
     enable_caching = get_env_bool(ENV_ENABLE_CACHING, True)
 
     return SimulatorConfig(
@@ -57,6 +55,5 @@ def load_simulator_config_from_env() -> SimulatorConfig:
         temperature=temperature,
         top_p=top_p,
         default_num_scenarios=default_num_scenarios,
-        use_seeded_generation=use_seeded_generation,
         enable_caching=enable_caching,
     )

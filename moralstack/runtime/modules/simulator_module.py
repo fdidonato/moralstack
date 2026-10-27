@@ -231,7 +231,6 @@ class SimulatorConfig:
     temperature: float = 0.8  # Higher for scenario diversity
     top_p: float = 0.95  # Nucleus sampling; configurable via MORALSTACK_SIMULATOR_TOP_P
     default_num_scenarios: int = 3
-    use_seeded_generation: bool = False  # If True, uses separate seeds
 
     # FIX PERFORMANCE: Caching to avoid recomputation on identical inputs
     enable_caching: bool = True  # Enable result caching

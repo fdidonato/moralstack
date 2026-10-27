@@ -399,13 +399,6 @@ Each failed parse attempt is persisted as a billable `simulator_retry` / `retry_
 - **Type**: int (>= 1)
 - **Description**: Default number of consequence scenarios to generate per simulation call.
 
-#### MORALSTACK_SIMULATOR_USE_SEEDED_GENERATION
-
-- **Default**: `false`
-- **Type**: bool (1/true/yes or 0/false/no)
-- **Description**: When true, each scenario is generated with a separate seed prompt for greater diversity. More costly
-  but produces more varied scenarios.
-
 ### Caching
 
 #### MORALSTACK_SIMULATOR_ENABLE_CACHING

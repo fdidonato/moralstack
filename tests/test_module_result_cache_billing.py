@@ -51,7 +51,7 @@ def _runner_with_module(module_attr: str, module: object) -> DeliberationRunner:
 
 def test_simulate_cache_hit_marked_non_billable_and_no_double_count(monkeypatch):
     policy = MagicMock()
-    config = SimulatorConfig(enable_caching=True, use_seeded_generation=False)
+    config = SimulatorConfig(enable_caching=True)
     simulator = LLMConsequenceSimulator(policy=policy, config=config)
     fixed = SimulationResult(tokens_used=50, prompt_tokens=30, completion_tokens=20)
     monkeypatch.setattr(simulator, "_simulate_batch", lambda *a, **k: fixed)

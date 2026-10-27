@@ -227,7 +227,7 @@ def _run_simulator_batch(ps: PromptSet | None, contract: Any = None, history: An
     policy = _Policy(_SIM_OK)
     sim = LLMConsequenceSimulator(
         policy=policy,
-        config=SimulatorConfig(max_retries=1, use_seeded_generation=False, enable_caching=False),
+        config=SimulatorConfig(max_retries=1, enable_caching=False),
         prompt_set=ps,
     )
     result = sim.simulate("request", "response", 2, developer_contract=contract, conversation_history=history)
@@ -366,7 +366,7 @@ def test_simulator_batch_markers(marker_set: PromptSet) -> None:
     policy = _Policy(_SIM_OK)
     sim = LLMConsequenceSimulator(
         policy=policy,
-        config=SimulatorConfig(max_retries=1, use_seeded_generation=False, enable_caching=False),
+        config=SimulatorConfig(max_retries=1, enable_caching=False),
         prompt_set=marker_set,
     )
     result = sim.simulate("request", "response", 2)
@@ -380,7 +380,7 @@ def test_simulator_retry_text_comes_from_the_set(marker_set: PromptSet) -> None:
     policy = _Policy(_NOT_JSON, _SIM_OK)
     sim = LLMConsequenceSimulator(
         policy=policy,
-        config=SimulatorConfig(max_retries=2, use_seeded_generation=False, enable_caching=False),
+        config=SimulatorConfig(max_retries=2, enable_caching=False),
         prompt_set=marker_set,
     )
     result = sim.simulate("request", "response", 2)
@@ -572,7 +572,7 @@ def test_global_cache_not_shared_between_sets(marker_set: PromptSet) -> None:
     # simulator
     request, response = _uniq("sim-req"), _uniq("sim-resp")
     default_policy, other_policy = _Policy(_SIM_OK), _Policy(_SIM_OK)
-    config = SimulatorConfig(max_retries=1, use_seeded_generation=False, enable_caching=True)
+    config = SimulatorConfig(max_retries=1, enable_caching=True)
     first = LLMConsequenceSimulator(default_policy, config).simulate(request, response, 2)
     other_sim = LLMConsequenceSimulator(other_policy, config, prompt_set=marker_set)
     second = other_sim.simulate(request, response, 2)

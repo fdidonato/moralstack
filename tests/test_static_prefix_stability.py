@@ -414,9 +414,7 @@ _VALID_SIMULATOR_BATCH = json.dumps(
 class TestSimulatorStaticPrefixStability:
     def test_batch_system_stable_and_equals_constant(self):
         policy = _CapturingPolicy(default_response=_VALID_SIMULATOR_BATCH)
-        sim = LLMConsequenceSimulator(
-            policy=policy, config=SimulatorConfig(max_retries=1, use_seeded_generation=False, enable_caching=False)
-        )
+        sim = LLMConsequenceSimulator(policy=policy, config=SimulatorConfig(max_retries=1, enable_caching=False))
         sim.simulate("request A", "response A", num_scenarios=2)
         sim.simulate("a very different request B", "a very different response B", num_scenarios=2)
 
@@ -685,9 +683,7 @@ class TestObservabilityPersistedFieldsReflectStaticDynamicSplit:
 
     def test_simulator_batch_result_system_prompt_matches_sent_static_constant(self):
         policy = _CapturingPolicy(default_response=_VALID_SIMULATOR_BATCH)
-        sim = LLMConsequenceSimulator(
-            policy=policy, config=SimulatorConfig(max_retries=1, use_seeded_generation=False, enable_caching=False)
-        )
+        sim = LLMConsequenceSimulator(policy=policy, config=SimulatorConfig(max_retries=1, enable_caching=False))
         simulation = sim.simulate("request Y", "response Y", num_scenarios=2)
 
         assert simulation.system_prompt == SIMULATOR_BATCH_SYSTEM_PROMPT

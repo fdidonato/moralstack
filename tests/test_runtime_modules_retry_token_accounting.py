@@ -117,7 +117,7 @@ def test_simulator_retry_failed_attempt_persists_token_usage(capture_async_persi
     ]
     simulator = LLMConsequenceSimulator(
         policy=_policy_with_generate(lambda **kwargs: responses.pop(0), model="gpt-sim"),
-        config=SimulatorConfig(max_retries=2, use_seeded_generation=False),
+        config=SimulatorConfig(max_retries=2),
     )
     result = simulator._simulate_batch("req", "resp", 1)
     assert result.tokens_used == 50

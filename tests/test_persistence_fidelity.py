@@ -357,9 +357,7 @@ class _ExcludingStore(cap.FakeRetrievalStore):
         return True
 
 
-def _build_orchestrator(
-    policy: Any, *, max_cycles: int = 1, seeded: bool = False, store: Any = None, parallel: bool = False
-) -> Any:
+def _build_orchestrator(policy: Any, *, max_cycles: int = 1, store: Any = None, parallel: bool = False) -> Any:
     """A real ``Orchestrator`` with REAL modules on one recording policy: sequential, offline, two attempts per module."""
     from moralstack.models.risk.estimator import LLMBasedRiskEstimator
     from moralstack.models.risk.schema import RiskEstimatorConfig
@@ -391,9 +389,7 @@ def _build_orchestrator(
         policy=policy,
         risk_estimator=estimator,
         critic=LLMConstitutionalCritic(policy, store=None, config=CriticConfig(max_retries=2)),
-        simulator=LLMConsequenceSimulator(
-            policy, SimulatorConfig(max_retries=2, enable_caching=False, use_seeded_generation=seeded)
-        ),
+        simulator=LLMConsequenceSimulator(policy, SimulatorConfig(max_retries=2, enable_caching=False)),
         hindsight=LLMHindsightEvaluator(policy, HindsightConfig(max_retries=2, enable_caching=False)),
         perspectives=LLMPerspectiveEnsemble(
             policy, EnsembleConfig(max_retries=2, parallel_evaluation=parallel, enable_caching=False, max_perspectives=2)
@@ -412,7 +408,6 @@ def _run_orchestrator(env: Env, sc: Scenario) -> Observed:
     orch = _build_orchestrator(
         policy,
         max_cycles=opts.get("max_cycles", 1),
-        seeded=opts.get("seeded", False),
         parallel=opts.get("parallel", False),
         store=opts["store"]() if "store" in opts else None,
     )
