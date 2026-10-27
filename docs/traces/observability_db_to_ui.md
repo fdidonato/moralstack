@@ -406,12 +406,30 @@ reconstructs:
   `parsed_json` is read by the page for the first time, decoded only to find the contract; only the contract excerpt is
   rendered, never the full wire; the page stays behind `_require_session` and Jinja autoescape is on.
   *INPUT anchor (2026-10-22)*: `_attach_contract_delivery` returns the resolved request contract, passed to the template
-  as `input_contract`; the INPUT node body shows it under "Full prompt" as a collapsed "Developer contract" `<details>`
-  (length, `sent by the client as role=system` when it was a system message, identity note, full text in `<pre>`). When
+  as `input_contract`; the INPUT node body shows it under "Full prompt" as a "Developer contract" `<details>`, open by
+  default since 2026-10-27 (length, `sent by the client as role=system` when it was a system message, identity note, full
+  text in `<pre>`), and the node header previews its first 300 chars (`.flow-node-contract-preview`). When
   `input_anchor_info.developer_contract_present` is true but nothing was resolved, a muted line says the text could not be
   identified; without a contract the node shows nothing. The header chip "developer contract" is lit by
   `input_contract` OR `input_anchor_info.developer_contract_present` (request page only), so chip and body agree even when
   no `COMPLIANCE_LAYER_STARTED` event was persisted; the conversation spine keeps the event-derived chip.
+- **Node details (2026-10-27, tests `tests/test_ui_node_details.py`).** One macro, `call_details` in `request.html`, renders
+  a call's evidence for both the execution-graph node and the flat "LLM Calls" list; the expanded "Result / Summary"
+  block and the collapsed module node's result pill (both from `_call_result_preview`, now deleted with its
+  `module_result` filter) were removed: a module's outputs stay on its `→` io-rows and in its Parsed Summary; the INPUT
+  anchor keeps its prompt pill. Each section renders only
+  when it has content (Prompt, System Prompt, Raw Response; "Conversation History" only with prior turns).
+  "Original request messages (client body)" leads with the user request: `message_sections.final_user_message`, or
+  `req.prompt` when that row's `prompt` contains it verbatim (the risk estimators record an empty final user message
+  because they send the request inside their module prompt; across the local DB no recorded row lacked both), with a
+  note saying so; otherwise "No final user message recorded". The system / developer messages follow under their own
+  labels. "Conversation History" now lists prior turns only (the final user message moved to the section above). Raw
+  Response and Parsed Summary pass through the `pretty_json` filter (`ui/app.py`, display only: a JSON object/array is
+  re-serialized with `indent=2`, anything else is returned unchanged). In the graph, clicking a node header moves that
+  node's own `.flow-node-body` into the side panel `#flow-detail-panel` (and back on close / Esc / another node), so the
+  evidence exists once in the DOM and tier layout no longer stretches to thousands of pixels; on wide screens `.main`
+  yields the panel width. `.flow-node--input` sets `flex: 0 0 auto`: the inherited `.flow-node { flex: 1 1 210px;
+  overflow: hidden }` pinned the anchor's height at 210px inside the column-flex spine, which clipped an opened contract.
 - **Markdown exports**: per-request, per-run benchmark, and per-conversation
   AI Act art. 12 audit (`/conversations/{id}/export.md` →
   `reports/conversation_export.export_conversation_to_markdown`).

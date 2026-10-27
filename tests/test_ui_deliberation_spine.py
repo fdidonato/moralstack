@@ -379,8 +379,9 @@ def test_node_headers_are_keyboard_operable(ui_client):
 
 def test_speculative_node_hides_result_text_in_compact_box(ui_client):
     """A speculative draft is not the delivered answer: its content must not
-    render in the compact (collapsed) box preview pill, only behind expand —
-    unlike a governed module result, which still shows its pill."""
+    render in the compact (collapsed) box, only behind expand. Since 2026-10-27
+    no module node renders a result-summary pill at all (it duplicated the
+    removed "Result / Summary" block); only the INPUT anchor keeps its prompt pill."""
     run_id, request_id = "run-spine-spec", "req-spine-spec"
     create_run(run_id, run_type="single", meta={})
     upsert_request(run_id, request_id, prompt="hello", domain="general")
@@ -400,7 +401,7 @@ def test_speculative_node_hides_result_text_in_compact_box(ui_client):
         raw_response="SPECULATIVE_DRAFT_TEXT_BODY",
         parsed_summary_json=json.dumps({"context_shape": {"module": "speculative_generate"}}),
     )
-    # A governed module result that SHOULD still show its pill.
+    # A governed module result: its node no longer shows a result pill either.
     persist_llm_call(
         run_id=run_id,
         request_id=request_id,
@@ -426,7 +427,9 @@ def test_speculative_node_hides_result_text_in_compact_box(ui_client):
 
     # The speculative node's envelope preview is NOT rendered as a compact pill.
     assert '<div class="flow-node-pill">context_shape' not in body
-    # A governed module still shows its pill (feature not globally disabled).
-    assert '<div class="flow-node-pill">' in body
+    # No module node carries a result pill: the only one left is the INPUT anchor's prompt preview.
+    assert body.count('<div class="flow-node-pill">') == 1
+    assert '<div class="flow-node-pill">hello</div>' in body
+    assert "Harm: low" not in body  # the simulator's former pill text
     # The full speculative draft stays reachable via the node's expand body.
     assert "SPECULATIVE_DRAFT_TEXT_BODY" in body

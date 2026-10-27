@@ -36,6 +36,68 @@
 </details>
 {% endif %}
 {% endmacro %}
+{# Expandable evidence of one call (graph node body and the flat LLM-calls list). A section renders only when it has
+   content. The user request falls back to the request prompt only when this call's prompt embeds it verbatim (the
+   risk estimators send it inside their module prompt, so message_sections records no final user message). #}
+{% macro call_details(call, request_prompt) %}
+{{ contract_delivery_block(call) }}
+{% if (call.prompt or '') | trim %}
+<details>
+    <summary>Prompt</summary>
+    <pre class="block">{{ call.prompt }}</pre>
+</details>
+{% endif %}
+{% if (call.system_prompt or '') | trim %}
+<details>
+    <summary>System Prompt</summary>
+    <pre class="block">{{ call.system_prompt }}</pre>
+</details>
+{% endif %}
+{% set message_sections = call.parsed_summary_json | message_sections %}
+{% if message_sections %}
+<details>
+    <summary>Original request messages (client body)</summary>
+    <div class="meta-label">User request</div>
+    {% if (message_sections.final_user_message or '') | trim %}
+    <pre class="block">{{ message_sections.final_user_message }}</pre>
+    {% elif request_prompt and request_prompt in (call.prompt or '') %}
+    <pre class="block">{{ request_prompt }}</pre>
+    <div class="muted">Not sent as a separate client message: this call received it inside its module prompt.</div>
+    {% else %}
+    <div class="muted">No final user message recorded for this call.</div>
+    {% endif %}
+    {% if message_sections.system_messages %}
+    <div class="meta-label">System</div>
+    <pre class="block">{{ message_sections.system_messages | join('\n\n---\n\n') }}</pre>
+    {% endif %}
+    {% if message_sections.developer_messages %}
+    <div class="meta-label">Developer</div>
+    <pre class="block">{{ message_sections.developer_messages | join('\n\n---\n\n') }}</pre>
+    {% endif %}
+</details>
+{% if message_sections.history_messages %}
+<details>
+    <summary>Conversation History <span class="muted">&middot; {{ message_sections.history_messages | length }} prior message{{ 's' if message_sections.history_messages | length != 1 else '' }}</span></summary>
+    {% for msg in message_sections.history_messages %}
+    <div class="meta-label">{{ msg.role }}</div>
+    <pre class="block">{{ msg.content }}</pre>
+    {% endfor %}
+</details>
+{% endif %}
+{% endif %}
+{% if (call.raw_response or '') | trim %}
+<details>
+    <summary>Raw Response</summary>
+    <pre class="block">{{ call.raw_response | pretty_json }}</pre>
+</details>
+{% endif %}
+{% if call.parsed_summary_json %}
+<details>
+    <summary>Parsed Summary</summary>
+    <pre class="block json-block">{{ call.parsed_summary_json | pretty_json }}</pre>
+</details>
+{% endif %}
+{% endmacro %}
 <style>
 .badge-tokens { background: rgba(45, 212, 191, 0.15); color: #2dd4bf; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .badge-cached { background: rgba(129, 140, 248, 0.15); color: #818cf8; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -1333,6 +1395,10 @@
                     </div>
                     {% set input_preview = req.prompt or '' %}
                     <div class="flow-node-pill">{{ (input_preview[:90] + '…') if input_preview | length > 90 else input_preview }}</div>
+                    {% if input_contract %}
+                    {% set contract_preview = input_contract.text %}
+                    <div class="flow-node-contract-preview"><span class="meta-label">Contract</span> {{ (contract_preview[:300] + '…') if contract_preview | length > 300 else contract_preview }}</div>
+                    {% endif %}
                 </div>
             </div>
             <div class="flow-node-body">
@@ -1341,7 +1407,7 @@
                 {# The request's developer contract as identified by ui/contract_delivery.py (input_contract); each
                    module node shows separately how much of it that call received. #}
                 {% if input_contract %}
-                <details class="contract-delivery">
+                <details class="contract-delivery" open>
                     <summary>Developer contract <span class="muted">&middot; {{ input_contract.text | length }} chars{% if input_contract.client_role_system %} &middot; sent by the client as role=system{% endif %}</span></summary>
                     <pre class="block">{{ input_contract.text }}</pre>
                     <div class="muted">{% if input_contract.verified %}Identity verified by contract_hash.{% else %}Identity not verified by contract_hash.{% endif %}</div>
@@ -1430,14 +1496,6 @@
                                     {% endif %}
                                     {{ token_badge(call) }}
                                 </div>
-                                {% set preview = call.parsed_summary_json | module_result(call.module) %}
-                                {# A speculative draft is not the delivered answer (and its
-                                   parsed_summary is context-envelope internals, not a governed
-                                   result): keep its content out of the compact box — the full
-                                   draft stays reachable via this node's expand. #}
-                                {% if preview and 'speculative' not in ((call.phase or '') | lower) %}
-                                <div class="flow-node-pill">{{ (preview[:90] + '…') if preview | length > 90 else preview }}</div>
-                                {% endif %}
                             </div>
                         </div>
 
@@ -1470,57 +1528,7 @@
                         {% endif %}
 
                         <div class="flow-node-body">
-                            {% set preview = call.parsed_summary_json | module_result(call.module) %}
-                            {% if preview %}
-                            <div class="call-result-preview">
-                                <span class="meta-label">Result / Summary</span>
-                                <p class="call-result-text">{{ preview }}</p>
-                            </div>
-                            {% endif %}
-                            {{ contract_delivery_block(call) }}
-                            <details>
-                                <summary>Prompt</summary>
-                                <pre class="block">{{ call.prompt }}</pre>
-                            </details>
-                            <details>
-                                <summary>System Prompt</summary>
-                                <pre class="block">{{ call.system_prompt }}</pre>
-                            </details>
-                            {% set message_sections = call.parsed_summary_json | message_sections %}
-                            {% if message_sections %}
-                            <details>
-                                <summary>Original request messages (client body)</summary>
-                                {% if message_sections.system_messages %}
-                                <div class="meta-label">System</div>
-                                <pre class="block">{{ message_sections.system_messages | join('\n\n---\n\n') }}</pre>
-                                {% endif %}
-                                {% if message_sections.developer_messages %}
-                                <div class="meta-label">Developer</div>
-                                <pre class="block">{{ message_sections.developer_messages | join('\n\n---\n\n') }}</pre>
-                                {% endif %}
-                            </details>
-                            <details>
-                                <summary>Conversation History</summary>
-                                {% for msg in message_sections.history_messages or [] %}
-                                <div class="meta-label">{{ msg.role }}</div>
-                                <pre class="block">{{ msg.content }}</pre>
-                                {% endfor %}
-                                {% if message_sections.final_user_message %}
-                                <div class="meta-label">final user</div>
-                                <pre class="block">{{ message_sections.final_user_message }}</pre>
-                                {% endif %}
-                            </details>
-                            {% endif %}
-                            <details>
-                                <summary>Raw Response</summary>
-                                <pre class="block">{{ call.raw_response }}</pre>
-                            </details>
-                            {% if call.parsed_summary_json %}
-                            <details>
-                                <summary>Parsed Summary</summary>
-                                <pre class="block json-block">{{ call.parsed_summary_json }}</pre>
-                            </details>
-                            {% endif %}
+                            {{ call_details(call, req.prompt) }}
                             <div class="flow-node-ts">
                                 <span class="muted ts">{{ call.started_at | fmtdate }}</span>
                             </div>
@@ -1733,6 +1741,18 @@
         </div>
         {% endif %}
     </div>
+    {# Side panel for the selected node's details: the script below moves that node's own .flow-node-body here
+       and back, so each node's evidence exists once in the DOM and the graph keeps its compact layout. #}
+    <aside id="flow-detail-panel" class="flow-detail-panel" aria-label="Node details" hidden>
+        <div class="flow-detail-panel-head">
+            <div class="flow-detail-panel-heading">
+                <div class="flow-detail-panel-title"></div>
+                <div class="flow-detail-panel-meta"></div>
+            </div>
+            <button type="button" class="flow-detail-panel-close" aria-label="Close node details">&times;</button>
+        </div>
+        <div class="flow-detail-panel-body"></div>
+    </aside>
 {% elif llm_calls %}
 <h2>LLM Calls <span class="muted">({{ llm_calls | length }})</span></h2>
 {% for call in llm_calls %}
@@ -1766,57 +1786,7 @@
             <span class="muted ts">{{ call.started_at | fmtdate }}</span>
         </div>
     </div>
-    {% set preview = call.parsed_summary_json | module_result(call.module) %}
-    {% if preview %}
-    <div class="call-result-preview">
-        <span class="meta-label">Result / Summary</span>
-        <p class="call-result-text">{{ preview }}</p>
-    </div>
-    {% endif %}
-    {{ contract_delivery_block(call) }}
-    <details>
-        <summary>Prompt</summary>
-        <pre class="block">{{ call.prompt }}</pre>
-    </details>
-    <details>
-        <summary>System Prompt</summary>
-        <pre class="block">{{ call.system_prompt }}</pre>
-    </details>
-    {% set message_sections = call.parsed_summary_json | message_sections %}
-    {% if message_sections %}
-    <details>
-        <summary>Original request messages (client body)</summary>
-        {% if message_sections.system_messages %}
-        <div class="meta-label">System</div>
-        <pre class="block">{{ message_sections.system_messages | join('\n\n---\n\n') }}</pre>
-        {% endif %}
-        {% if message_sections.developer_messages %}
-        <div class="meta-label">Developer</div>
-        <pre class="block">{{ message_sections.developer_messages | join('\n\n---\n\n') }}</pre>
-        {% endif %}
-    </details>
-    <details>
-        <summary>Conversation History</summary>
-        {% for msg in message_sections.history_messages or [] %}
-        <div class="meta-label">{{ msg.role }}</div>
-        <pre class="block">{{ msg.content }}</pre>
-        {% endfor %}
-        {% if message_sections.final_user_message %}
-        <div class="meta-label">final user</div>
-        <pre class="block">{{ message_sections.final_user_message }}</pre>
-        {% endif %}
-    </details>
-    {% endif %}
-    <details>
-        <summary>Raw Response</summary>
-        <pre class="block">{{ call.raw_response }}</pre>
-    </details>
-    {% if call.parsed_summary_json %}
-    <details>
-        <summary>Parsed Summary</summary>
-        <pre class="block json-block">{{ call.parsed_summary_json }}</pre>
-    </details>
-    {% endif %}
+    {{ call_details(call, req.prompt) }}
 </div>
 {% endfor %}
 {% endif %}
@@ -1953,7 +1923,7 @@
 <script>
 (function () {
     /* ----------------------------------------------------------------
-       Expand / collapse individual nodes on header click
+       Show a graph node's details in the side panel on header click
     ---------------------------------------------------------------- */
     function initNodeExpand() {
         /* Keyboard parity with the removed chronological view: each node header
@@ -1961,16 +1931,58 @@
            (tabindex/role) and operable by Enter/Space here, and aria-expanded
            reflects state for assistive tech, so the raw per-call audit evidence
            stays reachable without a mouse. */
+        var panel = document.getElementById('flow-detail-panel');
+        if (!panel) return;  /* flat LLM-calls list: its details are plain inline <details> */
+        var current = null;
+
+        function closePanel() {
+            if (!current) return null;
+            var header = current.header;
+            /* The body was the node's last child: put it back where it came from. */
+            current.node.appendChild(current.body);
+            current.node.classList.remove('flow-node--expanded');
+            header.setAttribute('aria-expanded', 'false');
+            panel.hidden = true;
+            document.body.classList.remove('flow-panel-open');
+            current = null;
+            return header;
+        }
+
+        function openPanel(node, header) {
+            var body = node.querySelector(':scope > .flow-node-body');
+            if (!body) return;
+            var title = node.querySelector('.flow-node-title');
+            var meta = node.querySelector('.flow-node-meta');
+            panel.querySelector('.flow-detail-panel-title').textContent = title ? title.textContent.trim() : '';
+            panel.querySelector('.flow-detail-panel-meta').replaceChildren(meta ? meta.cloneNode(true) : '');
+            var panelBody = panel.querySelector('.flow-detail-panel-body');
+            panelBody.appendChild(body);
+            panelBody.scrollTop = 0;
+            node.classList.add('flow-node--expanded');
+            header.setAttribute('aria-expanded', 'true');
+            panel.hidden = false;
+            document.body.classList.add('flow-panel-open');
+            /* The page narrows beside the panel and reflows: keep the selected node in view. */
+            node.scrollIntoView({block: 'nearest'});
+            current = {node: node, header: header, body: body};
+        }
+
         function toggle(header) {
             var node = header.closest('.flow-node');
             if (!node) return;
-            var expanded = node.classList.toggle('flow-node--expanded');
-            header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            var wasOpen = current && current.node === node;
+            closePanel();
+            if (!wasOpen) openPanel(node, header);
         }
 
         document.addEventListener('click', function (e) {
-            /* Ignore clicks inside the expanded body (details, pre, etc.). */
+            /* Ignore clicks inside the details themselves (details, pre, etc.). */
             if (e.target.closest('.flow-node-body')) return;
+            if (e.target.closest('.flow-detail-panel-close')) {
+                var h = closePanel();
+                if (h) h.focus();
+                return;
+            }
             var header = e.target.closest('.flow-node-header');
             if (!header) return;
             e.stopPropagation();
@@ -1978,6 +1990,11 @@
         });
 
         document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && current) {
+                var h = closePanel();
+                if (h) h.focus();
+                return;
+            }
             if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
             if (e.target.closest('.flow-node-body')) return;
             var header = e.target.closest('.flow-node-header');

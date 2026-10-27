@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Request page: execution-graph node details are readable.** Clicking a node opens its details in a side panel
+  instead of stretching the box (close with the button, Esc, or another node). The INPUT node previews the developer
+  contract and opens it by default; an opened contract was previously clipped by a fixed 210px height. "Original request
+  messages" now leads with the user request, not only the contract (the risk estimators send it inside their module
+  prompt, which the page states). "Conversation History" lists prior turns only and appears only when there are some;
+  empty Prompt / System Prompt / Raw Response sections are hidden. JSON raw responses and parsed summaries are indented.
+  The "Result / Summary" block and the module nodes' result pill are removed. Display only: no persisted data, export,
+  governance or payload change.
+
 ### Removed
 
 - **Dead code (lot C): the test-only `moralstack/server/fingerprint.py` is removed.** `compute_conversation_fingerprint`

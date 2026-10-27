@@ -3417,91 +3417,6 @@ def _domain_retrieval_view(llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _call_result_preview(parsed_summary_json: str | None, module: str) -> str:
-    """Format parsed_summary_json as a short readable result for the module (for UI card)."""
-    if not parsed_summary_json or not str(parsed_summary_json).strip():
-        return ""
-    raw = str(parsed_summary_json).strip()
-    try:
-        data = json.loads(raw) if isinstance(parsed_summary_json, str) else parsed_summary_json
-        if not isinstance(data, dict):
-            return raw[:300] + ("..." if len(raw) > 300 else "")
-        parts = []
-        mod = (module or "").lower()
-        if "risk" in mod:
-            if "risk_score" in data:
-                parts.append(f"Score: {data['risk_score']}")
-            if "risk_category" in data:
-                parts.append(f"Cat: {data['risk_category']}")
-            if "intent_type" in data:
-                parts.append(f"Intent: {data['intent_type']}")
-            if "harm_type" in data:
-                parts.append(f"Harm: {data['harm_type']}")
-            if "operational_risk" in data:
-                parts.append(f"Op: {data['operational_risk']}")
-            if "domain" in data:
-                parts.append(f"Domain: {data['domain']}")
-            mini = data.get("mini_estimator")
-            mode = data.get("estimation_mode")
-            if mini:
-                parts.append(f"mini: {mini}")
-            if mode:
-                parts.append(f"mode: {mode}")
-
-        if "critic" in mod:
-            if "violations" in data:
-                parts.append(f"Violations: {data.get('violations', data.get('violation_count', '—'))}")
-            if "violated_hard" in data:
-                parts.append(f"Hard: {data['violated_hard']}")
-            if "decision" in data:
-                parts.append(f"Decision: {data['decision']}")
-            if "revision_guidance" in data:
-                g = data["revision_guidance"]
-                parts.append(f"Guidance: {(g[:80] + '…') if isinstance(g, str) and len(g) > 80 else g}")
-
-        if "simulator" in mod:
-            if "consequences_count" in data:
-                parts.append(f"Consequences: {data['consequences_count']}")
-            if "semantic_expected_harm" in data:
-                parts.append(f"Harm: {data['semantic_expected_harm']}")
-            if "expected_valence" in data:
-                parts.append(f"Valence: {data['expected_valence']}")
-            if "dominant_harm_types" in data:
-                dht = data["dominant_harm_types"]
-                if isinstance(dht, list):
-                    dht = ", ".join(dht)
-                parts.append(f"HarmTypes: {dht}")
-
-        if "hindsight" in mod:
-            if "score" in data:
-                parts.append(f"Score: {data['score']}")
-            if "hindsight_score" in data:
-                parts.append(f"Score: {data['hindsight_score']}")
-            if "recommendation" in data:
-                parts.append(f"Rec: {data['recommendation']}")
-
-        if "perspective" in mod:
-            if "perspectives_evaluated" in data:
-                parts.append(f"Perspectives: {data['perspectives_evaluated']}")
-            if "recommendation" in data:
-                parts.append(f"Rec: {data['recommendation']}")
-            if "approval_scores" in data:
-                avgs = data.get("approval_scores", {})
-                if isinstance(avgs, dict) and avgs:
-                    vals = [v for v in avgs.values() if isinstance(v, (int, float))]
-                    if vals:
-                        avg = sum(vals) / len(vals)
-                        parts.append(f"Avg Approval: {round(avg, 2)}")
-
-        if not parts:
-            for k, v in list(data.items())[:5]:
-                if v is not None and str(v).strip():
-                    parts.append(f"{k}: {v}")
-        return " | ".join(parts) if parts else raw[:200] + ("..." if len(raw) > 200 else "")
-    except (json.JSONDecodeError, TypeError):
-        return raw[:300] + ("..." if len(raw) > 300 else "")
-
-
 _CONVERSATION_STATE_JSON_KEYS = ("state_in_json", "state_out_json", "state_summary_json")
 _LEDGER_EVENT_JSON_KEYS = ("payload_json",)
 _SESSION_STORE_EVENT_JSON_KEYS = ("state_summary_json", "payload_json")
@@ -3955,11 +3870,6 @@ button:hover{opacity:0.9}
 
         templates.env.filters["fmtdate"] = _format_ts
 
-        def _filter_module_result(parsed_summary_json: Any, module: str) -> str:
-            return _call_result_preview(parsed_summary_json, module)
-
-        templates.env.filters["module_result"] = _filter_module_result
-
         def _filter_message_sections(parsed_summary_json: Any) -> dict[str, Any]:
             if not parsed_summary_json:
                 return {}
@@ -3975,6 +3885,25 @@ button:hover{opacity:0.9}
             return sections if isinstance(sections, dict) else {}
 
         templates.env.filters["message_sections"] = _filter_message_sections
+
+        def _filter_pretty_json(value: Any) -> str:
+            """Indent a JSON object/array for display; any other text is returned unchanged.
+
+            Purely presentational: the persisted value is never altered, only re-serialized for reading.
+            """
+            if value is None:
+                return ""
+            if not isinstance(value, str):
+                return json.dumps(value, indent=2, ensure_ascii=False, default=str)
+            text = value.strip()
+            if not text or text[0] not in "{[":
+                return value
+            try:
+                return json.dumps(json.loads(text), indent=2, ensure_ascii=False)
+            except ValueError:
+                return value
+
+        templates.env.filters["pretty_json"] = _filter_pretty_json
 
         def _filter_event_label(payload_json: Any) -> str:
             """Compact scannable label for a raw debug event ('component · message').

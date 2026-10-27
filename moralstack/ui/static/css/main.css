@@ -785,23 +785,6 @@ h3 {
     display: none !important;
 }
 
-/* Call result preview (per-module summary) */
-.call-result-preview {
-    margin: 0.75rem 0;
-    padding: 0.75rem 1rem;
-    background: var(--bg);
-    border-radius: var(--radius-sm);
-    border-left: 3px solid var(--accent);
-}
-
-.call-result-text {
-    margin: 0.25rem 0 0;
-    font-size: 0.875rem;
-    color: var(--text-secondary);
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
 /* Relevant constitutional principles */
 .principles-card {
     padding: 1.25rem 1.5rem;
@@ -1265,15 +1248,17 @@ h3 {
     font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
 }
 
-/* Node body (visible only when expanded) */
+/* Node body: hidden in the graph, shown once the script moves it into the side panel */
 .flow-node-body {
     display: none;
     padding: 0.5rem 0.7rem 0.7rem;
     border-top: 1px solid var(--border);
 }
 
-.flow-node--expanded .flow-node-body {
+.flow-detail-panel .flow-node-body {
     display: block;
+    padding: 0;
+    border-top: none;
 }
 
 .flow-node-ts {
@@ -1316,11 +1301,6 @@ h3 {
     font-style: italic;
 }
 
-/* Hide the result/summary block inside body to avoid duplication */
-.flow-node--expanded .flow-node-pill {
-    display: none;
-}
-
 /* Smooth height transition for expand/collapse via max-height trick */
 .flow-node-body {
     transition: none;
@@ -1346,9 +1326,90 @@ h3 {
 .flow-node[data-module="compliance_layer"]:hover { box-shadow: 0 0 0 1px rgba(236, 72, 153, 0.25); }
 .flow-node[data-module="final_revalidation"]:hover { box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.3); }
 
-/* Expanded node: subtle accent glow matching module */
+/* Node whose details are open in the side panel */
 .flow-node--expanded {
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+/* Side panel holding the selected node's details (see request.html script) */
+.flow-detail-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 150; /* above the sticky .header (z-index 100) */
+    width: min(50vw, 820px);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+}
+
+.flow-detail-panel[hidden] {
+    display: none;
+}
+
+.flow-detail-panel-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.9rem 1.1rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.flow-detail-panel-heading {
+    min-width: 0;
+}
+
+.flow-detail-panel-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    word-break: break-word;
+}
+
+.flow-detail-panel-meta .flow-node-meta .badge {
+    font-size: 0.72rem;
+}
+
+.flow-detail-panel-close {
+    flex-shrink: 0;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 1.2rem;
+    line-height: 1;
+    padding: 0.2rem 0.55rem;
+    cursor: pointer;
+}
+
+.flow-detail-panel-close:hover,
+.flow-detail-panel-close:focus-visible {
+    color: var(--text);
+    border-color: var(--accent);
+}
+
+.flow-detail-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.75rem 1.1rem 1.25rem;
+}
+
+/* Wide screens: the page yields the panel's width so the graph stays fully visible beside it */
+@media (min-width: 1000px) {
+    body.flow-panel-open .main {
+        margin-right: min(50vw, 820px);
+    }
+}
+
+@media (max-width: 999px) {
+    .flow-detail-panel {
+        width: 100vw;
+    }
 }
 
 /* Branch/rejoin bracket for parallel tiers with 2+ nodes: a horizontal bar
@@ -1385,10 +1446,34 @@ h3 {
 }
 
 .flow-node--input {
+    /* .flow-node's `flex: 1 1 210px` is a width in a tier row; in the column-flex spine it would
+       pin this anchor's height at 210px and clip its content (overflow: hidden). */
+    flex: 0 0 auto;
     width: 100%;
     max-width: 640px;
     border-color: var(--accent);
     cursor: pointer;
+}
+
+/* Developer contract preview, always visible in the INPUT anchor */
+.flow-node-contract-preview {
+    margin-top: 0.4rem;
+    padding-top: 0.35rem;
+    border-top: 1px dashed var(--border);
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.flow-node-contract-preview .meta-label {
+    display: inline;
+    margin-right: 0.3rem;
 }
 .flow-node--input .flow-node-title {
     color: var(--accent);
