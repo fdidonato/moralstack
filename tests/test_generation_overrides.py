@@ -219,8 +219,16 @@ class TestRefuseRemoved:
         assert not hasattr(PolicyLLMProtocol, "refuse")
 
     def test_llm_refusal_call_uses_env_default_not_override(self, monkeypatch):
-        from moralstack.orchestration.safe_refusal_generator import _llm_refusal_call
+        import inspect
 
+        from moralstack.orchestration.safe_refusal_generator import (
+            _llm_refusal_call,
+            generate_llm_safe_refusal_detailed,
+        )
+
+        # No per-request override can be threaded into the refusal path.
+        assert "overrides" not in inspect.signature(_llm_refusal_call).parameters
+        assert "overrides" not in inspect.signature(generate_llm_safe_refusal_detailed).parameters
         policy, completions = _make_policy(monkeypatch, max_tokens_env="4096")
         # The live refusal path calls generate() without ``overrides``: a client
         # max_tokens cannot reach it, so the operator-set default applies.

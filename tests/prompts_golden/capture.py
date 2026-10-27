@@ -1674,7 +1674,7 @@ def _builders_openai_policy_client_boundary(out: dict[str, str]) -> None:
     """The REAL ``OpenAIPolicy`` on a fake ``openai.OpenAI``: the messages that reach the provider client.
 
     Covers ``generate`` (with and without ``system``), ``generate_messages`` (passed through unchanged),
-    ``rewrite`` (inline system/user texts) - the policy boundary of the wire.
+    ``rewrite`` (PromptSet texts) - the policy boundary of the wire.
     """
     from moralstack.models.policy import OpenAIPolicy
 

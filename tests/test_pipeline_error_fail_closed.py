@@ -19,6 +19,7 @@ import dataclasses
 import json
 import logging
 import time
+import warnings
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -469,7 +470,6 @@ def test_p15_handlers_make_no_llm_call(request: pytest.FixtureRequest, monkeypat
 def test_p16a_removed_env_flag_is_ignored_for_content(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import warnings
 
     from moralstack.orchestration.config_loader import load_orchestrator_config_from_env
 
