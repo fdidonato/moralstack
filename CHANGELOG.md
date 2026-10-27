@@ -18,8 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   governance or payload change.
 - **`docs/CODEBASE_FACTS.md` records the dead-code lot C seeded-simulator results.** A verified row states that no
   conversation-event `extra` payload embeds a `SimulationResult`; the simulator Structured Outputs row cites current
-  lines; a Hypothesis row covers the 4 run databases not checked for seeded rows, and a known-gap row notes that
-  `docs/modules/observability.md` omits hindsight from the `wire_calls` users. Documentation only.
+  lines; a Hypothesis row covers the 4 run databases not checked for seeded rows. `docs/modules/observability.md`
+  now names the multi-consequence hindsight row among the `wire_calls` users. Documentation only.
 
 ### Removed
 

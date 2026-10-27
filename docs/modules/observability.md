@@ -661,10 +661,10 @@ meaning of any existing field: it describes the exact `messages` list sent, stor
 `sha256` of the whole list.
 
 - **Where.** `parsed_summary_json["wire"]` for a row that records one call. A row that aggregates several calls
-  (perspectives, the refusal's two attempts) uses `parsed_summary_json["wire_calls"]` (records in
-  call order) and `parsed_summary_json["wire_strings"]` (one string table shared by all of them, so a system prompt common
-  to every call is stored once). A cache hit makes no call and carries no wire. The record travels in the same
-  `llm.call` envelope to SQLite and to `llm.call.jsonl`.
+  (perspectives, a hindsight row that evaluated several consequences one by one, the refusal's two attempts) uses
+  `parsed_summary_json["wire_calls"]` (records in call order) and `parsed_summary_json["wire_strings"]` (one string
+  table shared by all of them, so a system prompt common to every call is stored once). A cache hit makes no call and
+  carries no wire. The record travels in the same `llm.call` envelope to SQLite and to `llm.call.jsonl`.
 - **Record v1.**
 
   ```json
